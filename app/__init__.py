@@ -1,0 +1,1 @@
+"""AssetMind personal finance baseline."""
