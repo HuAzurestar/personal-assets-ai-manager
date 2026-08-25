@@ -155,6 +155,18 @@ class ReviewCandidate(Base):
     created_at: Mapped[str] = mapped_column(DateTime(timezone=False))
 
 
+class CandidateActionLog(Base):
+    __tablename__ = "candidate_action_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    candidate_id: Mapped[int] = mapped_column(ForeignKey("review_candidates.id"))
+    action: Mapped[str] = mapped_column(String(40))
+    before_state: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(DateTime(timezone=False))
+    undone: Mapped[bool] = mapped_column(Boolean, default=False)
+    undone_at: Mapped[str | None] = mapped_column(DateTime(timezone=False), nullable=True)
+
+
 class AssetSnapshot(Base):
     __tablename__ = "asset_snapshots"
 

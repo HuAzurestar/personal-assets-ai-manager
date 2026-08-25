@@ -230,13 +230,75 @@ def test_server_pagination_stable_sort_and_view_scoped_tags(tmp_path):
 
 def test_workspace_and_update_script_are_present_and_safe():
     with TestClient(app) as client:
-        workspace = client.get("/static/workspace.js").text
+        workspace = client.get("/static/workspace-next.js").text
         assert 'data-page="summary"' in workspace
         assert 'data-page="data"' in workspace
         assert 'data-page="tags"' in workspace
+        assert 'data-page="candidates"' in workspace
+        assert 'aria-label="重复与转移候选"' in workspace
+        assert 'data-candidate-undo' in workspace
+        assert 'data-batch="ignored"' in workspace
         assert "/api/transactions" in workspace
+        css = client.get("/static/workspace.css").text
+        assert '.workspace[data-collapsed="true"]' in css
+        assert "@media (max-width: 700px)" in css
     script = open("scripts/update-and-run.ps1", encoding="utf-8").read()
     assert "git fetch origin main" in script
     assert "git merge --ff-only origin/main" in script
     assert "git status --porcelain" in script
     assert "git reset" not in script
+
+
+def test_candidate_page_batch_and_undo_restore_ledger_facts(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'ledger.db'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    def override_db():
+        db = session_factory()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    try:
+        with TestClient(app) as client:
+            def create_bill(at, merchant, amount):
+                response = client.post("/api/bills", json={"occurred_at": at, "merchant": merchant, "account_name": "test-account", "amount": amount})
+                assert response.status_code == 201
+                return response.json()
+
+            first = create_bill("2026-08-25T10:00:00", "same merchant", -12)
+            second = create_bill("2026-08-25T10:01:00", "same merchant", -12)
+            duplicate = next(item for item in client.get("/api/candidates").json() if item["candidate_type"] == "duplicate")
+            page = client.get("/api/candidates/page?page=1&page_size=20&status=pending&candidate_type=duplicate")
+            assert page.status_code == 200
+            assert page.json()["total"] == 1
+            assert page.json()["items"][0]["id"] == duplicate["id"]
+
+            batch = client.post("/api/candidates/batch", json={"items": [{"candidate_id": duplicate["id"], "action": "resolve_duplicate", "retained_bill_id": second["id"]}]})
+            assert batch.status_code == 200
+            resolved = batch.json()[0]
+            assert resolved["status"] == "duplicate_excluded"
+            assert resolved["undo_available"] is True
+            assert client.get("/api/dashboard").json()["spending"] == -12
+            audit = client.get(f"/api/candidates/{duplicate['id']}/actions").json()
+            assert audit[0]["action"] == "resolve_duplicate" and audit[0]["undone"] is False
+
+            undone = client.post(f"/api/candidates/{duplicate['id']}/undo")
+            assert undone.status_code == 200
+            assert undone.json()["status"] == "pending"
+            assert undone.json()["undo_available"] is False
+            bills = {bill["id"]: bill for bill in client.get("/api/bills").json()}
+            assert bills[first["id"]]["aggregate_excluded"] is False
+            assert bills[first["id"]]["duplicate_of_id"] is None
+            assert client.get("/api/dashboard").json()["spending"] == -24
+            audit = client.get(f"/api/candidates/{duplicate['id']}/actions").json()
+            assert audit[0]["undone"] is True
+
+            deferred = client.post("/api/candidates/batch", json={"items": [{"candidate_id": duplicate["id"], "action": "deferred"}]})
+            assert deferred.status_code == 200
+            assert deferred.json()[0]["status"] == "deferred"
+    finally:
+        app.dependency_overrides.clear()

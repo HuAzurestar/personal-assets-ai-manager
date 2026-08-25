@@ -134,6 +134,7 @@ class ReviewCandidateRead(BaseModel):
     transfer_group_id: str | None = None
     retained_bill_id: int | None = None
     resolved_at: datetime | None = None
+    undo_available: bool = False
     aggregation_effect: str
     created_at: datetime
     bill: BillRead
@@ -143,6 +144,23 @@ class ReviewCandidateRead(BaseModel):
 class CandidateDecision(BaseModel):
     action: str = Field(pattern="^(confirm_transfer|resolve_duplicate|ignored|deferred)$")
     retained_bill_id: int | None = None
+
+
+class CandidateBatchItem(BaseModel):
+    candidate_id: int
+    action: str = Field(pattern="^(confirm_transfer|resolve_duplicate|ignored|deferred)$")
+    retained_bill_id: int | None = None
+
+
+class CandidateBatchDecision(BaseModel):
+    items: list[CandidateBatchItem] = Field(min_length=1, max_length=100)
+
+
+class CandidatePageRead(BaseModel):
+    items: list[ReviewCandidateRead]
+    total: int
+    page: int
+    page_size: int
 
 
 class ViewTagRead(BaseModel):

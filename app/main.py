@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 from contextlib import asynccontextmanager
 from datetime import date, datetime, time
 from pathlib import Path
@@ -14,9 +15,9 @@ from sqlalchemy import asc, delete, desc, func, select
 from sqlalchemy.orm import Session
 
 from app.config import APP_DISPLAY_NAME, APP_SLUG
-from app.database import AssetSnapshot, Bill, BillTag, BillViewTag, ImportArtifact, ImportBatch, LedgerOrigin, ReviewCandidate, SessionLocal, Tag, TagAudit, TagChangeLog, TagView, ViewTag, init_db
+from app.database import AssetSnapshot, Bill, BillTag, BillViewTag, CandidateActionLog, ImportArtifact, ImportBatch, LedgerOrigin, ReviewCandidate, SessionLocal, Tag, TagAudit, TagChangeLog, TagView, ViewTag, init_db
 from app.file_import import normalise_rows, parse_upload, preview_rows
-from app.schemas import AssetCreate, AssetRead, BatchImportItemRead, BatchImportRead, BatchImportRequest, BatchPreviewItemRead, BatchPreviewRead, BillCreate, BillRead, CandidateDecision, ImportBatchRead, ImportPreviewRead, ReviewCandidateRead, TagApply, TagAuditRead, TagRequest, TagResult, TagViewCreate, TagViewRead, TagViewUpdate, TransactionPageRead, ViewTagAssignmentRead, ViewTagAssignmentRequest, ViewTagCreate, ViewTagRead, ViewTagUpdate
+from app.schemas import AssetCreate, AssetRead, BatchImportItemRead, BatchImportRead, BatchImportRequest, BatchPreviewItemRead, BatchPreviewRead, BillCreate, BillRead, CandidateBatchDecision, CandidateDecision, CandidatePageRead, ImportBatchRead, ImportPreviewRead, ReviewCandidateRead, TagApply, TagAuditRead, TagRequest, TagResult, TagViewCreate, TagViewRead, TagViewUpdate, TransactionPageRead, ViewTagAssignmentRead, ViewTagAssignmentRequest, ViewTagCreate, ViewTagRead, ViewTagUpdate
 from app.tagging import classify, classify_rules
 
 APP_DIR = Path(__file__).parent
@@ -161,6 +162,7 @@ def candidate_read(db: Session, candidate: ReviewCandidate) -> ReviewCandidateRe
         transfer_group_id=candidate.transfer_group_id,
         retained_bill_id=candidate.retained_bill_id,
         resolved_at=candidate.resolved_at,
+        undo_available=bool(db.scalar(select(CandidateActionLog.id).where(CandidateActionLog.candidate_id == candidate.id, CandidateActionLog.undone.is_(False)).order_by(CandidateActionLog.id.desc()))),
         aggregation_effect=_candidate_effect(candidate),
         created_at=candidate.created_at,
         bill=bill_read(db, db.get(Bill, candidate.bill_id)),
@@ -565,14 +567,50 @@ def list_candidates(db: Session = Depends(get_db)):
     return [candidate_read(db, candidate) for candidate in candidates]
 
 
-@app.post("/api/candidates/{candidate_id}", response_model=ReviewCandidateRead)
-def decide_candidate(candidate_id: int, payload: CandidateDecision, db: Session = Depends(get_db)):
-    candidate = db.get(ReviewCandidate, candidate_id)
-    if not candidate:
-        raise HTTPException(status_code=404, detail="Candidate not found")
+@app.get("/api/candidates/page", response_model=CandidatePageRead)
+def page_candidates(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    status: str | None = None,
+    candidate_type: str | None = None,
+    db: Session = Depends(get_db),
+):
+    filters = []
+    if status:
+        filters.append(ReviewCandidate.status == status)
+    if candidate_type:
+        filters.append(ReviewCandidate.candidate_type == candidate_type)
+    statement = select(ReviewCandidate).where(*filters).order_by(ReviewCandidate.created_at.desc(), ReviewCandidate.id.desc())
+    total = db.scalar(select(func.count(ReviewCandidate.id)).where(*filters)) or 0
+    candidates = db.scalars(statement.offset((page - 1) * page_size).limit(page_size)).all()
+    return CandidatePageRead(items=[candidate_read(db, candidate) for candidate in candidates], total=total, page=page, page_size=page_size)
+
+
+def _candidate_snapshot(candidate: ReviewCandidate, first: Bill, second: Bill) -> str:
+    return json.dumps({
+        "candidate": {
+            "status": candidate.status,
+            "transfer_group_id": candidate.transfer_group_id,
+            "retained_bill_id": candidate.retained_bill_id,
+            "resolved_at": candidate.resolved_at.isoformat() if candidate.resolved_at else None,
+        },
+        "bills": {
+            str(bill.id): {
+                "aggregate_excluded": bill.aggregate_excluded,
+                "transfer_group_id": bill.transfer_group_id,
+                "duplicate_of_id": bill.duplicate_of_id,
+            } for bill in (first, second)
+        },
+    }, ensure_ascii=False)
+
+
+def _apply_candidate_decision(db: Session, candidate: ReviewCandidate, payload: CandidateDecision) -> None:
     if candidate.status != "pending":
-        raise HTTPException(status_code=409, detail="Candidate has already been handled")
+        raise HTTPException(status_code=409, detail="Candidate has already been handled; undo it before applying another decision")
     first, second = db.get(Bill, candidate.bill_id), db.get(Bill, candidate.related_bill_id)
+    if not first or not second:
+        raise HTTPException(status_code=409, detail="Candidate evidence is incomplete")
+    db.add(CandidateActionLog(candidate_id=candidate.id, action=payload.action, before_state=_candidate_snapshot(candidate, first, second), created_at=datetime.now()))
     if payload.action == "confirm_transfer":
         if candidate.candidate_type != "transfer":
             raise HTTPException(status_code=422, detail="Only transfer candidates can be grouped as transfers")
@@ -597,9 +635,70 @@ def decide_candidate(candidate_id: int, payload: CandidateDecision, db: Session 
     else:
         candidate.status = payload.action
     candidate.resolved_at = datetime.now()
+
+
+@app.post("/api/candidates/batch", response_model=list[ReviewCandidateRead])
+def decide_candidates_batch(payload: CandidateBatchDecision, db: Session = Depends(get_db)):
+    candidate_ids = [item.candidate_id for item in payload.items]
+    if len(candidate_ids) != len(set(candidate_ids)):
+        raise HTTPException(status_code=422, detail="Each candidate can be processed only once per batch")
+    candidates: list[ReviewCandidate] = []
+    for item in payload.items:
+        candidate = db.get(ReviewCandidate, item.candidate_id)
+        if not candidate:
+            raise HTTPException(status_code=404, detail=f"Candidate {item.candidate_id} not found")
+        _apply_candidate_decision(db, candidate, CandidateDecision(action=item.action, retained_bill_id=item.retained_bill_id))
+        candidates.append(candidate)
+    db.commit()
+    for candidate in candidates:
+        db.refresh(candidate)
+    return [candidate_read(db, candidate) for candidate in candidates]
+
+
+@app.post("/api/candidates/{candidate_id}", response_model=ReviewCandidateRead)
+def decide_candidate(candidate_id: int, payload: CandidateDecision, db: Session = Depends(get_db)):
+    candidate = db.get(ReviewCandidate, candidate_id)
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    _apply_candidate_decision(db, candidate, payload)
     db.commit()
     db.refresh(candidate)
     return candidate_read(db, candidate)
+
+
+@app.post("/api/candidates/{candidate_id}/undo", response_model=ReviewCandidateRead)
+def undo_candidate(candidate_id: int, db: Session = Depends(get_db)):
+    candidate = db.get(ReviewCandidate, candidate_id)
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    log = db.scalar(select(CandidateActionLog).where(CandidateActionLog.candidate_id == candidate_id, CandidateActionLog.undone.is_(False)).order_by(CandidateActionLog.id.desc()))
+    if not log:
+        raise HTTPException(status_code=409, detail="No reversible candidate action is available")
+    snapshot = json.loads(log.before_state)
+    previous = snapshot["candidate"]
+    candidate.status = previous["status"]
+    candidate.transfer_group_id = previous["transfer_group_id"]
+    candidate.retained_bill_id = previous["retained_bill_id"]
+    candidate.resolved_at = datetime.fromisoformat(previous["resolved_at"]) if previous["resolved_at"] else None
+    for bill_id, bill_state in snapshot["bills"].items():
+        bill = db.get(Bill, int(bill_id))
+        if bill:
+            bill.aggregate_excluded = bill_state["aggregate_excluded"]
+            bill.transfer_group_id = bill_state["transfer_group_id"]
+            bill.duplicate_of_id = bill_state["duplicate_of_id"]
+    log.undone = True
+    log.undone_at = datetime.now()
+    db.commit()
+    db.refresh(candidate)
+    return candidate_read(db, candidate)
+
+
+@app.get("/api/candidates/{candidate_id}/actions")
+def list_candidate_actions(candidate_id: int, db: Session = Depends(get_db)):
+    if not db.get(ReviewCandidate, candidate_id):
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    logs = db.scalars(select(CandidateActionLog).where(CandidateActionLog.candidate_id == candidate_id).order_by(CandidateActionLog.created_at.desc(), CandidateActionLog.id.desc())).all()
+    return [{"id": log.id, "action": log.action, "created_at": log.created_at, "undone": log.undone, "undone_at": log.undone_at} for log in logs]
 
 
 @app.delete("/api/bills/{bill_id}", status_code=204)
