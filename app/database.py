@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, create_engine, inspect, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
@@ -24,6 +26,10 @@ class Bill(Base):
     amount: Mapped[float] = mapped_column(Float)
     category: Mapped[str] = mapped_column(String(80), default="未分类")
     tags: Mapped[str] = mapped_column(String(500), default="")
+    account_name: Mapped[str] = mapped_column(String(120), default="未提供账户")
+    aggregate_excluded: Mapped[bool] = mapped_column(Boolean, default=False)
+    transfer_group_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    duplicate_of_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class Tag(Base):
@@ -98,7 +104,10 @@ class ReviewCandidate(Base):
     related_bill_id: Mapped[int] = mapped_column(ForeignKey("bills.id"))
     confidence: Mapped[float] = mapped_column(Float)
     reason: Mapped[str] = mapped_column(Text)
-    status: Mapped[str] = mapped_column(String(20), default="pending")
+    status: Mapped[str] = mapped_column(String(64), default="pending")
+    transfer_group_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    retained_bill_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    resolved_at: Mapped[str | None] = mapped_column(DateTime(timezone=False), nullable=True)
     created_at: Mapped[str] = mapped_column(DateTime(timezone=False))
 
 
@@ -115,10 +124,26 @@ class AssetSnapshot(Base):
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     if DATABASE_URL.startswith("sqlite"):
-        columns = {item["name"] for item in inspect(engine).get_columns("import_batches")}
-        if "batch_token" not in columns:
-            with engine.begin() as connection:
-                connection.execute(text("ALTER TABLE import_batches ADD COLUMN batch_token VARCHAR(64)"))
+        migrations = {
+            "import_batches": {"batch_token": "VARCHAR(64)"},
+            "bills": {
+                "account_name": "VARCHAR(120) NOT NULL DEFAULT '未提供账户'",
+                "aggregate_excluded": "BOOLEAN NOT NULL DEFAULT 0",
+                "transfer_group_id": "VARCHAR(64)",
+                "duplicate_of_id": "INTEGER",
+            },
+            "review_candidates": {
+                "transfer_group_id": "VARCHAR(64)",
+                "retained_bill_id": "INTEGER",
+                "resolved_at": "DATETIME",
+            },
+        }
+        with engine.begin() as connection:
+            for table, columns in migrations.items():
+                existing = {item["name"] for item in inspect(engine).get_columns(table)}
+                for name, definition in columns.items():
+                    if name not in existing:
+                        connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {definition}"))
     with SessionLocal() as session:
         for bill in session.scalars(select(Bill)).all():
             if not bill.tags or session.scalar(select(BillTag).where(BillTag.bill_id == bill.id)):
@@ -130,4 +155,23 @@ def init_db() -> None:
                     session.add(tag)
                     session.flush()
                 session.add(BillTag(bill_id=bill.id, tag_id=tag.id))
+        pending_transfers = session.scalars(select(ReviewCandidate).where(ReviewCandidate.candidate_type == "transfer", ReviewCandidate.status == "pending")).all()
+        for candidate in pending_transfers:
+            first, second = session.get(Bill, candidate.bill_id), session.get(Bill, candidate.related_bill_id)
+            if not first or not second or first.account_name == "未提供账户" or second.account_name == "未提供账户" or first.account_name == second.account_name:
+                candidate.status = "evidence_insufficient"
+                candidate.resolved_at = datetime.now()
+        legacy_confirmed = session.scalars(select(ReviewCandidate).where(ReviewCandidate.status == "confirmed")).all()
+        for candidate in legacy_confirmed:
+            if candidate.candidate_type == "transfer":
+                candidate.status = "legacy_transfer_excluded"
+                candidate.transfer_group_id = f"legacy-transfer-{candidate.id}"
+                for bill_id in (candidate.bill_id, candidate.related_bill_id):
+                    bill = session.get(Bill, bill_id)
+                    if bill:
+                        bill.transfer_group_id = candidate.transfer_group_id
+                        bill.aggregate_excluded = True
+            else:
+                candidate.status = "legacy_duplicate_needs_review"
+            candidate.resolved_at = candidate.resolved_at or datetime.now()
         session.commit()

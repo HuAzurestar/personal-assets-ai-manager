@@ -14,10 +14,10 @@ document.querySelector(".shell").innerHTML = `
   <section class="cards" id="summary"><article><span>累计收入</span><strong>--</strong></article><article><span>累计支出</span><strong>--</strong></article><article><span>净额</span><strong>--</strong></article><article><span>待复核候选</span><strong>--</strong></article></section>
   <section class="grid">
     <article class="panel" id="import-panel"></article>
-    <article class="panel"><h2>手工录入流水</h2><form id="bill-form"><label>交易时间<input name="occurred_at" type="datetime-local" required></label><label>交易方<input name="merchant" required></label><label>金额（收入为正，支出为负）<input name="amount" type="number" step="0.01" required></label><label>备注<input name="note"></label><button>保存流水并生成规则建议</button></form></article>
+    <article class="panel"><h2>手工录入流水</h2><form id="bill-form"><label>交易时间<input name="occurred_at" type="datetime-local" required></label><label>交易方<input name="merchant" required></label><label>账户 / 支付渠道<input name="account_name" placeholder="如：微信零钱、招商银行" required></label><label>金额（收入为正，支出为负）<input name="amount" type="number" step="0.01" required></label><label>备注<input name="note"></label><button>保存流水并生成规则建议</button></form></article>
   </section>
   <section class="panel"><h2>流水工作台</h2><p class="hint">默认使用离线规则。LLM 建议仅在配置兼容 LLM 后调用远端；未配置或失败时会记录离线回退。四个按钮依次为规则 0.45、LLM 建议 0.70、人工确认 0.95、授权自动 1.00；更高数值覆盖当前展示，但所有操作保留审计历史。</p><div class="table-wrap"><table><thead><tr><th>时间</th><th>交易方</th><th>金额</th><th>当前分类 / 标签</th><th>来源</th><th>主动打标</th></tr></thead><tbody id="bills"></tbody></table></div></section>
-  <section class="panel"><h2>重复与转移候选</h2><p class="hint">系统只生成候选，必须由你确认或忽略；确认转移后，后续统计可据此排除收支。</p><div class="table-wrap"><table><thead><tr><th>类型</th><th>两笔流水</th><th>依据</th><th>置信度</th><th>状态</th><th>处理</th></tr></thead><tbody id="candidates"></tbody></table></div></section>`;
+  <section class="panel"><h2>重复与转移候选</h2><p class="hint">候选只是建议，不等于事实。转移必须由两个不同账户的同额反向流水支持；确认后两笔原始流水保留、归入同一转移组并排除收支汇总。重复必须选择保留哪一笔，另一笔保留原始记录但不再计入汇总。忽略或稍后处理都不会改变流水和汇总。</p><div class="table-wrap"><table><thead><tr><th>类型</th><th>两笔流水与来源证据</th><th>匹配依据</th><th>建议</th><th>处理结果</th><th>处理</th></tr></thead><tbody id="candidates"></tbody></table></div></section>`;
 
 document.querySelector('input[name="occurred_at"]').value = now();
 
@@ -108,7 +108,30 @@ async function refresh() {
   const values = [summary.income, summary.spending, summary.net, summary.candidate_count];
   document.querySelectorAll("#summary strong").forEach((node, index) => node.textContent = index === 3 ? values[index] : money.format(values[index]));
   document.querySelector("#bills").innerHTML = bills.map(bill => `<tr><td>${new Date(bill.occurred_at).toLocaleString()}</td><td>${escapeHtml(bill.merchant)}<br><small>${escapeHtml(bill.note)}</small></td><td class="${bill.amount < 0 ? "negative" : "positive"}">${money.format(bill.amount)}</td><td>${escapeHtml(bill.category)}<br><small>${bill.tags.map(escapeHtml).join(" · ") || "未标记"}</small></td><td>${escapeHtml(bill.source_type || "手工")}</td><td class="tag-actions"><button data-tag="local_rules" data-id="${bill.id}" aria-label="离线规则建议，置信度 0.45">规则 0.45</button><button data-tag="llm_suggestion" data-id="${bill.id}" aria-label="LLM 建议，未配置或失败时回退离线规则，置信度 0.70">LLM 建议 0.70</button><button data-tag="manual" data-id="${bill.id}" aria-label="输入分类和标签进行人工确认，置信度 0.95">人工确认 0.95</button><button data-tag="authorised_auto" data-id="${bill.id}" aria-label="授权本次自动打标，置信度 1.00">授权自动 1.00</button></td></tr>`).join("") || '<tr><td colspan="6">尚无流水</td></tr>';
-  document.querySelector("#candidates").innerHTML = candidates.map(item => `<tr><td>${item.candidate_type === "duplicate" ? "重复" : "资产转移"}</td><td>${escapeHtml(item.bill.merchant)} ↔ ${escapeHtml(item.related_bill.merchant)}</td><td>${escapeHtml(item.reason)}</td><td>${Math.round(item.confidence * 100)}%</td><td>${item.status === "pending" ? "待确认" : item.status === "confirmed" ? "已确认" : "已忽略"}</td><td>${item.status === "pending" ? `<button data-candidate="confirmed" data-id="${item.id}">确认</button> <button class="delete" data-candidate="ignored" data-id="${item.id}">忽略</button>` : "—"}</td></tr>`).join("") || '<tr><td colspan="6">暂无候选</td></tr>';
+  document.querySelector("#candidates").innerHTML = candidates.map(item => `<tr><td>${item.candidate_type === "duplicate" ? "重复候选" : "资产转移候选"}</td><td class="candidate-evidence">${candidateBill(item.bill, "流水 A")}${candidateBill(item.related_bill, "流水 B")}</td><td>${escapeHtml(item.reason)}</td><td>${Math.round(item.confidence * 100)}%<br><small>仅供人工判断</small></td><td>${candidateStatus(item)}</td><td>${candidateActions(item)}</td></tr>`).join("") || '<tr><td colspan="6">暂无候选</td></tr>';
+}
+
+function candidateBill(bill, label) {
+  const source = bill.source_type || "手工";
+  const batch = bill.import_batch_id ? `批次 #${bill.import_batch_id}` : "无导入批次";
+  const reference = bill.source_reference ? ` · 流水号 ${bill.source_reference}` : "";
+  return `<article class="candidate-bill"><strong>${label} · ${escapeHtml(bill.merchant)}</strong><small>账户：${escapeHtml(bill.account_name)} · ${escapeHtml(bill.direction)} · ${money.format(bill.amount)}</small><small>时间：${new Date(bill.occurred_at).toLocaleString()}</small><small>来源：${escapeHtml(source)} · ${batch}${escapeHtml(reference)}</small></article>`;
+}
+
+function candidateStatus(item) {
+  const group = item.transfer_group_id ? `<br><small>转移组：${escapeHtml(item.transfer_group_id)}</small>` : "";
+  const retained = item.retained_bill_id ? `<br><small>保留流水 #${item.retained_bill_id}</small>` : "";
+  return `${escapeHtml(item.aggregation_effect)}${group}${retained}`;
+}
+
+function candidateActions(item) {
+  if (item.status !== "pending") return "—";
+  const base = `<button class="delete" data-candidate-action="ignored" data-id="${item.id}">忽略</button> <button class="secondary-action" data-candidate-action="deferred" data-id="${item.id}">稍后处理</button>`;
+  if (item.candidate_type === "duplicate") {
+    return `<button data-candidate-action="resolve_duplicate" data-retained="${item.bill.id}" data-id="${item.id}">保留流水 A</button> <button data-candidate-action="resolve_duplicate" data-retained="${item.related_bill.id}" data-id="${item.id}">保留流水 B</button><br>${base}`;
+  }
+  const accountsReady = item.bill.account_name !== "未提供账户" && item.bill.account_name !== "手工未提供账户" && item.related_bill.account_name !== "未提供账户" && item.related_bill.account_name !== "手工未提供账户" && item.bill.account_name !== item.related_bill.account_name;
+  return `${accountsReady ? `<button data-candidate-action="confirm_transfer" data-id="${item.id}">确认转移组</button>` : `<button disabled title="需要两个不同的交易账户">缺少账户证据</button>`}<br>${base}`;
 }
 
 document.querySelector("#bill-form").addEventListener("submit", async event => {
@@ -133,9 +156,11 @@ document.querySelector("#bills").addEventListener("click", async event => {
 });
 
 document.querySelector("#candidates").addEventListener("click", async event => {
-  const button = event.target.closest("[data-candidate]");
+  const button = event.target.closest("[data-candidate-action]");
   if (!button) return;
-  try { await request(`/api/candidates/${button.dataset.id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: button.dataset.candidate }) }); refresh(); } catch (error) { alert(`处理失败：${error.message}`); }
+  const payload = { action: button.dataset.candidateAction };
+  if (button.dataset.retained) payload.retained_bill_id = Number(button.dataset.retained);
+  try { const result = await request(`/api/candidates/${button.dataset.id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }); alert(result.aggregation_effect); refresh(); } catch (error) { alert(`处理失败：${error.message}`); }
 });
 
 refresh().catch(error => alert(`加载失败：${error.message}`));

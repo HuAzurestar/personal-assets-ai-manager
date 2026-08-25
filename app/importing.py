@@ -14,6 +14,7 @@ class ImportedRow:
     note: str
     amount: float
     reference: str
+    account_name: str
     raw_payload: str
 
 
@@ -24,6 +25,7 @@ HEADER_ALIASES = {
     "amount": ("金额(元)", "金额（元）", "金额"),
     "direction": ("收/支", "收支类型", "交易类型"),
     "reference": ("交易单号", "交易订单号", "支付宝交易号", "商家订单号"),
+    "account": ("支付方式", "收/支方式", "付款方式", "资金渠道", "收款方式"),
 }
 
 
@@ -67,7 +69,7 @@ def _normalise(row: dict[str, str]) -> ImportedRow:
         amount = -amount
     elif direction in {"收入", "收款", "收"} and amount < 0:
         amount = -amount
-    return ImportedRow(occurred_at, _value(row, "merchant") or "未知交易方", _value(row, "note"), amount, _value(row, "reference"), str(row))
+    return ImportedRow(occurred_at, _value(row, "merchant") or "未知交易方", _value(row, "note"), amount, _value(row, "reference"), _value(row, "account") or "未提供账户", str(row))
 
 
 def _valid_time(value: str, pattern: str) -> bool:

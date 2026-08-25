@@ -16,6 +16,7 @@ PROVIDER_TEMPLATES: dict[str, dict[str, tuple[str, ...]]] = {
         "note": ("商品名称", "商品说明", "备注", "商品"),
         "direction": ("收/支", "收支"),
         "reference": ("交易号", "支付宝交易号", "商家订单号"),
+        "account": ("收/支方式", "支付方式", "付款方式", "资金渠道", "收款方式"),
     },
     "wechat": {
         "occurred_at": ("交易时间",),
@@ -24,6 +25,7 @@ PROVIDER_TEMPLATES: dict[str, dict[str, tuple[str, ...]]] = {
         "note": ("商品", "备注", "商品名称"),
         "direction": ("收/支", "收支"),
         "reference": ("交易单号", "交易订单号", "商户单号"),
+        "account": ("支付方式", "收/支方式", "付款方式", "资金渠道", "收款方式"),
     },
 }
 

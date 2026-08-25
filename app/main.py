@@ -62,6 +62,11 @@ def bill_read(db: Session, bill: Bill) -> BillRead:
         source_type=origin.source_type if origin else None,
         source_reference=origin.source_reference if origin else None,
         import_batch_id=origin.import_batch_id if origin else None,
+        account_name=bill.account_name,
+        direction="收入" if bill.amount >= 0 else "支出",
+        aggregate_excluded=bill.aggregate_excluded,
+        transfer_group_id=bill.transfer_group_id,
+        duplicate_of_id=bill.duplicate_of_id,
     )
 
 
@@ -107,13 +112,49 @@ def _generate_candidates(db: Session, bill: Bill) -> int:
             continue
         if bill.amount == other.amount and bill.merchant == other.merchant:
             candidate_type, confidence, reason = "duplicate", 0.92, "金额、交易方和 5 分钟内交易时间一致"
-        elif bill.amount * other.amount < 0:
+        elif bill.amount * other.amount < 0 and _has_distinct_account_evidence(bill, other):
             candidate_type, confidence, reason = "transfer", 0.78, "同额反向流水，可能是账户间资产转移"
         else:
             continue
         db.add(ReviewCandidate(candidate_type=candidate_type, bill_id=bill.id, related_bill_id=other.id, confidence=confidence, reason=reason, status="pending", created_at=datetime.now()))
         created += 1
     return created
+
+
+def _has_distinct_account_evidence(first: Bill, second: Bill) -> bool:
+    unknown_accounts = {"", "未提供账户", "手工未提供账户"}
+    return first.account_name not in unknown_accounts and second.account_name not in unknown_accounts and first.account_name != second.account_name
+
+
+def _candidate_effect(candidate: ReviewCandidate) -> str:
+    effects = {
+        "pending": "尚未改变流水或收支汇总。",
+        "deferred": "稍后处理；两笔流水仍独立计入收支。",
+        "ignored": "已忽略；两笔流水仍独立计入收支。",
+        "evidence_insufficient": "账户证据不足，已暂缓；两笔流水仍独立计入收支。",
+        "transfer_grouped": "已归入同一转移组；两笔保留但不计入收入/支出汇总。",
+        "duplicate_excluded": "已保留指定流水；另一笔保留原始记录但不计入收支汇总。",
+        "legacy_transfer_excluded": "旧版已按转移排除收支；保留原始流水，但没有可补回的账户证据。",
+        "legacy_duplicate_needs_review": "旧版曾标记为已确认，但未保存保留哪一笔；两笔仍独立计入收支。",
+    }
+    return effects[candidate.status]
+
+
+def candidate_read(db: Session, candidate: ReviewCandidate) -> ReviewCandidateRead:
+    return ReviewCandidateRead(
+        id=candidate.id,
+        candidate_type=candidate.candidate_type,
+        confidence=candidate.confidence,
+        reason=candidate.reason,
+        status=candidate.status,
+        transfer_group_id=candidate.transfer_group_id,
+        retained_bill_id=candidate.retained_bill_id,
+        resolved_at=candidate.resolved_at,
+        aggregation_effect=_candidate_effect(candidate),
+        created_at=candidate.created_at,
+        bill=bill_read(db, db.get(Bill, candidate.bill_id)),
+        related_bill=bill_read(db, db.get(Bill, candidate.related_bill_id)),
+    )
 
 
 def _validate_source_type(source_type: str) -> None:
@@ -161,7 +202,7 @@ def _commit_parsed(db: Session, source_type: str, parsed, batch_token: str | Non
     db.add(ImportArtifact(import_batch_id=batch.id, source_type=source_type, filename=parsed.filename, file_format=parsed.file_format, archive_entry=parsed.archive_entry, sha256=parsed.file_sha256))
     candidate_count = 0
     for row in imported_rows:
-        bill = Bill(occurred_at=row.occurred_at, merchant=row.merchant, note=row.note, amount=row.amount, category="未分类", tags="")
+        bill = Bill(occurred_at=row.occurred_at, merchant=row.merchant, note=row.note, amount=row.amount, account_name=row.account_name, category="未分类", tags="")
         db.add(bill)
         db.flush()
         db.add(LedgerOrigin(bill_id=bill.id, source_type=source_type, source_reference=row.reference, raw_payload=row.raw_payload, import_batch_id=batch.id))
@@ -332,7 +373,7 @@ def list_tag_audits(bill_id: int, db: Session = Depends(get_db)):
 @app.get("/api/candidates", response_model=list[ReviewCandidateRead])
 def list_candidates(db: Session = Depends(get_db)):
     candidates = db.scalars(select(ReviewCandidate).order_by(ReviewCandidate.created_at.desc())).all()
-    return [ReviewCandidateRead(id=item.id, candidate_type=item.candidate_type, confidence=item.confidence, reason=item.reason, status=item.status, created_at=item.created_at, bill=bill_read(db, db.get(Bill, item.bill_id)), related_bill=bill_read(db, db.get(Bill, item.related_bill_id))) for item in candidates]
+    return [candidate_read(db, candidate) for candidate in candidates]
 
 
 @app.post("/api/candidates/{candidate_id}", response_model=ReviewCandidateRead)
@@ -340,10 +381,36 @@ def decide_candidate(candidate_id: int, payload: CandidateDecision, db: Session 
     candidate = db.get(ReviewCandidate, candidate_id)
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
-    candidate.status = payload.status
+    if candidate.status != "pending":
+        raise HTTPException(status_code=409, detail="Candidate has already been handled")
+    first, second = db.get(Bill, candidate.bill_id), db.get(Bill, candidate.related_bill_id)
+    if payload.action == "confirm_transfer":
+        if candidate.candidate_type != "transfer":
+            raise HTTPException(status_code=422, detail="Only transfer candidates can be grouped as transfers")
+        if not _has_distinct_account_evidence(first, second):
+            raise HTTPException(status_code=422, detail="Transfer confirmation requires two distinct transaction accounts")
+        candidate.transfer_group_id = f"transfer-{candidate.id}"
+        candidate.status = "transfer_grouped"
+        for bill in (first, second):
+            bill.transfer_group_id = candidate.transfer_group_id
+            bill.aggregate_excluded = True
+    elif payload.action == "resolve_duplicate":
+        if candidate.candidate_type != "duplicate":
+            raise HTTPException(status_code=422, detail="Only duplicate candidates can resolve a retained bill")
+        if payload.retained_bill_id not in {first.id, second.id}:
+            raise HTTPException(status_code=422, detail="Select one of the two candidate bills to retain")
+        retained = first if payload.retained_bill_id == first.id else second
+        excluded = second if retained.id == first.id else first
+        candidate.retained_bill_id = retained.id
+        candidate.status = "duplicate_excluded"
+        excluded.aggregate_excluded = True
+        excluded.duplicate_of_id = retained.id
+    else:
+        candidate.status = payload.action
+    candidate.resolved_at = datetime.now()
     db.commit()
     db.refresh(candidate)
-    return ReviewCandidateRead(id=candidate.id, candidate_type=candidate.candidate_type, confidence=candidate.confidence, reason=candidate.reason, status=candidate.status, created_at=candidate.created_at, bill=bill_read(db, db.get(Bill, candidate.bill_id)), related_bill=bill_read(db, db.get(Bill, candidate.related_bill_id)))
+    return candidate_read(db, candidate)
 
 
 @app.delete("/api/bills/{bill_id}", status_code=204)
@@ -371,9 +438,8 @@ def create_asset(payload: AssetCreate, db: Session = Depends(get_db)):
 
 @app.get("/api/dashboard")
 def dashboard(db: Session = Depends(get_db)):
-    confirmed_transfers = db.scalars(select(ReviewCandidate).where(ReviewCandidate.candidate_type == "transfer", ReviewCandidate.status == "confirmed")).all()
-    transfer_bill_ids = {bill_id for candidate in confirmed_transfers for bill_id in (candidate.bill_id, candidate.related_bill_id)}
-    ledger_filter = ~Bill.id.in_(transfer_bill_ids) if transfer_bill_ids else True
+    ledger_filter = Bill.aggregate_excluded.is_(False)
     income = db.scalar(select(func.coalesce(func.sum(Bill.amount), 0.0)).where(ledger_filter, Bill.amount > 0))
     spending = db.scalar(select(func.coalesce(func.sum(Bill.amount), 0.0)).where(ledger_filter, Bill.amount < 0))
-    return {"income": income, "spending": spending, "net": income + spending, "bill_count": db.scalar(select(func.count(Bill.id))), "candidate_count": db.scalar(select(func.count(ReviewCandidate.id)).where(ReviewCandidate.status == "pending")), "generated_at": datetime.now().isoformat()}
+    transfer_group_count = len({group for group in db.scalars(select(Bill.transfer_group_id).where(Bill.transfer_group_id.is_not(None))).all() if group})
+    return {"income": income, "spending": spending, "net": income + spending, "bill_count": db.scalar(select(func.count(Bill.id))), "candidate_count": db.scalar(select(func.count(ReviewCandidate.id)).where(ReviewCandidate.status == "pending")), "transfer_group_count": transfer_group_count, "generated_at": datetime.now().isoformat()}

@@ -33,11 +33,12 @@ def test_import_tag_audit_and_transfer_review(tmp_path):
     app.dependency_overrides[get_db] = override_db
     try:
         with TestClient(app) as client:
-            csv_body = "交易时间,交易对方,商品,收/支,金额(元),交易单号\n2026-08-25 12:00:00,测试商户,午餐,支出,20.00,wx-001\n".encode()
+            csv_body = "交易时间,交易对方,商品,收/支,金额(元),交易单号,支付方式\n2026-08-25 12:00:00,测试商户,午餐,支出,20.00,wx-001,微信零钱\n".encode()
             imported = client.post("/api/imports/wechat?filename=wechat.csv", content=csv_body)
             assert imported.status_code == 201
             assert imported.json()["imported_count"] == 1
             bill = next(item for item in client.get("/api/bills").json() if item["source_reference"] == "wx-001")
+            assert bill["account_name"] == "微信零钱"
             manual = client.post(f"/api/bills/{bill['id']}/tags", json={"strategy": "manual", "category": "餐饮", "tags": ["消费", "午餐"]})
             assert manual.status_code == 201
             assert manual.json()["confidence"] == 0.95
@@ -48,17 +49,76 @@ def test_import_tag_audit_and_transfer_review(tmp_path):
                 assert {"消费", "午餐"}.issubset({tag.name for tag in db.query(Tag).all()})
                 assert db.query(BillTag).filter_by(bill_id=bill["id"]).count() == 2
 
-            first = client.post("/api/bills", json={"occurred_at": "2026-08-25T13:00:00", "merchant": "账户转出", "amount": -100, "note": "测试转账"})
-            second = client.post("/api/bills", json={"occurred_at": "2026-08-25T13:01:00", "merchant": "账户转入", "amount": 100, "note": "测试转账"})
+            first = client.post("/api/bills", json={"occurred_at": "2026-08-25T13:00:00", "merchant": "账户转出", "account_name": "招商银行", "amount": -100, "note": "测试转账"})
+            second = client.post("/api/bills", json={"occurred_at": "2026-08-25T13:01:00", "merchant": "账户转入", "account_name": "微信零钱", "amount": 100, "note": "测试转账"})
             assert first.status_code == second.status_code == 201
             candidates = client.get("/api/candidates").json()
             transfer = next(item for item in candidates if item["candidate_type"] == "transfer" and item["status"] == "pending")
-            decided = client.post(f"/api/candidates/{transfer['id']}", json={"status": "confirmed"})
+            assert transfer["bill"]["account_name"] == "微信零钱"
+            assert transfer["related_bill"]["account_name"] == "招商银行"
+            assert transfer["bill"]["direction"] != transfer["related_bill"]["direction"]
+            decided = client.post(f"/api/candidates/{transfer['id']}", json={"action": "confirm_transfer"})
             assert decided.status_code == 200
-            assert decided.json()["status"] == "confirmed"
+            assert decided.json()["status"] == "transfer_grouped"
+            assert decided.json()["transfer_group_id"]
+            assert "不计入收入/支出汇总" in decided.json()["aggregation_effect"]
             dashboard = client.get("/api/dashboard").json()
             assert dashboard["income"] == 0
             assert dashboard["spending"] == -20
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_duplicate_resolution_ignore_and_deferred_preserve_ledger_facts(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'ledger.db'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    def override_db():
+        db = session_factory()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    try:
+        with TestClient(app) as client:
+            def create_bill(at, merchant, amount):
+                response = client.post("/api/bills", json={"occurred_at": at, "merchant": merchant, "account_name": "微信零钱", "amount": amount})
+                assert response.status_code == 201
+                return response.json()
+
+            first = create_bill("2026-08-25T10:00:00", "同一商户", -10)
+            second = create_bill("2026-08-25T10:01:00", "同一商户", -10)
+            duplicate = next(item for item in client.get("/api/candidates").json() if item["candidate_type"] == "duplicate" and item["status"] == "pending")
+            missing_choice = client.post(f"/api/candidates/{duplicate['id']}", json={"action": "resolve_duplicate"})
+            assert missing_choice.status_code == 422
+            resolved = client.post(f"/api/candidates/{duplicate['id']}", json={"action": "resolve_duplicate", "retained_bill_id": second["id"]})
+            assert resolved.status_code == 200
+            assert resolved.json()["status"] == "duplicate_excluded"
+            assert resolved.json()["retained_bill_id"] == second["id"]
+            bills = {item["id"]: item for item in client.get("/api/bills").json()}
+            assert bills[first["id"]]["aggregate_excluded"] is True
+            assert bills[first["id"]]["duplicate_of_id"] == second["id"]
+            assert bills[second["id"]]["aggregate_excluded"] is False
+            assert client.get("/api/dashboard").json()["spending"] == -10
+
+            create_bill("2026-08-25T11:00:00", "忽略商户", -8)
+            create_bill("2026-08-25T11:01:00", "忽略商户", -8)
+            ignored = next(item for item in client.get("/api/candidates").json() if item["candidate_type"] == "duplicate" and item["status"] == "pending")
+            assert client.post(f"/api/candidates/{ignored['id']}", json={"action": "ignored"}).json()["status"] == "ignored"
+
+            create_bill("2026-08-25T12:00:00", "稍后商户", -5)
+            create_bill("2026-08-25T12:01:00", "稍后商户", -5)
+            deferred = next(item for item in client.get("/api/candidates").json() if item["candidate_type"] == "duplicate" and item["status"] == "pending")
+            assert client.post(f"/api/candidates/{deferred['id']}", json={"action": "deferred"}).json()["status"] == "deferred"
+            assert client.get("/api/dashboard").json()["spending"] == -36
+
+            without_account = client.post("/api/bills", json={"occurred_at": "2026-08-25T13:00:00", "merchant": "普通商户 A", "amount": -30})
+            other_without_account = client.post("/api/bills", json={"occurred_at": "2026-08-25T13:01:00", "merchant": "普通商户 B", "amount": 30})
+            assert without_account.status_code == other_without_account.status_code == 201
+            assert not any(item["candidate_type"] == "transfer" and {item["bill"]["merchant"], item["related_bill"]["merchant"]} == {"普通商户 A", "普通商户 B"} for item in client.get("/api/candidates").json())
     finally:
         app.dependency_overrides.clear()
 
@@ -115,3 +175,5 @@ def test_provider_icon_assets_are_local_and_referenced():
         assert 'aria-label="预览并导入微信账单"' in workbench
         assert 'data-tag="authorised_auto"' in workbench
         assert '授权自动 1.00' in workbench
+        assert '确认转移组' in workbench
+        assert '保留流水 A' in workbench

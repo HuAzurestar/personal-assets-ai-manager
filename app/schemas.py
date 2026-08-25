@@ -8,6 +8,7 @@ class BillCreate(BaseModel):
     merchant: str = Field(min_length=1, max_length=200)
     note: str = ""
     amount: float
+    account_name: str = Field(default="手工未提供账户", min_length=1, max_length=120)
 
 
 class BillRead(BillCreate):
@@ -17,6 +18,10 @@ class BillRead(BillCreate):
     source_type: str | None = None
     source_reference: str | None = None
     import_batch_id: int | None = None
+    direction: str
+    aggregate_excluded: bool
+    transfer_group_id: str | None = None
+    duplicate_of_id: int | None = None
 
 
 class AssetCreate(BaseModel):
@@ -125,10 +130,15 @@ class ReviewCandidateRead(BaseModel):
     confidence: float
     reason: str
     status: str
+    transfer_group_id: str | None = None
+    retained_bill_id: int | None = None
+    resolved_at: datetime | None = None
+    aggregation_effect: str
     created_at: datetime
     bill: BillRead
     related_bill: BillRead
 
 
 class CandidateDecision(BaseModel):
-    status: str = Field(pattern="^(confirmed|ignored)$")
+    action: str = Field(pattern="^(confirm_transfer|resolve_duplicate|ignored|deferred)$")
+    retained_bill_id: int | None = None
