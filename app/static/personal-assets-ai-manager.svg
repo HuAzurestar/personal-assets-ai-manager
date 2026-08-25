@@ -1,1 +1,36 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Personal Assets AI Manager"><rect width="128" height="128" rx="28" fill="#123b78"/><path d="M29 39h70v58H29z" fill="none" stroke="#fff" stroke-width="8"/><path d="M43 61h42M43 79h23" stroke="#93e7c1" stroke-width="8" stroke-linecap="round"/><path d="m94 37 3 8 8 3-8 3-3 8-3-8-8-3 8-3z" fill="#93e7c1"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <!-- 背景渐变：深邃科技蓝 -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#1e293b" />
+    </linearGradient>
+    <!-- 核心发光渐变：智能青绿 / 荧光蓝 -->
+    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#34d399" />
+    </linearGradient>
+    <!-- 投影滤镜 -->
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="8" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+  <!-- 圆角矩形底座（应用图标外观） -->
+  <rect width="512" height="512" rx="112" fill="url(#bgGrad)" />
+  <!-- 外层轮廓：象征金库 / 资产保护与账本方案 -->
+  <rect x="96" y="96" width="320" height="320" rx="64" fill="none" stroke="#334155" stroke-width="16" />
+  <!-- 内部元素：AI 神经网络节点与金库密码盘 / 数据流的结合 -->
+  <g transform="translate(256, 256)" filter="url(#glow)">
+    <path d="M-80 -40 L0 30 L80 -40 M0 30 L0 -90 M-40 70 L0 30 L40 70" fill="none" stroke="url(#accentGrad)" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" opacity="0.6" />
+    <circle cx="0" cy="-90" r="24" fill="url(#accentGrad)" />
+    <circle cx="-80" cy="-40" r="18" fill="#38bdf8" />
+    <circle cx="80" cy="-40" r="18" fill="#34d399" />
+    <circle cx="0" cy="30" r="32" fill="#0f172a" stroke="url(#accentGrad)" stroke-width="10" />
+    <circle cx="-40" cy="70" r="16" fill="#38bdf8" />
+    <circle cx="40" cy="70" r="16" fill="#34d399" />
+    <circle cx="0" cy="30" r="10" fill="url(#accentGrad)" />
+  </g>
+  <!-- 底部微光装饰线条（象征资产增长趋势曲线） -->
+  <path d="M 120 360 Q 200 330 256 360 T 392 340" fill="none" stroke="#38bdf8" stroke-width="6" stroke-linecap="round" opacity="0.4" />
+</svg>
