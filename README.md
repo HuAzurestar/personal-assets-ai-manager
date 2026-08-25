@@ -30,7 +30,7 @@ scripts/build.py      # PyInstaller Windows 目录式构建
 Windows（包括 Anaconda/Conda 环境）建议直接运行一键安装脚本。它始终使用项目虚拟环境的解释器，并以 `--isolated` 忽略会强制 `--user` 的本机 pip 配置：
 
 ```powershell
-.\scripts\setup.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 .\.venv\Scripts\python.exe run.py
 ```
 
@@ -38,6 +38,28 @@ Windows（包括 Anaconda/Conda 环境）建议直接运行一键安装脚本。
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
+```
+
+### 更新已有克隆（Windows PowerShell）
+
+若之前克隆时还没有 `scripts/setup.ps1`，先在仓库根目录拉取 `main`，再确认脚本存在并执行。注意虚拟环境解释器的正确相对路径是 `.\.venv\Scripts\python.exe`：
+
+```powershell
+git pull --ff-only origin main
+Get-Item .\scripts\setup.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
+```
+
+然后在第一个 PowerShell 窗口启动服务：
+
+```powershell
+.\.venv\Scripts\python.exe run.py
+```
+
+保持该窗口运行，并在第二个 PowerShell 窗口验证：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8765/api/health
 ```
 
 也可手动安装：
@@ -65,7 +87,7 @@ python -m pip config unset install.user
 python -m pip config unset global.user
 ```
 
-无需修改配置也可使用上述 `--isolated` 命令或 `scripts/setup.ps1`。在 Conda 中即使提示符同时显示 `(base)` 与 `(.venv)`，仍以 `.venv\Scripts\python.exe` 为准；若希望先建立独立 Conda 环境，可执行 `conda create -n paam python=3.10`、`conda activate paam` 后再运行安装脚本。
+无需修改配置也可使用上述 `--isolated` 命令或 `scripts/setup.ps1`。在 Conda 中即使提示符同时显示 `(base)` 与 `(.venv)`，仍以 `.\.venv\Scripts\python.exe` 为准；若希望先建立独立 Conda 环境，可执行 `conda create -n paam python=3.10`、`conda activate paam` 后再运行安装脚本。
 
 ## 验证
 
