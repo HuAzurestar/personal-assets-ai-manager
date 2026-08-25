@@ -27,14 +27,45 @@ scripts/build.py      # PyInstaller Windows 目录式构建
 
 需要 Python 3.10 或更高版本：
 
+Windows（包括 Anaconda/Conda 环境）建议直接运行一键安装脚本。它始终使用项目虚拟环境的解释器，并以 `--isolated` 忽略会强制 `--user` 的本机 pip 配置：
+
+```powershell
+.\scripts\setup.ps1
+.\.venv\Scripts\python.exe run.py
+```
+
+若 PowerShell 限制脚本执行，可仅对当前命令使用：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
+```
+
+也可手动安装：
+
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-python run.py
+.\.venv\Scripts\python.exe -m pip --isolated install -r requirements.txt
+.\.venv\Scripts\python.exe run.py
 ```
 
 打开 `http://127.0.0.1:8765` 使用 Web 面板，或打开 `http://127.0.0.1:8765/docs` 调用 API。服务默认绑定 `0.0.0.0:8765`，可供局域网设备访问；个人使用时建议仅在可信网络开放端口。
+
+### Windows / Conda pip 故障排查
+
+若出现 `Can not perform a '--user' install`，先检查配置来源：
+
+```powershell
+python -m pip config list -v
+```
+
+若输出中存在 `install.user='true'` 或 `global.user='true'`，可按需取消相应配置（不存在的键会提示错误，可忽略）：
+
+```powershell
+python -m pip config unset install.user
+python -m pip config unset global.user
+```
+
+无需修改配置也可使用上述 `--isolated` 命令或 `scripts/setup.ps1`。在 Conda 中即使提示符同时显示 `(base)` 与 `(.venv)`，仍以 `.venv\Scripts\python.exe` 为准；若希望先建立独立 Conda 环境，可执行 `conda create -n paam python=3.10`、`conda activate paam` 后再运行安装脚本。
 
 ## 验证
 
