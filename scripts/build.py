@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SEP = ";" if sys.platform == "win32" else ":"
 
 command = [
-    sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--name", "AssetMind",
+    sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--name", "personal-assets-ai-manager",
     "--onedir", "--add-data", f"{ROOT / 'app' / 'templates'}{SEP}app/templates",
     "--add-data", f"{ROOT / 'app' / 'static'}{SEP}app/static", "--collect-all", "uvicorn",
     str(ROOT / "run.py"),

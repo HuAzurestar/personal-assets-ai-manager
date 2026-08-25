@@ -1,4 +1,4 @@
-# AssetMind（个人资产管理基线）
+# personal-assets-ai-manager（个人资产管理基线）
 
 本地优先的个人账单与资产管理程序。它提供一个可直接运行的 FastAPI 服务和 Web 面板，适合作为支付宝/微信账单导入、资产快照、LLM 智能打标的演进起点。
 
@@ -6,9 +6,22 @@
 
 - Web 面板：总资产、收入/支出汇总，新增账单、资产快照和账单列表。
 - REST API：`/api/health`、`/api/dashboard`、`/api/bills`、`/api/assets`、`/api/tag`，以及 FastAPI 自动文档 `/docs`。
-- 本地 SQLite：默认存储在 `data/assetmind.db`；备份此文件即可备份数据。
-- LLM 边界：默认规则模拟器可离线运行；设置 `ASSETMIND_LLM_PROVIDER=openai_compatible`、`ASSETMIND_LLM_BASE_URL`、`ASSETMIND_LLM_MODEL`、`ASSETMIND_LLM_API_KEY` 后，可调用任意 OpenAI-compatible `/chat/completions` 接口并要求 JSON 输出。调用失败时自动回退本地规则。
-- 应用名称与图标：使用 `AssetMind` 名称，Web 使用 `app/static/icon.svg`，Windows 打包脚本可在补充 `.ico` 后嵌入安装包图标。
+- 本地 SQLite：默认存储在 `data/personal-assets-ai-manager.db`；备份此文件即可备份数据。
+- LLM 边界：默认规则模拟器可离线运行；设置 `PAAM_LLM_PROVIDER=openai_compatible`、`PAAM_LLM_BASE_URL`、`PAAM_LLM_MODEL`、`PAAM_LLM_API_KEY` 后，可调用任意 OpenAI-compatible `/chat/completions` 接口并要求 JSON 输出。调用失败时自动回退本地规则。
+
+## 当前初始化内容
+
+```
+app/                  # FastAPI 服务、SQLite 模型、LLM 分类器和 Web 静态资源
+app/static/           # Web UI 与 personal-assets-ai-manager 图标
+app/templates/        # 服务端 Web 页面
+tests/                # API 冒烟测试
+scripts/build.py      # PyInstaller Windows 目录式构建
+.github/workflows/    # 测试和标签触发的 Windows 构建
+```
+
+基线已实现账单与资产快照的新增/查询、聚合面板、分类 API、SQLite 持久化和 OpenAI-compatible 适配边界；支付宝/微信账单导入、可编辑 LLM 配置页和自启动安装脚本留作下一阶段。
+- 应用名称与图标：仓库、构建产物及服务标识为 `personal-assets-ai-manager`；界面展示名为 Personal Assets AI Manager；Web 使用 `app/static/personal-assets-ai-manager.svg`，Windows 打包脚本可在补充 `.ico` 后嵌入安装包图标。
 
 ## 本地运行
 
@@ -36,7 +49,7 @@ pip install pyinstaller
 python scripts/build.py
 ```
 
-打包结果位于 `dist/AssetMind/`。目录式产物便于保留 `data/assetmind.db`、替换程序文件和回滚。GitHub Actions 在 `main` 的提交上执行测试，推送 `v*` 标签时生成 Windows 构建产物。
+打包结果位于 `dist/personal-assets-ai-manager/`。目录式产物便于保留 `data/personal-assets-ai-manager.db`、替换程序文件和回滚。GitHub Actions 在 `main` 的提交上执行测试，推送 `v*` 标签时生成 Windows 构建产物。
 
 ## 下一阶段建议
 

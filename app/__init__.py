@@ -1,1 +1,1 @@
-"""AssetMind personal finance baseline."""
+"""Personal Assets AI Manager baseline."""

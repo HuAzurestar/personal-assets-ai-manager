@@ -8,6 +8,7 @@ def test_health_and_bill_flow(tmp_path, monkeypatch):
     # test validates the public health surface independently of user data.
     with TestClient(app) as client:
         assert client.get("/api/health").json()["status"] == "ok"
+        assert client.get("/api/health").json()["service"] == "personal-assets-ai-manager"
         created = client.post("/api/bills", json={"occurred_at": "2026-08-25T10:00:00", "merchant": "滴滴出行", "amount": -18.5, "note": "通勤"})
         assert created.status_code == 201
         assert created.json()["category"] == "交通出行"

@@ -11,6 +11,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.config import APP_DISPLAY_NAME, APP_SLUG
 from app.database import AssetSnapshot, Bill, SessionLocal, init_db
 from app.schemas import AssetCreate, AssetRead, BillCreate, BillRead, TagRequest, TagResult
 from app.tagging import classify
@@ -24,7 +25,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="AssetMind", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title=APP_DISPLAY_NAME, version="0.1.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=APP_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=APP_DIR / "templates")
 
@@ -43,12 +44,12 @@ def bill_read(bill: Bill) -> BillRead:
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def home(request: Request):
-    return templates.TemplateResponse(request, "index.html", {"app_name": "AssetMind"})
+    return templates.TemplateResponse(request, "index.html", {"app_name": APP_DISPLAY_NAME})
 
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "service": "assetmind"}
+    return {"status": "ok", "service": APP_SLUG}
 
 
 @app.post("/api/tag", response_model=TagResult)
