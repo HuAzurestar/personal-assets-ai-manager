@@ -37,6 +37,18 @@ class ImportBatch(Base):
     imported_count: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class ImportArtifact(Base):
+    __tablename__ = "import_artifacts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    import_batch_id: Mapped[int] = mapped_column(ForeignKey("import_batches.id"))
+    source_type: Mapped[str] = mapped_column(String(40))
+    filename: Mapped[str] = mapped_column(String(255))
+    file_format: Mapped[str] = mapped_column(String(12))
+    archive_entry: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    sha256: Mapped[str] = mapped_column(String(64))
+
+
 class LedgerOrigin(Base):
     __tablename__ = "ledger_origins"
 

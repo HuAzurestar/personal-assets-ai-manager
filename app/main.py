@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from datetime import datetime
+import json
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -12,9 +13,9 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import APP_DISPLAY_NAME, APP_SLUG
-from app.database import AssetSnapshot, Bill, ImportBatch, LedgerOrigin, ReviewCandidate, SessionLocal, TagAudit, init_db
-from app.importing import parse_csv
-from app.schemas import AssetCreate, AssetRead, BillCreate, BillRead, CandidateDecision, ImportBatchRead, ReviewCandidateRead, TagApply, TagAuditRead, TagRequest, TagResult
+from app.database import AssetSnapshot, Bill, ImportArtifact, ImportBatch, LedgerOrigin, ReviewCandidate, SessionLocal, TagAudit, init_db
+from app.file_import import normalise_rows, parse_upload, preview_rows, suggest_mapping
+from app.schemas import AssetCreate, AssetRead, BillCreate, BillRead, CandidateDecision, ImportBatchRead, ImportPreviewRead, ReviewCandidateRead, TagApply, TagAuditRead, TagRequest, TagResult
 from app.tagging import classify
 
 APP_DIR = Path(__file__).parent
@@ -94,6 +95,28 @@ def _generate_candidates(db: Session, bill: Bill) -> int:
     return created
 
 
+def _validate_source_type(source_type: str) -> None:
+    if source_type not in {"alipay", "wechat"}:
+        raise HTTPException(status_code=404, detail="Only alipay and wechat import adapters are enabled")
+
+
+def _mapping_from_header(value: str | None, columns: list[str]) -> dict[str, str | None]:
+    mapping = suggest_mapping(columns)
+    if not value:
+        return mapping
+    try:
+        requested = json.loads(value)
+    except json.JSONDecodeError as error:
+        raise HTTPException(status_code=422, detail="Import mapping must be valid JSON") from error
+    if not isinstance(requested, dict) or any(field not in mapping for field in requested):
+        raise HTTPException(status_code=422, detail="Import mapping has unsupported fields")
+    for field, column in requested.items():
+        if column is not None and (not isinstance(column, str) or column not in columns):
+            raise HTTPException(status_code=422, detail="Import mapping references an unavailable column")
+        mapping[field] = column
+    return mapping
+
+
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def home(request: Request):
     return templates.TemplateResponse(request, "index.html", {"app_name": APP_DISPLAY_NAME})
@@ -128,15 +151,54 @@ def create_bill(payload: BillCreate, db: Session = Depends(get_db)):
     return bill_read(db, bill)
 
 
-@app.post("/api/imports/{source_type}", response_model=ImportBatchRead, status_code=201)
-async def import_csv(source_type: str, request: Request, filename: str = "账单.csv", db: Session = Depends(get_db)):
+@app.post("/api/imports/{source_type}/preview", response_model=ImportPreviewRead)
+async def preview_import(
+    source_type: str,
+    request: Request,
+    filename: str = "import.csv",
+    import_password: str | None = Header(default=None, alias="X-Import-Password"),
+):
+    _validate_source_type(source_type)
     try:
-        imported_rows = parse_csv(await request.body(), source_type)
+        parsed = parse_upload(await request.body(), filename, import_password)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    batch = ImportBatch(source_type=source_type, filename=filename, imported_at=datetime.now(), row_count=len(imported_rows), imported_count=0)
+    return ImportPreviewRead(
+        source_type=source_type,
+        filename=parsed.filename,
+        file_format=parsed.file_format,
+        archive_entry=parsed.archive_entry,
+        file_sha256=parsed.file_sha256,
+        row_count=len(parsed.rows),
+        columns=parsed.columns,
+        mapping=suggest_mapping(parsed.columns),
+        preview_rows=preview_rows(parsed),
+    )
+
+
+@app.post("/api/imports/{source_type}", response_model=ImportBatchRead, status_code=201)
+async def commit_import(
+    source_type: str,
+    request: Request,
+    filename: str = "import.csv",
+    import_password: str | None = Header(default=None, alias="X-Import-Password"),
+    import_mapping: str | None = Header(default=None, alias="X-Import-Mapping"),
+    db: Session = Depends(get_db),
+):
+    _validate_source_type(source_type)
+    try:
+        parsed = parse_upload(await request.body(), filename, import_password)
+        mapping = _mapping_from_header(import_mapping, parsed.columns)
+        imported_rows = normalise_rows(parsed, mapping)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    duplicate = db.scalar(select(ImportArtifact).where(ImportArtifact.source_type == source_type, ImportArtifact.sha256 == parsed.file_sha256))
+    if duplicate:
+        raise HTTPException(status_code=409, detail="This source file was already imported; duplicate import was blocked")
+    batch = ImportBatch(source_type=source_type, filename=parsed.filename, imported_at=datetime.now(), row_count=len(imported_rows), imported_count=0)
     db.add(batch)
     db.flush()
+    db.add(ImportArtifact(import_batch_id=batch.id, source_type=source_type, filename=parsed.filename, file_format=parsed.file_format, archive_entry=parsed.archive_entry, sha256=parsed.file_sha256))
     candidate_count = 0
     for row in imported_rows:
         bill = Bill(occurred_at=row.occurred_at, merchant=row.merchant, note=row.note, amount=row.amount, category="未分类", tags="")
@@ -148,7 +210,7 @@ async def import_csv(source_type: str, request: Request, filename: str = "账单
         candidate_count += _generate_candidates(db, bill)
         batch.imported_count += 1
     db.commit()
-    return ImportBatchRead(id=batch.id, source_type=batch.source_type, filename=batch.filename, imported_at=batch.imported_at, row_count=batch.row_count, imported_count=batch.imported_count, candidate_count=candidate_count)
+    return ImportBatchRead(id=batch.id, source_type=batch.source_type, filename=batch.filename, imported_at=batch.imported_at, row_count=batch.row_count, imported_count=batch.imported_count, candidate_count=candidate_count, file_sha256=parsed.file_sha256, file_format=parsed.file_format, archive_entry=parsed.archive_entry)
 
 
 @app.post("/api/bills/{bill_id}/tags", response_model=TagAuditRead, status_code=201)

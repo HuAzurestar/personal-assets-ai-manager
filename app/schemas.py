@@ -67,6 +67,21 @@ class ImportBatchRead(BaseModel):
     row_count: int
     imported_count: int
     candidate_count: int
+    file_sha256: str | None = None
+    file_format: str | None = None
+    archive_entry: str | None = None
+
+
+class ImportPreviewRead(BaseModel):
+    source_type: str
+    filename: str
+    file_format: str
+    archive_entry: str | None = None
+    file_sha256: str
+    row_count: int
+    columns: list[str]
+    mapping: dict[str, str | None]
+    preview_rows: list[dict[str, str]]
 
 
 class ReviewCandidateRead(BaseModel):

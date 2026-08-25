@@ -1,5 +1,15 @@
 # personal-assets-ai-manager（个人账本与资产管家）
 
+### 多格式账单导入
+
+支付宝、微信各自拥有独立的“预览导入”入口，支持 `CSV`、`XLS`、`XLSX`，以及仅包含一个上述账单文件的密码 ZIP。选择文件后先预览字段和前 8 行，再按需映射交易时间、交易方、金额等字段并确认导入。
+
+- 密码仅用于当前请求的内存解包；不会写入 SQLite、导入原始字段、日志或仓库。解析过程不创建临时解压文件。
+- 每次导入保存批次、来源类型、显示文件名、格式、可选 ZIP 内文件名和 SHA-256 文件指纹，不保存原始文件二进制；同来源、同指纹的文件会被拒绝为重复导入。
+- 上传大小、压缩包条目数量、解压条目大小和可解析行数均有限制；不支持的格式、压缩包路径穿越、错误/缺失密码会在预览或导入前返回明确错误。
+
+API 对应 `POST /api/imports/alipay/preview`、`POST /api/imports/wechat/preview` 与确认接口 `POST /api/imports/{source_type}`。上传原始字节并传递 `filename` 查询参数；密码仅可选地放在 `X-Import-Password` 请求头，字段映射放在 `X-Import-Mapping` JSON 请求头。完整结构见 `/docs`。
+
 ## 当前 MVP（以本节为准）
 
 这是一个离线优先的个人账单事实源。技术标识保持 `personal-assets-ai-manager`，界面中文展示名为“个人账本与资产管家”。
@@ -11,9 +21,9 @@
 
 ### 最短导入与验收
 
-启动 `python run.py` 后打开 `http://127.0.0.1:8765`，选择一份支付宝或微信导出的 CSV，再点击对应导入按钮。导入结果会显示流水数量和待复核候选；在流水表可执行“规则 / LLM / 人工”打标，在候选表确认或忽略。
+启动 `python run.py` 后打开 `http://127.0.0.1:8765`，选择支付宝或微信账单的 CSV、XLS、XLSX 或密码 ZIP；先点“预览导入”，确认字段映射后再提交。导入结果会显示流水数量和待复核候选；在流水表可执行“规则 / LLM / 人工”打标，在候选表确认或忽略。
 
-对应 API：`POST /api/imports/alipay`、`POST /api/imports/wechat`、`POST /api/bills/{id}/tags`、`GET /api/candidates`、`POST /api/candidates/{id}`，完整交互文档在 `/docs`。导入接口请求体为 CSV 原始字节，可选查询参数 `filename`。
+对应 API：`POST /api/imports/alipay/preview`、`POST /api/imports/wechat/preview`、`POST /api/imports/{source_type}`、`POST /api/bills/{id}/tags`、`GET /api/candidates`、`POST /api/candidates/{id}`，完整交互文档在 `/docs`。导入接口请求体为账单原始字节，可选查询参数 `filename`。
 
 > 后文的 Windows 安装和构建说明仍适用；其中旧的资产快照和“尚未支持真实导入”描述已被本节取代。
 

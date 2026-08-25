@@ -21,6 +21,60 @@ document.querySelector(".shell").innerHTML = `
 
 document.querySelector('input[name="occurred_at"]').value = now();
 
+const importPanel = document.querySelector(".grid .panel");
+importPanel.innerHTML = `<h2>导入账单</h2>
+  <p class="hint">支付宝、微信分别预览后确认导入。支持 CSV、XLS、XLSX 和仅含一个账单文件的 ZIP；ZIP 密码只用于本次解析，不会保存。</p>
+  <label>账单文件<input id="import-file" type="file" accept=".csv,.xls,.xlsx,.zip,text/csv,application/zip"></label>
+  <label>ZIP 密码（可选）<input id="import-password" type="password" autocomplete="off"></label>
+  <div class="actions"><button class="provider-import" data-preview-source="alipay" aria-label="预览支付宝账单文件"><img class="provider-import__icon" src="/static/providers/alipay.svg" alt="" aria-hidden="true"><span>预览支付宝账单</span></button><button class="provider-import" data-preview-source="wechat" aria-label="预览微信账单文件"><img class="provider-import__icon" src="/static/providers/wechat.svg" alt="" aria-hidden="true"><span>预览微信账单</span></button></div>
+  <section id="import-preview" class="import-preview" hidden aria-live="polite"></section><small id="import-result" aria-live="polite"></small>`;
+
+let pendingImport = null;
+
+function importHeaders(mapping) {
+  const passwordInput = document.querySelector("#import-password");
+  const headers = {};
+  if (passwordInput.value) headers["X-Import-Password"] = passwordInput.value;
+  if (mapping) headers["X-Import-Mapping"] = JSON.stringify(mapping);
+  return headers;
+}
+
+function clearImportPassword() {
+  document.querySelector("#import-password").value = "";
+}
+
+function renderImportPreview(preview) {
+  const fields = { occurred_at: "交易时间", merchant: "交易方", amount: "金额", note: "备注", direction: "收支", reference: "流水号" };
+  const mappingControls = Object.entries(fields).map(([field, label]) => `<label>${label}<select data-map-field="${field}"><option value="">不映射</option>${preview.columns.map(column => `<option value="${escapeHtml(column)}" ${preview.mapping[field] === column ? "selected" : ""}>${escapeHtml(column)}</option>`).join("")}</select></label>`).join("");
+  const previewTable = preview.preview_rows.map(row => `<tr>${preview.columns.map(column => `<td>${escapeHtml(row[column])}</td>`).join("")}</tr>`).join("");
+  document.querySelector("#import-preview").hidden = false;
+  document.querySelector("#import-preview").innerHTML = `<h3>${preview.source_type === "alipay" ? "支付宝" : "微信"}预览：${preview.row_count} 条</h3><p class="hint">格式：${escapeHtml(preview.file_format.toUpperCase())}${preview.archive_entry ? `；ZIP 条目：${escapeHtml(preview.archive_entry)}` : ""}。确认导入前可调整字段映射。</p><div class="mapping-grid">${mappingControls}</div><div class="table-wrap"><table><thead><tr>${preview.columns.map(column => `<th>${escapeHtml(column)}</th>`).join("")}</tr></thead><tbody>${previewTable}</tbody></table></div><button id="confirm-import">确认导入${preview.source_type === "alipay" ? "支付宝" : "微信"}账单</button>`;
+}
+
+document.querySelectorAll("[data-preview-source]").forEach(button => button.addEventListener("click", async () => {
+  const file = document.querySelector("#import-file").files[0];
+  if (!file) return alert("请先选择账单文件");
+  const source = button.dataset.previewSource;
+  try {
+    const preview = await request(`/api/imports/${source}/preview?filename=${encodeURIComponent(file.name)}`, { method: "POST", headers: importHeaders(), body: await file.arrayBuffer() });
+    pendingImport = { source, file, preview };
+    renderImportPreview(preview);
+    document.querySelector("#import-result").textContent = "预览完成。为降低暴露范围，ZIP 密码已清空；确认导入 ZIP 时请重新输入。";
+  } catch (error) { alert(`预览失败：${error.message}`); } finally { clearImportPassword(); }
+}));
+
+document.querySelector("#import-preview").addEventListener("click", async event => {
+  if (event.target.id !== "confirm-import" || !pendingImport) return;
+  const mapping = Object.fromEntries([...document.querySelectorAll("[data-map-field]")].map(select => [select.dataset.mapField, select.value || null]));
+  try {
+    const result = await request(`/api/imports/${pendingImport.source}?filename=${encodeURIComponent(pendingImport.file.name)}`, { method: "POST", headers: importHeaders(mapping), body: await pendingImport.file.arrayBuffer() });
+    document.querySelector("#import-result").textContent = `已导入 ${result.imported_count}/${result.row_count} 条，生成 ${result.candidate_count} 个待复核候选；原文件引用已记录为 SHA-256 指纹。`;
+    document.querySelector("#import-preview").hidden = true;
+    pendingImport = null;
+    refresh();
+  } catch (error) { alert(`导入失败：${error.message}`); } finally { clearImportPassword(); }
+});
+
 async function refresh() {
   const [summary, bills, candidates] = await Promise.all([request("/api/dashboard"), request("/api/bills"), request("/api/candidates")]);
   const values = [summary.income, summary.spending, summary.net, summary.candidate_count];
