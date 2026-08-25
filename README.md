@@ -19,6 +19,15 @@ API 对应单文件预览 `POST /api/imports/{source_type}/preview`、单文件�
 - 流水可携带多个标签。规则建议、LLM 建议、人工确认和授权自动均写入审计历史；策略按数值置信度决定当前展示，低等级历史不会丢失。
 - 同额同交易方的近似重复、且具有两个不同账户证据的同额反向流水只生成候选，必须由人工处理；候选置信度不等于事实。MVP 不做余额校准，也不包含账单计划。
 
+### 三页工作台
+
+Web 面板只有三个一级入口：**汇总**、**数据**、**标签管理**。桌面端左侧栏可收缩并记住偏好；移动端改为顶部紧凑导航。候选复核属于数据页，不另增导航页。
+
+- 汇总页展示收入、支出、净额、已导入流水数和按日趋势，全部直接从未被排除的流水计算。
+- 数据页包含支付宝/微信预览导入、服务端分页列表和重复/转移复核。分页响应固定以 `occurred_at` 或 `amount` 加流水 ID 排序，显示总数、当前范围和上一页/下一页。
+- 数据接口 `GET /api/transactions` 支持 `page`、`page_size`（最大 100）、`sort_by`、`sort_order`、日期、绝对金额、来源、收支/转移、搜索和按视图标签筛选。跨视图标签按 AND 组合；同一视图传入两个标签会返回 400。
+- 标签管理页维护“标签视图”。同视图的显式标签原子替换，跨视图可组合；每个视图自动拥有受保护的“未分类”，没有赋值的流水即是该视图的未分类。
+
 ### 最短导入与验收
 
 启动 `python run.py` 后打开 `http://127.0.0.1:8765`，选择支付宝或微信账单的 CSV、XLS、XLSX 或密码 ZIP（也可多选或选文件夹）；点击对应“预览账单”后检查逐文件结果，再直接确认导入。导入结果会显示流水数量和待复核候选；在流水表可执行“规则 0.45 / LLM 建议 0.70 / 人工确认 0.95 / 授权自动 1.00”，在候选表确认或忽略。
@@ -128,6 +137,22 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8765/api/health
 ```
+
+### 一键安全升级、构建、测试并运行（Windows PowerShell）
+
+在仓库根目录执行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\update-and-run.ps1
+```
+
+脚本先检查工作区是否有未提交改动；有改动就停止，不会覆盖用户文件。随后只执行 `git fetch origin main` 和 `git merge --ff-only origin/main`，不是快进关系也会停止；更新成功后使用项目虚拟环境安装依赖、安装 PyInstaller、构建、运行测试，最后前台启动服务。只想验证升级链而不启动服务可使用：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\update-and-run.ps1 -NoStart
+```
+
+失败恢复：若提示本地改动，先用 `git status` 查看并自行提交、暂存或备份；若提示不是快进关系，先比较 `git log --oneline HEAD..origin/main` 与 `git log --oneline origin/main..HEAD`，手工处理分支后再运行。脚本从不执行 `git reset`、强制检出或删除用户文件；依赖/构建失败时也不会回退或覆盖数据库，修正网络、Python 或依赖问题后重试即可。
 
 也可手动安装：
 

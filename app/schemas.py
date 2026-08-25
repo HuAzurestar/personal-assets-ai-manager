@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
@@ -22,6 +22,7 @@ class BillRead(BillCreate):
     aggregate_excluded: bool
     transfer_group_id: str | None = None
     duplicate_of_id: int | None = None
+    view_tags: list["ViewTagAssignmentRead"] = []
 
 
 class AssetCreate(BaseModel):
@@ -142,3 +143,68 @@ class ReviewCandidateRead(BaseModel):
 class CandidateDecision(BaseModel):
     action: str = Field(pattern="^(confirm_transfer|resolve_duplicate|ignored|deferred)$")
     retained_bill_id: int | None = None
+
+
+class ViewTagRead(BaseModel):
+    id: int
+    name: str
+    is_unclassified: bool
+    archived: bool
+
+
+class TagViewRead(BaseModel):
+    id: int
+    name: str
+    archived: bool
+    tags: list[ViewTagRead]
+
+
+class TagViewCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
+class TagViewUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    archived: bool | None = None
+
+
+class ViewTagCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
+class ViewTagUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    archived: bool | None = None
+    migrate_to_tag_id: int | None = None
+
+
+class ViewTagAssignmentRead(BaseModel):
+    view_id: int
+    view_name: str
+    tag_id: int
+    tag_name: str
+    strategy: str
+    confidence: float
+
+
+class ViewTagAssignmentRequest(BaseModel):
+    tag_id: int
+    strategy: str = Field(default="manual", max_length=60)
+    confidence: float = Field(default=0.95, ge=0, le=1)
+
+
+class TransactionPageRead(BaseModel):
+    items: list[BillRead]
+    total: int
+    page: int
+    page_size: int
+    filters: dict[str, object]
+    sort: dict[str, str]
+
+
+class TrendPointRead(BaseModel):
+    day: date
+    income: float
+    spending: float
+    net: float
+    bill_count: int

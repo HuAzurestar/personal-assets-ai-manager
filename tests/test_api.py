@@ -1,8 +1,10 @@
+from datetime import datetime
+
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.database import Base, BillTag, Tag, TagAudit
+from app.database import Base, Bill, BillTag, Tag, TagAudit
 from app.main import app, get_db
 
 
@@ -177,3 +179,64 @@ def test_provider_icon_assets_are_local_and_referenced():
         assert '授权自动 1.00' in workbench
         assert '确认转移组' in workbench
         assert '保留流水 A' in workbench
+
+
+def test_server_pagination_stable_sort_and_view_scoped_tags(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'ledger.db'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    def override_db():
+        db = session_factory()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    with session_factory() as db:
+        for number in range(125):
+            db.add(Bill(occurred_at=datetime(2026, 8, 25, 10, 0), merchant=f"稳定排序-{number}", note="", amount=-10, account_name="测试账户", category="未分类", tags=""))
+        db.commit()
+    app.dependency_overrides[get_db] = override_db
+    try:
+        with TestClient(app) as client:
+            first = client.get("/api/transactions?page=1&page_size=50&sort_by=occurred_at&sort_order=desc")
+            second = client.get("/api/transactions?page=2&page_size=50&sort_by=occurred_at&sort_order=desc")
+            third = client.get("/api/transactions?page=3&page_size=50&sort_by=occurred_at&sort_order=desc")
+            assert [response.status_code for response in (first, second, third)] == [200, 200, 200]
+            assert [first.json()["total"], second.json()["total"], third.json()["total"]] == [125, 125, 125]
+            pages = [[item["id"] for item in response.json()["items"]] for response in (first, second, third)]
+            assert [len(page) for page in pages] == [50, 50, 25]
+            assert len(set().union(*map(set, pages))) == 125
+            assert pages[0] == sorted(pages[0], reverse=True)
+
+            created = client.post("/api/bills", json={"occurred_at": "2026-08-26T10:00:00", "merchant": "标签测试", "account_name": "测试账户", "amount": -20}).json()
+            view = client.post("/api/tag-views", json={"name": "测试视图"}).json()
+            unclassified = next(tag for tag in view["tags"] if tag["is_unclassified"])
+            first_tag = client.post(f"/api/tag-views/{view['id']}/tags", json={"name": "餐饮"}).json()
+            second_tag = client.post(f"/api/tag-views/{view['id']}/tags", json={"name": "交通"}).json()
+            assert client.put(f"/api/transactions/{created['id']}/tag-assignments/{view['id']}", json={"tag_id": first_tag["id"]}).status_code == 200
+            assigned = client.put(f"/api/transactions/{created['id']}/tag-assignments/{view['id']}", json={"tag_id": second_tag["id"]}).json()
+            assert [(tag["view_id"], tag["tag_id"]) for tag in assigned["view_tags"]] == [(view["id"], second_tag["id"])]
+            assert client.get(f"/api/transactions?tag={view['id']}:{second_tag['id']}").json()["total"] == 1
+            assert client.get(f"/api/transactions?tag={view['id']}:{first_tag['id']}&tag={view['id']}:{second_tag['id']}").status_code == 400
+            unclassified_result = client.get(f"/api/transactions?tag={view['id']}:{unclassified['id']}").json()
+            assert unclassified_result["total"] == 125
+            dashboard = client.get("/api/dashboard").json()
+            assert "import_count" in dashboard and "trend" in dashboard
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_workspace_and_update_script_are_present_and_safe():
+    with TestClient(app) as client:
+        workspace = client.get("/static/workspace.js").text
+        assert 'data-page="summary"' in workspace
+        assert 'data-page="data"' in workspace
+        assert 'data-page="tags"' in workspace
+        assert "/api/transactions" in workspace
+    script = open("scripts/update-and-run.ps1", encoding="utf-8").read()
+    assert "git fetch origin main" in script
+    assert "git merge --ff-only origin/main" in script
+    assert "git status --porcelain" in script
+    assert "git reset" not in script

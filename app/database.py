@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, create_engine, inspect, select, text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine, inspect, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 from app.config import DATABASE_URL, ensure_data_dir
@@ -37,6 +37,50 @@ class Tag(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(120), unique=True)
+
+
+class TagView(Base):
+    __tablename__ = "tag_views"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), unique=True)
+    archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[str] = mapped_column(DateTime(timezone=False))
+
+
+class ViewTag(Base):
+    __tablename__ = "view_tags"
+    __table_args__ = (UniqueConstraint("view_id", "name", name="uq_view_tag_name"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    view_id: Mapped[int] = mapped_column(ForeignKey("tag_views.id"))
+    name: Mapped[str] = mapped_column(String(120))
+    is_unclassified: Mapped[bool] = mapped_column(Boolean, default=False)
+    archived: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class BillViewTag(Base):
+    __tablename__ = "bill_view_tags"
+    __table_args__ = (UniqueConstraint("bill_id", "view_id", name="uq_bill_view_assignment"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    bill_id: Mapped[int] = mapped_column(ForeignKey("bills.id"))
+    view_id: Mapped[int] = mapped_column(ForeignKey("tag_views.id"))
+    tag_id: Mapped[int] = mapped_column(ForeignKey("view_tags.id"))
+    strategy: Mapped[str] = mapped_column(String(60), default="manual")
+    confidence: Mapped[float] = mapped_column(Float, default=0.95)
+    updated_at: Mapped[str] = mapped_column(DateTime(timezone=False))
+
+
+class TagChangeLog(Base):
+    __tablename__ = "tag_change_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    view_id: Mapped[int] = mapped_column(ForeignKey("tag_views.id"))
+    tag_id: Mapped[int | None] = mapped_column(ForeignKey("view_tags.id"), nullable=True)
+    action: Mapped[str] = mapped_column(String(40))
+    detail: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[str] = mapped_column(DateTime(timezone=False))
 
 
 class BillTag(Base):
@@ -145,6 +189,14 @@ def init_db() -> None:
                     if name not in existing:
                         connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {definition}"))
     with SessionLocal() as session:
+        if not session.scalar(select(TagView.id).limit(1)):
+            for name, tags in (("消费类别", ("餐饮", "交通", "住宿", "购物")), ("使用场景", ("日常", "计划", "意外"))):
+                view = TagView(name=name, created_at=datetime.now())
+                session.add(view)
+                session.flush()
+                session.add(ViewTag(view_id=view.id, name="未分类", is_unclassified=True))
+                for tag_name in tags:
+                    session.add(ViewTag(view_id=view.id, name=tag_name))
         for bill in session.scalars(select(Bill)).all():
             if not bill.tags or session.scalar(select(BillTag).where(BillTag.bill_id == bill.id)):
                 continue

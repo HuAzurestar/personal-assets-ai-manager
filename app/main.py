@@ -2,21 +2,21 @@ from __future__ import annotations
 
 import base64
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import date, datetime, time
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import delete, func, select
+from sqlalchemy import asc, delete, desc, func, select
 from sqlalchemy.orm import Session
 
 from app.config import APP_DISPLAY_NAME, APP_SLUG
-from app.database import AssetSnapshot, Bill, BillTag, ImportArtifact, ImportBatch, LedgerOrigin, ReviewCandidate, SessionLocal, Tag, TagAudit, init_db
+from app.database import AssetSnapshot, Bill, BillTag, BillViewTag, ImportArtifact, ImportBatch, LedgerOrigin, ReviewCandidate, SessionLocal, Tag, TagAudit, TagChangeLog, TagView, ViewTag, init_db
 from app.file_import import normalise_rows, parse_upload, preview_rows
-from app.schemas import AssetCreate, AssetRead, BatchImportItemRead, BatchImportRead, BatchImportRequest, BatchPreviewItemRead, BatchPreviewRead, BillCreate, BillRead, CandidateDecision, ImportBatchRead, ImportPreviewRead, ReviewCandidateRead, TagApply, TagAuditRead, TagRequest, TagResult
+from app.schemas import AssetCreate, AssetRead, BatchImportItemRead, BatchImportRead, BatchImportRequest, BatchPreviewItemRead, BatchPreviewRead, BillCreate, BillRead, CandidateDecision, ImportBatchRead, ImportPreviewRead, ReviewCandidateRead, TagApply, TagAuditRead, TagRequest, TagResult, TagViewCreate, TagViewRead, TagViewUpdate, TransactionPageRead, ViewTagAssignmentRead, ViewTagAssignmentRequest, ViewTagCreate, ViewTagRead, ViewTagUpdate
 from app.tagging import classify, classify_rules
 
 APP_DIR = Path(__file__).parent
@@ -67,7 +67,18 @@ def bill_read(db: Session, bill: Bill) -> BillRead:
         aggregate_excluded=bill.aggregate_excluded,
         transfer_group_id=bill.transfer_group_id,
         duplicate_of_id=bill.duplicate_of_id,
+        view_tags=_bill_view_tags(db, bill.id),
     )
+
+
+def _bill_view_tags(db: Session, bill_id: int) -> list[ViewTagAssignmentRead]:
+    assignments = db.execute(select(BillViewTag, TagView, ViewTag).join(TagView, TagView.id == BillViewTag.view_id).join(ViewTag, ViewTag.id == BillViewTag.tag_id).where(BillViewTag.bill_id == bill_id)).all()
+    return [ViewTagAssignmentRead(view_id=view.id, view_name=view.name, tag_id=tag.id, tag_name=tag.name, strategy=assignment.strategy, confidence=assignment.confidence) for assignment, view, tag in assignments]
+
+
+def _tag_view_read(db: Session, view: TagView) -> TagViewRead:
+    tags = db.scalars(select(ViewTag).where(ViewTag.view_id == view.id).order_by(ViewTag.is_unclassified.desc(), ViewTag.name)).all()
+    return TagViewRead(id=view.id, name=view.name, archived=view.archived, tags=[ViewTagRead(id=tag.id, name=tag.name, is_unclassified=tag.is_unclassified, archived=tag.archived) for tag in tags])
 
 
 def _normalise_tags(tags: list[str]) -> list[str]:
@@ -243,6 +254,184 @@ def tag_bill(payload: TagRequest):
 @app.get("/api/bills", response_model=list[BillRead])
 def list_bills(db: Session = Depends(get_db)):
     return [bill_read(db, bill) for bill in db.scalars(select(Bill).order_by(Bill.occurred_at.desc())).all()]
+
+
+@app.get("/api/transactions", response_model=TransactionPageRead)
+def list_transactions(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
+    sort_by: str = Query(default="occurred_at", pattern="^(occurred_at|amount)$"),
+    sort_order: str = Query(default="desc", pattern="^(asc|desc)$"),
+    date_from: date | None = None,
+    date_to: date | None = None,
+    amount_min: float | None = Query(default=None, ge=0),
+    amount_max: float | None = Query(default=None, ge=0),
+    source: list[str] = Query(default=[]),
+    direction: str | None = Query(default=None, pattern="^(income|expense|transfer)$"),
+    q: str | None = Query(default=None, max_length=200),
+    tag: list[str] = Query(default=[]),
+    db: Session = Depends(get_db),
+):
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(status_code=422, detail="date_from must be before date_to")
+    if amount_min is not None and amount_max is not None and amount_min > amount_max:
+        raise HTTPException(status_code=422, detail="amount_min must not exceed amount_max")
+    clauses = []
+    if date_from:
+        clauses.append(Bill.occurred_at >= datetime.combine(date_from, time.min))
+    if date_to:
+        clauses.append(Bill.occurred_at <= datetime.combine(date_to, time.max))
+    if amount_min is not None:
+        clauses.append(func.abs(Bill.amount) >= amount_min)
+    if amount_max is not None:
+        clauses.append(func.abs(Bill.amount) <= amount_max)
+    if source:
+        clauses.append(Bill.id.in_(select(LedgerOrigin.bill_id).where(LedgerOrigin.source_type.in_(source))))
+    if direction == "income":
+        clauses.append(Bill.amount > 0)
+    elif direction == "expense":
+        clauses.append(Bill.amount < 0)
+    elif direction == "transfer":
+        clauses.append(Bill.transfer_group_id.is_not(None))
+    if q:
+        needle = f"%{q.strip()}%"
+        clauses.append((Bill.merchant.ilike(needle)) | (Bill.note.ilike(needle)))
+    selected_by_view: dict[int, ViewTag] = {}
+    for selector in tag:
+        try:
+            view_id_text, tag_id_text = selector.split(":", 1)
+            view_id, tag_id = int(view_id_text), int(tag_id_text)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail="tag must use view_id:tag_id") from error
+        selected_tag = db.get(ViewTag, tag_id)
+        if not selected_tag or selected_tag.view_id != view_id:
+            raise HTTPException(status_code=422, detail="tag does not belong to the requested view")
+        if view_id in selected_by_view and selected_by_view[view_id].id != tag_id:
+            raise HTTPException(status_code=400, detail="only one tag may be selected in each view")
+        selected_by_view[view_id] = selected_tag
+    for view_id, selected_tag in selected_by_view.items():
+        assignment_ids = select(BillViewTag.bill_id).where(BillViewTag.view_id == view_id)
+        if selected_tag.is_unclassified:
+            clauses.append(~Bill.id.in_(assignment_ids))
+        else:
+            clauses.append(Bill.id.in_(assignment_ids.where(BillViewTag.tag_id == selected_tag.id)))
+    order_column = Bill.occurred_at if sort_by == "occurred_at" else Bill.amount
+    order_fn = asc if sort_order == "asc" else desc
+    statement = select(Bill).where(*clauses).order_by(order_fn(order_column), order_fn(Bill.id))
+    total = db.scalar(select(func.count(Bill.id)).where(*clauses)) or 0
+    bills = db.scalars(statement.offset((page - 1) * page_size).limit(page_size)).all()
+    return TransactionPageRead(items=[bill_read(db, bill) for bill in bills], total=total, page=page, page_size=page_size, filters={"date_from": str(date_from) if date_from else None, "date_to": str(date_to) if date_to else None, "amount_min": amount_min, "amount_max": amount_max, "source": source, "direction": direction, "q": q, "tag": tag}, sort={"by": sort_by, "order": sort_order})
+
+
+@app.get("/api/tag-views", response_model=list[TagViewRead])
+def list_tag_views(include_archived: bool = False, db: Session = Depends(get_db)):
+    statement = select(TagView).order_by(TagView.id)
+    if not include_archived:
+        statement = statement.where(TagView.archived.is_(False))
+    return [_tag_view_read(db, view) for view in db.scalars(statement).all()]
+
+
+@app.post("/api/tag-views", response_model=TagViewRead, status_code=201)
+def create_tag_view(payload: TagViewCreate, db: Session = Depends(get_db)):
+    if db.scalar(select(TagView).where(TagView.name == payload.name.strip())):
+        raise HTTPException(status_code=409, detail="Tag view name already exists")
+    view = TagView(name=payload.name.strip(), created_at=datetime.now())
+    db.add(view)
+    db.flush()
+    db.add(ViewTag(view_id=view.id, name="未分类", is_unclassified=True))
+    db.add(TagChangeLog(view_id=view.id, tag_id=None, action="create_view", detail=view.name, created_at=datetime.now()))
+    db.commit()
+    return _tag_view_read(db, view)
+
+
+@app.patch("/api/tag-views/{view_id}", response_model=TagViewRead)
+def update_tag_view(view_id: int, payload: TagViewUpdate, db: Session = Depends(get_db)):
+    view = db.get(TagView, view_id)
+    if not view:
+        raise HTTPException(status_code=404, detail="Tag view not found")
+    if payload.name and payload.name.strip() != view.name:
+        if db.scalar(select(TagView).where(TagView.name == payload.name.strip(), TagView.id != view.id)):
+            raise HTTPException(status_code=409, detail="Tag view name already exists")
+        view.name = payload.name.strip()
+    if payload.archived is not None:
+        view.archived = payload.archived
+    db.add(TagChangeLog(view_id=view.id, tag_id=None, action="update_view", detail=view.name, created_at=datetime.now()))
+    db.commit()
+    return _tag_view_read(db, view)
+
+
+@app.post("/api/tag-views/{view_id}/tags", response_model=ViewTagRead, status_code=201)
+def create_view_tag(view_id: int, payload: ViewTagCreate, db: Session = Depends(get_db)):
+    if not db.get(TagView, view_id):
+        raise HTTPException(status_code=404, detail="Tag view not found")
+    if db.scalar(select(ViewTag).where(ViewTag.view_id == view_id, ViewTag.name == payload.name.strip())):
+        raise HTTPException(status_code=409, detail="Tag name already exists in this view")
+    tag = ViewTag(view_id=view_id, name=payload.name.strip())
+    db.add(tag)
+    db.flush()
+    db.add(TagChangeLog(view_id=view_id, tag_id=tag.id, action="create_tag", detail=tag.name, created_at=datetime.now()))
+    db.commit()
+    return ViewTagRead(id=tag.id, name=tag.name, is_unclassified=tag.is_unclassified, archived=tag.archived)
+
+
+@app.patch("/api/tag-views/{view_id}/tags/{tag_id}", response_model=ViewTagRead)
+def update_view_tag(view_id: int, tag_id: int, payload: ViewTagUpdate, db: Session = Depends(get_db)):
+    tag = db.get(ViewTag, tag_id)
+    if not tag or tag.view_id != view_id:
+        raise HTTPException(status_code=404, detail="Tag not found")
+    if tag.is_unclassified and (payload.name or payload.archived is not None):
+        raise HTTPException(status_code=422, detail="The unclassified tag is protected")
+    if payload.name and payload.name.strip() != tag.name:
+        if db.scalar(select(ViewTag).where(ViewTag.view_id == view_id, ViewTag.name == payload.name.strip(), ViewTag.id != tag.id)):
+            raise HTTPException(status_code=409, detail="Tag name already exists in this view")
+        tag.name = payload.name.strip()
+    if payload.archived is not None:
+        tag.archived = payload.archived
+    db.add(TagChangeLog(view_id=view_id, tag_id=tag.id, action="update_tag", detail=tag.name, created_at=datetime.now()))
+    db.commit()
+    return ViewTagRead(id=tag.id, name=tag.name, is_unclassified=tag.is_unclassified, archived=tag.archived)
+
+
+@app.delete("/api/tag-views/{view_id}/tags/{tag_id}", status_code=204)
+def delete_view_tag(view_id: int, tag_id: int, migrate_to_tag_id: int | None = None, db: Session = Depends(get_db)):
+    tag = db.get(ViewTag, tag_id)
+    if not tag or tag.view_id != view_id:
+        raise HTTPException(status_code=404, detail="Tag not found")
+    if tag.is_unclassified:
+        raise HTTPException(status_code=422, detail="The unclassified tag is protected")
+    assignments = db.scalars(select(BillViewTag).where(BillViewTag.tag_id == tag.id)).all()
+    if assignments and migrate_to_tag_id is None:
+        raise HTTPException(status_code=422, detail="Used tags require a migration target")
+    if migrate_to_tag_id is not None:
+        target = db.get(ViewTag, migrate_to_tag_id)
+        if not target or target.view_id != view_id:
+            raise HTTPException(status_code=422, detail="Migration target must belong to the same view")
+        if target.is_unclassified:
+            for assignment in assignments:
+                db.delete(assignment)
+        else:
+            for assignment in assignments:
+                assignment.tag_id = target.id
+    db.add(TagChangeLog(view_id=view_id, tag_id=tag.id, action="delete_tag", detail=f"migrate_to={migrate_to_tag_id}", created_at=datetime.now()))
+    db.delete(tag)
+    db.commit()
+
+
+@app.put("/api/transactions/{bill_id}/tag-assignments/{view_id}", response_model=BillRead)
+def assign_view_tag(bill_id: int, view_id: int, payload: ViewTagAssignmentRequest, db: Session = Depends(get_db)):
+    bill, view, tag = db.get(Bill, bill_id), db.get(TagView, view_id), db.get(ViewTag, payload.tag_id)
+    if not bill or not view or not tag or tag.view_id != view.id:
+        raise HTTPException(status_code=404, detail="Transaction, tag view, or tag not found")
+    current = db.scalar(select(BillViewTag).where(BillViewTag.bill_id == bill.id, BillViewTag.view_id == view.id))
+    if tag.is_unclassified:
+        if current:
+            db.delete(current)
+    elif current:
+        current.tag_id, current.strategy, current.confidence, current.updated_at = tag.id, payload.strategy, payload.confidence, datetime.now()
+    else:
+        db.add(BillViewTag(bill_id=bill.id, view_id=view.id, tag_id=tag.id, strategy=payload.strategy, confidence=payload.confidence, updated_at=datetime.now()))
+    db.commit()
+    return bill_read(db, bill)
 
 
 @app.post("/api/bills", response_model=BillRead, status_code=201)
@@ -442,4 +631,11 @@ def dashboard(db: Session = Depends(get_db)):
     income = db.scalar(select(func.coalesce(func.sum(Bill.amount), 0.0)).where(ledger_filter, Bill.amount > 0))
     spending = db.scalar(select(func.coalesce(func.sum(Bill.amount), 0.0)).where(ledger_filter, Bill.amount < 0))
     transfer_group_count = len({group for group in db.scalars(select(Bill.transfer_group_id).where(Bill.transfer_group_id.is_not(None))).all() if group})
-    return {"income": income, "spending": spending, "net": income + spending, "bill_count": db.scalar(select(func.count(Bill.id))), "candidate_count": db.scalar(select(func.count(ReviewCandidate.id)).where(ReviewCandidate.status == "pending")), "transfer_group_count": transfer_group_count, "generated_at": datetime.now().isoformat()}
+    trend_rows = db.execute(select(func.date(Bill.occurred_at), Bill.amount).where(ledger_filter).order_by(func.date(Bill.occurred_at))).all()
+    trend: dict[str, dict[str, float | int]] = {}
+    for day, amount in trend_rows:
+        point = trend.setdefault(str(day), {"income": 0.0, "spending": 0.0, "net": 0.0, "bill_count": 0})
+        point["income" if amount > 0 else "spending"] += amount
+        point["net"] += amount
+        point["bill_count"] += 1
+    return {"income": income, "spending": spending, "net": income + spending, "bill_count": db.scalar(select(func.count(Bill.id))), "import_count": db.scalar(select(func.count(LedgerOrigin.id))) or 0, "candidate_count": db.scalar(select(func.count(ReviewCandidate.id)).where(ReviewCandidate.status == "pending")), "transfer_group_count": transfer_group_count, "trend": [{"day": day, **point} for day, point in trend.items()], "generated_at": datetime.now().isoformat()}
