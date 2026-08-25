@@ -138,7 +138,23 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 Invoke-RestMethod http://127.0.0.1:8765/api/health
 ```
 
-### 一键安全升级、构建、测试并运行（Windows PowerShell）
+### 开发更新并直接运行（Windows PowerShell）
+
+日常开发更新不需要编译。它会在发现本地未提交改动时停止；仅允许 `git fetch origin main` 后的快进同步，使用项目 `.venv` 安装/更新依赖、运行测试，随后直接执行 `run.py`。它不会安装 PyInstaller、不会构建发布产物，也不会删除、重置或覆盖用户文件：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\update-and-run-dev.ps1
+```
+
+只想完成安全同步、依赖更新和测试而不启动服务：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\update-and-run-dev.ps1 -NoStart
+```
+
+若测试需要暂时跳过，可额外传入 `-SkipTests`；修复后应重新运行不带该参数的命令。若提示本地改动或非快进关系，脚本会在更新前停止，按下文的失败恢复步骤处理即可。
+
+### 发布构建：安全升级、构建、测试并运行（Windows PowerShell）
 
 在仓库根目录执行：
 

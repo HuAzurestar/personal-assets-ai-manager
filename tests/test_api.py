@@ -1,4 +1,6 @@
 from datetime import datetime
+import shutil
+import subprocess
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -253,6 +255,27 @@ def test_workspace_and_update_script_are_present_and_safe():
     assert "git merge --ff-only origin/main" in script
     assert "git status --porcelain" in script
     assert "git reset" not in script
+
+
+def test_development_update_script_is_safe_parseable_and_does_not_build():
+    script_path = "scripts/update-and-run-dev.ps1"
+    script = open(script_path, encoding="utf-8").read()
+    assert "git status --porcelain" in script
+    assert "git fetch origin main" in script
+    assert "git merge --ff-only origin/main" in script
+    assert "Local changes detected" in script
+    assert "& powershell -NoProfile -ExecutionPolicy Bypass -File" in script
+    assert "& $venvPython -m pytest -q" in script
+    assert '& $venvPython (Join-Path $projectRoot "run.py")' in script
+    assert "pyinstaller" not in script.lower()
+    assert "build.py" not in script
+    assert "git reset" not in script
+
+    powershell = shutil.which("powershell") or shutil.which("pwsh")
+    assert powershell, "PowerShell is required for the Windows development script"
+    command = "& { $tokens = $null; $errors = $null; [System.Management.Automation.Language.Parser]::ParseFile('scripts/update-and-run-dev.ps1', [ref]$tokens, [ref]$errors) | Out-Null; if ($errors.Count) { $errors | ForEach-Object { Write-Error $_ }; exit 1 } }"
+    parsed = subprocess.run([powershell, "-NoProfile", "-Command", command], capture_output=True, text=True, check=False)
+    assert parsed.returncode == 0, parsed.stderr
 
 
 def test_candidate_page_batch_and_undo_restore_ledger_facts(tmp_path):
