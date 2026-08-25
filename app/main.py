@@ -123,12 +123,16 @@ def _generate_candidates(db: Session, bill: Bill) -> int:
         if seconds_apart > 300 or abs(abs(bill.amount) - abs(other.amount)) > 0.01:
             continue
         if bill.amount == other.amount and bill.merchant == other.merchant:
-            candidate_type, confidence, reason = "duplicate", 0.92, "金额、交易方和 5 分钟内交易时间一致"
-        elif bill.amount * other.amount < 0 and _has_distinct_account_evidence(bill, other):
-            candidate_type, confidence, reason = "transfer", 0.78, "同额反向流水，可能是账户间资产转移"
+            candidate_type, confidence, reason, status = "duplicate", 0.92, "金额、交易方和 5 分钟内交易时间一致", "pending"
+        elif bill.amount * other.amount < 0:
+            candidate_type = "transfer"
+            if _has_distinct_account_evidence(bill, other):
+                confidence, reason, status = 0.78, "5 分钟内同额反向、不同账户；可确认个人账户间转移", "pending"
+            else:
+                confidence, reason, status = 0.42, "5 分钟内同额反向，但缺少两个不同账户证据；仅供人工核验，不能自动认定为个人转移", "evidence_insufficient"
         else:
             continue
-        db.add(ReviewCandidate(candidate_type=candidate_type, bill_id=bill.id, related_bill_id=other.id, confidence=confidence, reason=reason, status="pending", created_at=datetime.now()))
+        db.add(ReviewCandidate(candidate_type=candidate_type, bill_id=bill.id, related_bill_id=other.id, confidence=confidence, reason=reason, status=status, created_at=datetime.now()))
         created += 1
     return created
 
@@ -144,6 +148,8 @@ def _candidate_effect(candidate: ReviewCandidate) -> str:
         "deferred": "稍后处理；两笔流水仍独立计入收支。",
         "ignored": "已忽略；两笔流水仍独立计入收支。",
         "evidence_insufficient": "账户证据不足，已暂缓；两笔流水仍独立计入收支。",
+        "personal_transfer_grouped": "已确认个人账户间转移；两笔保留并追踪资产流向，不计入收入/支出汇总、净额或趋势。手续费等不在本候选两笔内的真实成本仍保留统计。",
+        "third_party_transfer_grouped": "已确认他人资产转移/代收代付；两笔原始流水与标签保留并标记为不追踪收支，不计入收入/支出、净额或趋势。",
         "transfer_grouped": "已归入同一转移组；两笔保留但不计入收入/支出汇总。",
         "duplicate_excluded": "已保留指定流水；另一笔保留原始记录但不计入收支汇总。",
         "legacy_transfer_excluded": "旧版已按转移排除收支；保留原始流水，但没有可补回的账户证据。",
@@ -160,6 +166,7 @@ def candidate_read(db: Session, candidate: ReviewCandidate) -> ReviewCandidateRe
         reason=candidate.reason,
         status=candidate.status,
         transfer_group_id=candidate.transfer_group_id,
+        transfer_kind=candidate.transfer_kind,
         retained_bill_id=candidate.retained_bill_id,
         resolved_at=candidate.resolved_at,
         undo_available=bool(db.scalar(select(CandidateActionLog.id).where(CandidateActionLog.candidate_id == candidate.id, CandidateActionLog.undone.is_(False)).order_by(CandidateActionLog.id.desc()))),
@@ -591,6 +598,7 @@ def _candidate_snapshot(candidate: ReviewCandidate, first: Bill, second: Bill) -
         "candidate": {
             "status": candidate.status,
             "transfer_group_id": candidate.transfer_group_id,
+            "transfer_kind": candidate.transfer_kind,
             "retained_bill_id": candidate.retained_bill_id,
             "resolved_at": candidate.resolved_at.isoformat() if candidate.resolved_at else None,
         },
@@ -605,19 +613,22 @@ def _candidate_snapshot(candidate: ReviewCandidate, first: Bill, second: Bill) -
 
 
 def _apply_candidate_decision(db: Session, candidate: ReviewCandidate, payload: CandidateDecision) -> None:
-    if candidate.status != "pending":
+    actionable_statuses = {"pending", "evidence_insufficient", "legacy_duplicate_needs_review"}
+    if candidate.status not in actionable_statuses:
         raise HTTPException(status_code=409, detail="Candidate has already been handled; undo it before applying another decision")
     first, second = db.get(Bill, candidate.bill_id), db.get(Bill, candidate.related_bill_id)
     if not first or not second:
         raise HTTPException(status_code=409, detail="Candidate evidence is incomplete")
     db.add(CandidateActionLog(candidate_id=candidate.id, action=payload.action, before_state=_candidate_snapshot(candidate, first, second), created_at=datetime.now()))
-    if payload.action == "confirm_transfer":
+    if payload.action in {"confirm_transfer", "confirm_personal_transfer", "confirm_third_party_transfer"}:
         if candidate.candidate_type != "transfer":
             raise HTTPException(status_code=422, detail="Only transfer candidates can be grouped as transfers")
-        if not _has_distinct_account_evidence(first, second):
+        transfer_kind = "third_party" if payload.action == "confirm_third_party_transfer" else "personal"
+        if transfer_kind == "personal" and not _has_distinct_account_evidence(first, second):
             raise HTTPException(status_code=422, detail="Transfer confirmation requires two distinct transaction accounts")
         candidate.transfer_group_id = f"transfer-{candidate.id}"
-        candidate.status = "transfer_grouped"
+        candidate.transfer_kind = transfer_kind
+        candidate.status = f"{transfer_kind}_transfer_grouped"
         for bill in (first, second):
             bill.transfer_group_id = candidate.transfer_group_id
             bill.aggregate_excluded = True
@@ -678,6 +689,7 @@ def undo_candidate(candidate_id: int, db: Session = Depends(get_db)):
     previous = snapshot["candidate"]
     candidate.status = previous["status"]
     candidate.transfer_group_id = previous["transfer_group_id"]
+    candidate.transfer_kind = previous.get("transfer_kind")
     candidate.retained_bill_id = previous["retained_bill_id"]
     candidate.resolved_at = datetime.fromisoformat(previous["resolved_at"]) if previous["resolved_at"] else None
     for bill_id, bill_state in snapshot["bills"].items():
@@ -691,6 +703,41 @@ def undo_candidate(candidate_id: int, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(candidate)
     return candidate_read(db, candidate)
+
+
+@app.get("/api/candidates/{candidate_id}/detail")
+def candidate_detail(candidate_id: int, db: Session = Depends(get_db)):
+    candidate = db.get(ReviewCandidate, candidate_id)
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    def detail_for(bill_id: int):
+        bill = db.get(Bill, bill_id)
+        origin = db.scalar(select(LedgerOrigin).where(LedgerOrigin.bill_id == bill_id))
+        batch = db.get(ImportBatch, origin.import_batch_id) if origin and origin.import_batch_id else None
+        try:
+            raw_fields = json.loads(origin.raw_payload) if origin and origin.raw_payload else {}
+        except json.JSONDecodeError:
+            raw_fields = {"unparsed": origin.raw_payload}
+        return {
+            "bill": bill_read(db, bill),
+            "source": {
+                "source_type": origin.source_type if origin else "manual",
+                "source_reference": origin.source_reference if origin else None,
+                "import_batch_id": origin.import_batch_id if origin else None,
+                "batch_filename": batch.filename if batch else None,
+                "batch_imported_at": batch.imported_at if batch else None,
+            },
+            "raw_fields": raw_fields,
+        }
+
+    return {
+        "candidate": candidate_read(db, candidate),
+        "first": detail_for(candidate.bill_id),
+        "second": detail_for(candidate.related_bill_id),
+        "match_basis": candidate.reason,
+        "actions": list_candidate_actions(candidate_id, db),
+    }
 
 
 @app.get("/api/candidates/{candidate_id}/actions")

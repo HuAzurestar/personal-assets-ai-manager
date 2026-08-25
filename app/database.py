@@ -150,6 +150,7 @@ class ReviewCandidate(Base):
     reason: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(64), default="pending")
     transfer_group_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    transfer_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
     retained_bill_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     resolved_at: Mapped[str | None] = mapped_column(DateTime(timezone=False), nullable=True)
     created_at: Mapped[str] = mapped_column(DateTime(timezone=False))
@@ -190,6 +191,7 @@ def init_db() -> None:
             },
             "review_candidates": {
                 "transfer_group_id": "VARCHAR(64)",
+                "transfer_kind": "VARCHAR(32)",
                 "retained_bill_id": "INTEGER",
                 "resolved_at": "DATETIME",
             },

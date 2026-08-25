@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.database import Base, Bill, BillTag, Tag, TagAudit
+from app.database import Base, Bill, BillTag, ImportBatch, LedgerOrigin, ReviewCandidate, Tag, TagAudit
 from app.main import app, get_db
 
 
@@ -63,7 +63,7 @@ def test_import_tag_audit_and_transfer_review(tmp_path):
             assert transfer["bill"]["direction"] != transfer["related_bill"]["direction"]
             decided = client.post(f"/api/candidates/{transfer['id']}", json={"action": "confirm_transfer"})
             assert decided.status_code == 200
-            assert decided.json()["status"] == "transfer_grouped"
+            assert decided.json()["status"] == "personal_transfer_grouped"
             assert decided.json()["transfer_group_id"]
             assert "不计入收入/支出汇总" in decided.json()["aggregation_effect"]
             dashboard = client.get("/api/dashboard").json()
@@ -122,7 +122,9 @@ def test_duplicate_resolution_ignore_and_deferred_preserve_ledger_facts(tmp_path
             without_account = client.post("/api/bills", json={"occurred_at": "2026-08-25T13:00:00", "merchant": "普通商户 A", "amount": -30})
             other_without_account = client.post("/api/bills", json={"occurred_at": "2026-08-25T13:01:00", "merchant": "普通商户 B", "amount": 30})
             assert without_account.status_code == other_without_account.status_code == 201
-            assert not any(item["candidate_type"] == "transfer" and {item["bill"]["merchant"], item["related_bill"]["merchant"]} == {"普通商户 A", "普通商户 B"} for item in client.get("/api/candidates").json())
+            evidence_limited = next(item for item in client.get("/api/candidates").json() if item["candidate_type"] == "transfer" and {item["bill"]["merchant"], item["related_bill"]["merchant"]} == {"普通商户 A", "普通商户 B"})
+            assert evidence_limited["status"] == "evidence_insufficient"
+            assert "不能自动认定" in evidence_limited["reason"]
     finally:
         app.dependency_overrides.clear()
 
@@ -244,12 +246,20 @@ def test_workspace_and_update_script_are_present_and_safe():
         assert 'aria-hidden="true" data-ascii-fallback="[ERR]">[ ! ]' in workspace
         assert "🏷" not in workspace and "↺" not in workspace
         assert 'data-candidate-undo' in workspace
+        assert 'data-candidate-detail' in workspace
+        assert 'confirm_personal_transfer' in workspace
+        assert 'confirm_third_party_transfer' in workspace
+        assert '批量个人转移' in workspace
+        assert '批量他人转移' in workspace
+        assert 'legacy_duplicate_needs_review' in workspace
+        assert 'candidate-detail-dialog' in workspace
         assert 'data-batch="ignored"' in workspace
         assert "/api/transactions" in workspace
         css = client.get("/static/workspace.css").text
         assert '.workspace[data-collapsed="true"]' in css
         assert '.workspace[data-collapsed="true"] .sidebar nav button .nav-icon' in css
         assert "@media (max-width: 700px)" in css
+        assert ".candidate-detail-dialog" in css
     script = open("scripts/update-and-run.ps1", encoding="utf-8").read()
     assert "git fetch origin main" in script
     assert "git merge --ff-only origin/main" in script
@@ -329,5 +339,82 @@ def test_candidate_page_batch_and_undo_restore_ledger_facts(tmp_path):
             deferred = client.post("/api/candidates/batch", json={"items": [{"candidate_id": duplicate["id"], "action": "deferred"}]})
             assert deferred.status_code == 200
             assert deferred.json()[0]["status"] == "deferred"
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_candidate_detail_legacy_duplicate_and_transfer_tracking(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'ledger.db'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    def override_db():
+        db = session_factory()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    try:
+        with TestClient(app) as client:
+            def create_bill(at, merchant, amount, account="account-a"):
+                response = client.post("/api/bills", json={"occurred_at": at, "merchant": merchant, "account_name": account, "amount": amount, "note": "fixture"})
+                assert response.status_code == 201
+                return response.json()
+
+            first = create_bill("2026-08-25T09:00:00", "duplicate fixture", -10)
+            second = create_bill("2026-08-25T09:01:00", "duplicate fixture", -10)
+            duplicate = next(item for item in client.get("/api/candidates").json() if item["candidate_type"] == "duplicate")
+            with session_factory() as db:
+                batch = ImportBatch(source_type="wechat", filename="fixture.csv", imported_at=datetime(2026, 8, 25, 9), row_count=2, imported_count=2)
+                db.add(batch)
+                db.flush()
+                db.add_all([
+                    LedgerOrigin(bill_id=first["id"], source_type="wechat", source_reference="serial-a", raw_payload='{"field":"a"}', import_batch_id=batch.id),
+                    LedgerOrigin(bill_id=second["id"], source_type="wechat", source_reference="serial-b", raw_payload='{"field":"b"}', import_batch_id=batch.id),
+                ])
+                db.get(ReviewCandidate, duplicate["id"]).status = "legacy_duplicate_needs_review"
+                db.commit()
+
+            detail = client.get(f"/api/candidates/{duplicate['id']}/detail")
+            assert detail.status_code == 200
+            detail_body = detail.json()
+            assert {detail_body["first"]["source"]["source_reference"], detail_body["second"]["source"]["source_reference"]} == {"serial-a", "serial-b"}
+            assert {detail_body["first"]["source"]["batch_filename"], detail_body["second"]["source"]["batch_filename"]} == {"fixture.csv"}
+            assert {detail_body["first"]["raw_fields"]["field"], detail_body["second"]["raw_fields"]["field"]} == {"a", "b"}
+            resolved = client.post(f"/api/candidates/{duplicate['id']}", json={"action": "resolve_duplicate", "retained_bill_id": second["id"]})
+            assert resolved.status_code == 200 and resolved.json()["status"] == "duplicate_excluded"
+            assert client.get("/api/dashboard").json()["spending"] == -10
+            assert client.post(f"/api/candidates/{duplicate['id']}/undo").json()["status"] == "legacy_duplicate_needs_review"
+            assert client.get("/api/dashboard").json()["spending"] == -20
+
+            outbound = create_bill("2026-08-25T10:00:00", "internal out", -100, "bank-a")
+            inbound = create_bill("2026-08-25T10:01:00", "internal in", 100, "wallet-b")
+            personal = next(item for item in client.get("/api/candidates").json() if item["candidate_type"] == "transfer" and {item["bill"]["id"], item["related_bill"]["id"]} == {outbound["id"], inbound["id"]})
+            personal_result = client.post(f"/api/candidates/{personal['id']}", json={"action": "confirm_personal_transfer"})
+            assert personal_result.status_code == 200
+            assert personal_result.json()["status"] == "personal_transfer_grouped"
+            assert personal_result.json()["transfer_kind"] == "personal"
+            personal_bills = {bill["id"]: bill for bill in client.get("/api/bills").json()}
+            assert personal_bills[outbound["id"]]["aggregate_excluded"] and personal_bills[inbound["id"]]["aggregate_excluded"]
+            assert client.get("/api/dashboard").json()["spending"] == -20
+            assert client.post(f"/api/candidates/{personal['id']}/undo").json()["status"] == "pending"
+            assert client.get("/api/dashboard").json()["spending"] == -120
+            assert client.post(f"/api/candidates/{personal['id']}", json={"action": "confirm_personal_transfer"}).status_code == 200
+
+            external_out = create_bill("2026-08-25T11:00:00", "agent payment", -40, "未提供账户")
+            external_in = create_bill("2026-08-25T11:01:00", "agent collection", 40, "未提供账户")
+            external = next(item for item in client.get("/api/candidates").json() if item["candidate_type"] == "transfer" and {item["bill"]["id"], item["related_bill"]["id"]} == {external_out["id"], external_in["id"]})
+            assert external["status"] == "evidence_insufficient"
+            third_party = client.post(f"/api/candidates/{external['id']}", json={"action": "confirm_third_party_transfer"})
+            assert third_party.status_code == 200
+            assert third_party.json()["status"] == "third_party_transfer_grouped"
+            assert third_party.json()["transfer_kind"] == "third_party"
+            third_party_bills = {bill["id"]: bill for bill in client.get("/api/bills").json()}
+            assert third_party_bills[external_out["id"]]["aggregate_excluded"] and third_party_bills[external_in["id"]]["aggregate_excluded"]
+            assert client.get("/api/dashboard").json()["spending"] == -20
+            assert client.post(f"/api/candidates/{external['id']}/undo").json()["status"] == "evidence_insufficient"
+            assert client.get("/api/dashboard").json()["spending"] == -60
     finally:
         app.dependency_overrides.clear()

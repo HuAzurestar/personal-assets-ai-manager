@@ -29,4 +29,55 @@ async function loadCandidates() { const target = document.querySelector("#candid
 async function handleCandidateClick(event) { const step = event.target.closest("[data-candidate-page-step]"); if (step) { state.candidatePage = Math.max(1, state.candidatePage + Number(step.dataset.candidatePageStep)); return loadCandidates(); } const undo = event.target.closest("[data-candidate-undo]"); const single = event.target.closest("[data-candidate]"); const batch = event.target.closest("[data-batch]"); try { if (undo) await request(`/api/candidates/${undo.dataset.candidateUndo}/undo`, { method: "POST" }); if (single) { const payload = { action: single.dataset.candidate }; if (single.dataset.retained) payload.retained_bill_id = Number(single.dataset.retained); await request(`/api/candidates/${single.dataset.id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }); } if (batch) { const ids = [...document.querySelectorAll("[data-candidate-select]:checked")].map(box => Number(box.dataset.candidateSelect)); if (!ids.length) return alert("请先选择待处理候选"); await request("/api/candidates/batch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items: ids.map(candidate_id => ({ candidate_id, action: batch.dataset.batch })) }) }); } if (undo || single || batch) await loadCandidates(); } catch (error) { alert(error.message); } }
 
 async function renderTags() { const views = await request("/api/tag-views?include_archived=true"); state.views = views; document.querySelector("#tags-page").innerHTML = `<section class="grid"><article class="panel"><h2>新建标签视图</h2><form id="new-view"><label>视图名称<input name="name" required></label><button>新建（自带未分类）</button></form></article><article class="panel"><h2>已有视图</h2>${views.map(view => `<article><strong>${escapeHtml(view.name)}</strong><div>${view.tags.map(tag => `<span class="tag-chip">${escapeHtml(tag.name)}</span>`).join("")}</div></article>`).join("")}</article></section>`; document.querySelector("#new-view").addEventListener("submit", async event => { event.preventDefault(); try { await request("/api/tag-views", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: new FormData(event.currentTarget).get("name") }) }); renderTags(); } catch (error) { alert(error.message); } }); }
+function candidateRow(item) {
+  const kind = item.candidate_type === "duplicate" ? "重复" : "转移/人工核验";
+  const actionable = ["pending", "evidence_insufficient", "legacy_duplicate_needs_review"].includes(item.status);
+  const duplicateActions = `<button data-candidate="resolve_duplicate" data-id="${item.id}" data-retained="${item.bill.id}" title="保留 A；B 保留原始记录但从收支聚合排除">保留 A</button><button data-candidate="resolve_duplicate" data-id="${item.id}" data-retained="${item.related_bill.id}" title="保留 B；A 保留原始记录但从收支聚合排除">保留 B</button>`;
+  const transferActions = `<button data-candidate="confirm_personal_transfer" data-id="${item.id}" title="确认个人账户间转移；需要两个不同账户证据">个人转移</button><button data-candidate="confirm_third_party_transfer" data-id="${item.id}" title="确认他人资产转移/代收代付；两笔不追踪收支">他人转移</button>`;
+  const actions = actionable ? (item.candidate_type === "duplicate" ? duplicateActions : transferActions) : "";
+  return `<tr><td>${actionable ? `<input type="checkbox" data-candidate-select="${item.id}" aria-label="选择${kind}候选 ${item.id}">` : ""}</td><td>${kind}<br><small>置信度 ${Math.round(item.confidence * 100)}%（仅建议）</small></td><td class="evidence">A：${candidateEvidence(item.bill)}<hr>B：${candidateEvidence(item.related_bill)}<hr><small>匹配依据：${escapeHtml(item.reason)}</small></td><td><span class="candidate-status">${escapeHtml(item.status)}</span><br><small>${escapeHtml(item.aggregation_effect)}</small></td><td class="candidate-actions"><button data-candidate-detail="${item.id}" title="查看两笔流水、流水号、来源、批次、账户证据与审计记录">详情</button>${actions}${actionable ? `<button data-candidate="ignored" data-id="${item.id}" title="两笔流水保留并继续统计">忽略</button><button data-candidate="deferred" data-id="${item.id}" title="稍后处理，汇总不变">稍后</button>` : ""}${item.undo_available ? `<button data-candidate-undo="${item.id}" title="恢复候选和两笔流水的处理前状态">撤销/回退</button>` : ""}<br><small class="audit-note">原始流水、标签与来源不删除；详情显示追踪/不追踪结果。</small></td></tr>`;
+}
+
+function candidateDetailSide(label, detail) {
+  const bill = detail.bill;
+  const rows = [["流水 ID", bill.id], ["时间", new Date(bill.occurred_at).toLocaleString()], ["交易方", bill.merchant], ["备注", bill.note], ["金额", money.format(bill.amount)], ["账户/方向", `${bill.account_name} / ${bill.direction}`], ["分类/标签", `${bill.category} / ${bill.tags.join(", ") || "—"}`], ["流水号", detail.source.source_reference || "—"], ["来源", detail.source.source_type || "手工"], ["导入批次", detail.source.import_batch_id || "—"], ["批次文件", detail.source.batch_filename || "—"], ["聚合", bill.aggregate_excluded ? "不追踪收支" : "计入收支"]];
+  return `<section><h3>${label}</h3><dl>${rows.map(([name, value]) => `<dt>${escapeHtml(name)}</dt><dd>${escapeHtml(value)}</dd>`).join("")}</dl><details><summary>原始字段</summary><pre>${escapeHtml(JSON.stringify(detail.raw_fields, null, 2))}</pre></details></section>`;
+}
+
+async function showCandidateDetail(candidateId) {
+  const detail = await request(`/api/candidates/${candidateId}/detail`);
+  document.querySelector("#candidate-detail-dialog")?.remove();
+  const dialog = document.createElement("dialog");
+  dialog.id = "candidate-detail-dialog";
+  dialog.className = "candidate-detail-dialog";
+  dialog.innerHTML = `<form method="dialog"><button class="dialog-close" aria-label="关闭候选详情">关闭</button></form><h2>候选 #${detail.candidate.id} 详情</h2><p><strong>当前状态：</strong>${escapeHtml(detail.candidate.status)}；<strong>匹配依据：</strong>${escapeHtml(detail.match_basis)}</p><p>${escapeHtml(detail.candidate.aggregation_effect)}</p><div class="candidate-detail-grid">${candidateDetailSide("流水 A", detail.first)}${candidateDetailSide("流水 B", detail.second)}</div><details><summary>处理审计</summary><pre>${escapeHtml(JSON.stringify(detail.actions, null, 2))}</pre></details>`;
+  document.body.append(dialog);
+  dialog.addEventListener("close", () => dialog.remove());
+  dialog.showModal();
+}
+
+async function handleCandidateClick(event) {
+  const step = event.target.closest("[data-candidate-page-step]");
+  if (step) { state.candidatePage = Math.max(1, state.candidatePage + Number(step.dataset.candidatePageStep)); return loadCandidates(); }
+  const detail = event.target.closest("[data-candidate-detail]");
+  if (detail) { try { await showCandidateDetail(detail.dataset.candidateDetail); } catch (error) { alert(error.message); } return; }
+  const undo = event.target.closest("[data-candidate-undo]");
+  const single = event.target.closest("[data-candidate]");
+  const batch = event.target.closest("[data-batch]");
+  try {
+    if (undo) await request(`/api/candidates/${undo.dataset.candidateUndo}/undo`, { method: "POST" });
+    if (single) { const payload = { action: single.dataset.candidate }; if (single.dataset.retained) payload.retained_bill_id = Number(single.dataset.retained); await request(`/api/candidates/${single.dataset.id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }); }
+    if (batch) { const ids = [...document.querySelectorAll("[data-candidate-select]:checked")].map(box => Number(box.dataset.candidateSelect)); if (!ids.length) return alert("请先选择待处理候选"); await request("/api/candidates/batch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items: ids.map(candidate_id => ({ candidate_id, action: batch.dataset.batch })) }) }); }
+    if (undo || single || batch) await loadCandidates();
+  } catch (error) { alert(error.message); }
+}
+
+function addCandidateTransferBatchActions() {
+  const actions = document.querySelector("#candidates-page .candidate-toolbar .candidate-actions");
+  if (!actions || actions.querySelector("[data-batch='confirm_personal_transfer']")) return;
+  actions.insertAdjacentHTML("beforeend", `<button data-batch="confirm_personal_transfer" title="仅选择具有两个不同账户证据的转移候选">批量个人转移</button><button data-batch="confirm_third_party_transfer" title="仅选择转移候选；两笔标记为不追踪收支">批量他人转移</button>`);
+}
+
+new MutationObserver(addCandidateTransferBatchActions).observe(document.querySelector("#candidates-page"), { childList: true, subtree: true });
+
 setPage(localStorage.getItem("paam-page") || "summary");
