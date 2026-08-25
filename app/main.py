@@ -10,14 +10,14 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.config import APP_DISPLAY_NAME, APP_SLUG
-from app.database import AssetSnapshot, Bill, ImportArtifact, ImportBatch, LedgerOrigin, ReviewCandidate, SessionLocal, TagAudit, init_db
+from app.database import AssetSnapshot, Bill, BillTag, ImportArtifact, ImportBatch, LedgerOrigin, ReviewCandidate, SessionLocal, Tag, TagAudit, init_db
 from app.file_import import normalise_rows, parse_upload, preview_rows
 from app.schemas import AssetCreate, AssetRead, BatchImportItemRead, BatchImportRead, BatchImportRequest, BatchPreviewItemRead, BatchPreviewRead, BillCreate, BillRead, CandidateDecision, ImportBatchRead, ImportPreviewRead, ReviewCandidateRead, TagApply, TagAuditRead, TagRequest, TagResult
-from app.tagging import classify
+from app.tagging import classify, classify_rules
 
 APP_DIR = Path(__file__).parent
 
@@ -65,7 +65,27 @@ def bill_read(db: Session, bill: Bill) -> BillRead:
     )
 
 
+def _normalise_tags(tags: list[str]) -> list[str]:
+    return list(dict.fromkeys(tag.strip() for tag in tags if tag.strip()))
+
+
+def _set_current_tags(db: Session, bill: Bill, tags: list[str]) -> list[str]:
+    """Keep the legacy display string and the current tag relation in sync."""
+    normalised = _normalise_tags(tags)
+    bill.tags = ",".join(normalised)
+    db.execute(delete(BillTag).where(BillTag.bill_id == bill.id))
+    for name in normalised:
+        tag = db.scalar(select(Tag).where(Tag.name == name))
+        if not tag:
+            tag = Tag(name=name)
+            db.add(tag)
+            db.flush()
+        db.add(BillTag(bill_id=bill.id, tag_id=tag.id))
+    return normalised
+
+
 def _apply_tag(db: Session, bill: Bill, strategy: str, category: str, tags: list[str], provider: str, confidence: float) -> TagAudit:
+    tags = _normalise_tags(tags)
     current = db.scalar(select(TagAudit).where(TagAudit.bill_id == bill.id, TagAudit.superseded.is_(False)).order_by(TagAudit.confidence.desc(), TagAudit.id.desc()))
     superseded = bool(current and confidence < current.confidence)
     audit = TagAudit(bill_id=bill.id, category=category, tags=",".join(tags), strategy=strategy, confidence=confidence, provider=provider, superseded=superseded, created_at=datetime.now())
@@ -73,7 +93,7 @@ def _apply_tag(db: Session, bill: Bill, strategy: str, category: str, tags: list
         if current:
             current.superseded = True
         bill.category = category
-        bill.tags = ",".join(tags)
+        _set_current_tags(db, bill, tags)
     db.add(audit)
     return audit
 
@@ -145,7 +165,7 @@ def _commit_parsed(db: Session, source_type: str, parsed, batch_token: str | Non
         db.add(bill)
         db.flush()
         db.add(LedgerOrigin(bill_id=bill.id, source_type=source_type, source_reference=row.reference, raw_payload=row.raw_payload, import_batch_id=batch.id))
-        category, tags, provider = classify(row.merchant, row.note)
+        category, tags, provider = classify_rules(row.merchant, row.note)
         _apply_tag(db, bill, "local_rules", category, tags, provider, STRATEGY_CONFIDENCE["local_rules"])
         candidate_count += _generate_candidates(db, bill)
         batch.imported_count += 1
@@ -186,7 +206,7 @@ def list_bills(db: Session = Depends(get_db)):
 
 @app.post("/api/bills", response_model=BillRead, status_code=201)
 def create_bill(payload: BillCreate, db: Session = Depends(get_db)):
-    category, tags, provider = classify(payload.merchant, payload.note)
+    category, tags, provider = classify_rules(payload.merchant, payload.note)
     bill = Bill(**payload.model_dump(), category=category, tags=",".join(tags))
     db.add(bill)
     db.flush()
@@ -280,11 +300,20 @@ def apply_tag(bill_id: int, payload: TagApply, db: Session = Depends(get_db)):
     bill = db.get(Bill, bill_id)
     if not bill:
         raise HTTPException(status_code=404, detail="Bill not found")
-    suggested_category, suggested_tags, provider = classify(bill.merchant, bill.note)
-    category = payload.category or suggested_category
-    tags = payload.tags if payload.tags is not None else suggested_tags
     if payload.strategy == "manual" and not payload.tags:
         raise HTTPException(status_code=422, detail="Manual tagging requires at least one tag")
+    if payload.strategy == "manual":
+        category = payload.category or "人工分类"
+        tags = payload.tags or []
+        provider = "manual"
+    elif payload.strategy == "local_rules":
+        suggested_category, suggested_tags, provider = classify_rules(bill.merchant, bill.note)
+        category = payload.category or suggested_category
+        tags = payload.tags if payload.tags is not None else suggested_tags
+    else:
+        suggested_category, suggested_tags, provider = classify(bill.merchant, bill.note)
+        category = payload.category or suggested_category
+        tags = payload.tags if payload.tags is not None else suggested_tags
     confidence = payload.confidence if payload.confidence is not None else STRATEGY_CONFIDENCE[payload.strategy]
     audit = _apply_tag(db, bill, payload.strategy, category, tags, provider, confidence)
     db.commit()

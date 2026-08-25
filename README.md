@@ -16,16 +16,46 @@ API 对应单文件预览 `POST /api/imports/{source_type}/preview`、单文件�
 
 - 已启用独立的支付宝、微信 CSV 导入入口；工行、农行等银行会以独立适配器按钮逐步加入。
 - 每个导入批次保存来源、文件名和行数；每笔流水保留来源引用和原始字段快照。
-- 流水可携带多个标签。规则建议、LLM 建议、人工确认和人工授权自动策略均写入审计历史；策略按数值置信度决定当前展示，低等级历史不会丢失。
+- 流水可携带多个标签。规则建议、LLM 建议、人工确认和授权自动均写入审计历史；策略按数值置信度决定当前展示，低等级历史不会丢失。
 - 同额同交易方的近似重复、同额反向流水的资产转移均只生成候选，必须由人工确认或忽略。MVP 不做余额校准，也不包含账单计划。
 
 ### 最短导入与验收
 
-启动 `python run.py` 后打开 `http://127.0.0.1:8765`，选择支付宝或微信账单的 CSV、XLS、XLSX 或密码 ZIP（也可多选或选文件夹）；点击对应“预览账单”后检查逐文件结果，再直接确认导入。导入结果会显示流水数量和待复核候选；在流水表可执行“规则 / LLM / 人工”打标，在候选表确认或忽略。
+启动 `python run.py` 后打开 `http://127.0.0.1:8765`，选择支付宝或微信账单的 CSV、XLS、XLSX 或密码 ZIP（也可多选或选文件夹）；点击对应“预览账单”后检查逐文件结果，再直接确认导入。导入结果会显示流水数量和待复核候选；在流水表可执行“规则 0.45 / LLM 建议 0.70 / 人工确认 0.95 / 授权自动 1.00”，在候选表确认或忽略。
 
 对应 API：`POST /api/imports/alipay/preview`、`POST /api/imports/wechat/preview`、`POST /api/imports/{source_type}`、`POST /api/bills/{id}/tags`、`GET /api/candidates`、`POST /api/candidates/{id}`，完整交互文档在 `/docs`。导入接口请求体为账单原始字节，可选查询参数 `filename`。
 
 > 后文的 Windows 安装和构建说明仍适用；其中旧的资产快照和“尚未支持真实导入”描述已被本节取代。
+
+## 打标策略：当前实际行为
+
+默认配置 `PAAM_LLM_PROVIDER=mock`，所以服务默认离线：新建和导入流水一律使用内置关键词规则，审计记录的 `provider` 为 `local-rules`。只有明确设置 `PAAM_LLM_PROVIDER=openai_compatible` 且提供 Base URL、模型和 API Key 后，LLM 路径才会向兼容的 `/chat/completions` 端点发送交易方和备注；调用失败或未完成配置会改用本地规则，并把实际来源记录为 `fallback-rules` 或 `mock-rules`。
+
+| 工作台按钮 / API `strategy` | 输入 | 结果与审计来源 | 默认置信度 |
+| --- | --- | --- | --- |
+| 规则 0.45 / `local_rules` | 交易方、备注；也可通过 API 提供分类和标签 | 强制本地关键词规则，绝不调用 LLM；`provider=local-rules` | 0.45 |
+| LLM 建议 0.70 / `llm_suggestion` | 交易方、备注；也可通过 API 覆盖建议值 | 已配置时调用兼容 LLM；否则或失败时离线回退，`provider` 记录真实来源 | 0.70 |
+| 人工确认 0.95 / `manual` | 工作台弹窗输入分类和至少一个标签 | 直接采用用户输入，不调用 LLM；`provider=manual` | 0.95 |
+| 授权自动 1.00 / `authorised_auto` | 点击后再次确认本次自动打标 | 执行一次自动分类并记录真实来源；它是单次用户授权，不是后台定时或长期授权规则 | 1.00 |
+
+`confidence` 是 0 到 1 的可选 API 字段；不给值时使用上表默认值。数值高于当前未失效记录时，新的分类和标签成为流水当前展示值；较低值仅留下 `superseded=true` 的审计历史。数值相等时，较新的记录成为当前值。每次动作都会新增 `tag_audits`，历史不覆盖、不删除。
+
+## SQLite 数据关系与来源保留
+
+```
+asset_snapshots（账户名称/类型/余额快照；当前没有独立 Account 主表）
+
+import_batches 1 ── * import_artifacts（文件名、格式、ZIP 条目、SHA-256）
+       │
+       └── * ledger_origins * ── 1 bills ── * tag_audits（策略、置信度、来源、失效标记）
+                                      │
+                                      ├── * bill_tags * ── 1 tags（当前标签关系）
+                                      └── * review_candidates（本流水与 related_bill 两次关联：重复/转移候选）
+```
+
+`bills` 是账单事实源，保存规范化后的时间、交易方、备注、金额及当前分类/标签显示值；`ledger_origins` 保存来源类型、流水号、导入批次和解析出的原始字段 JSON。导入原始文件二进制不入库，`import_artifacts` 只保存文件引用元数据和 SHA-256 指纹。密码不持久化。`tags`/`bill_tags` 保存当前标签实体关系，而每次打标时的分类和标签快照留在 `tag_audits` 中，便于追溯。
+
+当前扩展新数据源需要新增 provider 模板、在 `_validate_source_type` 中加入来源、并增加对应 UI 入口；模板只要映射交易时间、交易方、金额、备注、收支和流水号，导入批次、流水、标签和审计表不需要变化。
 
 本地优先的个人账单与资产管理程序。它提供一个可直接运行的 FastAPI 服务和 Web 面板，适合作为支付宝/微信账单导入、资产快照、LLM 智能打标的演进起点。
 
@@ -47,8 +77,8 @@ scripts/build.py      # PyInstaller Windows 目录式构建
 .github/workflows/    # 测试和标签触发的 Windows 构建
 ```
 
-基线已实现账单与资产快照的新增/查询、聚合面板、分类 API、SQLite 持久化和 OpenAI-compatible 适配边界；支付宝/微信账单导入、可编辑 LLM 配置页和自启动安装脚本留作下一阶段。
-- 应用名称与图标：仓库、构建产物及服务标识为 `personal-assets-ai-manager`；界面展示名为 Personal Assets AI Manager；Web 使用已确认的 Gemini SVG 图标（`app/static/personal-assets-ai-manager.svg`）。PyInstaller 通过收集整个 `app/static/` 目录将其纳入构建；Windows 打包可在后续补充同款 `.ico` 后嵌入可执行文件图标。
+基线已实现账单与资产快照的新增/查询、聚合面板、真实的支付宝/微信多格式导入、分类 API、SQLite 持久化和 OpenAI-compatible 适配边界；LLM 配置页和自启动安装脚本留作后续迭代。
+- 应用名称与图标：仓库、构建产物及服务标识为 `personal-assets-ai-manager`；界面展示名为“个人账本与资产管家”；Web 使用已确认的 Gemini SVG 图标（`app/static/personal-assets-ai-manager.svg`）。PyInstaller 通过收集整个 `app/static/` 目录将其纳入构建；Windows 打包可在后续补充同款 `.ico` 后嵌入可执行文件图标。
 
 ## 本地运行
 
@@ -133,10 +163,10 @@ python scripts/build.py
 
 ## 首发说明（v0.1.0 基线）
 
-首发版本交付可运行的本地账单与资产管理底座：SQLite 数据持久化、Web 管理面板、REST API、离线规则打标与可配置 OpenAI-compatible LLM 调用边界。它不包含真实账单导入、自启动安装器或生产级安全策略；这些能力将在后续迭代补齐。待确认首发行为后，推送 `v0.1.0` 标签即可触发 Windows 构建产物。
+`v0.1.0` 当前暂停，等待本轮导入、打标与数据模型重新验收；在确认前不得创建或推送该标签。现有基线包含 SQLite 持久化、Web 管理面板、REST API、离线规则打标、可配置 OpenAI-compatible LLM 边界，以及支付宝/微信多格式导入；自启动安装器和生产级安全策略尚未实现。
 
 ## 下一阶段建议
 
-1. 增加支付宝/微信 CSV、Excel 导入器及去重规则。
-2. 实现配置界面和真实 OpenAI-compatible LLM 适配器，输出结构化分类/标签。
-3. 确认名称、Windows `.ico`、发布平台和对账单数据调用云端 LLM 的隐私策略后，发布首个 GitHub Release。
+1. 实现 LLM 配置界面与更完整的授权策略管理。
+2. 增加工行、农行等独立 provider 模板和入口。
+3. 重新验收后再决定首个 GitHub Release。

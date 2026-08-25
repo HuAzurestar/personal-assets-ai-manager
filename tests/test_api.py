@@ -2,7 +2,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.database import Base
+from app.database import Base, BillTag, Tag, TagAudit
 from app.main import app, get_db
 
 
@@ -41,8 +41,12 @@ def test_import_tag_audit_and_transfer_review(tmp_path):
             manual = client.post(f"/api/bills/{bill['id']}/tags", json={"strategy": "manual", "category": "餐饮", "tags": ["消费", "午餐"]})
             assert manual.status_code == 201
             assert manual.json()["confidence"] == 0.95
+            assert manual.json()["provider"] == "manual"
             history = client.get(f"/api/bills/{bill['id']}/tags").json()
             assert len(history) == 2
+            with session_factory() as db:
+                assert {"消费", "午餐"}.issubset({tag.name for tag in db.query(Tag).all()})
+                assert db.query(BillTag).filter_by(bill_id=bill["id"]).count() == 2
 
             first = client.post("/api/bills", json={"occurred_at": "2026-08-25T13:00:00", "merchant": "账户转出", "amount": -100, "note": "测试转账"})
             second = client.post("/api/bills", json={"occurred_at": "2026-08-25T13:01:00", "merchant": "账户转入", "amount": 100, "note": "测试转账"})
@@ -59,6 +63,45 @@ def test_import_tag_audit_and_transfer_review(tmp_path):
         app.dependency_overrides.clear()
 
 
+def test_tagging_strategies_are_distinct_and_auditable(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'ledger.db'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    def override_db():
+        db = session_factory()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    try:
+        with TestClient(app) as client:
+            created = client.post("/api/bills", json={"occurred_at": "2026-08-25T10:00:00", "merchant": "滴滴出行", "amount": -18.5, "note": "通勤"})
+            assert created.status_code == 201
+            bill_id = created.json()["id"]
+            local = client.post(f"/api/bills/{bill_id}/tags", json={"strategy": "local_rules"})
+            assert local.status_code == 201
+            assert local.json()["provider"] == "local-rules"
+            assert local.json()["confidence"] == 0.45
+            llm = client.post(f"/api/bills/{bill_id}/tags", json={"strategy": "llm_suggestion"})
+            assert llm.status_code == 201
+            assert llm.json()["provider"] == "mock-rules"
+            manual = client.post(f"/api/bills/{bill_id}/tags", json={"strategy": "manual", "category": "出行", "tags": ["人工", "通勤"]})
+            assert manual.json()["provider"] == "manual"
+            authorised = client.post(f"/api/bills/{bill_id}/tags", json={"strategy": "authorised_auto"})
+            assert authorised.status_code == 201
+            assert authorised.json()["confidence"] == 1.0
+            history = client.get(f"/api/bills/{bill_id}/tags").json()
+            assert {item["strategy"] for item in history} == {"local_rules", "llm_suggestion", "manual", "authorised_auto"}
+            with session_factory() as db:
+                assert db.query(TagAudit).filter_by(bill_id=bill_id, superseded=False).count() == 1
+                assert db.query(BillTag).filter_by(bill_id=bill_id).count() > 0
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_provider_icon_assets_are_local_and_referenced():
     with TestClient(app) as client:
         for path in ("/static/providers/alipay.svg", "/static/providers/wechat.svg"):
@@ -70,3 +113,5 @@ def test_provider_icon_assets_are_local_and_referenced():
         assert 'src="/static/providers/wechat.svg"' in workbench
         assert 'aria-label="预览并导入支付宝账单"' in workbench
         assert 'aria-label="预览并导入微信账单"' in workbench
+        assert 'data-tag="authorised_auto"' in workbench
+        assert '授权自动 1.00' in workbench

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, create_engine, inspect, text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, create_engine, inspect, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 from app.config import DATABASE_URL, ensure_data_dir
@@ -24,6 +24,20 @@ class Bill(Base):
     amount: Mapped[float] = mapped_column(Float)
     category: Mapped[str] = mapped_column(String(80), default="未分类")
     tags: Mapped[str] = mapped_column(String(500), default="")
+
+
+class Tag(Base):
+    __tablename__ = "tags"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), unique=True)
+
+
+class BillTag(Base):
+    __tablename__ = "bill_tags"
+
+    bill_id: Mapped[int] = mapped_column(ForeignKey("bills.id"), primary_key=True)
+    tag_id: Mapped[int] = mapped_column(ForeignKey("tags.id"), primary_key=True)
 
 
 class ImportBatch(Base):
@@ -105,3 +119,15 @@ def init_db() -> None:
         if "batch_token" not in columns:
             with engine.begin() as connection:
                 connection.execute(text("ALTER TABLE import_batches ADD COLUMN batch_token VARCHAR(64)"))
+    with SessionLocal() as session:
+        for bill in session.scalars(select(Bill)).all():
+            if not bill.tags or session.scalar(select(BillTag).where(BillTag.bill_id == bill.id)):
+                continue
+            for name in dict.fromkeys(tag.strip() for tag in bill.tags.split(",") if tag.strip()):
+                tag = session.scalar(select(Tag).where(Tag.name == name))
+                if not tag:
+                    tag = Tag(name=name)
+                    session.add(tag)
+                    session.flush()
+                session.add(BillTag(bill_id=bill.id, tag_id=tag.id))
+        session.commit()

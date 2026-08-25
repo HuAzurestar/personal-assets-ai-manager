@@ -16,7 +16,7 @@ RULES: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (
 
 
 def classify(merchant: str, note: str = "") -> tuple[str, list[str], str]:
-    """Classify locally by default, or call an OpenAI-compatible endpoint when configured."""
+    """Use the optional OpenAI-compatible provider, with an offline rule fallback."""
     if LLM_PROVIDER == "openai_compatible" and LLM_BASE_URL and LLM_MODEL and LLM_API_KEY:
         try:
             return _classify_remote(merchant, note)
@@ -25,6 +25,11 @@ def classify(merchant: str, note: str = "") -> tuple[str, list[str], str]:
             # provider is unavailable; callers can surface fallback-rules.
             pass
     return _classify_rules(merchant, note)
+
+
+def classify_rules(merchant: str, note: str = "") -> tuple[str, list[str], str]:
+    """Always classify offline, independent of LLM environment configuration."""
+    return _classify_rules(merchant, note, provider="local-rules")
 
 
 def _classify_remote(merchant: str, note: str) -> tuple[str, list[str], str]:
@@ -43,9 +48,9 @@ def _classify_remote(merchant: str, note: str) -> tuple[str, list[str], str]:
     return category, tags or ["待确认"], "openai-compatible"
 
 
-def _classify_rules(merchant: str, note: str) -> tuple[str, list[str], str]:
+def _classify_rules(merchant: str, note: str, provider: str | None = None) -> tuple[str, list[str], str]:
     text = f"{merchant} {note}".lower()
     for category, keywords, tags in RULES:
         if any(keyword in text for keyword in keywords):
-            return category, list(tags), "mock-rules"
-    return "未分类", ["待确认"], "mock-rules" if LLM_PROVIDER == "mock" else "fallback-rules"
+            return category, list(tags), provider or "mock-rules"
+    return "未分类", ["待确认"], provider or ("mock-rules" if LLM_PROVIDER == "mock" else "fallback-rules")
