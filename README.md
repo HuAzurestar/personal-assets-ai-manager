@@ -51,6 +51,10 @@ python scripts/build.py
 
 打包结果位于 `dist/personal-assets-ai-manager/`。目录式产物便于保留 `data/personal-assets-ai-manager.db`、替换程序文件和回滚。GitHub Actions 在 `main` 的提交上执行测试，推送 `v*` 标签时生成 Windows 构建产物。
 
+## 首发说明（v0.1.0 基线）
+
+首发版本交付可运行的本地账单与资产管理底座：SQLite 数据持久化、Web 管理面板、REST API、离线规则打标与可配置 OpenAI-compatible LLM 调用边界。它不包含真实账单导入、自启动安装器或生产级安全策略；这些能力将在后续迭代补齐。待确认首发行为后，推送 `v0.1.0` 标签即可触发 Windows 构建产物。
+
 ## 下一阶段建议
 
 1. 增加支付宝/微信 CSV、Excel 导入器及去重规则。
