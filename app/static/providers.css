@@ -23,20 +23,26 @@
   margin: 0;
 }
 
-.mapping-grid {
-  display: grid;
-  gap: 10px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+.batch-file {
+  border: 1px solid #dce6f3;
+  border-radius: 10px;
   margin: 12px 0;
+  overflow: hidden;
+  padding: 12px;
 }
 
-.mapping-grid select {
-  border: 1px solid #cdd8e8;
-  border-radius: 8px;
-  font: inherit;
-  padding: 9px;
+.batch-file > strong,
+.batch-file > span {
+  display: block;
 }
 
-@media (max-width: 720px) {
-  .mapping-grid { grid-template-columns: 1fr; }
+.batch-file > span {
+  color: #52657d;
+  font-size: 13px;
+  margin: 4px 0 10px;
+}
+
+.batch-file--error {
+  background: #fff6f5;
+  border-color: #f0b4ae;
 }

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, create_engine
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 from app.config import DATABASE_URL, ensure_data_dir
@@ -35,6 +35,7 @@ class ImportBatch(Base):
     imported_at: Mapped[str] = mapped_column(DateTime(timezone=False))
     row_count: Mapped[int] = mapped_column(Integer, default=0)
     imported_count: Mapped[int] = mapped_column(Integer, default=0)
+    batch_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class ImportArtifact(Base):
@@ -99,3 +100,8 @@ class AssetSnapshot(Base):
 
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
+    if DATABASE_URL.startswith("sqlite"):
+        columns = {item["name"] for item in inspect(engine).get_columns("import_batches")}
+        if "batch_token" not in columns:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE import_batches ADD COLUMN batch_token VARCHAR(64)"))

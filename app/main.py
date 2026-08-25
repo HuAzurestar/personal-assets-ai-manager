@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import base64
 from contextlib import asynccontextmanager
 from datetime import datetime
-import json
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse
@@ -14,8 +15,8 @@ from sqlalchemy.orm import Session
 
 from app.config import APP_DISPLAY_NAME, APP_SLUG
 from app.database import AssetSnapshot, Bill, ImportArtifact, ImportBatch, LedgerOrigin, ReviewCandidate, SessionLocal, TagAudit, init_db
-from app.file_import import normalise_rows, parse_upload, preview_rows, suggest_mapping
-from app.schemas import AssetCreate, AssetRead, BillCreate, BillRead, CandidateDecision, ImportBatchRead, ImportPreviewRead, ReviewCandidateRead, TagApply, TagAuditRead, TagRequest, TagResult
+from app.file_import import normalise_rows, parse_upload, preview_rows
+from app.schemas import AssetCreate, AssetRead, BatchImportItemRead, BatchImportRead, BatchImportRequest, BatchPreviewItemRead, BatchPreviewRead, BillCreate, BillRead, CandidateDecision, ImportBatchRead, ImportPreviewRead, ReviewCandidateRead, TagApply, TagAuditRead, TagRequest, TagResult
 from app.tagging import classify
 
 APP_DIR = Path(__file__).parent
@@ -100,21 +101,66 @@ def _validate_source_type(source_type: str) -> None:
         raise HTTPException(status_code=404, detail="Only alipay and wechat import adapters are enabled")
 
 
-def _mapping_from_header(value: str | None, columns: list[str]) -> dict[str, str | None]:
-    mapping = suggest_mapping(columns)
-    if not value:
-        return mapping
+def _preview_read(source_type: str, parsed) -> ImportPreviewRead:
+    return ImportPreviewRead(
+        source_type=source_type,
+        filename=parsed.filename,
+        file_format=parsed.file_format,
+        archive_entry=parsed.archive_entry,
+        file_sha256=parsed.file_sha256,
+        row_count=len(parsed.rows),
+        columns=["交易时间", "交易方", "金额", "备注", "收支", "流水号"],
+        preview_rows=preview_rows(parsed),
+    )
+
+
+def _batch_read(batch: ImportBatch, parsed, candidate_count: int) -> ImportBatchRead:
+    return ImportBatchRead(
+        id=batch.id,
+        source_type=batch.source_type,
+        filename=batch.filename,
+        imported_at=batch.imported_at,
+        row_count=batch.row_count,
+        imported_count=batch.imported_count,
+        candidate_count=candidate_count,
+        file_sha256=parsed.file_sha256,
+        file_format=parsed.file_format,
+        archive_entry=parsed.archive_entry,
+        batch_token=batch.batch_token,
+    )
+
+
+def _commit_parsed(db: Session, source_type: str, parsed, batch_token: str | None = None) -> ImportBatchRead:
+    duplicate = db.scalar(select(ImportArtifact).where(ImportArtifact.source_type == source_type, ImportArtifact.sha256 == parsed.file_sha256))
+    if duplicate:
+        raise ValueError("该来源文件已导入，已跳过重复文件")
+    imported_rows = normalise_rows(parsed)
+    batch = ImportBatch(source_type=source_type, filename=parsed.filename, imported_at=datetime.now(), row_count=len(imported_rows), imported_count=0, batch_token=batch_token)
+    db.add(batch)
+    db.flush()
+    db.add(ImportArtifact(import_batch_id=batch.id, source_type=source_type, filename=parsed.filename, file_format=parsed.file_format, archive_entry=parsed.archive_entry, sha256=parsed.file_sha256))
+    candidate_count = 0
+    for row in imported_rows:
+        bill = Bill(occurred_at=row.occurred_at, merchant=row.merchant, note=row.note, amount=row.amount, category="未分类", tags="")
+        db.add(bill)
+        db.flush()
+        db.add(LedgerOrigin(bill_id=bill.id, source_type=source_type, source_reference=row.reference, raw_payload=row.raw_payload, import_batch_id=batch.id))
+        category, tags, provider = classify(row.merchant, row.note)
+        _apply_tag(db, bill, "local_rules", category, tags, provider, STRATEGY_CONFIDENCE["local_rules"])
+        candidate_count += _generate_candidates(db, bill)
+        batch.imported_count += 1
+    db.commit()
+    return _batch_read(batch, parsed, candidate_count)
+
+
+def _decode_batch_file(encoded: str, filename: str) -> bytes:
     try:
-        requested = json.loads(value)
-    except json.JSONDecodeError as error:
-        raise HTTPException(status_code=422, detail="Import mapping must be valid JSON") from error
-    if not isinstance(requested, dict) or any(field not in mapping for field in requested):
-        raise HTTPException(status_code=422, detail="Import mapping has unsupported fields")
-    for field, column in requested.items():
-        if column is not None and (not isinstance(column, str) or column not in columns):
-            raise HTTPException(status_code=422, detail="Import mapping references an unavailable column")
-        mapping[field] = column
-    return mapping
+        content = base64.b64decode(encoded, validate=True)
+    except (ValueError, TypeError) as error:
+        raise ValueError(f"{filename}: 文件编码无效") from error
+    if len(content) > 25 * 1024 * 1024:
+        raise ValueError(f"{filename}: 文件超过 25 MB 限制")
+    return content
 
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
@@ -160,20 +206,10 @@ async def preview_import(
 ):
     _validate_source_type(source_type)
     try:
-        parsed = parse_upload(await request.body(), filename, import_password)
+        parsed = parse_upload(source_type, await request.body(), filename, import_password)
     except ValueError as error:
-        raise HTTPException(status_code=422, detail=str(error)) from error
-    return ImportPreviewRead(
-        source_type=source_type,
-        filename=parsed.filename,
-        file_format=parsed.file_format,
-        archive_entry=parsed.archive_entry,
-        file_sha256=parsed.file_sha256,
-        row_count=len(parsed.rows),
-        columns=parsed.columns,
-        mapping=suggest_mapping(parsed.columns),
-        preview_rows=preview_rows(parsed),
-    )
+        raise HTTPException(status_code=422, detail=f"{filename}: {error}") from error
+    return _preview_read(source_type, parsed)
 
 
 @app.post("/api/imports/{source_type}", response_model=ImportBatchRead, status_code=201)
@@ -182,35 +218,61 @@ async def commit_import(
     request: Request,
     filename: str = "import.csv",
     import_password: str | None = Header(default=None, alias="X-Import-Password"),
-    import_mapping: str | None = Header(default=None, alias="X-Import-Mapping"),
+    batch_token: str | None = None,
     db: Session = Depends(get_db),
 ):
     _validate_source_type(source_type)
     try:
-        parsed = parse_upload(await request.body(), filename, import_password)
-        mapping = _mapping_from_header(import_mapping, parsed.columns)
-        imported_rows = normalise_rows(parsed, mapping)
+        parsed = parse_upload(source_type, await request.body(), filename, import_password)
+        return _commit_parsed(db, source_type, parsed, batch_token)
     except ValueError as error:
-        raise HTTPException(status_code=422, detail=str(error)) from error
-    duplicate = db.scalar(select(ImportArtifact).where(ImportArtifact.source_type == source_type, ImportArtifact.sha256 == parsed.file_sha256))
-    if duplicate:
-        raise HTTPException(status_code=409, detail="This source file was already imported; duplicate import was blocked")
-    batch = ImportBatch(source_type=source_type, filename=parsed.filename, imported_at=datetime.now(), row_count=len(imported_rows), imported_count=0)
-    db.add(batch)
-    db.flush()
-    db.add(ImportArtifact(import_batch_id=batch.id, source_type=source_type, filename=parsed.filename, file_format=parsed.file_format, archive_entry=parsed.archive_entry, sha256=parsed.file_sha256))
-    candidate_count = 0
-    for row in imported_rows:
-        bill = Bill(occurred_at=row.occurred_at, merchant=row.merchant, note=row.note, amount=row.amount, category="未分类", tags="")
-        db.add(bill)
-        db.flush()
-        db.add(LedgerOrigin(bill_id=bill.id, source_type=source_type, source_reference=row.reference, raw_payload=row.raw_payload, import_batch_id=batch.id))
-        category, tags, provider = classify(row.merchant, row.note)
-        _apply_tag(db, bill, "local_rules", category, tags, provider, STRATEGY_CONFIDENCE["local_rules"])
-        candidate_count += _generate_candidates(db, bill)
-        batch.imported_count += 1
-    db.commit()
-    return ImportBatchRead(id=batch.id, source_type=batch.source_type, filename=batch.filename, imported_at=batch.imported_at, row_count=batch.row_count, imported_count=batch.imported_count, candidate_count=candidate_count, file_sha256=parsed.file_sha256, file_format=parsed.file_format, archive_entry=parsed.archive_entry)
+        db.rollback()
+        status = 409 if "重复文件" in str(error) else 422
+        raise HTTPException(status_code=status, detail=f"{filename}: {error}") from error
+
+
+@app.post("/api/imports/{source_type}/batch/preview", response_model=BatchPreviewRead)
+def preview_import_batch(
+    source_type: str,
+    payload: BatchImportRequest,
+    import_password: str | None = Header(default=None, alias="X-Import-Password"),
+    db: Session = Depends(get_db),
+):
+    _validate_source_type(source_type)
+    batch_token = payload.batch_token or uuid4().hex
+    files: list[BatchPreviewItemRead] = []
+    fingerprints: set[str] = set()
+    for item in payload.files:
+        try:
+            parsed = parse_upload(source_type, _decode_batch_file(item.content_base64, item.filename), item.filename, import_password)
+            duplicate = parsed.file_sha256 in fingerprints or bool(db.scalar(select(ImportArtifact).where(ImportArtifact.source_type == source_type, ImportArtifact.sha256 == parsed.file_sha256)))
+            fingerprints.add(parsed.file_sha256)
+            files.append(BatchPreviewItemRead(filename=item.filename, ok=True, duplicate=duplicate, preview=_preview_read(source_type, parsed)))
+        except ValueError as error:
+            files.append(BatchPreviewItemRead(filename=item.filename, ok=False, error=str(error)))
+    return BatchPreviewRead(batch_token=batch_token, files=files)
+
+
+@app.post("/api/imports/{source_type}/batch", response_model=BatchImportRead, status_code=201)
+def commit_import_batch(
+    source_type: str,
+    payload: BatchImportRequest,
+    import_password: str | None = Header(default=None, alias="X-Import-Password"),
+    db: Session = Depends(get_db),
+):
+    _validate_source_type(source_type)
+    batch_token = payload.batch_token or uuid4().hex
+    files: list[BatchImportItemRead] = []
+    for item in payload.files:
+        try:
+            parsed = parse_upload(source_type, _decode_batch_file(item.content_base64, item.filename), item.filename, import_password)
+            committed = _commit_parsed(db, source_type, parsed, batch_token)
+            files.append(BatchImportItemRead(filename=item.filename, status="imported", import_batch=committed))
+        except ValueError as error:
+            db.rollback()
+            status = "duplicate" if "重复文件" in str(error) else "error"
+            files.append(BatchImportItemRead(filename=item.filename, status=status, error=str(error)))
+    return BatchImportRead(batch_token=batch_token, files=files)
 
 
 @app.post("/api/bills/{bill_id}/tags", response_model=TagAuditRead, status_code=201)

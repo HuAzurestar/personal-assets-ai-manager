@@ -2,13 +2,13 @@
 
 ### 多格式账单导入
 
-支付宝、微信各自拥有独立的“预览导入”入口，支持 `CSV`、`XLS`、`XLSX`，以及仅包含一个上述账单文件的密码 ZIP。选择文件后先预览字段和前 8 行，再按需映射交易时间、交易方、金额等字段并确认导入。
+支付宝、微信各自拥有独立的“预览导入”入口，支持 `CSV`、`XLS`、`XLSX`，以及仅包含一个上述账单文件的密码 ZIP。选择多个文件或一个文件夹后，服务端按对应平台的固定模板自动识别交易时间、交易方、金额、备注、收支和流水号，再逐文件预览并确认导入；不需要手工字段映射。
 
 - 密码仅用于当前请求的内存解包；不会写入 SQLite、导入原始字段、日志或仓库。解析过程不创建临时解压文件。
-- 每次导入保存批次、来源类型、显示文件名、格式、可选 ZIP 内文件名和 SHA-256 文件指纹，不保存原始文件二进制；同来源、同指纹的文件会被拒绝为重复导入。
+- 每次导入保存批次标识、来源类型、显示文件名、格式、可选 ZIP 内文件名和 SHA-256 文件指纹，不保存原始文件二进制；同来源、同指纹的文件会被拒绝为重复导入。
 - 上传大小、压缩包条目数量、解压条目大小和可解析行数均有限制；不支持的格式、压缩包路径穿越、错误/缺失密码会在预览或导入前返回明确错误。
 
-API 对应 `POST /api/imports/alipay/preview`、`POST /api/imports/wechat/preview` 与确认接口 `POST /api/imports/{source_type}`。上传原始字节并传递 `filename` 查询参数；密码仅可选地放在 `X-Import-Password` 请求头，字段映射放在 `X-Import-Mapping` JSON 请求头。完整结构见 `/docs`。
+API 对应单文件预览 `POST /api/imports/{source_type}/preview`、单文件确认 `POST /api/imports/{source_type}`，以及批量预览/确认 `POST /api/imports/{source_type}/batch/preview`、`POST /api/imports/{source_type}/batch`。批量接口接收文件名与 Base64 内容数组；密码仅可选地放在 `X-Import-Password` 请求头。完整结构见 `/docs`。
 
 ## 当前 MVP（以本节为准）
 
@@ -21,7 +21,7 @@ API 对应 `POST /api/imports/alipay/preview`、`POST /api/imports/wechat/previe
 
 ### 最短导入与验收
 
-启动 `python run.py` 后打开 `http://127.0.0.1:8765`，选择支付宝或微信账单的 CSV、XLS、XLSX 或密码 ZIP；先点“预览导入”，确认字段映射后再提交。导入结果会显示流水数量和待复核候选；在流水表可执行“规则 / LLM / 人工”打标，在候选表确认或忽略。
+启动 `python run.py` 后打开 `http://127.0.0.1:8765`，选择支付宝或微信账单的 CSV、XLS、XLSX 或密码 ZIP（也可多选或选文件夹）；点击对应“预览账单”后检查逐文件结果，再直接确认导入。导入结果会显示流水数量和待复核候选；在流水表可执行“规则 / LLM / 人工”打标，在候选表确认或忽略。
 
 对应 API：`POST /api/imports/alipay/preview`、`POST /api/imports/wechat/preview`、`POST /api/imports/{source_type}`、`POST /api/bills/{id}/tags`、`GET /api/candidates`、`POST /api/candidates/{id}`，完整交互文档在 `/docs`。导入接口请求体为账单原始字节，可选查询参数 `filename`。
 

@@ -70,6 +70,7 @@ class ImportBatchRead(BaseModel):
     file_sha256: str | None = None
     file_format: str | None = None
     archive_entry: str | None = None
+    batch_token: str | None = None
 
 
 class ImportPreviewRead(BaseModel):
@@ -80,8 +81,42 @@ class ImportPreviewRead(BaseModel):
     file_sha256: str
     row_count: int
     columns: list[str]
-    mapping: dict[str, str | None]
     preview_rows: list[dict[str, str]]
+
+
+class BatchFilePayload(BaseModel):
+    filename: str = Field(min_length=1, max_length=255)
+    content_base64: str = Field(min_length=1)
+
+
+class BatchPreviewItemRead(BaseModel):
+    filename: str
+    ok: bool
+    duplicate: bool = False
+    error: str | None = None
+    preview: ImportPreviewRead | None = None
+
+
+class BatchPreviewRead(BaseModel):
+    batch_token: str
+    files: list[BatchPreviewItemRead]
+
+
+class BatchImportItemRead(BaseModel):
+    filename: str
+    status: str
+    error: str | None = None
+    import_batch: ImportBatchRead | None = None
+
+
+class BatchImportRequest(BaseModel):
+    files: list[BatchFilePayload] = Field(min_length=1, max_length=100)
+    batch_token: str | None = Field(default=None, max_length=64)
+
+
+class BatchImportRead(BaseModel):
+    batch_token: str
+    files: list[BatchImportItemRead]
 
 
 class ReviewCandidateRead(BaseModel):

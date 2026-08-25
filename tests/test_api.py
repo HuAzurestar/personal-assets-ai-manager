@@ -68,5 +68,5 @@ def test_provider_icon_assets_are_local_and_referenced():
         workbench = client.get("/static/workbench.js").text
         assert 'src="/static/providers/alipay.svg"' in workbench
         assert 'src="/static/providers/wechat.svg"' in workbench
-        assert 'aria-label="导入支付宝账单 CSV 文件"' in workbench
-        assert 'aria-label="导入微信账单 CSV 文件"' in workbench
+        assert 'aria-label="预览并导入支付宝账单"' in workbench
+        assert 'aria-label="预览并导入微信账单"' in workbench

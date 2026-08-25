@@ -13,6 +13,7 @@ import pyzipper
 import xlrd
 
 from app.importing import HEADER_ALIASES, ImportedRow, _normalise
+from app.provider_templates import locate_provider_table
 
 SUPPORTED_EXTENSIONS = {".csv", ".xls", ".xlsx", ".zip"}
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
@@ -23,15 +24,17 @@ REQUIRED_MAPPING_FIELDS = ("occurred_at", "merchant", "amount")
 
 @dataclass(frozen=True)
 class ParsedFile:
+    source_type: str
     filename: str
     file_format: str
     archive_entry: str | None
     columns: list[str]
     rows: list[dict[str, str]]
+    mapping: dict[str, str | None]
     file_sha256: str
 
 
-def parse_upload(content: bytes, filename: str, password: str | None = None) -> ParsedFile:
+def parse_upload(source_type: str, content: bytes, filename: str, password: str | None = None) -> ParsedFile:
     if not content:
         raise ValueError("Import file is empty")
     if len(content) > MAX_UPLOAD_BYTES:
@@ -45,27 +48,21 @@ def parse_upload(content: bytes, filename: str, password: str | None = None) -> 
     if extension == ".zip":
         archive_entry, payload = _read_zip(content, password)
         extension = Path(archive_entry).suffix.lower()
-        safe_filename = Path(archive_entry).name
-    columns, rows = _read_tabular(payload, extension)
+    columns, rows, mapping = _read_tabular(payload, extension, source_type)
     return ParsedFile(
+        source_type=source_type,
         filename=safe_filename,
         file_format=extension.removeprefix("."),
         archive_entry=archive_entry,
         columns=columns,
         rows=rows,
+        mapping=mapping,
         file_sha256=hashlib.sha256(content).hexdigest(),
     )
 
 
-def suggest_mapping(columns: list[str]) -> dict[str, str | None]:
-    normalized = {column.strip().casefold(): column for column in columns}
-    return {
-        field: next((normalized[alias.casefold()] for alias in aliases if alias.casefold() in normalized), None)
-        for field, aliases in HEADER_ALIASES.items()
-    }
-
-
-def normalise_rows(parsed: ParsedFile, mapping: dict[str, str | None]) -> list[ImportedRow]:
+def normalise_rows(parsed: ParsedFile) -> list[ImportedRow]:
+    mapping = parsed.mapping
     missing = [field for field in REQUIRED_MAPPING_FIELDS if not mapping.get(field)]
     if missing:
         raise ValueError("Transaction time, counterparty, and amount mappings are required")
@@ -89,7 +86,17 @@ def normalise_rows(parsed: ParsedFile, mapping: dict[str, str | None]) -> list[I
 
 
 def preview_rows(parsed: ParsedFile, limit: int = 8) -> list[dict[str, str]]:
-    return parsed.rows[:limit]
+    return [
+        {
+            "交易时间": row.get(parsed.mapping["occurred_at"] or "", ""),
+            "交易方": row.get(parsed.mapping["merchant"] or "", ""),
+            "金额": row.get(parsed.mapping["amount"] or "", ""),
+            "备注": row.get(parsed.mapping["note"] or "", ""),
+            "收支": row.get(parsed.mapping["direction"] or "", ""),
+            "流水号": row.get(parsed.mapping["reference"] or "", ""),
+        }
+        for row in parsed.rows[:limit]
+    ]
 
 
 def _read_zip(content: bytes, password: str | None) -> tuple[str, bytes]:
@@ -113,7 +120,7 @@ def _read_zip(content: bytes, password: str | None) -> tuple[str, bytes]:
     return entry.filename, payload
 
 
-def _read_tabular(payload: bytes, extension: str) -> tuple[list[str], list[dict[str, str]]]:
+def _read_tabular(payload: bytes, extension: str, source_type: str) -> tuple[list[str], list[dict[str, str]], dict[str, str | None]]:
     if extension == ".csv":
         table = list(csv.reader(io.StringIO(_decode_csv(payload))))
     elif extension == ".xlsx":
@@ -133,13 +140,10 @@ def _read_tabular(payload: bytes, extension: str) -> tuple[list[str], list[dict[
         raise ValueError("Unsupported tabular file format")
     if not table:
         raise ValueError("Import file has no rows")
-    headers = [header.strip() for header in table[0]]
-    if not any(headers):
-        raise ValueError("Import file has no header row")
-    rows = [dict(zip(headers, row)) for row in table[1:] if any(value.strip() for value in row)]
+    headers, rows, mapping = locate_provider_table(source_type, table)
     if len(rows) > MAX_ROWS:
         raise ValueError("Import file exceeds the 10,000-row safety limit")
-    return headers, rows
+    return headers, rows, mapping
 
 
 def _decode_csv(payload: bytes) -> str:
