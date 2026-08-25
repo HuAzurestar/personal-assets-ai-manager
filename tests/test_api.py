@@ -236,11 +236,17 @@ def test_workspace_and_update_script_are_present_and_safe():
         assert 'data-page="tags"' in workspace
         assert 'data-page="candidates"' in workspace
         assert 'aria-label="重复与转移候选"' in workspace
+        assert 'aria-hidden="true" data-ascii-fallback="[SUM]">[ ≡ ]' in workspace
+        assert 'aria-hidden="true" data-ascii-fallback="[IMP]">[ ↓ ]' in workspace
+        assert 'aria-hidden="true" data-ascii-fallback="[TAG]">[ ¤ ]' in workspace
+        assert 'aria-hidden="true" data-ascii-fallback="[ERR]">[ ! ]' in workspace
+        assert "🏷" not in workspace and "↺" not in workspace
         assert 'data-candidate-undo' in workspace
         assert 'data-batch="ignored"' in workspace
         assert "/api/transactions" in workspace
         css = client.get("/static/workspace.css").text
         assert '.workspace[data-collapsed="true"]' in css
+        assert '.workspace[data-collapsed="true"] .sidebar nav button .nav-icon' in css
         assert "@media (max-width: 700px)" in css
     script = open("scripts/update-and-run.ps1", encoding="utf-8").read()
     assert "git fetch origin main" in script
