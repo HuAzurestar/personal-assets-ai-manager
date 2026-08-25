@@ -5,7 +5,7 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 APP_SLUG = "personal-assets-ai-manager"
-APP_DISPLAY_NAME = "Personal Assets AI Manager"
+APP_DISPLAY_NAME = "个人账本与资产管家"
 DATA_DIR = Path(os.getenv("PAAM_DATA_DIR", BASE_DIR / "data"))
 DATABASE_URL = os.getenv("PAAM_DATABASE_URL", f"sqlite:///{DATA_DIR / f'{APP_SLUG}.db'}")
 LLM_PROVIDER = os.getenv("PAAM_LLM_PROVIDER", "mock")

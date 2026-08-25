@@ -14,6 +14,9 @@ class BillRead(BillCreate):
     id: int
     category: str
     tags: list[str]
+    source_type: str | None = None
+    source_reference: str | None = None
+    import_batch_id: int | None = None
 
 
 class AssetCreate(BaseModel):
@@ -36,3 +39,46 @@ class TagResult(BaseModel):
     category: str
     tags: list[str]
     provider: str
+
+
+class TagApply(BaseModel):
+    strategy: str = Field(pattern="^(local_rules|llm_suggestion|manual|authorised_auto)$")
+    category: str | None = None
+    tags: list[str] | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+
+
+class TagAuditRead(BaseModel):
+    id: int
+    category: str
+    tags: list[str]
+    strategy: str
+    confidence: float
+    provider: str
+    superseded: bool
+    created_at: datetime
+
+
+class ImportBatchRead(BaseModel):
+    id: int
+    source_type: str
+    filename: str
+    imported_at: datetime
+    row_count: int
+    imported_count: int
+    candidate_count: int
+
+
+class ReviewCandidateRead(BaseModel):
+    id: int
+    candidate_type: str
+    confidence: float
+    reason: str
+    status: str
+    created_at: datetime
+    bill: BillRead
+    related_bill: BillRead
+
+
+class CandidateDecision(BaseModel):
+    status: str = Field(pattern="^(confirmed|ignored)$")

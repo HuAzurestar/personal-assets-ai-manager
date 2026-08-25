@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import DateTime, Float, Integer, String, Text, create_engine
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, create_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 from app.config import DATABASE_URL, ensure_data_dir
@@ -24,6 +24,55 @@ class Bill(Base):
     amount: Mapped[float] = mapped_column(Float)
     category: Mapped[str] = mapped_column(String(80), default="未分类")
     tags: Mapped[str] = mapped_column(String(500), default="")
+
+
+class ImportBatch(Base):
+    __tablename__ = "import_batches"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_type: Mapped[str] = mapped_column(String(40))
+    filename: Mapped[str] = mapped_column(String(255))
+    imported_at: Mapped[str] = mapped_column(DateTime(timezone=False))
+    row_count: Mapped[int] = mapped_column(Integer, default=0)
+    imported_count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class LedgerOrigin(Base):
+    __tablename__ = "ledger_origins"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    bill_id: Mapped[int] = mapped_column(ForeignKey("bills.id"), unique=True)
+    source_type: Mapped[str] = mapped_column(String(40))
+    source_reference: Mapped[str] = mapped_column(String(160), default="")
+    raw_payload: Mapped[str] = mapped_column(Text, default="")
+    import_batch_id: Mapped[int | None] = mapped_column(ForeignKey("import_batches.id"), nullable=True)
+
+
+class TagAudit(Base):
+    __tablename__ = "tag_audits"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    bill_id: Mapped[int] = mapped_column(ForeignKey("bills.id"))
+    category: Mapped[str] = mapped_column(String(80))
+    tags: Mapped[str] = mapped_column(String(500), default="")
+    strategy: Mapped[str] = mapped_column(String(60))
+    confidence: Mapped[float] = mapped_column(Float)
+    provider: Mapped[str] = mapped_column(String(80), default="")
+    superseded: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[str] = mapped_column(DateTime(timezone=False))
+
+
+class ReviewCandidate(Base):
+    __tablename__ = "review_candidates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    candidate_type: Mapped[str] = mapped_column(String(30))
+    bill_id: Mapped[int] = mapped_column(ForeignKey("bills.id"))
+    related_bill_id: Mapped[int] = mapped_column(ForeignKey("bills.id"))
+    confidence: Mapped[float] = mapped_column(Float)
+    reason: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    created_at: Mapped[str] = mapped_column(DateTime(timezone=False))
 
 
 class AssetSnapshot(Base):
