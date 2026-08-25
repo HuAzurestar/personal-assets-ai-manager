@@ -57,3 +57,16 @@ def test_import_tag_audit_and_transfer_review(tmp_path):
             assert dashboard["spending"] == -20
     finally:
         app.dependency_overrides.clear()
+
+
+def test_provider_icon_assets_are_local_and_referenced():
+    with TestClient(app) as client:
+        for path in ("/static/providers/alipay.svg", "/static/providers/wechat.svg"):
+            response = client.get(path)
+            assert response.status_code == 200
+            assert response.headers["content-type"].startswith("image/svg+xml")
+        workbench = client.get("/static/workbench.js").text
+        assert 'src="/static/providers/alipay.svg"' in workbench
+        assert 'src="/static/providers/wechat.svg"' in workbench
+        assert 'aria-label="导入支付宝账单 CSV 文件"' in workbench
+        assert 'aria-label="导入微信账单 CSV 文件"' in workbench

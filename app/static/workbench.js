@@ -7,11 +7,13 @@ const request = async (url, options) => {
 const escapeHtml = value => String(value ?? "").replace(/[&<>'"]/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]);
 const now = () => new Date().toISOString().slice(0, 16);
 
+document.head.insertAdjacentHTML("beforeend", '<link rel="stylesheet" href="/static/providers.css">');
+
 document.querySelector(".shell").innerHTML = `
   <header><div class="brand"><img src="/static/personal-assets-ai-manager.svg" alt=""><span>个人账本与资产管家</span></div><p>账单流水是事实源 · 本地优先 · 可审计打标</p></header>
   <section class="cards" id="summary"><article><span>累计收入</span><strong>--</strong></article><article><span>累计支出</span><strong>--</strong></article><article><span>净额</span><strong>--</strong></article><article><span>待复核候选</span><strong>--</strong></article></section>
   <section class="grid">
-    <article class="panel"><h2>导入账单</h2><p class="hint">选择 CSV 文件后，按来源导入。已启用支付宝、微信适配器；银行适配器可按真实样本逐步增加。</p><input id="import-file" type="file" accept=".csv,text/csv"><div class="actions"><button data-import="alipay">导入支付宝账单</button><button data-import="wechat">导入微信账单</button></div><div class="actions secondary"><button disabled>工行适配器（待接入）</button><button disabled>农行适配器（待接入）</button></div><small id="import-result"></small></article>
+    <article class="panel"><h2>导入账单</h2><p class="hint">选择 CSV 文件后，按来源导入。已启用支付宝、微信适配器；银行适配器可按真实样本逐步增加。</p><input id="import-file" type="file" accept=".csv,text/csv"><div class="actions"><button class="provider-import" data-import="alipay" aria-label="导入支付宝账单 CSV 文件"><img class="provider-import__icon" src="/static/providers/alipay.svg" alt="" aria-hidden="true"><span>导入支付宝账单</span></button><button class="provider-import" data-import="wechat" aria-label="导入微信账单 CSV 文件"><img class="provider-import__icon" src="/static/providers/wechat.svg" alt="" aria-hidden="true"><span>导入微信账单</span></button></div><div class="actions secondary"><button disabled>工行适配器（待接入）</button><button disabled>农行适配器（待接入）</button></div><small id="import-result"></small></article>
     <article class="panel"><h2>手工录入流水</h2><form id="bill-form"><label>交易时间<input name="occurred_at" type="datetime-local" required></label><label>交易方<input name="merchant" required></label><label>金额（收入为正，支出为负）<input name="amount" type="number" step="0.01" required></label><label>备注<input name="note"></label><button>保存流水并生成规则建议</button></form></article>
   </section>
   <section class="panel"><h2>流水工作台</h2><p class="hint">规则建议、LLM 建议、人工确认和授权自动策略均记录为审计事件；数值更高的置信度覆盖当前展示，不删除历史。</p><div class="table-wrap"><table><thead><tr><th>时间</th><th>交易方</th><th>金额</th><th>当前分类 / 标签</th><th>来源</th><th>主动打标</th></tr></thead><tbody id="bills"></tbody></table></div></section>
