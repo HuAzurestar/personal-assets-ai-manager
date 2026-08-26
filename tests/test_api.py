@@ -507,3 +507,55 @@ def test_duplicate_group_migration_merges_historical_subsets_and_reloads(tmp_pat
             assert round(client.get("/api/dashboard").json()["spending"], 2) == -32.0
     finally:
         app.dependency_overrides.clear()
+
+
+def test_read_only_database_observer_metadata_and_pagination(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'ledger.db'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    def override_db():
+        db = session_factory()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    with session_factory() as db:
+        for number in range(3):
+            db.add(Bill(occurred_at=datetime(2026, 8, 26, 9, number), merchant=f"observer-{number}", note="x" * (610 if number == 0 else 1), amount=-number - 1, account_name="local", category="uncategorized", tags=""))
+        db.commit()
+
+    app.dependency_overrides[get_db] = override_db
+    try:
+        with TestClient(app) as client:
+            catalog = client.get("/api/database/tables")
+            assert catalog.status_code == 200
+            tables = {table["name"]: table for table in catalog.json()["tables"]}
+            assert tables["bills"]["row_count"] == 3
+            assert {column["name"] for column in tables["bills"]["columns"]} >= {"id", "merchant", "amount"}
+            assert any(column["name"] == "id" and column["primary_key"] for column in tables["bills"]["columns"])
+            assert "sqlite_sequence" not in tables
+
+            first = client.get("/api/database/tables/bills?page=1&page_size=2")
+            second = client.get("/api/database/tables/bills?page=2&page_size=2")
+            assert [response.status_code for response in (first, second)] == [200, 200]
+            assert first.json()["total"] == second.json()["total"] == 3
+            assert [row["id"] for row in first.json()["rows"] + second.json()["rows"]] == [1, 2, 3]
+            assert first.json()["rows"][0]["note"].endswith("… [truncated]")
+            assert first.json()["sort"] == {"columns": ["id"], "order": "asc"}
+
+            empty = client.get("/api/database/tables/asset_snapshots?page=1&page_size=25")
+            assert empty.status_code == 200 and empty.json()["total"] == 0 and empty.json()["rows"] == []
+            assert client.get("/api/database/tables/not_a_table").status_code == 404
+            assert client.get("/api/database/tables/bills?page=0").status_code == 422
+            assert client.get("/api/database/tables/bills?page_size=101").status_code == 422
+            assert client.get("/api/dashboard").status_code == 200
+            assert client.get("/api/transactions?page=1&page_size=2").json()["total"] == 3
+
+            workspace = client.get("/static/workspace-next.js").text
+            assert 'data-page="database"' in workspace
+            assert "/api/database/tables" in workspace
+            assert 'data-ascii-fallback="[DB]"' in workspace
+    finally:
+        app.dependency_overrides.clear()

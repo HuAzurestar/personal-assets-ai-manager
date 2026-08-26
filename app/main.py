@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import asc, delete, desc, func, select
+from sqlalchemy import MetaData, Table, asc, delete, desc, func, inspect, select
 from sqlalchemy.orm import Session
 
 from app.config import APP_DISPLAY_NAME, APP_SLUG
@@ -51,6 +51,71 @@ STRATEGY_CONFIDENCE = {
     "manual": 0.95,
     "authorised_auto": 1.0,
 }
+
+
+# This is deliberately a fixed application schema allow-list.  The database
+# observer never accepts a SQL expression or an arbitrary SQLite object name.
+DATABASE_OBSERVER_TABLES = frozenset({
+    "asset_snapshots",
+    "bill_tags",
+    "bill_view_tags",
+    "bills",
+    "candidate_action_logs",
+    "import_artifacts",
+    "import_batches",
+    "ledger_origins",
+    "review_candidates",
+    "tag_audits",
+    "tag_change_logs",
+    "tag_views",
+    "tags",
+    "view_tags",
+})
+DATABASE_OBSERVER_CELL_LIMIT = 600
+
+
+def _database_observer_table_names(db: Session) -> list[str]:
+    inspector = inspect(db.bind)
+    return sorted(name for name in inspector.get_table_names() if name in DATABASE_OBSERVER_TABLES)
+
+
+def _database_observer_table(db: Session, table_name: str) -> Table:
+    if table_name not in _database_observer_table_names(db):
+        raise HTTPException(status_code=404, detail="Unknown read-only database table")
+    return Table(table_name, MetaData(), autoload_with=db.bind)
+
+
+def _database_value(value: object) -> object:
+    """Return a display-safe value without persisting or logging a second copy."""
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, (datetime, date)):
+        value = value.isoformat()
+    elif isinstance(value, bytes):
+        value = f"<{len(value)} bytes>"
+    else:
+        value = str(value)
+    return value if len(value) <= DATABASE_OBSERVER_CELL_LIMIT else f"{value[:DATABASE_OBSERVER_CELL_LIMIT]}… [truncated]"
+
+
+def _database_metadata(db: Session, table_name: str) -> dict:
+    inspector = inspect(db.bind)
+    primary_key = set((inspector.get_pk_constraint(table_name) or {}).get("constrained_columns") or [])
+    return {
+        "columns": [
+            {
+                "name": column["name"],
+                "type": str(column["type"]),
+                "nullable": bool(column.get("nullable", True)),
+                "primary_key": column["name"] in primary_key,
+            }
+            for column in inspector.get_columns(table_name)
+        ],
+        "indexes": [
+            {"name": index["name"], "columns": index.get("column_names", []), "unique": bool(index.get("unique", False))}
+            for index in inspector.get_indexes(table_name)
+        ],
+    }
 
 
 def bill_read(db: Session, bill: Bill) -> BillRead:
@@ -341,6 +406,49 @@ def home(request: Request):
 @app.get("/api/health")
 def health():
     return {"status": "ok", "service": APP_SLUG}
+
+
+@app.get("/api/database/tables")
+def list_database_tables(db: Session = Depends(get_db)):
+    """Describe application-owned SQLite tables for the local read-only observer."""
+    tables = []
+    for name in _database_observer_table_names(db):
+        table = _database_observer_table(db, name)
+        tables.append({
+            "name": name,
+            "row_count": db.scalar(select(func.count()).select_from(table)) or 0,
+            **_database_metadata(db, name),
+        })
+    return {"tables": tables, "read_only": True, "max_page_size": 100, "cell_output_limit": DATABASE_OBSERVER_CELL_LIMIT}
+
+
+@app.get("/api/database/tables/{table_name}")
+def read_database_table(
+    table_name: str,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    """Read one allow-listed table using SQLAlchemy-bound pagination only."""
+    table = _database_observer_table(db, table_name)
+    primary_key = list(table.primary_key.columns)
+    stable_order = primary_key or [next(iter(table.columns))]
+    total = db.scalar(select(func.count()).select_from(table)) or 0
+    statement = select(table).order_by(*[column.asc() for column in stable_order]).offset((page - 1) * page_size).limit(page_size)
+    rows = [
+        {column.name: _database_value(row[column.name]) for column in table.columns}
+        for row in db.execute(statement).mappings()
+    ]
+    return {
+        "table": table_name,
+        "read_only": True,
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "sort": {"columns": [column.name for column in stable_order], "order": "asc"},
+        **_database_metadata(db, table_name),
+        "rows": rows,
+    }
 
 
 @app.post("/api/tag", response_model=TagResult)
