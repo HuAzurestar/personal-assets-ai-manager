@@ -2,12 +2,14 @@ import json
 from datetime import datetime
 import shutil
 import subprocess
+from time import perf_counter
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
-from app.database import Base, Bill, BillTag, ImportBatch, LedgerOrigin, ReviewCandidate, Tag, TagAudit
+import app.database as database
+from app.database import Base, Bill, BillTag, ImportBatch, LedgerOrigin, ReviewCandidate, Tag, TagAudit, TagView, ViewTag
 from app.main import app, get_db
 
 
@@ -21,6 +23,102 @@ def test_health_and_bill_flow(tmp_path, monkeypatch):
         assert created.status_code == 201
         assert created.json()["category"] == "交通出行"
         assert client.get("/api/dashboard").status_code == 200
+
+
+def _seed_json_tag_definitions(db):
+    category = TagView(name="消费类别", system_name="category", created_at=datetime.now())
+    scenario = TagView(name="使用场景", system_name="scenario", created_at=datetime.now())
+    db.add_all([category, scenario])
+    db.flush()
+    db.add_all([
+        ViewTag(view_id=category.id, name="未分类", system_name="unclassified", is_unclassified=True),
+        ViewTag(view_id=category.id, name="餐饮", system_name="food"),
+        ViewTag(view_id=category.id, name="交通", system_name="transport"),
+        ViewTag(view_id=scenario.id, name="未分类", system_name="unclassified", is_unclassified=True),
+        ViewTag(view_id=scenario.id, name="日常", system_name="daily"),
+    ])
+    db.commit()
+
+
+def test_json_tag_state_migrates_legacy_labels_without_mutating_legacy_rows(tmp_path, monkeypatch):
+    engine = create_engine(f"sqlite:///{tmp_path / 'migration.db'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    with session_factory() as db:
+        _seed_json_tag_definitions(db)
+        db.add(Bill(occurred_at=datetime(2026, 8, 1), merchant="旧账单", note="", amount=-10, category="餐饮", tags="旧标签"))
+        db.commit()
+
+    monkeypatch.setattr(database, "engine", engine)
+    monkeypatch.setattr(database, "SessionLocal", session_factory)
+    monkeypatch.setattr(database, "DATABASE_URL", "sqlite:///migration.db")
+    database.init_db()
+
+    with session_factory() as db:
+        bill = db.scalar(db.query(Bill).statement)
+        assert json.loads(bill.tag_state_json) == {"category": "unclassified", "scenario": "unclassified"}
+        assert bill.tags == "旧标签"
+        assert db.query(BillTag).count() == 0
+        audit = db.query(TagAudit).filter_by(bill_id=bill.id, provider="legacy_tag_state").one()
+        assert json.loads(audit.tag_state_json) == {"category": "unclassified", "scenario": "unclassified"}
+
+
+def test_json_tag_state_api_is_name_based_exclusive_and_indexed_at_scale(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'tag-state-scale.db'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    with engine.begin() as connection:
+        connection.execute(text("CREATE INDEX ix_bills_tag_state_category_page ON bills(json_extract(tag_state_json, '$.category'), occurred_at DESC, id DESC)"))
+    with session_factory() as db:
+        _seed_json_tag_definitions(db)
+        base_time = datetime(2026, 8, 1)
+        db.bulk_insert_mappings(Bill, [
+            {
+                "occurred_at": base_time,
+                "merchant": f"构造流水-{index}",
+                "note": "",
+                "amount": -float(index % 19 + 1),
+                "category": "旧分类",
+                "tags": "旧标签",
+                "account_name": "测试账户",
+                "aggregate_excluded": False,
+                "tag_state_json": json.dumps({"category": "food" if index % 2 else "transport", "scenario": "daily"}),
+            }
+            for index in range(20_000)
+        ])
+        db.commit()
+
+    def override_db():
+        db = session_factory()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    try:
+        with TestClient(app) as client:
+            selected = client.put("/api/transactions/2/tag-state", json={"tag_state": {"category": "food", "scenario": "daily"}})
+            assert selected.status_code == 200
+            assert selected.json()["tag_state"] == {"category": "food", "scenario": "daily"}
+            assert {item["view_system_name"] for item in selected.json()["view_tags"]} == {"category", "scenario"}
+            assert client.put("/api/transactions/2/tag-state", json={"tag_state": {"消费类别": "餐饮"}}).status_code == 422
+            oversized = {f"v{index:02d}_{'x' * 58}": f"t{'y' * 62}" for index in range(30)}
+            assert client.put("/api/transactions/2/tag-state", json={"tag_state": oversized}).status_code == 422
+            assert client.put("/api/transactions/2/tag-state", content=b'{"tag_state": []}', headers={"Content-Type": "application/json"}).status_code == 422
+            assert client.get("/api/transactions?tag=category:food&page=1&page_size=100").json()["total"] == 10_000
+            start = perf_counter()
+            page_one = client.get("/api/transactions?tag=category:food&page=1&page_size=100")
+            page_two = client.get("/api/transactions?tag=category:food&page=2&page_size=100")
+            assert perf_counter() - start < 2.5
+            assert page_one.status_code == page_two.status_code == 200
+            assert len({item["id"] for item in page_one.json()["items"] + page_two.json()["items"]}) == 200
+    finally:
+        app.dependency_overrides.clear()
+
+    with engine.connect() as connection:
+        plan = connection.execute(text("EXPLAIN QUERY PLAN SELECT id FROM bills WHERE json_extract(tag_state_json, '$.category') = 'food' ORDER BY occurred_at DESC, id DESC LIMIT 100")).all()
+        assert "ix_bills_tag_state_category_page" in " ".join(str(row) for row in plan)
 
 
 def test_import_tag_audit_and_transfer_review(tmp_path):
@@ -51,8 +149,8 @@ def test_import_tag_audit_and_transfer_review(tmp_path):
             history = client.get(f"/api/bills/{bill['id']}/tags").json()
             assert len(history) == 2
             with session_factory() as db:
-                assert {"消费", "午餐"}.issubset({tag.name for tag in db.query(Tag).all()})
-                assert db.query(BillTag).filter_by(bill_id=bill["id"]).count() == 2
+                assert db.query(Tag).count() == 0
+                assert db.query(BillTag).filter_by(bill_id=bill["id"]).count() == 0
 
             first = client.post("/api/bills", json={"occurred_at": "2026-08-25T13:00:00", "merchant": "账户转出", "account_name": "招商银行", "amount": -100, "note": "测试转账"})
             second = client.post("/api/bills", json={"occurred_at": "2026-08-25T13:01:00", "merchant": "账户转入", "account_name": "微信零钱", "amount": 100, "note": "测试转账"})
@@ -164,7 +262,7 @@ def test_tagging_strategies_are_distinct_and_auditable(tmp_path):
             assert {item["strategy"] for item in history} == {"local_rules", "llm_suggestion", "manual", "authorised_auto"}
             with session_factory() as db:
                 assert db.query(TagAudit).filter_by(bill_id=bill_id, superseded=False).count() == 1
-                assert db.query(BillTag).filter_by(bill_id=bill_id).count() > 0
+                assert db.query(BillTag).filter_by(bill_id=bill_id).count() == 0
     finally:
         app.dependency_overrides.clear()
 
@@ -240,6 +338,10 @@ def test_workspace_and_update_script_are_present_and_safe():
         assert 'data-page="data"' in workspace
         assert 'data-page="tags"' in workspace
         assert 'data-page="candidates"' in workspace
+        assert '/tag-state' in workspace
+        assert 'data-tag-state' in workspace
+        assert 'system_name' in workspace
+        assert 'prompt(' not in workspace
         assert 'aria-label="重复与转移候选"' in workspace
         assert 'aria-hidden="true" data-ascii-fallback="[SUM]">[ ≡ ]' in workspace
         assert 'aria-hidden="true" data-ascii-fallback="[IMP]">[ ↓ ]' in workspace

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine, inspect, select, text
@@ -30,6 +31,7 @@ class Bill(Base):
     aggregate_excluded: Mapped[bool] = mapped_column(Boolean, default=False)
     transfer_group_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     duplicate_of_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tag_state_json: Mapped[str] = mapped_column(Text, default="{}")
 
 
 class Tag(Base):
@@ -44,17 +46,21 @@ class TagView(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(120), unique=True)
+    system_name: Mapped[str] = mapped_column(String(64), default="")
     archived: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[str] = mapped_column(DateTime(timezone=False))
 
 
 class ViewTag(Base):
     __tablename__ = "view_tags"
-    __table_args__ = (UniqueConstraint("view_id", "name", name="uq_view_tag_name"),)
+    __table_args__ = (
+        UniqueConstraint("view_id", "name", name="uq_view_tag_name"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     view_id: Mapped[int] = mapped_column(ForeignKey("tag_views.id"))
     name: Mapped[str] = mapped_column(String(120))
+    system_name: Mapped[str] = mapped_column(String(64), default="")
     is_unclassified: Mapped[bool] = mapped_column(Boolean, default=False)
     archived: Mapped[bool] = mapped_column(Boolean, default=False)
 
@@ -132,6 +138,7 @@ class TagAudit(Base):
     bill_id: Mapped[int] = mapped_column(ForeignKey("bills.id"))
     category: Mapped[str] = mapped_column(String(80))
     tags: Mapped[str] = mapped_column(String(500), default="")
+    tag_state_json: Mapped[str] = mapped_column(Text, default="{}")
     strategy: Mapped[str] = mapped_column(String(60))
     confidence: Mapped[float] = mapped_column(Float)
     provider: Mapped[str] = mapped_column(String(80), default="")
@@ -191,7 +198,11 @@ def init_db() -> None:
                 "aggregate_excluded": "BOOLEAN NOT NULL DEFAULT 0",
                 "transfer_group_id": "VARCHAR(64)",
                 "duplicate_of_id": "INTEGER",
+                "tag_state_json": "TEXT NOT NULL DEFAULT '{}'",
             },
+            "tag_views": {"system_name": "VARCHAR(64) NOT NULL DEFAULT ''"},
+            "view_tags": {"system_name": "VARCHAR(64) NOT NULL DEFAULT ''"},
+            "tag_audits": {"tag_state_json": "TEXT NOT NULL DEFAULT '{}'"},
             "review_candidates": {
                 "transfer_group_id": "VARCHAR(64)",
                 "member_bill_ids": "TEXT NOT NULL DEFAULT ''",
@@ -208,6 +219,10 @@ def init_db() -> None:
                 for name, definition in columns.items():
                     if name not in existing:
                         connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {definition}"))
+            connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_tag_views_system_name ON tag_views(system_name) WHERE system_name <> ''"))
+            connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_view_tags_view_system_name ON view_tags(view_id, system_name) WHERE system_name <> ''"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_bills_tag_state_category_page ON bills(json_extract(tag_state_json, '$.category'), occurred_at DESC, id DESC)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_bills_tag_state_scenario_page ON bills(json_extract(tag_state_json, '$.scenario'), occurred_at DESC, id DESC)"))
     with SessionLocal() as session:
         if not session.scalar(select(TagView.id).limit(1)):
             for name, tags in (("消费类别", ("餐饮", "交通", "住宿", "购物")), ("使用场景", ("日常", "计划", "意外"))):
@@ -217,16 +232,56 @@ def init_db() -> None:
                 session.add(ViewTag(view_id=view.id, name="未分类", is_unclassified=True))
                 for tag_name in tags:
                     session.add(ViewTag(view_id=view.id, name=tag_name))
+        default_view_names = ("category", "scenario")
+        default_tag_names = {
+            "category": ("food", "transport", "lodging", "shopping"),
+            "scenario": ("daily", "planned", "unexpected"),
+        }
+        for position, view in enumerate(session.scalars(select(TagView).order_by(TagView.id)).all()):
+            if not view.system_name:
+                view.system_name = default_view_names[position] if position < len(default_view_names) else f"view_{view.id}"
+            numbered = 0
+            tags_for_view = session.scalars(select(ViewTag).where(ViewTag.view_id == view.id).order_by(ViewTag.is_unclassified.desc(), ViewTag.id)).all()
+            for view_tag in tags_for_view:
+                if view_tag.is_unclassified:
+                    view_tag.system_name = "unclassified"
+                elif not view_tag.system_name:
+                    defaults = default_tag_names.get(view.system_name, ())
+                    view_tag.system_name = defaults[numbered] if numbered < len(defaults) else f"tag_{view_tag.id}"
+                    numbered += 1
+        session.flush()
+        # Legacy `tags` / `bill_tags` are retained for compatibility only.  The
+        # JSON-state migration deliberately never backfills or mutates them.
+        active_views = session.scalars(select(TagView).where(TagView.archived.is_(False)).order_by(TagView.id)).all()
+        default_state = {
+            view.system_name: session.scalar(
+                select(ViewTag.system_name).where(ViewTag.view_id == view.id, ViewTag.is_unclassified.is_(True))
+            )
+            for view in active_views
+        }
+        default_state = {key: value for key, value in default_state.items() if value}
         for bill in session.scalars(select(Bill)).all():
-            if not bill.tags or session.scalar(select(BillTag).where(BillTag.bill_id == bill.id)):
-                continue
-            for name in dict.fromkeys(tag.strip() for tag in bill.tags.split(",") if tag.strip()):
-                tag = session.scalar(select(Tag).where(Tag.name == name))
-                if not tag:
-                    tag = Tag(name=name)
-                    session.add(tag)
-                    session.flush()
-                session.add(BillTag(bill_id=bill.id, tag_id=tag.id))
+            try:
+                state = json.loads(bill.tag_state_json or "{}")
+            except (json.JSONDecodeError, TypeError):
+                state = None
+            if not isinstance(state, dict) or not state:
+                had_legacy_assignment = bool(bill.tags) or bool(
+                    session.scalar(select(BillViewTag.id).where(BillViewTag.bill_id == bill.id).limit(1))
+                )
+                bill.tag_state_json = json.dumps(default_state, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                if had_legacy_assignment:
+                    session.add(TagAudit(
+                        bill_id=bill.id,
+                        category=bill.category,
+                        tags="",
+                        tag_state_json=bill.tag_state_json,
+                        strategy="migration",
+                        confidence=1.0,
+                        provider="legacy_tag_state",
+                        superseded=False,
+                        created_at=datetime.now(),
+                    ))
         pending_transfers = session.scalars(select(ReviewCandidate).where(ReviewCandidate.candidate_type == "transfer", ReviewCandidate.status == "pending")).all()
         for candidate in pending_transfers:
             first, second = session.get(Bill, candidate.bill_id), session.get(Bill, candidate.related_bill_id)

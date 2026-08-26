@@ -23,6 +23,7 @@ class BillRead(BillCreate):
     transfer_group_id: str | None = None
     duplicate_of_id: int | None = None
     view_tags: list["ViewTagAssignmentRead"] = []
+    tag_state: dict[str, str] = Field(default_factory=dict)
 
 
 class AssetCreate(BaseModel):
@@ -63,6 +64,7 @@ class TagAuditRead(BaseModel):
     provider: str
     superseded: bool
     created_at: datetime
+    tag_state: dict[str, str] = Field(default_factory=dict)
 
 
 class ImportBatchRead(BaseModel):
@@ -168,6 +170,7 @@ class CandidatePageRead(BaseModel):
 class ViewTagRead(BaseModel):
     id: int
     name: str
+    system_name: str
     is_unclassified: bool
     archived: bool
 
@@ -175,12 +178,14 @@ class ViewTagRead(BaseModel):
 class TagViewRead(BaseModel):
     id: int
     name: str
+    system_name: str
     archived: bool
     tags: list[ViewTagRead]
 
 
 class TagViewCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
+    system_name: str | None = Field(default=None, pattern="^[a-z][a-z0-9_]{0,63}$")
 
 
 class TagViewUpdate(BaseModel):
@@ -190,6 +195,7 @@ class TagViewUpdate(BaseModel):
 
 class ViewTagCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
+    system_name: str | None = Field(default=None, pattern="^[a-z][a-z0-9_]{0,63}$")
 
 
 class ViewTagUpdate(BaseModel):
@@ -203,6 +209,8 @@ class ViewTagAssignmentRead(BaseModel):
     view_name: str
     tag_id: int
     tag_name: str
+    view_system_name: str
+    tag_system_name: str
     strategy: str
     confidence: float
 
@@ -211,6 +219,16 @@ class ViewTagAssignmentRequest(BaseModel):
     tag_id: int
     strategy: str = Field(default="manual", max_length=60)
     confidence: float = Field(default=0.95, ge=0, le=1)
+
+
+class TagStateAssignmentRequest(BaseModel):
+    tag_state: dict[str, str] = Field(default_factory=dict)
+    strategy: str = Field(default="manual", max_length=60)
+    confidence: float = Field(default=0.95, ge=0, le=1)
+
+
+class TagStateBulkAssignmentRequest(TagStateAssignmentRequest):
+    bill_ids: list[int] = Field(min_length=1, max_length=100)
 
 
 class TransactionPageRead(BaseModel):
