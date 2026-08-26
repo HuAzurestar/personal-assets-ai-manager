@@ -253,6 +253,9 @@ def test_workspace_and_update_script_are_present_and_safe():
         assert '批量他人转移' in workspace
         assert 'legacy_duplicate_needs_review' in workspace
         assert 'candidate-detail-dialog' in workspace
+        assert '不是重复（拒绝建议，全部计入）' in workspace
+        assert '原始字段（默认展开）' in workspace
+        assert '关闭候选详情，不改变候选或流水状态' in workspace
         assert 'data-batch="ignored"' in workspace
         assert "/api/transactions" in workspace
         css = client.get("/static/workspace.css").text
@@ -416,5 +419,54 @@ def test_candidate_detail_legacy_duplicate_and_transfer_tracking(tmp_path):
             assert client.get("/api/dashboard").json()["spending"] == -20
             assert client.post(f"/api/candidates/{external['id']}/undo").json()["status"] == "evidence_insufficient"
             assert client.get("/api/dashboard").json()["spending"] == -60
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_three_identical_bills_use_one_idempotent_duplicate_group(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'ledger.db'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    def override_db():
+        db = session_factory()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    try:
+        with TestClient(app) as client:
+            def create_bill(at):
+                response = client.post("/api/bills", json={"occurred_at": at, "merchant": "Didi fixture", "amount": -17.1, "account_name": "wallet"})
+                assert response.status_code == 201
+                return response.json()
+
+            first, second, third = create_bill("2026-08-25T09:00:00"), create_bill("2026-08-25T09:01:00"), create_bill("2026-08-25T09:02:00")
+            candidates = client.get("/api/candidates/page?candidate_type=duplicate").json()
+            assert candidates["total"] == 1
+            candidate = candidates["items"][0]
+            assert {bill["id"] for bill in candidate["member_bills"]} == {first["id"], second["id"], third["id"]}
+            detail = client.get(f"/api/candidates/{candidate['id']}/detail").json()
+            assert len(detail["members"]) == 3
+            assert {help["action"] for help in detail["decision_help"]} >= {"保留 A/B", "不是重复（拒绝建议）", "稍后处理"}
+            assert round(client.get("/api/dashboard").json()["spending"], 2) == -51.3
+
+            retained = client.post(f"/api/candidates/{candidate['id']}", json={"action": "resolve_duplicate", "retained_bill_id": first["id"]})
+            assert retained.status_code == 200
+            assert round(client.get("/api/dashboard").json()["spending"], 2) == -17.1
+            assert client.post(f"/api/candidates/{candidate['id']}", json={"action": "resolve_duplicate", "retained_bill_id": first["id"]}).status_code == 200
+            assert round(client.get("/api/dashboard").json()["spending"], 2) == -17.1
+            assert client.post(f"/api/candidates/{candidate['id']}/undo").json()["status"] == "pending"
+            assert round(client.get("/api/dashboard").json()["spending"], 2) == -51.3
+
+            rejected = client.post(f"/api/candidates/{candidate['id']}", json={"action": "reject_duplicate"})
+            assert rejected.status_code == 200 and rejected.json()["status"] == "duplicate_rejected"
+            assert round(client.get("/api/dashboard").json()["spending"], 2) == -51.3
+            assert client.post(f"/api/candidates/{candidate['id']}/undo").json()["status"] == "pending"
+            deferred = client.post(f"/api/candidates/{candidate['id']}", json={"action": "deferred"})
+            assert deferred.status_code == 200 and deferred.json()["status"] == "deferred"
+            assert round(client.get("/api/dashboard").json()["spending"], 2) == -51.3
     finally:
         app.dependency_overrides.clear()

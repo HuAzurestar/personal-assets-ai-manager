@@ -26,6 +26,9 @@ APP_DIR = Path(__file__).parent
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
+    with SessionLocal() as db:
+        _consolidate_duplicate_candidates(db)
+        db.commit()
     yield
 
 
@@ -115,6 +118,52 @@ def _apply_tag(db: Session, bill: Bill, strategy: str, category: str, tags: list
     return audit
 
 
+def _candidate_member_ids(candidate: ReviewCandidate) -> list[int]:
+    try:
+        ids = json.loads(candidate.member_bill_ids) if candidate.member_bill_ids else []
+    except json.JSONDecodeError:
+        ids = []
+    return list(dict.fromkeys([*ids, candidate.bill_id, candidate.related_bill_id]))
+
+
+def _candidate_members(db: Session, candidate: ReviewCandidate) -> list[Bill]:
+    members = [db.get(Bill, bill_id) for bill_id in _candidate_member_ids(candidate)]
+    return sorted((bill for bill in members if bill), key=lambda bill: (bill.occurred_at, bill.id))
+
+
+def _duplicate_component(db: Session, bill: Bill) -> list[Bill]:
+    matches = db.scalars(select(Bill).where(Bill.merchant == bill.merchant, Bill.amount == bill.amount).order_by(Bill.occurred_at, Bill.id)).all()
+    components: list[list[Bill]] = []
+    for match in matches:
+        if not components or (match.occurred_at - components[-1][-1].occurred_at).total_seconds() > 300:
+            components.append([match])
+        else:
+            components[-1].append(match)
+    return next((component for component in components if any(member.id == bill.id for member in component)), [bill])
+
+
+def _consolidate_duplicate_candidates(db: Session) -> None:
+    candidates = db.scalars(select(ReviewCandidate).where(ReviewCandidate.candidate_type == "duplicate", ReviewCandidate.status.in_(("pending", "legacy_duplicate_needs_review"))).order_by(ReviewCandidate.id)).all()
+    groups: list[set[int]] = []
+    grouped_candidates: list[list[ReviewCandidate]] = []
+    for candidate in candidates:
+        ids = set(_candidate_member_ids(candidate))
+        related = [index for index, member_ids in enumerate(groups) if ids & member_ids]
+        if not related:
+            groups.append(ids); grouped_candidates.append([candidate]); continue
+        target = related[0]
+        groups[target].update(ids); grouped_candidates[target].append(candidate)
+        for index in reversed(related[1:]):
+            groups[target].update(groups.pop(index)); grouped_candidates[target].extend(grouped_candidates.pop(index))
+    for ids, group_candidates in zip(groups, grouped_candidates):
+        members = sorted((db.get(Bill, bill_id) for bill_id in ids), key=lambda bill: (bill.occurred_at, bill.id))
+        canonical = group_candidates[0]
+        canonical.bill_id, canonical.related_bill_id = members[0].id, members[1].id
+        canonical.member_bill_ids = json.dumps([member.id for member in members])
+        for duplicate in group_candidates[1:]:
+            db.delete(duplicate)
+
+
 def _generate_candidates(db: Session, bill: Bill) -> int:
     created = 0
     prior_bills = db.scalars(select(Bill).where(Bill.id != bill.id)).all()
@@ -123,7 +172,18 @@ def _generate_candidates(db: Session, bill: Bill) -> int:
         if seconds_apart > 300 or abs(abs(bill.amount) - abs(other.amount)) > 0.01:
             continue
         if bill.amount == other.amount and bill.merchant == other.merchant:
-            candidate_type, confidence, reason, status = "duplicate", 0.92, "金额、交易方和 5 分钟内交易时间一致", "pending"
+            members = _duplicate_component(db, bill)
+            if len(members) < 2:
+                continue
+            candidate_type, confidence, reason, status = "duplicate", 0.92, f"{len(members)} 笔金额、交易方一致且相邻时间不超过 5 分钟；作为同一重复候选组处理", "pending"
+            member_ids = {member.id for member in members}
+            pending_duplicates = db.scalars(select(ReviewCandidate).where(ReviewCandidate.candidate_type == "duplicate", ReviewCandidate.status.in_(("pending", "legacy_duplicate_needs_review")))).all()
+            existing = next((candidate for candidate in pending_duplicates if member_ids & set(_candidate_member_ids(candidate))), None)
+            if existing:
+                existing.bill_id, existing.related_bill_id = members[0].id, members[1].id
+                existing.member_bill_ids = json.dumps([member.id for member in members])
+                existing.reason = reason
+                return 0
         elif bill.amount * other.amount < 0:
             candidate_type = "transfer"
             if _has_distinct_account_evidence(bill, other):
@@ -132,8 +192,10 @@ def _generate_candidates(db: Session, bill: Bill) -> int:
                 confidence, reason, status = 0.42, "5 分钟内同额反向，但缺少两个不同账户证据；仅供人工核验，不能自动认定为个人转移", "evidence_insufficient"
         else:
             continue
-        db.add(ReviewCandidate(candidate_type=candidate_type, bill_id=bill.id, related_bill_id=other.id, confidence=confidence, reason=reason, status=status, created_at=datetime.now()))
+        db.add(ReviewCandidate(candidate_type=candidate_type, bill_id=members[0].id if candidate_type == "duplicate" else bill.id, related_bill_id=members[1].id if candidate_type == "duplicate" else other.id, member_bill_ids=json.dumps([member.id for member in members]) if candidate_type == "duplicate" else "", confidence=confidence, reason=reason, status=status, created_at=datetime.now()))
         created += 1
+        if candidate_type == "duplicate":
+            return created
     return created
 
 
@@ -152,6 +214,7 @@ def _candidate_effect(candidate: ReviewCandidate) -> str:
         "third_party_transfer_grouped": "已确认他人资产转移/代收代付；两笔原始流水与标签保留并标记为不追踪收支，不计入收入/支出、净额或趋势。",
         "transfer_grouped": "已归入同一转移组；两笔保留但不计入收入/支出汇总。",
         "duplicate_excluded": "已保留指定流水；另一笔保留原始记录但不计入收支汇总。",
+        "duplicate_rejected": "已拒绝重复建议；候选组所有原始流水继续计入收入、支出、净额和趋势。",
         "legacy_transfer_excluded": "旧版已按转移排除收支；保留原始流水，但没有可补回的账户证据。",
         "legacy_duplicate_needs_review": "旧版曾标记为已确认，但未保存保留哪一笔；两笔仍独立计入收支。",
     }
@@ -172,6 +235,7 @@ def candidate_read(db: Session, candidate: ReviewCandidate) -> ReviewCandidateRe
         undo_available=bool(db.scalar(select(CandidateActionLog.id).where(CandidateActionLog.candidate_id == candidate.id, CandidateActionLog.undone.is_(False)).order_by(CandidateActionLog.id.desc()))),
         aggregation_effect=_candidate_effect(candidate),
         created_at=candidate.created_at,
+        member_bills=[bill_read(db, bill) for bill in _candidate_members(db, candidate)],
         bill=bill_read(db, db.get(Bill, candidate.bill_id)),
         related_bill=bill_read(db, db.get(Bill, candidate.related_bill_id)),
     )
@@ -593,7 +657,7 @@ def page_candidates(
     return CandidatePageRead(items=[candidate_read(db, candidate) for candidate in candidates], total=total, page=page, page_size=page_size)
 
 
-def _candidate_snapshot(candidate: ReviewCandidate, first: Bill, second: Bill) -> str:
+def _candidate_snapshot(candidate: ReviewCandidate, members: list[Bill]) -> str:
     return json.dumps({
         "candidate": {
             "status": candidate.status,
@@ -607,19 +671,24 @@ def _candidate_snapshot(candidate: ReviewCandidate, first: Bill, second: Bill) -
                 "aggregate_excluded": bill.aggregate_excluded,
                 "transfer_group_id": bill.transfer_group_id,
                 "duplicate_of_id": bill.duplicate_of_id,
-            } for bill in (first, second)
+            } for bill in members
         },
     }, ensure_ascii=False)
 
 
 def _apply_candidate_decision(db: Session, candidate: ReviewCandidate, payload: CandidateDecision) -> None:
+    if candidate.status == "duplicate_excluded" and payload.action == "resolve_duplicate" and candidate.retained_bill_id == payload.retained_bill_id:
+        return
+    if candidate.status == "duplicate_rejected" and payload.action == "reject_duplicate":
+        return
     actionable_statuses = {"pending", "evidence_insufficient", "legacy_duplicate_needs_review"}
     if candidate.status not in actionable_statuses:
         raise HTTPException(status_code=409, detail="Candidate has already been handled; undo it before applying another decision")
+    members = _candidate_members(db, candidate)
     first, second = db.get(Bill, candidate.bill_id), db.get(Bill, candidate.related_bill_id)
-    if not first or not second:
+    if not first or not second or len(members) < 2:
         raise HTTPException(status_code=409, detail="Candidate evidence is incomplete")
-    db.add(CandidateActionLog(candidate_id=candidate.id, action=payload.action, before_state=_candidate_snapshot(candidate, first, second), created_at=datetime.now()))
+    db.add(CandidateActionLog(candidate_id=candidate.id, action=payload.action, before_state=_candidate_snapshot(candidate, members), created_at=datetime.now()))
     if payload.action in {"confirm_transfer", "confirm_personal_transfer", "confirm_third_party_transfer"}:
         if candidate.candidate_type != "transfer":
             raise HTTPException(status_code=422, detail="Only transfer candidates can be grouped as transfers")
@@ -635,14 +704,19 @@ def _apply_candidate_decision(db: Session, candidate: ReviewCandidate, payload: 
     elif payload.action == "resolve_duplicate":
         if candidate.candidate_type != "duplicate":
             raise HTTPException(status_code=422, detail="Only duplicate candidates can resolve a retained bill")
-        if payload.retained_bill_id not in {first.id, second.id}:
-            raise HTTPException(status_code=422, detail="Select one of the two candidate bills to retain")
-        retained = first if payload.retained_bill_id == first.id else second
-        excluded = second if retained.id == first.id else first
+        if payload.retained_bill_id not in {bill.id for bill in members}:
+            raise HTTPException(status_code=422, detail="Select one of the duplicate-group bills to retain")
+        retained = next(bill for bill in members if bill.id == payload.retained_bill_id)
         candidate.retained_bill_id = retained.id
         candidate.status = "duplicate_excluded"
-        excluded.aggregate_excluded = True
-        excluded.duplicate_of_id = retained.id
+        for excluded in members:
+            if excluded.id != retained.id:
+                excluded.aggregate_excluded = True
+                excluded.duplicate_of_id = retained.id
+    elif payload.action == "reject_duplicate":
+        if candidate.candidate_type != "duplicate":
+            raise HTTPException(status_code=422, detail="Only duplicate candidates can reject a duplicate suggestion")
+        candidate.status = "duplicate_rejected"
     else:
         candidate.status = payload.action
     candidate.resolved_at = datetime.now()
@@ -735,7 +809,16 @@ def candidate_detail(candidate_id: int, db: Session = Depends(get_db)):
         "candidate": candidate_read(db, candidate),
         "first": detail_for(candidate.bill_id),
         "second": detail_for(candidate.related_bill_id),
+        "members": [detail_for(bill.id) for bill in _candidate_members(db, candidate)],
         "match_basis": candidate.reason,
+        "decision_help": (
+            [
+                {"action": "保留 A/B", "effect": "只保留所选流水参与收入、支出、净额和趋势；同组其他原始流水保留但不计入汇总。"},
+                {"action": "不是重复（拒绝建议）", "effect": "同组所有流水继续计入汇总，不删除或修改原始字段。"},
+                {"action": "稍后处理", "effect": "保持待处理的统计状态，汇总不变。"},
+                {"action": "撤销/回退", "effect": "恢复该次处理前的候选状态与同组所有流水聚合字段。"},
+            ] if candidate.candidate_type == "duplicate" else []
+        ),
         "actions": list_candidate_actions(candidate_id, db),
     }
 

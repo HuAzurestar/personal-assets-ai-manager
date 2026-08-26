@@ -78,6 +78,56 @@ function addCandidateTransferBatchActions() {
   actions.insertAdjacentHTML("beforeend", `<button data-batch="confirm_personal_transfer" title="仅选择具有两个不同账户证据的转移候选">批量个人转移</button><button data-batch="confirm_third_party_transfer" title="仅选择转移候选；两笔标记为不追踪收支">批量他人转移</button>`);
 }
 
+function duplicateMemberName(index) { return String.fromCharCode(65 + index); }
+
+function candidateDetailSide(label, detail) {
+  const bill = detail.bill;
+  const rows = [["流水 ID", bill.id], ["时间", new Date(bill.occurred_at).toLocaleString()], ["交易方", bill.merchant], ["备注", bill.note], ["金额", money.format(bill.amount)], ["账户/方向", `${bill.account_name} / ${bill.direction}`], ["分类/标签", `${bill.category} / ${bill.tags.join(", ") || "—"}`], ["流水号", detail.source.source_reference || "—"], ["来源", detail.source.source_type || "手工"], ["导入批次", detail.source.import_batch_id || "—"], ["批次文件", detail.source.batch_filename || "—"], ["聚合", bill.aggregate_excluded ? "不计入汇总" : "计入收入、支出、净额和趋势"]];
+  return `<section><h3>${label}</h3><dl>${rows.map(([name, value]) => `<dt>${escapeHtml(name)}</dt><dd>${escapeHtml(value)}</dd>`).join("")}</dl><details open><summary>原始字段（默认展开）</summary><pre>${escapeHtml(JSON.stringify(detail.raw_fields, null, 2))}</pre></details></section>`;
+}
+
+function candidateRow(item) {
+  const kind = item.candidate_type === "duplicate" ? "重复候选组" : "转移/人工核验";
+  const actionable = ["pending", "evidence_insufficient", "legacy_duplicate_needs_review"].includes(item.status);
+  const members = item.member_bills?.length ? item.member_bills : [item.bill, item.related_bill];
+  const duplicateActions = members.map((bill, index) => `<button data-candidate="resolve_duplicate" data-id="${item.id}" data-retained="${bill.id}" title="保留 ${duplicateMemberName(index)}；同组其他流水不计入收入、支出、净额和趋势">保留 ${duplicateMemberName(index)}（其他不计入汇总）</button>`).join("") + `<button data-candidate="reject_duplicate" data-id="${item.id}" title="拒绝重复建议；同组全部流水继续计入汇总">不是重复（拒绝建议，全部计入）</button><button data-candidate="deferred" data-id="${item.id}" title="暂不处理；汇总不变">稍后处理</button>`;
+  const transferActions = `<button data-candidate="confirm_personal_transfer" data-id="${item.id}" title="确认个人账户间转移；需要不同账户证据">个人转移</button><button data-candidate="confirm_third_party_transfer" data-id="${item.id}" title="确认他人资产转移/代收代付；两笔不追踪收支">他人转移</button><button data-candidate="ignored" data-id="${item.id}" title="拒绝转移建议；两笔继续计入汇总">拒绝建议</button><button data-candidate="deferred" data-id="${item.id}" title="暂不处理；汇总不变">稍后处理</button>`;
+  const actions = actionable ? (item.candidate_type === "duplicate" ? duplicateActions : transferActions) : "";
+  return `<tr><td>${actionable ? `<input type="checkbox" data-candidate-select="${item.id}" aria-label="选择${kind} ${item.id}">` : ""}</td><td>${kind}<br><small>${members.length} 笔关联流水；置信度 ${Math.round(item.confidence * 100)}%（仅建议）</small></td><td class="evidence">${members.map((bill, index) => `${duplicateMemberName(index)}：${candidateEvidence(bill)}`).join("<hr>")}<hr><small>匹配依据：${escapeHtml(item.reason)}</small></td><td><span class="candidate-status">${escapeHtml(item.status)}</span><br><small>${escapeHtml(item.aggregation_effect)}</small></td><td class="candidate-actions"><button data-candidate-detail="${item.id}" title="查看完整流水、来源、批次、原始字段和处理说明">详情</button>${actions}${item.undo_available ? `<button data-candidate-undo="${item.id}" title="恢复处理前候选和所有关联流水的聚合状态">撤销/回退</button>` : ""}</td></tr>`;
+}
+
+function candidateDetailActions(candidate) {
+  const actionable = ["pending", "evidence_insufficient", "legacy_duplicate_needs_review"].includes(candidate.status);
+  if (!actionable) return candidate.undo_available ? `<button data-candidate-undo="${candidate.id}">撤销/回退</button>` : "";
+  const members = candidate.member_bills?.length ? candidate.member_bills : [candidate.bill, candidate.related_bill];
+  if (candidate.candidate_type === "duplicate") return members.map((bill, index) => `<button data-candidate="resolve_duplicate" data-id="${candidate.id}" data-retained="${bill.id}">保留 ${duplicateMemberName(index)}（其他不计入汇总）</button>`).join("") + `<button data-candidate="reject_duplicate" data-id="${candidate.id}">不是重复（拒绝建议，全部计入）</button><button data-candidate="deferred" data-id="${candidate.id}">稍后处理</button>`;
+  return `<button data-candidate="confirm_personal_transfer" data-id="${candidate.id}">个人转移</button><button data-candidate="confirm_third_party_transfer" data-id="${candidate.id}">他人转移</button><button data-candidate="ignored" data-id="${candidate.id}">拒绝建议</button><button data-candidate="deferred" data-id="${candidate.id}">稍后处理</button>`;
+}
+
+async function showCandidateDetail(candidateId) {
+  const detail = await request(`/api/candidates/${candidateId}/detail`);
+  document.querySelector("#candidate-detail-dialog")?.remove();
+  const dialog = document.createElement("dialog");
+  dialog.id = "candidate-detail-dialog";
+  dialog.className = "candidate-detail-dialog";
+  dialog.innerHTML = `<form method="dialog"><button class="dialog-close" aria-label="关闭候选详情，不改变候选或流水状态">关闭</button></form><h2>候选 #${detail.candidate.id} 详情</h2><div class="candidate-actions" data-detail-actions>${candidateDetailActions(detail.candidate)}</div><p><strong>当前状态：</strong>${escapeHtml(detail.candidate.status)}；<strong>匹配依据：</strong>${escapeHtml(detail.match_basis)}</p><p>${escapeHtml(detail.candidate.aggregation_effect)}</p><section><h3>处理后果</h3><ul>${(detail.decision_help || []).map(help => `<li><strong>${escapeHtml(help.action)}：</strong>${escapeHtml(help.effect)}</li>`).join("") || "<li>请根据账户、方向、原始字段和来源证据人工核验。</li>"}</ul></section><div class="candidate-detail-grid">${(detail.members || [detail.first, detail.second]).map((member, index) => candidateDetailSide(`流水 ${duplicateMemberName(index)}`, member)).join("")}</div><details open><summary>处理审计</summary><pre>${escapeHtml(JSON.stringify(detail.actions, null, 2))}</pre></details>`;
+  document.body.append(dialog);
+  dialog.addEventListener("close", () => dialog.remove());
+  dialog.querySelector("[data-detail-actions]").addEventListener("click", async event => {
+    const undo = event.target.closest("[data-candidate-undo]");
+    const action = event.target.closest("[data-candidate]");
+    if (!undo && !action) return;
+    try {
+      if (undo) await request(`/api/candidates/${undo.dataset.candidateUndo}/undo`, { method: "POST" });
+      if (action) { const payload = { action: action.dataset.candidate }; if (action.dataset.retained) payload.retained_bill_id = Number(action.dataset.retained); await request(`/api/candidates/${action.dataset.id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }); }
+      dialog.close();
+      await loadCandidates();
+      if (state.page === "summary") await renderSummary();
+    } catch (error) { alert(error.message); }
+  });
+  dialog.showModal();
+}
+
 new MutationObserver(addCandidateTransferBatchActions).observe(document.querySelector("#candidates-page"), { childList: true, subtree: true });
 
 setPage(localStorage.getItem("paam-page") || "summary");

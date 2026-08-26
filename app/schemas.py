@@ -131,6 +131,7 @@ class ReviewCandidateRead(BaseModel):
     confidence: float
     reason: str
     status: str
+    member_bills: list[BillRead] = Field(default_factory=list)
     transfer_group_id: str | None = None
     transfer_kind: str | None = None
     retained_bill_id: int | None = None
@@ -143,13 +144,13 @@ class ReviewCandidateRead(BaseModel):
 
 
 class CandidateDecision(BaseModel):
-    action: str = Field(pattern="^(confirm_transfer|confirm_personal_transfer|confirm_third_party_transfer|resolve_duplicate|ignored|deferred)$")
+    action: str = Field(pattern="^(confirm_transfer|confirm_personal_transfer|confirm_third_party_transfer|resolve_duplicate|reject_duplicate|ignored|deferred)$")
     retained_bill_id: int | None = None
 
 
 class CandidateBatchItem(BaseModel):
     candidate_id: int
-    action: str = Field(pattern="^(confirm_transfer|confirm_personal_transfer|confirm_third_party_transfer|resolve_duplicate|ignored|deferred)$")
+    action: str = Field(pattern="^(confirm_transfer|confirm_personal_transfer|confirm_third_party_transfer|resolve_duplicate|reject_duplicate|ignored|deferred)$")
     retained_bill_id: int | None = None
 
 
