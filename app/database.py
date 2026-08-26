@@ -150,6 +150,8 @@ class ReviewCandidate(Base):
     reason: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(64), default="pending")
     member_bill_ids: Mapped[str] = mapped_column(Text, default="")
+    group_fingerprint: Mapped[str] = mapped_column(String(256), default="")
+    superseded_by_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     transfer_group_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     transfer_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
     retained_bill_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -193,6 +195,8 @@ def init_db() -> None:
             "review_candidates": {
                 "transfer_group_id": "VARCHAR(64)",
                 "member_bill_ids": "TEXT NOT NULL DEFAULT ''",
+                "group_fingerprint": "VARCHAR(256) NOT NULL DEFAULT ''",
+                "superseded_by_id": "INTEGER",
                 "transfer_kind": "VARCHAR(32)",
                 "retained_bill_id": "INTEGER",
                 "resolved_at": "DATETIME",

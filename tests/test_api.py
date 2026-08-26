@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 import shutil
 import subprocess
@@ -468,5 +469,41 @@ def test_three_identical_bills_use_one_idempotent_duplicate_group(tmp_path):
             deferred = client.post(f"/api/candidates/{candidate['id']}", json={"action": "deferred"})
             assert deferred.status_code == 200 and deferred.json()["status"] == "deferred"
             assert round(client.get("/api/dashboard").json()["spending"], 2) == -51.3
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_duplicate_group_migration_merges_historical_subsets_and_reloads(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'ledger.db'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    def override_db():
+        db = session_factory()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    try:
+        with TestClient(app) as client:
+            bills = [client.post("/api/bills", json={"occurred_at": f"2026-08-25T10:0{index}:00", "merchant": "Didi migration", "amount": -8.0, "account_name": "wallet"}).json() for index in range(4)]
+            with session_factory() as db:
+                db.add_all([
+                    ReviewCandidate(candidate_type="duplicate", bill_id=bills[0]["id"], related_bill_id=bills[1]["id"], member_bill_ids=json.dumps([bills[0]["id"], bills[1]["id"]]), confidence=.92, reason="legacy AB", status="pending", created_at=datetime.now()),
+                    ReviewCandidate(candidate_type="duplicate", bill_id=bills[0]["id"], related_bill_id=bills[2]["id"], member_bill_ids=json.dumps([bills[0]["id"], bills[1]["id"], bills[2]["id"]]), confidence=.92, reason="legacy ABC", status="pending", created_at=datetime.now()),
+                ])
+                db.commit()
+            page = client.get("/api/candidates/page?candidate_type=duplicate").json()
+            assert page["total"] == 1
+            candidate = page["items"][0]
+            assert {member["id"] for member in candidate["member_bills"]} == {bill["id"] for bill in bills}
+            assert round(client.get("/api/dashboard").json()["spending"], 2) == -32.0
+            assert client.post(f"/api/candidates/{candidate['id']}", json={"action": "resolve_duplicate", "retained_bill_id": bills[0]["id"]}).status_code == 200
+            assert round(client.get("/api/dashboard").json()["spending"], 2) == -8.0
+            assert client.get("/api/candidates/page?candidate_type=duplicate").json()["total"] == 1
+            assert client.post(f"/api/candidates/{candidate['id']}/undo").status_code == 200
+            assert round(client.get("/api/dashboard").json()["spending"], 2) == -32.0
     finally:
         app.dependency_overrides.clear()

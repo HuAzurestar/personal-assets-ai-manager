@@ -131,6 +131,12 @@ def _candidate_members(db: Session, candidate: ReviewCandidate) -> list[Bill]:
     return sorted((bill for bill in members if bill), key=lambda bill: (bill.occurred_at, bill.id))
 
 
+def _canonical_candidate(db: Session, candidate: ReviewCandidate | None) -> ReviewCandidate | None:
+    while candidate and candidate.status == "superseded_duplicate_group" and candidate.superseded_by_id:
+        candidate = db.get(ReviewCandidate, candidate.superseded_by_id)
+    return candidate
+
+
 def _duplicate_component(db: Session, bill: Bill) -> list[Bill]:
     matches = db.scalars(select(Bill).where(Bill.merchant == bill.merchant, Bill.amount == bill.amount).order_by(Bill.occurred_at, Bill.id)).all()
     components: list[list[Bill]] = []
@@ -143,11 +149,15 @@ def _duplicate_component(db: Session, bill: Bill) -> list[Bill]:
 
 
 def _consolidate_duplicate_candidates(db: Session) -> None:
-    candidates = db.scalars(select(ReviewCandidate).where(ReviewCandidate.candidate_type == "duplicate", ReviewCandidate.status.in_(("pending", "legacy_duplicate_needs_review"))).order_by(ReviewCandidate.id)).all()
+    candidates = db.scalars(select(ReviewCandidate).where(ReviewCandidate.candidate_type == "duplicate", ReviewCandidate.status != "superseded_duplicate_group").order_by(ReviewCandidate.id)).all()
     groups: list[set[int]] = []
     grouped_candidates: list[list[ReviewCandidate]] = []
     for candidate in candidates:
-        ids = set(_candidate_member_ids(candidate))
+        ids: set[int] = set()
+        for bill_id in _candidate_member_ids(candidate):
+            bill = db.get(Bill, bill_id)
+            if bill:
+                ids.update(member.id for member in _duplicate_component(db, bill))
         related = [index for index, member_ids in enumerate(groups) if ids & member_ids]
         if not related:
             groups.append(ids); grouped_candidates.append([candidate]); continue
@@ -157,11 +167,25 @@ def _consolidate_duplicate_candidates(db: Session) -> None:
             groups[target].update(groups.pop(index)); grouped_candidates[target].extend(grouped_candidates.pop(index))
     for ids, group_candidates in zip(groups, grouped_candidates):
         members = sorted((db.get(Bill, bill_id) for bill_id in ids), key=lambda bill: (bill.occurred_at, bill.id))
-        canonical = group_candidates[0]
+        logs_by_candidate = {candidate.id: db.scalars(select(CandidateActionLog).where(CandidateActionLog.candidate_id == candidate.id).order_by(CandidateActionLog.created_at.desc(), CandidateActionLog.id.desc())).all() for candidate in group_candidates}
+        processed = [candidate for candidate in group_candidates if candidate.status not in {"pending", "legacy_duplicate_needs_review"}]
+        canonical = max(processed, key=lambda candidate: (logs_by_candidate[candidate.id][0].created_at if logs_by_candidate[candidate.id] else candidate.created_at, candidate.id), default=group_candidates[0])
+        fingerprint = "duplicate:" + ":".join(str(member.id) for member in members)
         canonical.bill_id, canonical.related_bill_id = members[0].id, members[1].id
         canonical.member_bill_ids = json.dumps([member.id for member in members])
-        for duplicate in group_candidates[1:]:
-            db.delete(duplicate)
+        canonical.group_fingerprint = fingerprint
+        if canonical.status == "duplicate_excluded" and canonical.retained_bill_id in ids:
+            for member in members:
+                member.aggregate_excluded = member.id != canonical.retained_bill_id
+                member.duplicate_of_id = canonical.retained_bill_id if member.id != canonical.retained_bill_id else None
+        for duplicate in group_candidates:
+            if duplicate.id == canonical.id:
+                continue
+            for log in logs_by_candidate[duplicate.id]:
+                log.candidate_id = canonical.id
+            duplicate.status = "superseded_duplicate_group"
+            duplicate.superseded_by_id = canonical.id
+            duplicate.group_fingerprint = fingerprint
 
 
 def _generate_candidates(db: Session, bill: Bill) -> int:
@@ -182,6 +206,7 @@ def _generate_candidates(db: Session, bill: Bill) -> int:
             if existing:
                 existing.bill_id, existing.related_bill_id = members[0].id, members[1].id
                 existing.member_bill_ids = json.dumps([member.id for member in members])
+                existing.group_fingerprint = "duplicate:" + ":".join(str(member.id) for member in members)
                 existing.reason = reason
                 return 0
         elif bill.amount * other.amount < 0:
@@ -192,7 +217,7 @@ def _generate_candidates(db: Session, bill: Bill) -> int:
                 confidence, reason, status = 0.42, "5 分钟内同额反向，但缺少两个不同账户证据；仅供人工核验，不能自动认定为个人转移", "evidence_insufficient"
         else:
             continue
-        db.add(ReviewCandidate(candidate_type=candidate_type, bill_id=members[0].id if candidate_type == "duplicate" else bill.id, related_bill_id=members[1].id if candidate_type == "duplicate" else other.id, member_bill_ids=json.dumps([member.id for member in members]) if candidate_type == "duplicate" else "", confidence=confidence, reason=reason, status=status, created_at=datetime.now()))
+        db.add(ReviewCandidate(candidate_type=candidate_type, bill_id=members[0].id if candidate_type == "duplicate" else bill.id, related_bill_id=members[1].id if candidate_type == "duplicate" else other.id, member_bill_ids=json.dumps([member.id for member in members]) if candidate_type == "duplicate" else "", group_fingerprint=("duplicate:" + ":".join(str(member.id) for member in members)) if candidate_type == "duplicate" else "", confidence=confidence, reason=reason, status=status, created_at=datetime.now()))
         created += 1
         if candidate_type == "duplicate":
             return created
@@ -634,7 +659,9 @@ def list_tag_audits(bill_id: int, db: Session = Depends(get_db)):
 
 @app.get("/api/candidates", response_model=list[ReviewCandidateRead])
 def list_candidates(db: Session = Depends(get_db)):
-    candidates = db.scalars(select(ReviewCandidate).order_by(ReviewCandidate.created_at.desc())).all()
+    _consolidate_duplicate_candidates(db)
+    db.commit()
+    candidates = db.scalars(select(ReviewCandidate).where(ReviewCandidate.status != "superseded_duplicate_group").order_by(ReviewCandidate.created_at.desc())).all()
     return [candidate_read(db, candidate) for candidate in candidates]
 
 
@@ -646,7 +673,9 @@ def page_candidates(
     candidate_type: str | None = None,
     db: Session = Depends(get_db),
 ):
-    filters = []
+    _consolidate_duplicate_candidates(db)
+    db.commit()
+    filters = [ReviewCandidate.status != "superseded_duplicate_group"]
     if status:
         filters.append(ReviewCandidate.status == status)
     if candidate_type:
@@ -742,7 +771,8 @@ def decide_candidates_batch(payload: CandidateBatchDecision, db: Session = Depen
 
 @app.post("/api/candidates/{candidate_id}", response_model=ReviewCandidateRead)
 def decide_candidate(candidate_id: int, payload: CandidateDecision, db: Session = Depends(get_db)):
-    candidate = db.get(ReviewCandidate, candidate_id)
+    _consolidate_duplicate_candidates(db)
+    candidate = _canonical_candidate(db, db.get(ReviewCandidate, candidate_id))
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
     _apply_candidate_decision(db, candidate, payload)
@@ -753,7 +783,8 @@ def decide_candidate(candidate_id: int, payload: CandidateDecision, db: Session 
 
 @app.post("/api/candidates/{candidate_id}/undo", response_model=ReviewCandidateRead)
 def undo_candidate(candidate_id: int, db: Session = Depends(get_db)):
-    candidate = db.get(ReviewCandidate, candidate_id)
+    _consolidate_duplicate_candidates(db)
+    candidate = _canonical_candidate(db, db.get(ReviewCandidate, candidate_id))
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
     log = db.scalar(select(CandidateActionLog).where(CandidateActionLog.candidate_id == candidate_id, CandidateActionLog.undone.is_(False)).order_by(CandidateActionLog.id.desc()))
@@ -781,7 +812,8 @@ def undo_candidate(candidate_id: int, db: Session = Depends(get_db)):
 
 @app.get("/api/candidates/{candidate_id}/detail")
 def candidate_detail(candidate_id: int, db: Session = Depends(get_db)):
-    candidate = db.get(ReviewCandidate, candidate_id)
+    _consolidate_duplicate_candidates(db)
+    candidate = _canonical_candidate(db, db.get(ReviewCandidate, candidate_id))
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
 
@@ -819,15 +851,17 @@ def candidate_detail(candidate_id: int, db: Session = Depends(get_db)):
                 {"action": "撤销/回退", "effect": "恢复该次处理前的候选状态与同组所有流水聚合字段。"},
             ] if candidate.candidate_type == "duplicate" else []
         ),
-        "actions": list_candidate_actions(candidate_id, db),
+        "actions": list_candidate_actions(candidate.id, db),
     }
 
 
 @app.get("/api/candidates/{candidate_id}/actions")
 def list_candidate_actions(candidate_id: int, db: Session = Depends(get_db)):
-    if not db.get(ReviewCandidate, candidate_id):
+    _consolidate_duplicate_candidates(db)
+    candidate = _canonical_candidate(db, db.get(ReviewCandidate, candidate_id))
+    if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
-    logs = db.scalars(select(CandidateActionLog).where(CandidateActionLog.candidate_id == candidate_id).order_by(CandidateActionLog.created_at.desc(), CandidateActionLog.id.desc())).all()
+    logs = db.scalars(select(CandidateActionLog).where(CandidateActionLog.candidate_id == candidate.id).order_by(CandidateActionLog.created_at.desc(), CandidateActionLog.id.desc())).all()
     return [{"id": log.id, "action": log.action, "created_at": log.created_at, "undone": log.undone, "undone_at": log.undone_at} for log in logs]
 
 
