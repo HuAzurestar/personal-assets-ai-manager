@@ -3,8 +3,9 @@ from __future__ import annotations
 import csv
 import hashlib
 import io
+import json
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from pathlib import Path, PurePosixPath
 
@@ -30,6 +31,7 @@ class ParsedFile:
     archive_entry: str | None
     columns: list[str]
     rows: list[dict[str, str]]
+    row_numbers: list[int]
     mapping: dict[str, str | None]
     file_sha256: str
 
@@ -48,7 +50,7 @@ def parse_upload(source_type: str, content: bytes, filename: str, password: str 
     if extension == ".zip":
         archive_entry, payload = _read_zip(content, password)
         extension = Path(archive_entry).suffix.lower()
-    columns, rows, mapping = _read_tabular(payload, extension, source_type)
+    columns, rows, mapping, row_numbers = _read_tabular(payload, extension, source_type)
     return ParsedFile(
         source_type=source_type,
         filename=safe_filename,
@@ -56,6 +58,7 @@ def parse_upload(source_type: str, content: bytes, filename: str, password: str 
         archive_entry=archive_entry,
         columns=columns,
         rows=rows,
+        row_numbers=row_numbers,
         mapping=mapping,
         file_sha256=hashlib.sha256(content).hexdigest(),
     )
@@ -77,7 +80,8 @@ def normalise_rows(parsed: ParsedFile) -> list[ImportedRow]:
             if column
         }
         try:
-            imported.append(_normalise(alias_row))
+            normalised = _normalise(alias_row)
+            imported.append(replace(normalised, raw_payload=json.dumps(row, ensure_ascii=False, sort_keys=True)))
         except ValueError as error:
             raise ValueError(f"Could not parse row {index}: {error}") from error
     if not imported:
@@ -120,7 +124,7 @@ def _read_zip(content: bytes, password: str | None) -> tuple[str, bytes]:
     return entry.filename, payload
 
 
-def _read_tabular(payload: bytes, extension: str, source_type: str) -> tuple[list[str], list[dict[str, str]], dict[str, str | None]]:
+def _read_tabular(payload: bytes, extension: str, source_type: str) -> tuple[list[str], list[dict[str, str]], dict[str, str | None], list[int]]:
     if extension == ".csv":
         table = list(csv.reader(io.StringIO(_decode_csv(payload))))
     elif extension == ".xlsx":
@@ -143,7 +147,23 @@ def _read_tabular(payload: bytes, extension: str, source_type: str) -> tuple[lis
     headers, rows, mapping = locate_provider_table(source_type, table)
     if len(rows) > MAX_ROWS:
         raise ValueError("Import file exceeds the 10,000-row safety limit")
-    return headers, rows, mapping
+    return headers, rows, mapping, _source_row_numbers(table, headers, rows)
+
+
+def _source_row_numbers(table: list[list[str]], headers: list[str], rows: list[dict[str, str]]) -> list[int]:
+    header_index = next(index for index, row in enumerate(table) if [value.strip() for value in row] == headers)
+    cursor = header_index + 1
+    row_numbers: list[int] = []
+    for expected in rows:
+        while cursor < len(table):
+            actual = dict(zip(headers, table[cursor]))
+            cursor += 1
+            if actual == expected:
+                row_numbers.append(cursor)
+                break
+        else:
+            raise ValueError("Could not retain the source row reference")
+    return row_numbers
 
 
 def _decode_csv(payload: bytes) -> str:

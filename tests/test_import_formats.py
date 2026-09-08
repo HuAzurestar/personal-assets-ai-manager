@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
-from app.database import Base, ImportArtifact, ImportBatch, LedgerOrigin
+from app.database import Base, Bill, ImportArtifact, ImportBatch, LedgerOrigin
 from app.main import app, get_db
 
 ALIPAY_CSV = "支付宝交易明细查询结果\n导出时间：2026-08-25\n交易号,商家订单号,交易创建时间,付款时间,交易对方,商品名称,金额（元）,收/支,交易状态,备注\nali-001,order-1,2026-08-25 10:00:00,2026-08-25 10:01:00,脱敏商户,午餐,12.50,支出,交易成功,测试账单\n".encode("gb18030")
@@ -151,6 +151,43 @@ def test_batch_preview_and_import_preserves_one_batch_token_and_skips_duplicates
         assert {batch.batch_token for batch in db.scalars(select(ImportBatch)).all()} == {"fixture-batch-001"}
     duplicate = client.post("/api/imports/alipay/batch", json=payload)
     assert [item["status"] for item in duplicate.json()["files"]] == ["duplicate", "duplicate"]
+
+
+def test_import_facts_are_atomic_traceable_and_cannot_be_deleted(client_and_session):
+    client, session_factory = client_and_session
+    invalid = ALIPAY_CSV + "ali-bad,order-bad,not-a-time,,失败商户,坏数据,5.00,支出,交易失败,测试\n".encode("gb18030")
+
+    failed = client.post("/api/imports/alipay?filename=invalid.csv", content=invalid)
+    assert failed.status_code == 422
+    with session_factory() as db:
+        assert db.query(ImportBatch).count() == 0
+        assert db.query(ImportArtifact).count() == 0
+        assert db.query(Bill).count() == 0
+        assert db.query(LedgerOrigin).count() == 0
+
+    missing_values = "交易创建时间,交易对方,金额（元）,收/支,交易号\n2026-08-25 10:00:00,,,支出,ali-missing\n".encode("gb18030")
+    missing = client.post("/api/imports/alipay?filename=missing.csv", content=missing_values)
+    assert missing.status_code == 422
+    assert "missing" in missing.text.lower()
+    with session_factory() as db:
+        assert db.query(Bill).count() == 0
+
+    imported = client.post("/api/imports/alipay?filename=statement.csv", content=ALIPAY_CSV)
+    assert imported.status_code == 201
+    bill = client.get("/api/bills").json()[0]
+    source = client.get(f"/api/transactions/{bill['id']}/source")
+    assert source.status_code == 200
+    assert source.json()["batch"]["filename"] == "statement.csv"
+    assert source.json()["artifact"]["sha256"] == imported.json()["file_sha256"]
+    assert source.json()["origin"]["source_reference"] == "ali-001"
+    assert source.json()["origin"]["source_row_number"] == 4
+    assert source.json()["raw_fields"]["交易号"] == "ali-001"
+
+    rejected = client.delete(f"/api/bills/{bill['id']}")
+    assert rejected.status_code == 409
+    with session_factory() as db:
+        assert db.query(Bill).count() == 1
+        assert db.query(LedgerOrigin).count() == 1
 
 
 def test_import_ui_uses_a_one_request_password_field_without_browser_storage(client_and_session):

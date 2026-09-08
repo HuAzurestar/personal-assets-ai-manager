@@ -1,11 +1,12 @@
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import shutil
 import subprocess
 from time import perf_counter
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import sessionmaker
 
 import app.database as database
@@ -23,6 +24,25 @@ def test_health_and_bill_flow(tmp_path, monkeypatch):
         assert created.status_code == 201
         assert created.json()["category"] == "交通出行"
         assert client.get("/api/dashboard").status_code == 200
+
+
+def test_init_db_assigns_system_names_to_all_default_tags(tmp_path, monkeypatch):
+    engine = create_engine(f"sqlite:///{tmp_path / 'fresh.db'}", connect_args={"check_same_thread": False})
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    monkeypatch.setattr(database, "DATABASE_URL", f"sqlite:///{tmp_path / 'fresh.db'}")
+    monkeypatch.setattr(database, "engine", engine)
+    monkeypatch.setattr(database, "SessionLocal", session_factory)
+
+    database.init_db()
+
+    with session_factory() as db:
+        views = db.scalars(select(TagView).order_by(TagView.id)).all()
+        assert [view.system_name for view in views] == ["category", "scenario"]
+        for view in views:
+            tags = db.scalars(select(ViewTag).where(ViewTag.view_id == view.id).order_by(ViewTag.id)).all()
+            assert tags
+            assert all(tag.system_name for tag in tags)
+            assert sum(tag.is_unclassified for tag in tags) == 1
 
 
 def _seed_json_tag_definitions(db):
@@ -422,7 +442,7 @@ def test_candidate_page_batch_and_undo_restore_ledger_facts(tmp_path):
             assert page.json()["total"] == 1
             assert page.json()["items"][0]["id"] == duplicate["id"]
 
-            batch = client.post("/api/candidates/batch", json={"items": [{"candidate_id": duplicate["id"], "action": "resolve_duplicate", "retained_bill_id": second["id"]}]})
+            batch = client.post("/api/candidates/batch", json={"items": [{"candidate_id": duplicate["id"], "action": "resolve_duplicate", "retained_bill_id": second["id"], "idempotency_key": "candidate-1"}]})
             assert batch.status_code == 200
             resolved = batch.json()[0]
             assert resolved["status"] == "duplicate_excluded"
@@ -430,6 +450,12 @@ def test_candidate_page_batch_and_undo_restore_ledger_facts(tmp_path):
             assert client.get("/api/dashboard").json()["spending"] == -12
             audit = client.get(f"/api/candidates/{duplicate['id']}/actions").json()
             assert audit[0]["action"] == "resolve_duplicate" and audit[0]["undone"] is False
+            assert audit[0]["idempotency_key"] == "candidate-1"
+            repeated = client.post(f"/api/candidates/{duplicate['id']}", json={"action": "resolve_duplicate", "retained_bill_id": second["id"], "idempotency_key": "candidate-1"})
+            assert repeated.status_code == 200
+            conflict = client.post(f"/api/candidates/{duplicate['id']}", json={"action": "reject_duplicate", "idempotency_key": "candidate-1"})
+            assert conflict.status_code == 409
+            assert len(client.get(f"/api/candidates/{duplicate['id']}/actions").json()) == 1
 
             undone = client.post(f"/api/candidates/{duplicate['id']}/undo")
             assert undone.status_code == 200
@@ -440,7 +466,10 @@ def test_candidate_page_batch_and_undo_restore_ledger_facts(tmp_path):
             assert bills[first["id"]]["duplicate_of_id"] is None
             assert client.get("/api/dashboard").json()["spending"] == -24
             audit = client.get(f"/api/candidates/{duplicate['id']}/actions").json()
-            assert audit[0]["undone"] is True
+            assert [item["action"] for item in audit[:2]] == ["undo", "resolve_duplicate"]
+            assert audit[0]["actor"] == "local-user"
+            assert audit[0]["reverses_action_id"] == audit[1]["id"]
+            assert audit[1]["undone"] is True
 
             deferred = client.post("/api/candidates/batch", json={"items": [{"candidate_id": duplicate["id"], "action": "deferred"}]})
             assert deferred.status_code == 200
@@ -659,5 +688,214 @@ def test_read_only_database_observer_metadata_and_pagination(tmp_path):
             assert 'data-page="database"' in workspace
             assert "/api/database/tables" in workspace
             assert 'data-ascii-fallback="[DB]"' in workspace
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_review_undo_and_partial_refund_allocation_are_append_only(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'review.db'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    with session_factory() as db:
+        _seed_json_tag_definitions(db)
+
+    def override_db():
+        db = session_factory()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    try:
+        with TestClient(app) as client:
+            expense = client.post("/api/bills", json={"occurred_at": "2026-08-25T10:00:00", "merchant": "expense", "amount": -300, "account_name": "wallet-a"}).json()
+            other_expense = client.post("/api/bills", json={"occurred_at": "2026-08-25T11:00:00", "merchant": "other expense", "amount": -200, "account_name": "wallet-a"}).json()
+            refund = client.post("/api/bills", json={"occurred_at": "2026-08-26T10:00:00", "merchant": "refund", "amount": 100, "account_name": "wallet-a"}).json()
+            with session_factory() as db:
+                db.add(LedgerOrigin(bill_id=expense["id"], source_type="wechat", source_reference="expense-raw", raw_payload='{"原始账户":"wallet-a"}'))
+                db.commit()
+
+            revised = client.post(f"/api/bills/{expense['id']}/tags", json={"strategy": "manual", "category": "餐饮", "tags": ["消费"], "reason": "manual correction", "idempotency_key": "tag-1"})
+            assert revised.status_code == 201
+            repeated = client.post(f"/api/bills/{expense['id']}/tags", json={"strategy": "manual", "category": "餐饮", "tags": ["消费"], "reason": "manual correction", "idempotency_key": "tag-1"})
+            assert repeated.status_code == 201 and repeated.json()["id"] == revised.json()["id"]
+            undone_tag = client.post(f"/api/bills/{expense['id']}/tags/{revised.json()['id']}/undo", json={"reason": "mistake"})
+            assert undone_tag.status_code == 200
+            assert undone_tag.json()["action"] == "undo"
+            current_bill = next(item for item in client.get("/api/bills").json() if item["id"] == expense["id"])
+            assert current_bill["category"] == "未分类"
+            assert current_bill["tag_state"]["category"] == "unclassified"
+            tag_history = client.get(f"/api/bills/{expense['id']}/tags").json()
+            assert [item["action"] for item in tag_history[:2]] == ["undo", "confirm"]
+            assert tag_history[0]["reverses_audit_id"] == revised.json()["id"]
+            assert client.post(f"/api/bills/{expense['id']}/tags", json={"strategy": "manual", "category": "餐饮", "tags": ["消费"], "reason": "manual correction", "idempotency_key": "tag-1"}).status_code == 409
+
+            account = client.put(f"/api/transactions/{expense['id']}/account", json={"account_name": "wallet-b", "reason": "correct owner", "idempotency_key": "account-1"})
+            assert account.status_code == 200 and account.json()["account_name"] == "wallet-b"
+            undone_account = client.post(f"/api/transactions/{expense['id']}/account-revisions/{account.json()['revision_id']}/undo", json={"reason": "restore"})
+            assert undone_account.status_code == 200 and undone_account.json()["account_name"] == "wallet-a"
+            account_history = client.get(f"/api/transactions/{expense['id']}/account-revisions").json()
+            assert [item["action"] for item in account_history] == ["confirm", "undo"]
+            assert account_history[1]["reverses_revision_id"] == account.json()["revision_id"]
+            assert client.put(f"/api/transactions/{expense['id']}/account", json={"account_name": "wallet-b", "reason": "correct owner", "idempotency_key": "account-1"}).status_code == 409
+
+            ordered_bill = client.post("/api/bills", json={"occurred_at": "2026-08-25T11:30:00", "merchant": "ordered account", "amount": -10, "account_name": "wallet-a"}).json()
+            ordered_revisions = []
+            for index, account_name in enumerate(("wallet-b", "wallet-c", "wallet-b"), start=1):
+                response = client.put(
+                    f"/api/transactions/{ordered_bill['id']}/account",
+                    json={"account_name": account_name, "idempotency_key": f"ordered-account-{index}"},
+                )
+                assert response.status_code == 200
+                ordered_revisions.append(response.json()["revision_id"])
+            out_of_order = client.post(
+                f"/api/transactions/{ordered_bill['id']}/account-revisions/{ordered_revisions[0]}/undo",
+                json={"reason": "must reject stale revision"},
+            )
+            assert out_of_order.status_code == 409
+            ordered_current = next(item for item in client.get("/api/bills").json() if item["id"] == ordered_bill["id"])
+            assert ordered_current["account_name"] == "wallet-b"
+
+            first = client.post("/api/refund-allocations", json={"refund_bill_id": refund["id"], "expense_bill_id": expense["id"], "amount": 60, "reason": "partial refund", "idempotency_key": "refund-60"})
+            assert first.status_code == 201
+            assert client.post("/api/refund-allocations", json={"refund_bill_id": refund["id"], "expense_bill_id": expense["id"], "amount": 60, "reason": "partial refund", "idempotency_key": "refund-60"}).json()["id"] == first.json()["id"]
+            assert client.get("/api/dashboard").json()["refund_offset"] == 60
+            single_undo = client.post(f"/api/refund-allocations/{first.json()['id']}/undo", json={"reason": "single allocation check"})
+            assert single_undo.status_code == 200
+            assert client.get("/api/dashboard").json()["refund_offset"] == 0
+            assert client.post("/api/refund-allocations", json={"refund_bill_id": refund["id"], "expense_bill_id": expense["id"], "amount": 60, "reason": "partial refund", "idempotency_key": "refund-60"}).status_code == 409
+
+            first_multi = client.post("/api/refund-allocations", json={"refund_bill_id": refund["id"], "expense_bill_id": expense["id"], "amount": 60, "reason": "multi allocation", "idempotency_key": "refund-60-multi"})
+            assert first_multi.status_code == 201
+            second = client.post("/api/refund-allocations", json={"refund_bill_id": refund["id"], "expense_bill_id": other_expense["id"], "amount": 40, "reason": "remaining refund", "idempotency_key": "refund-40"})
+            assert second.status_code == 201
+            rejected = client.post("/api/refund-allocations", json={"refund_bill_id": refund["id"], "expense_bill_id": expense["id"], "amount": 1, "reason": "over limit", "idempotency_key": "refund-over"})
+            assert rejected.status_code == 422
+            assert client.get("/api/dashboard").json()["refund_offset"] == 100
+
+            undone = client.post(f"/api/refund-allocations/{first_multi.json()['id']}/undo", json={"reason": "wrong allocation"})
+            assert undone.status_code == 200 and undone.json()["status"] == "revoked"
+            assert client.get("/api/dashboard").json()["refund_offset"] == 40
+            audits = client.get(f"/api/refund-allocations/{first_multi.json()['id']}/audits").json()
+            assert [audit["action"] for audit in audits] == ["confirm", "revoke"]
+            assert all(audit["actor"] == "local-user" for audit in audits)
+
+            with session_factory() as db:
+                origin = db.scalar(select(LedgerOrigin).where(LedgerOrigin.bill_id == expense["id"]))
+                assert origin.raw_payload == '{"原始账户":"wallet-a"}'
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_refund_limits_are_serialized_across_independent_sessions(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'concurrent.db'}", connect_args={"check_same_thread": False, "timeout": 2})
+    Base.metadata.create_all(bind=engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    def override_db():
+        db = session_factory()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    try:
+        with TestClient(app) as client:
+            expense_a = client.post("/api/bills", json={"occurred_at": "2026-08-25T10:00:00", "merchant": "expense-a", "amount": -100}).json()
+            expense_b = client.post("/api/bills", json={"occurred_at": "2026-08-25T11:00:00", "merchant": "expense-b", "amount": -100}).json()
+            refund = client.post("/api/bills", json={"occurred_at": "2026-08-26T10:00:00", "merchant": "refund", "amount": 100}).json()
+
+        payloads = [
+            {"refund_bill_id": refund["id"], "expense_bill_id": expense_a["id"], "amount": 60, "idempotency_key": "shared-refund-a"},
+            {"refund_bill_id": refund["id"], "expense_bill_id": expense_b["id"], "amount": 60, "idempotency_key": "shared-refund-b"},
+        ]
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            responses = list(pool.map(lambda payload: TestClient(app).post("/api/refund-allocations", json=payload), payloads))
+        assert sorted(response.status_code for response in responses) == [201, 422]
+
+        with session_factory() as db:
+            confirmed = db.execute(text("SELECT COALESCE(SUM(amount), 0) FROM refund_allocations WHERE status = 'confirmed' AND refund_bill_id = :id"), {"id": refund["id"]}).scalar_one()
+            assert confirmed == 60
+
+        with TestClient(app) as client:
+            shared_expense = client.post("/api/bills", json={"occurred_at": "2026-08-27T10:00:00", "merchant": "shared-expense", "amount": -100}).json()
+            refund_a = client.post("/api/bills", json={"occurred_at": "2026-08-28T10:00:00", "merchant": "refund-a", "amount": 70}).json()
+            refund_b = client.post("/api/bills", json={"occurred_at": "2026-08-28T11:00:00", "merchant": "refund-b", "amount": 50}).json()
+        expense_payloads = [
+            {"refund_bill_id": refund_a["id"], "expense_bill_id": shared_expense["id"], "amount": 70, "idempotency_key": "shared-expense-a"},
+            {"refund_bill_id": refund_b["id"], "expense_bill_id": shared_expense["id"], "amount": 50, "idempotency_key": "shared-expense-b"},
+        ]
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            responses = list(pool.map(lambda payload: TestClient(app).post("/api/refund-allocations", json=payload), expense_payloads))
+        assert sorted(response.status_code for response in responses) == [201, 422]
+        with session_factory() as db:
+            confirmed = db.execute(text("SELECT COALESCE(SUM(amount), 0) FROM refund_allocations WHERE status = 'confirmed' AND expense_bill_id = :id"), {"id": shared_expense["id"]}).scalar_one()
+            assert confirmed <= 100
+
+        with engine.connect() as locked:
+            locked.exec_driver_sql("BEGIN IMMEDIATE")
+            busy = TestClient(app).post("/api/refund-allocations", json={"refund_bill_id": refund_a["id"], "expense_bill_id": expense_a["id"], "amount": 1, "idempotency_key": "busy-lock"})
+            assert busy.status_code == 409
+            locked.exec_driver_sql("ROLLBACK")
+        with session_factory() as db:
+            assert db.execute(text("SELECT COUNT(*) FROM refund_allocations WHERE idempotency_key = 'busy-lock'")).scalar_one() == 0
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_effective_ledger_uses_one_filtered_set_for_list_summary_and_drilldown(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'ledger-contract.db'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    def override_db():
+        db = session_factory()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_db
+    try:
+        with TestClient(app) as client:
+            expense = client.post("/api/bills", json={"occurred_at": "2026-08-25T10:00:00", "merchant": "kept expense", "amount": -300, "account_name": "wallet-a"}).json()
+            refund = client.post("/api/bills", json={"occurred_at": "2026-08-25T11:00:00", "merchant": "refund", "amount": 100, "account_name": "wallet-a"}).json()
+            client.post("/api/refund-allocations", json={"refund_bill_id": refund["id"], "expense_bill_id": expense["id"], "amount": 60, "idempotency_key": "ledger-refund"})
+            duplicate_a = client.post("/api/bills", json={"occurred_at": "2026-08-25T12:00:00", "merchant": "duplicate", "amount": -20, "account_name": "wallet-a"}).json()
+            duplicate_b = client.post("/api/bills", json={"occurred_at": "2026-08-25T12:01:00", "merchant": "duplicate", "amount": -20, "account_name": "wallet-a"}).json()
+            candidate = next(item for item in client.get("/api/candidates").json() if item["candidate_type"] == "duplicate")
+            client.post(f"/api/candidates/{candidate['id']}", json={"action": "resolve_duplicate", "retained_bill_id": duplicate_a["id"]})
+            other_a = client.post("/api/bills", json={"occurred_at": "2026-08-25T13:00:00", "merchant": "other duplicate", "amount": -50, "account_name": "wallet-b"}).json()
+            other_b = client.post("/api/bills", json={"occurred_at": "2026-08-25T13:01:00", "merchant": "other duplicate", "amount": -50, "account_name": "wallet-b"}).json()
+            other_candidate = next(
+                item
+                for item in client.get("/api/candidates").json()
+                if item["candidate_type"] == "duplicate" and other_a["id"] in {bill["id"] for bill in item["member_bills"]}
+            )
+            client.post(f"/api/candidates/{other_candidate['id']}", json={"action": "resolve_duplicate", "retained_bill_id": other_a["id"]})
+
+            query = "date_from=2026-08-25&date_to=2026-08-25&account=wallet-a"
+            listed = client.get(f"/api/transactions?{query}&page_size=100").json()
+            summary = client.get(f"/api/dashboard?{query}").json()
+            drilldown = client.get(f"/api/ledger/drilldown?{query}").json()
+            listed_ids = {item["id"] for item in listed["items"]}
+            assert duplicate_b["id"] not in listed_ids
+            assert listed_ids == set(summary["transaction_ids"]) == set(drilldown["transaction_ids"])
+            assert summary["income"] == 40
+            assert summary["spending"] == -320
+            assert summary["refund_offset"] == 60
+            assert summary["net"] == -220
+            assert summary["effective_count"] == len(listed_ids)
+            assert summary["basis_version"] == drilldown["basis_version"] == "pirc-9-v1"
+            assert drilldown["filters"] == summary["filters"] == listed["filters"]
+            assert any(item["bill_id"] == duplicate_b["id"] and item["reason"] == "confirmed_duplicate" for item in drilldown["excluded"])
+            assert all(item["bill_id"] != other_b["id"] for item in drilldown["excluded"])
+            assert set(drilldown["composition"]["net"]) == listed_ids
+            assert drilldown["composition"]["refund_offset"][0]["expense_bill_id"] == expense["id"]
+            expense_detail = next(item for item in drilldown["transactions"] if item["bill"]["id"] == expense["id"])
+            assert {"source", "tag_audits", "account_revisions", "candidate_ids", "refund_allocations"} <= expense_detail.keys()
+            assert expense_detail["refund_allocations"][0]["amount"] == 60
     finally:
         app.dependency_overrides.clear()

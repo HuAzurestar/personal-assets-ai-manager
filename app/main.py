@@ -12,13 +12,14 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import MetaData, Table, asc, desc, func, inspect, select
+from sqlalchemy import MetaData, Table, asc, desc, func, inspect, select, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.config import APP_DISPLAY_NAME, APP_SLUG
-from app.database import AssetSnapshot, Bill, BillViewTag, CandidateActionLog, ImportArtifact, ImportBatch, LedgerOrigin, ReviewCandidate, SessionLocal, TagAudit, TagChangeLog, TagView, ViewTag, init_db
+from app.database import AccountRevision, AssetSnapshot, Bill, BillViewTag, CandidateActionLog, ImportArtifact, ImportBatch, LedgerOrigin, RefundAllocation, RefundAllocationAudit, ReviewCandidate, SessionLocal, TagAudit, TagChangeLog, TagView, ViewTag, init_db
 from app.file_import import normalise_rows, parse_upload, preview_rows
-from app.schemas import AssetCreate, AssetRead, BatchImportItemRead, BatchImportRead, BatchImportRequest, BatchPreviewItemRead, BatchPreviewRead, BillCreate, BillRead, CandidateBatchDecision, CandidateDecision, CandidatePageRead, ImportBatchRead, ImportPreviewRead, ReviewCandidateRead, TagApply, TagAuditRead, TagRequest, TagResult, TagStateAssignmentRequest, TagStateBulkAssignmentRequest, TagViewCreate, TagViewRead, TagViewUpdate, TransactionPageRead, ViewTagAssignmentRead, ViewTagAssignmentRequest, ViewTagCreate, ViewTagRead, ViewTagUpdate
+from app.schemas import AccountRevisionRequest, AssetCreate, AssetRead, BatchImportItemRead, BatchImportRead, BatchImportRequest, BatchPreviewItemRead, BatchPreviewRead, BillCreate, BillRead, CandidateBatchDecision, CandidateDecision, CandidatePageRead, ImportBatchRead, ImportPreviewRead, RefundAllocationCreate, RefundAllocationRead, ReviewCandidateRead, TagApply, TagAuditRead, TagRequest, TagResult, TagStateAssignmentRequest, TagStateBulkAssignmentRequest, TagViewCreate, TagViewRead, TagViewUpdate, TransactionPageRead, UndoRequest, ViewTagAssignmentRead, ViewTagAssignmentRequest, ViewTagCreate, ViewTagRead, ViewTagUpdate
 from app.tagging import classify, classify_rules
 
 APP_DIR = Path(__file__).parent
@@ -67,6 +68,7 @@ CATEGORY_SYSTEM_NAME_ALIASES = {
 # observer never accepts a SQL expression or an arbitrary SQLite object name.
 DATABASE_OBSERVER_TABLES = frozenset({
     "asset_snapshots",
+    "account_revisions",
     "bill_tags",
     "bill_view_tags",
     "bills",
@@ -75,6 +77,8 @@ DATABASE_OBSERVER_TABLES = frozenset({
     "import_batches",
     "ledger_origins",
     "review_candidates",
+    "refund_allocation_audits",
+    "refund_allocations",
     "tag_audits",
     "tag_change_logs",
     "tag_views",
@@ -233,7 +237,11 @@ def _write_tag_state(
     strategy: str,
     confidence: float,
     provider: str,
+    reason: str = "",
+    idempotency_key: str | None = None,
+    request_payload: str = "",
 ) -> TagAudit:
+    before_state = _state_from_bill(bill)
     state = _validate_tag_state(db, submitted)
     current = db.scalar(select(TagAudit).where(
         TagAudit.bill_id == bill.id,
@@ -250,6 +258,13 @@ def _write_tag_state(
         confidence=confidence,
         provider=provider,
         superseded=superseded,
+        action="confirm",
+        actor="local-user",
+        reason=reason,
+        before_state_json=_tag_state_json(before_state),
+        before_category=bill.category,
+        idempotency_key=idempotency_key,
+        request_payload=request_payload,
         created_at=datetime.now(),
     )
     if not superseded:
@@ -315,7 +330,7 @@ def _normalise_tags(tags: list[str]) -> list[str]:
     return list(dict.fromkeys(tag.strip() for tag in tags if tag.strip()))
 
 
-def _apply_tag(db: Session, bill: Bill, strategy: str, category: str, tags: list[str], provider: str, confidence: float) -> TagAudit:
+def _apply_tag(db: Session, bill: Bill, strategy: str, category: str, tags: list[str], provider: str, confidence: float, reason: str = "", idempotency_key: str | None = None, request_payload: str = "") -> TagAudit:
     category_view = db.scalar(select(TagView).where(TagView.system_name == "category", TagView.archived.is_(False)))
     state = _state_from_bill(bill)
     if category_view:
@@ -329,7 +344,11 @@ def _apply_tag(db: Session, bill: Bill, strategy: str, category: str, tags: list
             ViewTag.archived.is_(False),
         ))
         state[category_view.system_name] = category_tag.system_name if category_tag else "unclassified"
-    return _write_tag_state(db, bill, state, strategy, confidence, provider)
+    audit = _write_tag_state(db, bill, state, strategy, confidence, provider, reason, idempotency_key, request_payload)
+    audit.category = category
+    if not audit.superseded:
+        bill.category = category
+    return audit
 
 
 def _candidate_member_ids(candidate: ReviewCandidate) -> list[int]:
@@ -471,7 +490,7 @@ def candidate_read(db: Session, candidate: ReviewCandidate) -> ReviewCandidateRe
         transfer_kind=candidate.transfer_kind,
         retained_bill_id=candidate.retained_bill_id,
         resolved_at=candidate.resolved_at,
-        undo_available=bool(db.scalar(select(CandidateActionLog.id).where(CandidateActionLog.candidate_id == candidate.id, CandidateActionLog.undone.is_(False)).order_by(CandidateActionLog.id.desc()))),
+        undo_available=bool(db.scalar(select(CandidateActionLog.id).where(CandidateActionLog.candidate_id == candidate.id, CandidateActionLog.action != "undo", CandidateActionLog.undone.is_(False)).order_by(CandidateActionLog.id.desc()))),
         aggregation_effect=_candidate_effect(candidate),
         created_at=candidate.created_at,
         member_bills=[bill_read(db, bill) for bill in _candidate_members(db, candidate)],
@@ -524,11 +543,11 @@ def _commit_parsed(db: Session, source_type: str, parsed, batch_token: str | Non
     db.flush()
     db.add(ImportArtifact(import_batch_id=batch.id, source_type=source_type, filename=parsed.filename, file_format=parsed.file_format, archive_entry=parsed.archive_entry, sha256=parsed.file_sha256))
     candidate_count = 0
-    for row in imported_rows:
+    for source_row_number, row in zip(parsed.row_numbers, imported_rows, strict=True):
         bill = Bill(occurred_at=row.occurred_at, merchant=row.merchant, note=row.note, amount=row.amount, account_name=row.account_name, category="未分类", tags="")
         db.add(bill)
         db.flush()
-        db.add(LedgerOrigin(bill_id=bill.id, source_type=source_type, source_reference=row.reference, raw_payload=row.raw_payload, import_batch_id=batch.id))
+        db.add(LedgerOrigin(bill_id=bill.id, source_type=source_type, source_reference=row.reference, raw_payload=row.raw_payload, import_batch_id=batch.id, source_row_number=source_row_number))
         category, tags, provider = classify_rules(row.merchant, row.note)
         _apply_tag(db, bill, "local_rules", category, tags, provider, STRATEGY_CONFIDENCE["local_rules"])
         candidate_count += _generate_candidates(db, bill)
@@ -611,27 +630,62 @@ def list_bills(db: Session = Depends(get_db)):
     return [bill_read(db, bill) for bill in db.scalars(select(Bill).order_by(Bill.occurred_at.desc())).all()]
 
 
-@app.get("/api/transactions", response_model=TransactionPageRead)
-def list_transactions(
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=50, ge=1, le=100),
-    sort_by: str = Query(default="occurred_at", pattern="^(occurred_at|amount)$"),
-    sort_order: str = Query(default="desc", pattern="^(asc|desc)$"),
+@app.get("/api/transactions/{bill_id}/source")
+def transaction_source(bill_id: int, db: Session = Depends(get_db)):
+    bill = db.get(Bill, bill_id)
+    if not bill:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    origin = db.scalar(select(LedgerOrigin).where(LedgerOrigin.bill_id == bill_id))
+    if not origin:
+        return {"bill_id": bill_id, "origin": None, "artifact": None, "batch": None, "raw_fields": {}}
+    batch = db.get(ImportBatch, origin.import_batch_id) if origin.import_batch_id else None
+    artifact = db.scalar(select(ImportArtifact).where(ImportArtifact.import_batch_id == origin.import_batch_id)) if origin.import_batch_id else None
+    try:
+        raw_fields = json.loads(origin.raw_payload or "{}")
+    except (json.JSONDecodeError, TypeError):
+        raw_fields = {"unparsed": origin.raw_payload}
+    return {
+        "bill_id": bill_id,
+        "origin": {
+            "source_type": origin.source_type,
+            "source_reference": origin.source_reference,
+            "source_row_number": origin.source_row_number,
+            "import_batch_id": origin.import_batch_id,
+        },
+        "artifact": ({
+            "filename": artifact.filename,
+            "file_format": artifact.file_format,
+            "archive_entry": artifact.archive_entry,
+            "sha256": artifact.sha256,
+        } if artifact else None),
+        "batch": ({
+            "id": batch.id,
+            "filename": batch.filename,
+            "imported_at": batch.imported_at,
+        } if batch else None),
+        "raw_fields": raw_fields,
+    }
+
+
+def _ledger_clauses(
+    db: Session,
     date_from: date | None = None,
     date_to: date | None = None,
-    amount_min: float | None = Query(default=None, ge=0),
-    amount_max: float | None = Query(default=None, ge=0),
-    source: list[str] = Query(default=[]),
-    direction: str | None = Query(default=None, pattern="^(income|expense|transfer)$"),
-    q: str | None = Query(default=None, max_length=200),
-    tag: list[str] = Query(default=[]),
-    db: Session = Depends(get_db),
-):
+    amount_min: float | None = None,
+    amount_max: float | None = None,
+    source: list[str] | None = None,
+    account: list[str] | None = None,
+    direction: str | None = None,
+    q: str | None = None,
+    tag: list[str] | None = None,
+    aggregate_excluded: bool = False,
+) -> list:
+    source, account, tag = source or [], account or [], tag or []
     if date_from and date_to and date_from > date_to:
         raise HTTPException(status_code=422, detail="date_from must be before date_to")
     if amount_min is not None and amount_max is not None and amount_min > amount_max:
         raise HTTPException(status_code=422, detail="amount_min must not exceed amount_max")
-    clauses = []
+    clauses = [Bill.aggregate_excluded.is_(aggregate_excluded)]
     if date_from:
         clauses.append(Bill.occurred_at >= datetime.combine(date_from, time.min))
     if date_to:
@@ -642,6 +696,8 @@ def list_transactions(
         clauses.append(func.abs(Bill.amount) <= amount_max)
     if source:
         clauses.append(Bill.id.in_(select(LedgerOrigin.bill_id).where(LedgerOrigin.source_type.in_(source))))
+    if account:
+        clauses.append(Bill.account_name.in_(account))
     if direction == "income":
         clauses.append(Bill.amount > 0)
     elif direction == "expense":
@@ -683,12 +739,37 @@ def list_transactions(
             func.json_extract(Bill.tag_state_json, f"$.{view_system_name}"),
             "unclassified",
         ) == tag_system_name)
+    return clauses
+
+
+def _ledger_filter_values(date_from, date_to, amount_min, amount_max, source, account, direction, q, tag) -> dict[str, object]:
+    return {"date_from": str(date_from) if date_from else None, "date_to": str(date_to) if date_to else None, "amount_min": amount_min, "amount_max": amount_max, "source": source, "account": account, "direction": direction, "q": q, "tag": tag}
+
+
+@app.get("/api/transactions", response_model=TransactionPageRead)
+def list_transactions(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
+    sort_by: str = Query(default="occurred_at", pattern="^(occurred_at|amount)$"),
+    sort_order: str = Query(default="desc", pattern="^(asc|desc)$"),
+    date_from: date | None = None,
+    date_to: date | None = None,
+    amount_min: float | None = Query(default=None, ge=0),
+    amount_max: float | None = Query(default=None, ge=0),
+    source: list[str] = Query(default=[]),
+    account: list[str] = Query(default=[]),
+    direction: str | None = Query(default=None, pattern="^(income|expense|transfer)$"),
+    q: str | None = Query(default=None, max_length=200),
+    tag: list[str] = Query(default=[]),
+    db: Session = Depends(get_db),
+):
+    clauses = _ledger_clauses(db, date_from, date_to, amount_min, amount_max, source, account, direction, q, tag)
     order_column = Bill.occurred_at if sort_by == "occurred_at" else Bill.amount
     order_fn = asc if sort_order == "asc" else desc
     statement = select(Bill).where(*clauses).order_by(order_fn(order_column), order_fn(Bill.id))
     total = db.scalar(select(func.count(Bill.id)).where(*clauses)) or 0
     bills = db.scalars(statement.offset((page - 1) * page_size).limit(page_size)).all()
-    return TransactionPageRead(items=[bill_read(db, bill) for bill in bills], total=total, page=page, page_size=page_size, filters={"date_from": str(date_from) if date_from else None, "date_to": str(date_to) if date_to else None, "amount_min": amount_min, "amount_max": amount_max, "source": source, "direction": direction, "q": q, "tag": tag}, sort={"by": sort_by, "order": sort_order})
+    return TransactionPageRead(items=[bill_read(db, bill) for bill in bills], total=total, page=page, page_size=page_size, filters=_ledger_filter_values(date_from, date_to, amount_min, amount_max, source, account, direction, q, tag), sort={"by": sort_by, "order": sort_order})
 
 
 @app.get("/api/tag-views", response_model=list[TagViewRead])
@@ -796,6 +877,7 @@ def delete_view_tag(view_id: int, tag_id: int, migrate_to_tag_id: int | None = N
 
 @app.put("/api/transactions/{bill_id}/tag-assignments/{view_id}", response_model=BillRead)
 def assign_view_tag(bill_id: int, view_id: int, payload: ViewTagAssignmentRequest, db: Session = Depends(get_db)):
+    _begin_immediate(db)
     bill, view, tag = db.get(Bill, bill_id), db.get(TagView, view_id), db.get(ViewTag, payload.tag_id)
     if not bill or not view or not tag or tag.view_id != view.id:
         raise HTTPException(status_code=404, detail="Transaction, tag view, or tag not found")
@@ -808,6 +890,7 @@ def assign_view_tag(bill_id: int, view_id: int, payload: ViewTagAssignmentReques
 
 @app.put("/api/transactions/{bill_id}/tag-state", response_model=BillRead)
 def assign_tag_state(bill_id: int, payload: TagStateAssignmentRequest, db: Session = Depends(get_db)):
+    _begin_immediate(db)
     bill = db.get(Bill, bill_id)
     if not bill:
         raise HTTPException(status_code=404, detail="Transaction not found")
@@ -818,6 +901,7 @@ def assign_tag_state(bill_id: int, payload: TagStateAssignmentRequest, db: Sessi
 
 @app.put("/api/transactions/bulk-tag-state")
 def assign_tag_state_bulk(payload: TagStateBulkAssignmentRequest, db: Session = Depends(get_db)):
+    _begin_immediate(db)
     bills = db.scalars(select(Bill).where(Bill.id.in_(payload.bill_ids)).order_by(Bill.id)).all()
     if len(bills) != len(set(payload.bill_ids)):
         raise HTTPException(status_code=404, detail="One or more transactions were not found")
@@ -931,6 +1015,12 @@ def _tag_audit_read(audit: TagAudit) -> TagAuditRead:
         confidence=audit.confidence,
         provider=audit.provider,
         superseded=audit.superseded,
+        action=audit.action,
+        actor=audit.actor,
+        reason=audit.reason,
+        reverses_audit_id=audit.reverses_audit_id,
+        undone=audit.undone,
+        undone_at=audit.undone_at,
         created_at=audit.created_at,
         tag_state=state if isinstance(state, dict) else {},
     )
@@ -938,9 +1028,19 @@ def _tag_audit_read(audit: TagAudit) -> TagAuditRead:
 
 @app.post("/api/bills/{bill_id}/tags", response_model=TagAuditRead, status_code=201)
 def apply_tag(bill_id: int, payload: TagApply, db: Session = Depends(get_db)):
+    _begin_immediate(db)
     bill = db.get(Bill, bill_id)
     if not bill:
         raise HTTPException(status_code=404, detail="Bill not found")
+    request_payload = json.dumps(payload.model_dump(), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    if payload.idempotency_key:
+        existing = db.scalar(select(TagAudit).where(TagAudit.idempotency_key == payload.idempotency_key))
+        if existing:
+            if existing.bill_id != bill_id or existing.request_payload != request_payload or existing.undone:
+                db.rollback()
+                raise HTTPException(status_code=409, detail="Idempotency key was already used for a different tag revision")
+            db.commit()
+            return _tag_audit_read(existing)
     if payload.strategy == "manual" and not payload.tags:
         raise HTTPException(status_code=422, detail="Manual tagging requires at least one tag")
     if payload.strategy == "manual":
@@ -956,10 +1056,58 @@ def apply_tag(bill_id: int, payload: TagApply, db: Session = Depends(get_db)):
         category = payload.category or suggested_category
         tags = payload.tags if payload.tags is not None else suggested_tags
     confidence = payload.confidence if payload.confidence is not None else STRATEGY_CONFIDENCE[payload.strategy]
-    audit = _apply_tag(db, bill, payload.strategy, category, tags, provider, confidence)
+    audit = _apply_tag(db, bill, payload.strategy, category, tags, provider, confidence, payload.reason, payload.idempotency_key, request_payload)
     db.commit()
     db.refresh(audit)
     return _tag_audit_read(audit)
+
+
+@app.post("/api/bills/{bill_id}/tags/{audit_id}/undo", response_model=TagAuditRead)
+def undo_tag_revision(bill_id: int, audit_id: int, payload: UndoRequest, db: Session = Depends(get_db)):
+    _begin_immediate(db)
+    bill = db.get(Bill, bill_id)
+    audit = db.get(TagAudit, audit_id)
+    if not bill or not audit or audit.bill_id != bill_id:
+        raise HTTPException(status_code=404, detail="Tag revision not found")
+    if audit.undone:
+        raise HTTPException(status_code=409, detail="Tag revision has already been undone")
+    current = db.scalar(select(TagAudit).where(TagAudit.bill_id == bill_id, TagAudit.superseded.is_(False)).order_by(TagAudit.id.desc()))
+    if not current or current.id != audit.id:
+        raise HTTPException(status_code=409, detail="Only the current tag revision can be undone")
+    try:
+        restored_state = json.loads(audit.before_state_json or "{}")
+    except json.JSONDecodeError as error:
+        raise HTTPException(status_code=409, detail="Tag revision has no valid previous state") from error
+    before_state = bill.tag_state_json
+    before_category = bill.category
+    restored_assignments = _state_assignments_for_state(db, restored_state)
+    restored_category = audit.before_category
+    audit.undone = True
+    audit.undone_at = datetime.now()
+    audit.superseded = True
+    bill.tag_state_json = _tag_state_json(restored_state)
+    bill.category = restored_category
+    undo_audit = TagAudit(
+        bill_id=bill_id,
+        category=restored_category,
+        tags=",".join(tag.tag_name for tag in restored_assignments),
+        tag_state_json=bill.tag_state_json,
+        strategy="manual",
+        confidence=1.0,
+        provider="manual",
+        superseded=False,
+        action="undo",
+        actor="local-user",
+        reason=payload.reason,
+        before_state_json=before_state,
+        before_category=before_category,
+        reverses_audit_id=audit.id,
+        created_at=datetime.now(),
+    )
+    db.add(undo_audit)
+    db.commit()
+    db.refresh(undo_audit)
+    return _tag_audit_read(undo_audit)
 
 
 @app.get("/api/bills/{bill_id}/tags", response_model=list[TagAuditRead])
@@ -968,6 +1116,193 @@ def list_tag_audits(bill_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Bill not found")
     audits = db.scalars(select(TagAudit).where(TagAudit.bill_id == bill_id).order_by(TagAudit.created_at.desc(), TagAudit.id.desc())).all()
     return [_tag_audit_read(audit) for audit in audits]
+
+
+@app.put("/api/transactions/{bill_id}/account")
+def revise_account(bill_id: int, payload: AccountRevisionRequest, db: Session = Depends(get_db)):
+    _begin_immediate(db)
+    request_payload = json.dumps(payload.model_dump(), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    existing = db.scalar(select(AccountRevision).where(AccountRevision.idempotency_key == payload.idempotency_key))
+    if existing:
+        if existing.bill_id != bill_id or existing.request_payload != request_payload or existing.undone:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="Idempotency key was already used for a different account revision")
+        db.commit()
+        return {"revision_id": existing.id, "bill_id": bill_id, "account_name": existing.after_account, "action": existing.action, "actor": existing.actor, "reason": existing.reason}
+    bill = db.get(Bill, bill_id)
+    if not bill:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    revision = AccountRevision(
+        bill_id=bill_id,
+        before_account=bill.account_name,
+        after_account=payload.account_name,
+        action="confirm",
+        actor="local-user",
+        reason=payload.reason,
+        idempotency_key=payload.idempotency_key,
+        request_payload=request_payload,
+        created_at=datetime.now(),
+    )
+    bill.account_name = payload.account_name
+    db.add(revision)
+    db.commit()
+    db.refresh(revision)
+    return {"revision_id": revision.id, "bill_id": bill_id, "account_name": bill.account_name, "action": revision.action, "actor": revision.actor, "reason": revision.reason}
+
+
+@app.post("/api/transactions/{bill_id}/account-revisions/{revision_id}/undo")
+def undo_account_revision(bill_id: int, revision_id: int, payload: UndoRequest, db: Session = Depends(get_db)):
+    _begin_immediate(db)
+    bill = db.get(Bill, bill_id)
+    revision = db.get(AccountRevision, revision_id)
+    if not bill or not revision or revision.bill_id != bill_id:
+        raise HTTPException(status_code=404, detail="Account revision not found")
+    if revision.undone:
+        raise HTTPException(status_code=409, detail="Account revision has already been undone")
+    current = db.scalar(select(AccountRevision).where(
+        AccountRevision.bill_id == bill_id,
+        AccountRevision.action == "confirm",
+        AccountRevision.undone.is_(False),
+    ).order_by(AccountRevision.id.desc()))
+    if not current or current.id != revision.id:
+        raise HTTPException(status_code=409, detail="Only the current account revision can be undone")
+    revision.undone = True
+    revision.undone_at = datetime.now()
+    bill.account_name = revision.before_account
+    reversal = AccountRevision(
+        bill_id=bill_id,
+        before_account=revision.after_account,
+        after_account=revision.before_account,
+        action="undo",
+        actor="local-user",
+        reason=payload.reason,
+        reverses_revision_id=revision.id,
+        created_at=datetime.now(),
+    )
+    db.add(reversal)
+    db.commit()
+    db.refresh(reversal)
+    return {"revision_id": reversal.id, "bill_id": bill_id, "account_name": bill.account_name, "action": reversal.action, "actor": reversal.actor, "reason": reversal.reason, "reverses_revision_id": revision.id}
+
+
+@app.get("/api/transactions/{bill_id}/account-revisions")
+def list_account_revisions(bill_id: int, db: Session = Depends(get_db)):
+    if not db.get(Bill, bill_id):
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    revisions = db.scalars(select(AccountRevision).where(AccountRevision.bill_id == bill_id).order_by(AccountRevision.id)).all()
+    return [{"revision_id": revision.id, "bill_id": revision.bill_id, "before_account": revision.before_account, "after_account": revision.after_account, "action": revision.action, "actor": revision.actor, "reason": revision.reason, "reverses_revision_id": revision.reverses_revision_id, "undone": revision.undone, "undone_at": revision.undone_at, "created_at": revision.created_at} for revision in revisions]
+
+
+def _refund_allocation_read(allocation: RefundAllocation) -> RefundAllocationRead:
+    return RefundAllocationRead(
+        id=allocation.id,
+        refund_bill_id=allocation.refund_bill_id,
+        expense_bill_id=allocation.expense_bill_id,
+        amount=allocation.amount,
+        status=allocation.status,
+        idempotency_key=allocation.idempotency_key,
+        created_at=allocation.created_at,
+        revoked_at=allocation.revoked_at,
+    )
+
+
+def _begin_immediate(db: Session) -> None:
+    try:
+        db.execute(text("BEGIN IMMEDIATE"))
+    except OperationalError as error:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Ledger is busy; retry the review operation") from error
+
+
+@app.post("/api/refund-allocations", response_model=RefundAllocationRead, status_code=201)
+def create_refund_allocation(payload: RefundAllocationCreate, db: Session = Depends(get_db)):
+    _begin_immediate(db)
+    request_payload = json.dumps(payload.model_dump(), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    existing = db.scalar(select(RefundAllocation).where(RefundAllocation.idempotency_key == payload.idempotency_key))
+    if existing:
+        if existing.request_payload != request_payload or existing.status != "confirmed":
+            db.rollback()
+            raise HTTPException(status_code=409, detail="Idempotency key was already used for a different refund allocation")
+        db.commit()
+        return _refund_allocation_read(existing)
+    refund = db.get(Bill, payload.refund_bill_id)
+    expense = db.get(Bill, payload.expense_bill_id)
+    if not refund or not expense:
+        db.rollback()
+        raise HTTPException(status_code=422, detail="Refund and expense transactions must both exist")
+    if refund.amount <= 0 or expense.amount >= 0:
+        db.rollback()
+        raise HTTPException(status_code=422, detail="Refund must be positive and original expense must be negative")
+    if refund.aggregate_excluded or expense.aggregate_excluded:
+        db.rollback()
+        raise HTTPException(status_code=422, detail="Refund allocations require effective ledger transactions")
+    allocated_refund = db.scalar(select(func.coalesce(func.sum(RefundAllocation.amount), 0.0)).where(RefundAllocation.refund_bill_id == refund.id, RefundAllocation.status == "confirmed")) or 0.0
+    allocated_expense = db.scalar(select(func.coalesce(func.sum(RefundAllocation.amount), 0.0)).where(RefundAllocation.expense_bill_id == expense.id, RefundAllocation.status == "confirmed")) or 0.0
+    if allocated_refund + payload.amount > refund.amount + 1e-9:
+        db.rollback()
+        raise HTTPException(status_code=422, detail="Refund allocation exceeds the available refund amount")
+    if allocated_expense + payload.amount > abs(expense.amount) + 1e-9:
+        db.rollback()
+        raise HTTPException(status_code=422, detail="Refund allocation exceeds the original expense amount")
+    allocation = RefundAllocation(
+        refund_bill_id=refund.id,
+        expense_bill_id=expense.id,
+        amount=payload.amount,
+        status="confirmed",
+        idempotency_key=payload.idempotency_key,
+        request_payload=request_payload,
+        created_at=datetime.now(),
+    )
+    db.add(allocation)
+    db.flush()
+    db.add(RefundAllocationAudit(
+        allocation_id=allocation.id,
+        action="confirm",
+        actor="local-user",
+        reason=payload.reason,
+        before_state=json.dumps({"status": None}),
+        after_state=json.dumps({"status": "confirmed", "amount": allocation.amount}),
+        created_at=datetime.now(),
+    ))
+    db.commit()
+    db.refresh(allocation)
+    return _refund_allocation_read(allocation)
+
+
+@app.post("/api/refund-allocations/{allocation_id}/undo", response_model=RefundAllocationRead)
+def undo_refund_allocation(allocation_id: int, payload: UndoRequest, db: Session = Depends(get_db)):
+    _begin_immediate(db)
+    allocation = db.get(RefundAllocation, allocation_id)
+    if not allocation:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="Refund allocation not found")
+    if allocation.status != "confirmed":
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Refund allocation has already been revoked")
+    confirmation = db.scalar(select(RefundAllocationAudit).where(RefundAllocationAudit.allocation_id == allocation_id, RefundAllocationAudit.action == "confirm").order_by(RefundAllocationAudit.id.desc()))
+    allocation.status = "revoked"
+    allocation.revoked_at = datetime.now()
+    db.add(RefundAllocationAudit(
+        allocation_id=allocation.id,
+        action="revoke",
+        actor="local-user",
+        reason=payload.reason,
+        before_state=json.dumps({"status": "confirmed", "amount": allocation.amount}),
+        after_state=json.dumps({"status": "revoked", "amount": allocation.amount}),
+        reverses_audit_id=confirmation.id if confirmation else None,
+        created_at=datetime.now(),
+    ))
+    db.commit()
+    db.refresh(allocation)
+    return _refund_allocation_read(allocation)
+
+
+@app.get("/api/refund-allocations/{allocation_id}/audits")
+def list_refund_allocation_audits(allocation_id: int, db: Session = Depends(get_db)):
+    if not db.get(RefundAllocation, allocation_id):
+        raise HTTPException(status_code=404, detail="Refund allocation not found")
+    audits = db.scalars(select(RefundAllocationAudit).where(RefundAllocationAudit.allocation_id == allocation_id).order_by(RefundAllocationAudit.id)).all()
+    return [{"id": audit.id, "action": audit.action, "actor": audit.actor, "reason": audit.reason, "before_state": json.loads(audit.before_state), "after_state": json.loads(audit.after_state), "reverses_audit_id": audit.reverses_audit_id, "created_at": audit.created_at} for audit in audits]
 
 
 @app.get("/api/candidates", response_model=list[ReviewCandidateRead])
@@ -1019,6 +1354,13 @@ def _candidate_snapshot(candidate: ReviewCandidate, members: list[Bill]) -> str:
 
 
 def _apply_candidate_decision(db: Session, candidate: ReviewCandidate, payload: CandidateDecision) -> None:
+    request_payload = json.dumps(payload.model_dump(), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    if payload.idempotency_key:
+        existing = db.scalar(select(CandidateActionLog).where(CandidateActionLog.idempotency_key == payload.idempotency_key))
+        if existing:
+            if existing.candidate_id != candidate.id or existing.request_payload != request_payload or existing.undone:
+                raise HTTPException(status_code=409, detail="Idempotency key conflicts with another candidate decision or state")
+            return
     if candidate.status == "duplicate_excluded" and payload.action == "resolve_duplicate" and candidate.retained_bill_id == payload.retained_bill_id:
         return
     if candidate.status == "duplicate_rejected" and payload.action == "reject_duplicate":
@@ -1030,7 +1372,8 @@ def _apply_candidate_decision(db: Session, candidate: ReviewCandidate, payload: 
     first, second = db.get(Bill, candidate.bill_id), db.get(Bill, candidate.related_bill_id)
     if not first or not second or len(members) < 2:
         raise HTTPException(status_code=409, detail="Candidate evidence is incomplete")
-    db.add(CandidateActionLog(candidate_id=candidate.id, action=payload.action, before_state=_candidate_snapshot(candidate, members), created_at=datetime.now()))
+    log = CandidateActionLog(candidate_id=candidate.id, action=payload.action, before_state=_candidate_snapshot(candidate, members), actor="local-user", reason=candidate.reason, idempotency_key=payload.idempotency_key, request_payload=request_payload, created_at=datetime.now())
+    db.add(log)
     if payload.action in {"confirm_transfer", "confirm_personal_transfer", "confirm_third_party_transfer"}:
         if candidate.candidate_type != "transfer":
             raise HTTPException(status_code=422, detail="Only transfer candidates can be grouped as transfers")
@@ -1062,10 +1405,12 @@ def _apply_candidate_decision(db: Session, candidate: ReviewCandidate, payload: 
     else:
         candidate.status = payload.action
     candidate.resolved_at = datetime.now()
+    log.after_state = _candidate_snapshot(candidate, members)
 
 
 @app.post("/api/candidates/batch", response_model=list[ReviewCandidateRead])
 def decide_candidates_batch(payload: CandidateBatchDecision, db: Session = Depends(get_db)):
+    _begin_immediate(db)
     candidate_ids = [item.candidate_id for item in payload.items]
     if len(candidate_ids) != len(set(candidate_ids)):
         raise HTTPException(status_code=422, detail="Each candidate can be processed only once per batch")
@@ -1074,7 +1419,7 @@ def decide_candidates_batch(payload: CandidateBatchDecision, db: Session = Depen
         candidate = db.get(ReviewCandidate, item.candidate_id)
         if not candidate:
             raise HTTPException(status_code=404, detail=f"Candidate {item.candidate_id} not found")
-        _apply_candidate_decision(db, candidate, CandidateDecision(action=item.action, retained_bill_id=item.retained_bill_id))
+        _apply_candidate_decision(db, candidate, CandidateDecision(action=item.action, retained_bill_id=item.retained_bill_id, idempotency_key=item.idempotency_key))
         candidates.append(candidate)
     db.commit()
     for candidate in candidates:
@@ -1084,6 +1429,7 @@ def decide_candidates_batch(payload: CandidateBatchDecision, db: Session = Depen
 
 @app.post("/api/candidates/{candidate_id}", response_model=ReviewCandidateRead)
 def decide_candidate(candidate_id: int, payload: CandidateDecision, db: Session = Depends(get_db)):
+    _begin_immediate(db)
     _consolidate_duplicate_candidates(db)
     candidate = _canonical_candidate(db, db.get(ReviewCandidate, candidate_id))
     if not candidate:
@@ -1096,13 +1442,16 @@ def decide_candidate(candidate_id: int, payload: CandidateDecision, db: Session 
 
 @app.post("/api/candidates/{candidate_id}/undo", response_model=ReviewCandidateRead)
 def undo_candidate(candidate_id: int, db: Session = Depends(get_db)):
+    _begin_immediate(db)
     _consolidate_duplicate_candidates(db)
     candidate = _canonical_candidate(db, db.get(ReviewCandidate, candidate_id))
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
-    log = db.scalar(select(CandidateActionLog).where(CandidateActionLog.candidate_id == candidate_id, CandidateActionLog.undone.is_(False)).order_by(CandidateActionLog.id.desc()))
+    log = db.scalar(select(CandidateActionLog).where(CandidateActionLog.candidate_id == candidate_id, CandidateActionLog.action != "undo", CandidateActionLog.undone.is_(False)).order_by(CandidateActionLog.id.desc()))
     if not log:
         raise HTTPException(status_code=409, detail="No reversible candidate action is available")
+    members = _candidate_members(db, candidate)
+    current_snapshot = _candidate_snapshot(candidate, members)
     snapshot = json.loads(log.before_state)
     previous = snapshot["candidate"]
     candidate.status = previous["status"]
@@ -1118,6 +1467,16 @@ def undo_candidate(candidate_id: int, db: Session = Depends(get_db)):
             bill.duplicate_of_id = bill_state["duplicate_of_id"]
     log.undone = True
     log.undone_at = datetime.now()
+    db.add(CandidateActionLog(
+        candidate_id=candidate.id,
+        action="undo",
+        before_state=current_snapshot,
+        after_state=_candidate_snapshot(candidate, members),
+        actor="local-user",
+        reason="Undo candidate decision",
+        reverses_action_id=log.id,
+        created_at=datetime.now(),
+    ))
     db.commit()
     db.refresh(candidate)
     return candidate_read(db, candidate)
@@ -1175,7 +1534,7 @@ def list_candidate_actions(candidate_id: int, db: Session = Depends(get_db)):
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
     logs = db.scalars(select(CandidateActionLog).where(CandidateActionLog.candidate_id == candidate.id).order_by(CandidateActionLog.created_at.desc(), CandidateActionLog.id.desc())).all()
-    return [{"id": log.id, "action": log.action, "created_at": log.created_at, "undone": log.undone, "undone_at": log.undone_at} for log in logs]
+    return [{"id": log.id, "action": log.action, "actor": log.actor, "reason": log.reason, "before_state": json.loads(log.before_state), "after_state": json.loads(log.after_state) if log.after_state else None, "reverses_action_id": log.reverses_action_id, "idempotency_key": log.idempotency_key, "created_at": log.created_at, "undone": log.undone, "undone_at": log.undone_at} for log in logs]
 
 
 @app.delete("/api/bills/{bill_id}", status_code=204)
@@ -1183,6 +1542,8 @@ def delete_bill(bill_id: int, db: Session = Depends(get_db)):
     bill = db.get(Bill, bill_id)
     if not bill:
         raise HTTPException(status_code=404, detail="Bill not found")
+    if db.scalar(select(LedgerOrigin.id).where(LedgerOrigin.bill_id == bill_id)):
+        raise HTTPException(status_code=409, detail="Imported facts cannot be deleted")
     db.delete(bill)
     db.commit()
 
@@ -1201,17 +1562,122 @@ def create_asset(payload: AssetCreate, db: Session = Depends(get_db)):
     return AssetRead(id=asset.id, account_name=asset.account_name, account_type=asset.account_type, balance=asset.balance, recorded_at=asset.recorded_at)
 
 
-@app.get("/api/dashboard")
-def dashboard(db: Session = Depends(get_db)):
-    ledger_filter = Bill.aggregate_excluded.is_(False)
-    income = db.scalar(select(func.coalesce(func.sum(Bill.amount), 0.0)).where(ledger_filter, Bill.amount > 0))
-    spending = db.scalar(select(func.coalesce(func.sum(Bill.amount), 0.0)).where(ledger_filter, Bill.amount < 0))
-    transfer_group_count = len({group for group in db.scalars(select(Bill.transfer_group_id).where(Bill.transfer_group_id.is_not(None))).all() if group})
-    trend_rows = db.execute(select(func.date(Bill.occurred_at), Bill.amount).where(ledger_filter).order_by(func.date(Bill.occurred_at))).all()
+def _ledger_summary(db: Session, clauses: list, filters: dict[str, object]) -> dict:
+    bills = db.scalars(select(Bill).where(*clauses).order_by(Bill.occurred_at, Bill.id)).all()
+    bill_ids = [bill.id for bill in bills]
+    allocations = db.scalars(select(RefundAllocation).where(
+        RefundAllocation.status == "confirmed",
+        RefundAllocation.refund_bill_id.in_(bill_ids),
+        RefundAllocation.expense_bill_id.in_(bill_ids),
+    )).all() if bill_ids else []
+    refund_offset = sum(allocation.amount for allocation in allocations)
+    gross_income = sum(bill.amount for bill in bills if bill.amount > 0)
+    spending = sum(bill.amount for bill in bills if bill.amount < 0)
+    income = gross_income - refund_offset
+    refunds_by_bill: dict[int, float] = {}
+    for allocation in allocations:
+        refunds_by_bill[allocation.refund_bill_id] = refunds_by_bill.get(allocation.refund_bill_id, 0.0) + allocation.amount
     trend: dict[str, dict[str, float | int]] = {}
-    for day, amount in trend_rows:
-        point = trend.setdefault(str(day), {"income": 0.0, "spending": 0.0, "net": 0.0, "bill_count": 0})
-        point["income" if amount > 0 else "spending"] += amount
-        point["net"] += amount
+    for bill in bills:
+        day = str(bill.occurred_at.date())
+        point = trend.setdefault(day, {"income": 0.0, "spending": 0.0, "refund_offset": 0.0, "net": 0.0, "bill_count": 0})
+        allocated = refunds_by_bill.get(bill.id, 0.0)
+        if bill.amount > 0:
+            point["income"] += bill.amount - allocated
+            point["refund_offset"] += allocated
+        else:
+            point["spending"] += bill.amount
+        point["net"] += bill.amount
         point["bill_count"] += 1
-    return {"income": income, "spending": spending, "net": income + spending, "bill_count": db.scalar(select(func.count(Bill.id))), "import_count": db.scalar(select(func.count(LedgerOrigin.id))) or 0, "candidate_count": db.scalar(select(func.count(ReviewCandidate.id)).where(ReviewCandidate.status == "pending")), "transfer_group_count": transfer_group_count, "trend": [{"day": day, **point} for day, point in trend.items()], "generated_at": datetime.now().isoformat()}
+    return {
+        "income": income,
+        "spending": spending,
+        "refund_offset": refund_offset,
+        "net": gross_income + spending,
+        "bill_count": len(bills),
+        "effective_count": len(bills),
+        "transaction_ids": bill_ids,
+        "composition": {
+            "income": [bill.id for bill in bills if bill.amount > 0],
+            "spending": [bill.id for bill in bills if bill.amount < 0],
+            "refund_offset": [{"allocation_id": allocation.id, "refund_bill_id": allocation.refund_bill_id, "expense_bill_id": allocation.expense_bill_id, "amount": allocation.amount} for allocation in allocations],
+            "net": bill_ids,
+            "effective_count": bill_ids,
+        },
+        "import_count": db.scalar(select(func.count(LedgerOrigin.id)).where(LedgerOrigin.bill_id.in_(bill_ids))) or 0 if bill_ids else 0,
+        "candidate_count": db.scalar(select(func.count(ReviewCandidate.id)).where(ReviewCandidate.status == "pending")) or 0,
+        "transfer_group_count": len({group for group in db.scalars(select(Bill.transfer_group_id).where(Bill.transfer_group_id.is_not(None))).all() if group}),
+        "trend": [{"day": day, **point} for day, point in trend.items()],
+        "filters": filters,
+        "basis_version": "pirc-9-v1",
+        "generated_at": datetime.now().isoformat(),
+    }
+
+
+@app.get("/api/dashboard")
+def dashboard(
+    date_from: date | None = None,
+    date_to: date | None = None,
+    amount_min: float | None = Query(default=None, ge=0),
+    amount_max: float | None = Query(default=None, ge=0),
+    source: list[str] = Query(default=[]),
+    account: list[str] = Query(default=[]),
+    direction: str | None = Query(default=None, pattern="^(income|expense|transfer)$"),
+    q: str | None = Query(default=None, max_length=200),
+    tag: list[str] = Query(default=[]),
+    db: Session = Depends(get_db),
+):
+    clauses = _ledger_clauses(db, date_from, date_to, amount_min, amount_max, source, account, direction, q, tag)
+    filters = _ledger_filter_values(date_from, date_to, amount_min, amount_max, source, account, direction, q, tag)
+    return _ledger_summary(db, clauses, filters)
+
+
+@app.get("/api/ledger/drilldown")
+def ledger_drilldown(
+    date_from: date | None = None,
+    date_to: date | None = None,
+    amount_min: float | None = Query(default=None, ge=0),
+    amount_max: float | None = Query(default=None, ge=0),
+    source: list[str] = Query(default=[]),
+    account: list[str] = Query(default=[]),
+    direction: str | None = Query(default=None, pattern="^(income|expense|transfer)$"),
+    q: str | None = Query(default=None, max_length=200),
+    tag: list[str] = Query(default=[]),
+    db: Session = Depends(get_db),
+):
+    clauses = _ledger_clauses(db, date_from, date_to, amount_min, amount_max, source, account, direction, q, tag)
+    filters = _ledger_filter_values(date_from, date_to, amount_min, amount_max, source, account, direction, q, tag)
+    summary = _ledger_summary(db, clauses, filters)
+    excluded_clauses = _ledger_clauses(db, date_from, date_to, amount_min, amount_max, source, account, direction, q, tag, aggregate_excluded=True)
+    excluded = db.scalars(select(Bill).where(*excluded_clauses).order_by(Bill.id)).all()
+    bills = db.scalars(select(Bill).where(Bill.id.in_(summary["transaction_ids"])).order_by(Bill.occurred_at, Bill.id)).all() if summary["transaction_ids"] else []
+    transactions = []
+    for bill in bills:
+        tag_audits = db.scalars(select(TagAudit).where(TagAudit.bill_id == bill.id).order_by(TagAudit.created_at, TagAudit.id)).all()
+        account_revisions = db.scalars(select(AccountRevision).where(AccountRevision.bill_id == bill.id).order_by(AccountRevision.created_at, AccountRevision.id)).all()
+        candidate_ids = db.scalars(select(ReviewCandidate.id).where(
+            (ReviewCandidate.bill_id == bill.id) | (ReviewCandidate.related_bill_id == bill.id),
+            ReviewCandidate.status != "superseded_duplicate_group",
+        ).order_by(ReviewCandidate.id)).all()
+        refund_allocations = db.scalars(select(RefundAllocation).where(
+            (RefundAllocation.refund_bill_id == bill.id) | (RefundAllocation.expense_bill_id == bill.id),
+            RefundAllocation.status == "confirmed",
+        ).order_by(RefundAllocation.id)).all()
+        transactions.append({
+            "bill": bill_read(db, bill),
+            "source": transaction_source(bill.id, db),
+            "tag_audits": [_tag_audit_read(audit) for audit in tag_audits],
+            "account_revisions": [{"id": revision.id, "before_account": revision.before_account, "after_account": revision.after_account, "action": revision.action, "actor": revision.actor, "reason": revision.reason, "reverses_revision_id": revision.reverses_revision_id, "undone": revision.undone, "undone_at": revision.undone_at, "created_at": revision.created_at} for revision in account_revisions],
+            "candidate_ids": candidate_ids,
+            "refund_allocations": [_refund_allocation_read(allocation) for allocation in refund_allocations],
+        })
+    return {
+        "transaction_ids": summary["transaction_ids"],
+        "summary": {key: summary[key] for key in ("income", "spending", "refund_offset", "net", "effective_count")},
+        "composition": summary["composition"],
+        "transactions": transactions,
+        "excluded": [{"bill_id": bill.id, "reason": "confirmed_duplicate" if bill.duplicate_of_id else "confirmed_transfer"} for bill in excluded],
+        "filters": filters,
+        "basis_version": summary["basis_version"],
+        "generated_at": summary["generated_at"],
+    }

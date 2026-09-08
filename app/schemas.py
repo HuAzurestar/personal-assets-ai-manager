@@ -53,6 +53,12 @@ class TagApply(BaseModel):
     category: str | None = None
     tags: list[str] | None = None
     confidence: float | None = Field(default=None, ge=0, le=1)
+    reason: str = Field(default="", max_length=500)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=120)
+
+
+class UndoRequest(BaseModel):
+    reason: str = Field(default="", max_length=500)
 
 
 class TagAuditRead(BaseModel):
@@ -63,6 +69,12 @@ class TagAuditRead(BaseModel):
     confidence: float
     provider: str
     superseded: bool
+    action: str = "confirm"
+    actor: str = "local-user"
+    reason: str = ""
+    reverses_audit_id: int | None = None
+    undone: bool = False
+    undone_at: datetime | None = None
     created_at: datetime
     tag_state: dict[str, str] = Field(default_factory=dict)
 
@@ -148,12 +160,14 @@ class ReviewCandidateRead(BaseModel):
 class CandidateDecision(BaseModel):
     action: str = Field(pattern="^(confirm_transfer|confirm_personal_transfer|confirm_third_party_transfer|resolve_duplicate|reject_duplicate|ignored|deferred)$")
     retained_bill_id: int | None = None
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=120)
 
 
 class CandidateBatchItem(BaseModel):
     candidate_id: int
     action: str = Field(pattern="^(confirm_transfer|confirm_personal_transfer|confirm_third_party_transfer|resolve_duplicate|reject_duplicate|ignored|deferred)$")
     retained_bill_id: int | None = None
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=120)
 
 
 class CandidateBatchDecision(BaseModel):
@@ -238,6 +252,31 @@ class TransactionPageRead(BaseModel):
     page_size: int
     filters: dict[str, object]
     sort: dict[str, str]
+
+
+class AccountRevisionRequest(BaseModel):
+    account_name: str = Field(min_length=1, max_length=120)
+    reason: str = Field(default="", max_length=500)
+    idempotency_key: str = Field(min_length=1, max_length=120)
+
+
+class RefundAllocationCreate(BaseModel):
+    refund_bill_id: int
+    expense_bill_id: int
+    amount: float = Field(gt=0)
+    reason: str = Field(default="", max_length=500)
+    idempotency_key: str = Field(min_length=1, max_length=120)
+
+
+class RefundAllocationRead(BaseModel):
+    id: int
+    refund_bill_id: int
+    expense_bill_id: int
+    amount: float
+    status: str
+    idempotency_key: str
+    created_at: datetime
+    revoked_at: datetime | None = None
 
 
 class TrendPointRead(BaseModel):

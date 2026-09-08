@@ -110,6 +110,7 @@ class ImportBatch(Base):
 
 class ImportArtifact(Base):
     __tablename__ = "import_artifacts"
+    __table_args__ = (UniqueConstraint("source_type", "sha256", name="uq_import_artifact_source_sha256"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     import_batch_id: Mapped[int] = mapped_column(ForeignKey("import_batches.id"))
@@ -129,6 +130,7 @@ class LedgerOrigin(Base):
     source_reference: Mapped[str] = mapped_column(String(160), default="")
     raw_payload: Mapped[str] = mapped_column(Text, default="")
     import_batch_id: Mapped[int | None] = mapped_column(ForeignKey("import_batches.id"), nullable=True)
+    source_row_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class TagAudit(Base):
@@ -143,6 +145,16 @@ class TagAudit(Base):
     confidence: Mapped[float] = mapped_column(Float)
     provider: Mapped[str] = mapped_column(String(80), default="")
     superseded: Mapped[bool] = mapped_column(Boolean, default=False)
+    action: Mapped[str] = mapped_column(String(40), default="confirm")
+    actor: Mapped[str] = mapped_column(String(80), default="local-user")
+    reason: Mapped[str] = mapped_column(Text, default="")
+    before_state_json: Mapped[str] = mapped_column(Text, default="{}")
+    before_category: Mapped[str] = mapped_column(String(80), default="未分类")
+    reverses_audit_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    undone: Mapped[bool] = mapped_column(Boolean, default=False)
+    undone_at: Mapped[str | None] = mapped_column(DateTime(timezone=False), nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(120), nullable=True, unique=True)
+    request_payload: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[str] = mapped_column(DateTime(timezone=False))
 
 
@@ -173,9 +185,61 @@ class CandidateActionLog(Base):
     candidate_id: Mapped[int] = mapped_column(ForeignKey("review_candidates.id"))
     action: Mapped[str] = mapped_column(String(40))
     before_state: Mapped[str] = mapped_column(Text)
+    after_state: Mapped[str] = mapped_column(Text, default="")
+    actor: Mapped[str] = mapped_column(String(80), default="local-user")
+    reason: Mapped[str] = mapped_column(Text, default="")
+    reverses_action_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(120), nullable=True, unique=True)
+    request_payload: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[str] = mapped_column(DateTime(timezone=False))
     undone: Mapped[bool] = mapped_column(Boolean, default=False)
     undone_at: Mapped[str | None] = mapped_column(DateTime(timezone=False), nullable=True)
+
+
+class AccountRevision(Base):
+    __tablename__ = "account_revisions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    bill_id: Mapped[int] = mapped_column(ForeignKey("bills.id"))
+    before_account: Mapped[str] = mapped_column(String(120))
+    after_account: Mapped[str] = mapped_column(String(120))
+    action: Mapped[str] = mapped_column(String(40), default="confirm")
+    actor: Mapped[str] = mapped_column(String(80), default="local-user")
+    reason: Mapped[str] = mapped_column(Text, default="")
+    reverses_revision_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    undone: Mapped[bool] = mapped_column(Boolean, default=False)
+    undone_at: Mapped[str | None] = mapped_column(DateTime(timezone=False), nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(120), nullable=True, unique=True)
+    request_payload: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[str] = mapped_column(DateTime(timezone=False))
+
+
+class RefundAllocation(Base):
+    __tablename__ = "refund_allocations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    refund_bill_id: Mapped[int] = mapped_column(ForeignKey("bills.id"))
+    expense_bill_id: Mapped[int] = mapped_column(ForeignKey("bills.id"))
+    amount: Mapped[float] = mapped_column(Float)
+    status: Mapped[str] = mapped_column(String(30), default="confirmed")
+    idempotency_key: Mapped[str] = mapped_column(String(120), unique=True)
+    request_payload: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(DateTime(timezone=False))
+    revoked_at: Mapped[str | None] = mapped_column(DateTime(timezone=False), nullable=True)
+
+
+class RefundAllocationAudit(Base):
+    __tablename__ = "refund_allocation_audits"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    allocation_id: Mapped[int] = mapped_column(ForeignKey("refund_allocations.id"))
+    action: Mapped[str] = mapped_column(String(40))
+    actor: Mapped[str] = mapped_column(String(80), default="local-user")
+    reason: Mapped[str] = mapped_column(Text, default="")
+    before_state: Mapped[str] = mapped_column(Text)
+    after_state: Mapped[str] = mapped_column(Text)
+    reverses_audit_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[str] = mapped_column(DateTime(timezone=False))
 
 
 class AssetSnapshot(Base):
@@ -193,6 +257,7 @@ def init_db() -> None:
     if DATABASE_URL.startswith("sqlite"):
         migrations = {
             "import_batches": {"batch_token": "VARCHAR(64)"},
+            "ledger_origins": {"source_row_number": "INTEGER"},
             "bills": {
                 "account_name": "VARCHAR(120) NOT NULL DEFAULT '未提供账户'",
                 "aggregate_excluded": "BOOLEAN NOT NULL DEFAULT 0",
@@ -212,7 +277,27 @@ def init_db() -> None:
                 "retained_bill_id": "INTEGER",
                 "resolved_at": "DATETIME",
             },
+            "candidate_action_logs": {
+                "after_state": "TEXT NOT NULL DEFAULT ''",
+                "actor": "VARCHAR(80) NOT NULL DEFAULT 'local-user'",
+                "reason": "TEXT NOT NULL DEFAULT ''",
+                "reverses_action_id": "INTEGER",
+                "idempotency_key": "VARCHAR(120)",
+                "request_payload": "TEXT NOT NULL DEFAULT ''",
+            },
         }
+        migrations["tag_audits"].update({
+            "action": "VARCHAR(40) NOT NULL DEFAULT 'confirm'",
+            "actor": "VARCHAR(80) NOT NULL DEFAULT 'local-user'",
+            "reason": "TEXT NOT NULL DEFAULT ''",
+            "before_state_json": "TEXT NOT NULL DEFAULT '{}'",
+            "before_category": "VARCHAR(80) NOT NULL DEFAULT '未分类'",
+            "reverses_audit_id": "INTEGER",
+            "undone": "BOOLEAN NOT NULL DEFAULT 0",
+            "undone_at": "DATETIME",
+            "idempotency_key": "VARCHAR(120)",
+            "request_payload": "TEXT NOT NULL DEFAULT ''",
+        })
         with engine.begin() as connection:
             for table, columns in migrations.items():
                 existing = {item["name"] for item in inspect(engine).get_columns(table)}
@@ -220,6 +305,9 @@ def init_db() -> None:
                     if name not in existing:
                         connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {definition}"))
             connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_tag_views_system_name ON tag_views(system_name) WHERE system_name <> ''"))
+            connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_import_artifacts_source_sha256 ON import_artifacts(source_type, sha256)"))
+            connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_tag_audits_idempotency_key ON tag_audits(idempotency_key) WHERE idempotency_key IS NOT NULL"))
+            connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_candidate_actions_idempotency_key ON candidate_action_logs(idempotency_key) WHERE idempotency_key IS NOT NULL"))
             connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_view_tags_view_system_name ON view_tags(view_id, system_name) WHERE system_name <> ''"))
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_bills_tag_state_category_page ON bills(json_extract(tag_state_json, '$.category'), occurred_at DESC, id DESC)"))
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_bills_tag_state_scenario_page ON bills(json_extract(tag_state_json, '$.scenario'), occurred_at DESC, id DESC)"))
@@ -232,6 +320,7 @@ def init_db() -> None:
                 session.add(ViewTag(view_id=view.id, name="未分类", is_unclassified=True))
                 for tag_name in tags:
                     session.add(ViewTag(view_id=view.id, name=tag_name))
+            session.flush()
         default_view_names = ("category", "scenario")
         default_tag_names = {
             "category": ("food", "transport", "lodging", "shopping"),

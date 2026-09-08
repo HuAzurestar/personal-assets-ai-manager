@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -62,14 +63,23 @@ def _normalise(row: dict[str, str]) -> ImportedRow:
     occurred_at = next((datetime.strptime(timestamp, pattern) for pattern in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y/%m/%d %H:%M:%S") if _valid_time(timestamp, pattern)), None)
     if not occurred_at:
         raise ValueError(f"Unrecognised transaction time: {timestamp}")
+    merchant = _value(row, "merchant")
+    if not merchant:
+        raise ValueError("Missing transaction counterparty")
     raw_amount = _value(row, "amount")
-    amount = float(re.sub(r"[^0-9.-]", "", raw_amount) or "0")
+    normalised_amount = re.sub(r"[^0-9.-]", "", raw_amount)
+    if not normalised_amount:
+        raise ValueError("Missing transaction amount")
+    try:
+        amount = float(normalised_amount)
+    except ValueError as error:
+        raise ValueError(f"Unrecognised transaction amount: {raw_amount}") from error
     direction = _value(row, "direction")
     if direction in {"支出", "付款", "支"} and amount > 0:
         amount = -amount
     elif direction in {"收入", "收款", "收"} and amount < 0:
         amount = -amount
-    return ImportedRow(occurred_at, _value(row, "merchant") or "未知交易方", _value(row, "note"), amount, _value(row, "reference"), _value(row, "account") or "未提供账户", str(row))
+    return ImportedRow(occurred_at, merchant, _value(row, "note"), amount, _value(row, "reference"), _value(row, "account") or "未提供账户", json.dumps(row, ensure_ascii=False, sort_keys=True))
 
 
 def _valid_time(value: str, pattern: str) -> bool:
