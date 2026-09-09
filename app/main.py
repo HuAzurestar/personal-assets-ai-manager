@@ -13,14 +13,18 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import MetaData, Table, asc, desc, func, inspect, select, text
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import OperationalError, IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import APP_DISPLAY_NAME, APP_SLUG
 from app.database import AccountRevision, AssetSnapshot, Bill, BillViewTag, CandidateActionLog, ImportArtifact, ImportBatch, LedgerOrigin, RefundAllocation, RefundAllocationAudit, ReviewCandidate, SessionLocal, TagAudit, TagChangeLog, TagView, ViewTag, init_db
-from app.file_import import normalise_rows, parse_upload, preview_rows
+from app.file_import import normalise_rows, parse_upload, preview_rows, inspect_rows
 from app.schemas import AccountRevisionRequest, AssetCreate, AssetRead, BatchImportItemRead, BatchImportRead, BatchImportRequest, BatchPreviewItemRead, BatchPreviewRead, BillCreate, BillRead, CandidateBatchDecision, CandidateDecision, CandidatePageRead, ImportBatchRead, ImportPreviewRead, RefundAllocationCreate, RefundAllocationRead, ReviewCandidateRead, TagApply, TagAuditRead, TagRequest, TagResult, TagStateAssignmentRequest, TagStateBulkAssignmentRequest, TagViewCreate, TagViewRead, TagViewUpdate, TransactionPageRead, UndoRequest, ViewTagAssignmentRead, ViewTagAssignmentRequest, ViewTagCreate, ViewTagRead, ViewTagUpdate
 from app.tagging import classify, classify_rules
+from app.database import RefundDesignation, ImportRowIssue, RefundNatureAudit, ImportIssueAction
+from app.schemas import IssueResolve, NatureRequest
+from app.money import cents, money
+from app.review_matters import allocated_bills, assert_no_matters, current_matters, register_matter_routes
 
 APP_DIR = Path(__file__).parent
 
@@ -67,6 +71,7 @@ CATEGORY_SYSTEM_NAME_ALIASES = {
 # This is deliberately a fixed application schema allow-list.  The database
 # observer never accepts a SQL expression or an arbitrary SQLite object name.
 DATABASE_OBSERVER_TABLES = frozenset({
+    "review_matters", "review_matter_revisions", "refund_designations", "refund_nature_audits", "import_row_issues", "import_issue_actions",
     "asset_snapshots",
     "account_revisions",
     "bill_tags",
@@ -242,12 +247,17 @@ def _write_tag_state(
     request_payload: str = "",
 ) -> TagAudit:
     before_state = _state_from_bill(bill)
+    if not before_state:
+        before_state = _validate_tag_state(db, {})
+        bill.tag_state_json = _tag_state_json(before_state)
     state = _validate_tag_state(db, submitted)
-    current = db.scalar(select(TagAudit).where(
+    current_audits = db.scalars(select(TagAudit).where(
         TagAudit.bill_id == bill.id,
         TagAudit.superseded.is_(False),
-    ).order_by(TagAudit.confidence.desc(), TagAudit.id.desc()))
-    superseded = bool(current and confidence < current.confidence)
+    ).order_by(TagAudit.id.desc())).all()
+    # Confidence ranks suggestions, never overrides a human decision.
+    suggestion = strategy in {"local_rules", "llm_suggestion"}
+    superseded = suggestion
     selected = _state_assignments_for_state(db, state)
     audit = TagAudit(
         bill_id=bill.id,
@@ -258,7 +268,7 @@ def _write_tag_state(
         confidence=confidence,
         provider=provider,
         superseded=superseded,
-        action="confirm",
+        action="suggest" if suggestion else "confirm",
         actor="local-user",
         reason=reason,
         before_state_json=_tag_state_json(before_state),
@@ -268,9 +278,10 @@ def _write_tag_state(
         created_at=datetime.now(),
     )
     if not superseded:
-        if current:
+        for current in current_audits:
             current.superseded = True
         bill.tag_state_json = audit.tag_state_json
+        bill.category = audit.category
     db.add(audit)
     return audit
 
@@ -301,6 +312,7 @@ def bill_read(db: Session, bill: Bill) -> BillRead:
         merchant=bill.merchant,
         note=bill.note,
         amount=bill.amount,
+        currency=bill.currency,
         category=bill.category,
         tags=[tag.tag_name for tag in assignments],
         source_type=origin.source_type if origin else None,
@@ -313,6 +325,7 @@ def bill_read(db: Session, bill: Bill) -> BillRead:
         duplicate_of_id=bill.duplicate_of_id,
         view_tags=assignments,
         tag_state=state,
+        tag_revision_id=db.scalar(select(TagAudit.id).where(TagAudit.bill_id == bill.id, TagAudit.superseded.is_(False)).order_by(TagAudit.id.desc()).limit(1)) or 0,
     )
 
 
@@ -382,7 +395,9 @@ def _duplicate_component(db: Session, bill: Bill) -> list[Bill]:
 
 
 def _consolidate_duplicate_candidates(db: Session) -> None:
-    candidates = db.scalars(select(ReviewCandidate).where(ReviewCandidate.candidate_type == "duplicate", ReviewCandidate.status != "superseded_duplicate_group").order_by(ReviewCandidate.id)).all()
+    # Consolidation may improve unconfirmed suggestions only. Confirmed members
+    # and all historical decisions are frozen; GET must never exclude new facts.
+    candidates = db.scalars(select(ReviewCandidate).where(ReviewCandidate.candidate_type == "duplicate", ReviewCandidate.status.in_(("pending", "legacy_duplicate_needs_review")), ~ReviewCandidate.id.in_(select(CandidateActionLog.candidate_id)))).all()
     groups: list[set[int]] = []
     grouped_candidates: list[list[ReviewCandidate]] = []
     for candidate in candidates:
@@ -407,15 +422,9 @@ def _consolidate_duplicate_candidates(db: Session) -> None:
         canonical.bill_id, canonical.related_bill_id = members[0].id, members[1].id
         canonical.member_bill_ids = json.dumps([member.id for member in members])
         canonical.group_fingerprint = fingerprint
-        if canonical.status == "duplicate_excluded" and canonical.retained_bill_id in ids:
-            for member in members:
-                member.aggregate_excluded = member.id != canonical.retained_bill_id
-                member.duplicate_of_id = canonical.retained_bill_id if member.id != canonical.retained_bill_id else None
         for duplicate in group_candidates:
             if duplicate.id == canonical.id:
                 continue
-            for log in logs_by_candidate[duplicate.id]:
-                log.candidate_id = canonical.id
             duplicate.status = "superseded_duplicate_group"
             duplicate.superseded_by_id = canonical.id
             duplicate.group_fingerprint = fingerprint
@@ -482,6 +491,7 @@ def _candidate_effect(candidate: ReviewCandidate) -> str:
 def candidate_read(db: Session, candidate: ReviewCandidate) -> ReviewCandidateRead:
     return ReviewCandidateRead(
         id=candidate.id,
+        current_action_id=db.scalar(select(CandidateActionLog.id).where(CandidateActionLog.candidate_id == candidate.id).order_by(CandidateActionLog.id.desc()).limit(1)) or 0,
         candidate_type=candidate.candidate_type,
         confidence=candidate.confidence,
         reason=candidate.reason,
@@ -505,6 +515,7 @@ def _validate_source_type(source_type: str) -> None:
 
 
 def _preview_read(source_type: str, parsed) -> ImportPreviewRead:
+    valid, issues = inspect_rows(parsed)
     return ImportPreviewRead(
         source_type=source_type,
         filename=parsed.filename,
@@ -514,10 +525,12 @@ def _preview_read(source_type: str, parsed) -> ImportPreviewRead:
         row_count=len(parsed.rows),
         columns=["交易时间", "交易方", "金额", "备注", "收支", "流水号"],
         preview_rows=preview_rows(parsed),
+        valid_count=len(valid),
+        issues=issues,
     )
 
 
-def _batch_read(batch: ImportBatch, parsed, candidate_count: int) -> ImportBatchRead:
+def _batch_read(batch: ImportBatch, parsed, candidate_count: int, issue_count: int = 0) -> ImportBatchRead:
     return ImportBatchRead(
         id=batch.id,
         source_type=batch.source_type,
@@ -526,6 +539,7 @@ def _batch_read(batch: ImportBatch, parsed, candidate_count: int) -> ImportBatch
         row_count=batch.row_count,
         imported_count=batch.imported_count,
         candidate_count=candidate_count,
+        issue_count=issue_count,
         file_sha256=parsed.file_sha256,
         file_format=parsed.file_format,
         archive_entry=parsed.archive_entry,
@@ -537,13 +551,13 @@ def _commit_parsed(db: Session, source_type: str, parsed, batch_token: str | Non
     duplicate = db.scalar(select(ImportArtifact).where(ImportArtifact.source_type == source_type, ImportArtifact.sha256 == parsed.file_sha256))
     if duplicate:
         raise ValueError("该来源文件已导入，已跳过重复文件")
-    imported_rows = normalise_rows(parsed)
-    batch = ImportBatch(source_type=source_type, filename=parsed.filename, imported_at=datetime.now(), row_count=len(imported_rows), imported_count=0, batch_token=batch_token)
+    imported_rows, issues = inspect_rows(parsed)
+    batch = ImportBatch(source_type=source_type, filename=parsed.filename, imported_at=datetime.now(), row_count=len(parsed.rows), imported_count=0, batch_token=batch_token)
     db.add(batch)
     db.flush()
     db.add(ImportArtifact(import_batch_id=batch.id, source_type=source_type, filename=parsed.filename, file_format=parsed.file_format, archive_entry=parsed.archive_entry, sha256=parsed.file_sha256))
     candidate_count = 0
-    for source_row_number, row in zip(parsed.row_numbers, imported_rows, strict=True):
+    for source_row_number, row in imported_rows:
         bill = Bill(occurred_at=row.occurred_at, merchant=row.merchant, note=row.note, amount=row.amount, account_name=row.account_name, category="未分类", tags="")
         db.add(bill)
         db.flush()
@@ -552,8 +566,10 @@ def _commit_parsed(db: Session, source_type: str, parsed, batch_token: str | Non
         _apply_tag(db, bill, "local_rules", category, tags, provider, STRATEGY_CONFIDENCE["local_rules"])
         candidate_count += _generate_candidates(db, bill)
         batch.imported_count += 1
+    for issue in issues:
+        db.add(ImportRowIssue(import_batch_id=batch.id, source_row_number=issue["row_number"], raw_payload=json.dumps(issue["raw_fields"], ensure_ascii=False, sort_keys=True), error=issue["error"]))
     db.commit()
-    return _batch_read(batch, parsed, candidate_count)
+    return _batch_read(batch, parsed, candidate_count, len(issues))
 
 
 def _decode_batch_file(encoded: str, filename: str) -> bytes:
@@ -859,22 +875,7 @@ def delete_view_tag(view_id: int, tag_id: int, migrate_to_tag_id: int | None = N
         raise HTTPException(status_code=404, detail="Tag not found")
     if tag.is_unclassified:
         raise HTTPException(status_code=422, detail="The unclassified tag is protected")
-    assignments = db.scalars(select(BillViewTag).where(BillViewTag.tag_id == tag.id)).all()
-    if assignments and migrate_to_tag_id is None:
-        raise HTTPException(status_code=422, detail="Used tags require a migration target")
-    if migrate_to_tag_id is not None:
-        target = db.get(ViewTag, migrate_to_tag_id)
-        if not target or target.view_id != view_id:
-            raise HTTPException(status_code=422, detail="Migration target must belong to the same view")
-        if target.is_unclassified:
-            for assignment in assignments:
-                db.delete(assignment)
-        else:
-            for assignment in assignments:
-                assignment.tag_id = target.id
-    db.add(TagChangeLog(view_id=view_id, tag_id=tag.id, action="delete_tag", detail=f"migrate_to={migrate_to_tag_id}", created_at=datetime.now()))
-    db.delete(tag)
-    db.commit()
+    raise HTTPException(409, "为保留当前标签与历史解释，请使用归档，不支持物理删除标签")
 
 
 @app.put("/api/transactions/{bill_id}/tag-assignments/{view_id}", response_model=BillRead)
@@ -896,7 +897,18 @@ def assign_tag_state(bill_id: int, payload: TagStateAssignmentRequest, db: Sessi
     bill = db.get(Bill, bill_id)
     if not bill:
         raise HTTPException(status_code=404, detail="Transaction not found")
-    _write_tag_state(db, bill, payload.tag_state, payload.strategy, payload.confidence, "named_tag_state")
+    latest = db.scalar(select(TagAudit.id).where(TagAudit.bill_id == bill_id, TagAudit.superseded.is_(False)).order_by(TagAudit.id.desc()).limit(1)) or 0
+    encoded = json.dumps({"bill_id": bill_id, **payload.model_dump()}, sort_keys=True, ensure_ascii=False)
+    if payload.idempotency_key:
+        existing = db.scalar(select(TagAudit).where(TagAudit.idempotency_key == payload.idempotency_key))
+        if existing:
+            if existing.request_payload != encoded or existing.undone or existing.id != latest:
+                raise HTTPException(409, "标签请求已发生变化，请刷新后重试")
+            db.commit()
+            return bill_read(db, bill)
+    if payload.expected_audit_id is not None and latest != payload.expected_audit_id:
+        raise HTTPException(409, "标签已被其他操作修改，请重新打开")
+    _write_tag_state(db, bill, payload.tag_state, payload.strategy, payload.confidence, "named_tag_state", payload.reason, payload.idempotency_key, encoded)
     db.commit()
     return bill_read(db, bill)
 
@@ -907,6 +919,11 @@ def assign_tag_state_bulk(payload: TagStateBulkAssignmentRequest, db: Session = 
     bills = db.scalars(select(Bill).where(Bill.id.in_(payload.bill_ids)).order_by(Bill.id)).all()
     if len(bills) != len(set(payload.bill_ids)):
         raise HTTPException(status_code=404, detail="One or more transactions were not found")
+    if payload.expected_revisions is not None:
+        for bill in bills:
+            current = db.scalar(select(TagAudit.id).where(TagAudit.bill_id == bill.id, TagAudit.superseded.is_(False)).order_by(TagAudit.id.desc()).limit(1)) or 0
+            if payload.expected_revisions.get(bill.id) != current:
+                raise HTTPException(409, f"流水 {bill.id} 的标签已有修改，本次批量操作未生效，请刷新")
     for bill in bills:
         tag_state = {**json.loads(bill.tag_state_json or "{}"), **payload.tag_state} if payload.merge else payload.tag_state
         _write_tag_state(db, bill, tag_state, payload.strategy, payload.confidence, "named_tag_state_bulk")
@@ -917,7 +934,7 @@ def assign_tag_state_bulk(payload: TagStateBulkAssignmentRequest, db: Session = 
 @app.post("/api/bills", response_model=BillRead, status_code=201)
 def create_bill(payload: BillCreate, db: Session = Depends(get_db)):
     category, tags, provider = classify_rules(payload.merchant, payload.note)
-    bill = Bill(**payload.model_dump(), category=category, tags="")
+    bill = Bill(**payload.model_dump(), category="未分类", tags="")
     db.add(bill)
     db.flush()
     _apply_tag(db, bill, "local_rules", category, tags, provider, STRATEGY_CONFIDENCE["local_rules"])
@@ -959,6 +976,9 @@ async def commit_import(
         db.rollback()
         status = 409 if "重复文件" in str(error) else 422
         raise HTTPException(status_code=status, detail=f"{filename}: {error}") from error
+    except (IntegrityError, OperationalError) as error:
+        db.rollback()
+        raise HTTPException(409, "文件已被其他请求导入或账本正在写入，请刷新后重试") from error
 
 
 @app.post("/api/imports/{source_type}/batch/preview", response_model=BatchPreviewRead)
@@ -1002,6 +1022,9 @@ def commit_import_batch(
             db.rollback()
             status = "duplicate" if "重复文件" in str(error) else "error"
             files.append(BatchImportItemRead(filename=item.filename, status=status, error=str(error)))
+        except (IntegrityError, OperationalError):
+            db.rollback()
+            files.append(BatchImportItemRead(filename=item.filename, status="error", error="文件重复或账本写入冲突，请刷新后重试；本文件未部分提交"))
     return BatchImportRead(batch_token=batch_token, files=files)
 
 
@@ -1031,19 +1054,10 @@ def _tag_audit_read(audit: TagAudit) -> TagAuditRead:
 
 @app.post("/api/bills/{bill_id}/tags", response_model=TagAuditRead, status_code=201)
 def apply_tag(bill_id: int, payload: TagApply, db: Session = Depends(get_db)):
-    _begin_immediate(db)
     bill = db.get(Bill, bill_id)
     if not bill:
         raise HTTPException(status_code=404, detail="Bill not found")
     request_payload = json.dumps(payload.model_dump(), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    if payload.idempotency_key:
-        existing = db.scalar(select(TagAudit).where(TagAudit.idempotency_key == payload.idempotency_key))
-        if existing:
-            if existing.bill_id != bill_id or existing.request_payload != request_payload or existing.undone:
-                db.rollback()
-                raise HTTPException(status_code=409, detail="Idempotency key was already used for a different tag revision")
-            db.commit()
-            return _tag_audit_read(existing)
     if payload.strategy == "manual" and not payload.tags:
         raise HTTPException(status_code=422, detail="Manual tagging requires at least one tag")
     if payload.strategy == "manual":
@@ -1059,6 +1073,17 @@ def apply_tag(bill_id: int, payload: TagApply, db: Session = Depends(get_db)):
         category = payload.category or suggested_category
         tags = payload.tags if payload.tags is not None else suggested_tags
     confidence = payload.confidence if payload.confidence is not None else STRATEGY_CONFIDENCE[payload.strategy]
+    # External classification must never hold the ledger write lock.
+    db.rollback()
+    _begin_immediate(db)
+    bill = db.get(Bill, bill_id)
+    if payload.idempotency_key:
+        existing = db.scalar(select(TagAudit).where(TagAudit.idempotency_key == payload.idempotency_key))
+        if existing:
+            if existing.bill_id != bill_id or existing.request_payload != request_payload or existing.undone or (existing.action != "suggest" and existing.superseded):
+                raise HTTPException(status_code=409, detail="Idempotency key was already used for a different tag revision")
+            db.commit()
+            return _tag_audit_read(existing)
     audit = _apply_tag(db, bill, payload.strategy, category, tags, provider, confidence, payload.reason, payload.idempotency_key, request_payload)
     db.commit()
     db.refresh(audit)
@@ -1135,6 +1160,7 @@ def revise_account(bill_id: int, payload: AccountRevisionRequest, db: Session = 
     bill = db.get(Bill, bill_id)
     if not bill:
         raise HTTPException(status_code=404, detail="Transaction not found")
+    _assert_account_editable(db, bill)
     revision = AccountRevision(
         bill_id=bill_id,
         before_account=bill.account_name,
@@ -1160,6 +1186,7 @@ def undo_account_revision(bill_id: int, revision_id: int, payload: UndoRequest, 
     revision = db.get(AccountRevision, revision_id)
     if not bill or not revision or revision.bill_id != bill_id:
         raise HTTPException(status_code=404, detail="Account revision not found")
+    _assert_account_editable(db, bill)
     if revision.undone:
         raise HTTPException(status_code=409, detail="Account revision has already been undone")
     current = db.scalar(select(AccountRevision).where(
@@ -1239,12 +1266,13 @@ def create_refund_allocation(payload: RefundAllocationCreate, db: Session = Depe
     if refund.aggregate_excluded or expense.aggregate_excluded:
         db.rollback()
         raise HTTPException(status_code=422, detail="Refund allocations require effective ledger transactions")
-    allocated_refund = db.scalar(select(func.coalesce(func.sum(RefundAllocation.amount), 0.0)).where(RefundAllocation.refund_bill_id == refund.id, RefundAllocation.status == "confirmed")) or 0.0
-    allocated_expense = db.scalar(select(func.coalesce(func.sum(RefundAllocation.amount), 0.0)).where(RefundAllocation.expense_bill_id == expense.id, RefundAllocation.status == "confirmed")) or 0.0
-    if allocated_refund + payload.amount > refund.amount + 1e-9:
+    assert_no_matters(db, {refund.id, expense.id})
+    allocated_refund = sum(cents(value) for value in db.scalars(select(RefundAllocation.amount).where(RefundAllocation.refund_bill_id == refund.id, RefundAllocation.status == "confirmed")))
+    allocated_expense = sum(cents(value) for value in db.scalars(select(RefundAllocation.amount).where(RefundAllocation.expense_bill_id == expense.id, RefundAllocation.status == "confirmed")))
+    if allocated_refund + cents(payload.amount) > cents(refund.amount):
         db.rollback()
         raise HTTPException(status_code=422, detail="Refund allocation exceeds the available refund amount")
-    if allocated_expense + payload.amount > abs(expense.amount) + 1e-9:
+    if allocated_expense + cents(payload.amount) > abs(cents(expense.amount)):
         db.rollback()
         raise HTTPException(status_code=422, detail="Refund allocation exceeds the original expense amount")
     allocation = RefundAllocation(
@@ -1257,6 +1285,9 @@ def create_refund_allocation(payload: RefundAllocationCreate, db: Session = Depe
         created_at=datetime.now(),
     )
     db.add(allocation)
+    if not db.get(RefundDesignation, refund.id):
+        db.add(RefundDesignation(bill_id=refund.id, created_at=datetime.now()))
+        db.add(RefundNatureAudit(bill_id=refund.id, action="refund", reason=payload.reason or "确认退款分配", created_at=datetime.now()))
     db.flush()
     db.add(RefundAllocationAudit(
         allocation_id=allocation.id,
@@ -1360,7 +1391,63 @@ def _candidate_snapshot(candidate: ReviewCandidate, members: list[Bill]) -> str:
     }, ensure_ascii=False)
 
 
+ACTIVE_EXCLUSION_STATES = {"duplicate_excluded", "personal_transfer_grouped", "third_party_transfer_grouped", "transfer_grouped", "legacy_transfer_excluded"}
+
+
+def _assert_review_available(db: Session, candidate: ReviewCandidate, bill_ids: set[int]) -> None:
+    assert_no_matters(db, bill_ids)
+    for other in db.scalars(select(ReviewCandidate).where(ReviewCandidate.status.in_(ACTIVE_EXCLUSION_STATES), ReviewCandidate.id != candidate.id)).all():
+        if bill_ids & set(_candidate_member_ids(other)):
+            raise HTTPException(409, f"金额已用于候选 {other.id} 的有效决定；请先撤销或修改该决定")
+    if db.scalar(select(RefundDesignation.bill_id).where(RefundDesignation.bill_id.in_(bill_ids)).limit(1)) or db.scalar(select(RefundAllocation.id).where(RefundAllocation.status == "confirmed", (RefundAllocation.refund_bill_id.in_(bill_ids)) | (RefundAllocation.expense_bill_id.in_(bill_ids))).limit(1)):
+        raise HTTPException(409, "流水涉及退款性质或有效退款分配，请先在退款记录中处理")
+
+
+def _assert_account_editable(db: Session, bill: Bill) -> None:
+    assert_no_matters(db, {bill.id})
+    for candidate in db.scalars(select(ReviewCandidate).where(ReviewCandidate.status.in_(ACTIVE_EXCLUSION_STATES))).all():
+        if bill.id in _candidate_member_ids(candidate):
+            raise HTTPException(409, f"账户用于已确认候选 {candidate.id}；请先撤销该决定再修改账户")
+
+
+def _rebuild_review_effects(db: Session, bill_ids: set[int]) -> None:
+    """Recompute only affected facts from remaining decisions, never old snapshots."""
+    bills = {bill.id: bill for bill in db.scalars(select(Bill).where(Bill.id.in_(bill_ids))).all()}
+    for bill in bills.values():
+        bill.aggregate_excluded, bill.duplicate_of_id, bill.transfer_group_id = False, None, None
+    for candidate in db.scalars(select(ReviewCandidate).where(ReviewCandidate.status.in_(ACTIVE_EXCLUSION_STATES)).order_by(ReviewCandidate.id)).all():
+        for bill_id in bill_ids & set(_candidate_member_ids(candidate)):
+            bill = bills.get(bill_id)
+            if not bill:
+                continue
+            if candidate.status == "duplicate_excluded":
+                if bill.id != candidate.retained_bill_id:
+                    bill.aggregate_excluded, bill.duplicate_of_id = True, candidate.retained_bill_id
+            else:
+                bill.aggregate_excluded, bill.transfer_group_id = True, candidate.transfer_group_id
+
+
+def _review_warnings(db: Session) -> list[dict]:
+    warnings = []
+    owners = {}
+    for candidate in db.scalars(select(ReviewCandidate).where(ReviewCandidate.status.in_(ACTIVE_EXCLUSION_STATES))).all():
+        if candidate.status in {"third_party_transfer_grouped", "legacy_transfer_excluded"}:
+            warnings.append({"candidate_id": candidate.id, "reason": "历史整笔排除缺少新的金额分配依据，请核验后改为手工事项"})
+        for bill_id in _candidate_member_ids(candidate):
+            if bill_id in owners:
+                warnings.append({"candidate_id": candidate.id, "conflicts_with": owners[bill_id], "bill_id": bill_id, "reason": "历史有效决定重复占用同一流水；请撤销错误决定"})
+            owners[bill_id] = candidate.id
+    return warnings
+
+
+@app.get("/api/review-warnings")
+def review_warnings(db: Session = Depends(get_db)):
+    return _review_warnings(db)
+
+
 def _apply_candidate_decision(db: Session, candidate: ReviewCandidate, payload: CandidateDecision) -> None:
+    if payload.action == "confirm_third_party_transfer":
+        raise HTTPException(422, "代收代付不能整笔排除。请建立手工事项，填写往来对象并分配本金、回款和费用")
     request_payload = json.dumps(payload.model_dump(), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     if payload.idempotency_key:
         existing = db.scalar(select(CandidateActionLog).where(CandidateActionLog.idempotency_key == payload.idempotency_key))
@@ -1368,6 +1455,11 @@ def _apply_candidate_decision(db: Session, candidate: ReviewCandidate, payload: 
             if existing.candidate_id != candidate.id or existing.request_payload != request_payload or existing.undone:
                 raise HTTPException(status_code=409, detail="Idempotency key conflicts with another candidate decision or state")
             return
+    latest = db.scalar(select(CandidateActionLog.id).where(CandidateActionLog.candidate_id == candidate.id).order_by(CandidateActionLog.id.desc()).limit(1)) or 0
+    if payload.expected_action_id is not None and payload.expected_action_id != latest:
+        raise HTTPException(409, "候选已发生变化，请重新打开后处理")
+    if payload.expected_member_ids is not None and set(payload.expected_member_ids) != set(_candidate_member_ids(candidate)):
+        raise HTTPException(409, "候选成员已有变化，请重新核对全部流水后确认")
     if candidate.status == "duplicate_excluded" and payload.action == "resolve_duplicate" and candidate.retained_bill_id == payload.retained_bill_id:
         return
     if candidate.status == "duplicate_rejected" and payload.action == "reject_duplicate":
@@ -1379,12 +1471,16 @@ def _apply_candidate_decision(db: Session, candidate: ReviewCandidate, payload: 
     first, second = db.get(Bill, candidate.bill_id), db.get(Bill, candidate.related_bill_id)
     if not first or not second or len(members) < 2:
         raise HTTPException(status_code=409, detail="Candidate evidence is incomplete")
+    if payload.action in {"confirm_transfer", "confirm_personal_transfer", "confirm_third_party_transfer", "resolve_duplicate"}:
+        _assert_review_available(db, candidate, {bill.id for bill in members})
     log = CandidateActionLog(candidate_id=candidate.id, action=payload.action, before_state=_candidate_snapshot(candidate, members), actor="local-user", reason=candidate.reason, idempotency_key=payload.idempotency_key, request_payload=request_payload, created_at=datetime.now())
     db.add(log)
     if payload.action in {"confirm_transfer", "confirm_personal_transfer", "confirm_third_party_transfer"}:
         if candidate.candidate_type != "transfer":
             raise HTTPException(status_code=422, detail="Only transfer candidates can be grouped as transfers")
         transfer_kind = "third_party" if payload.action == "confirm_third_party_transfer" else "personal"
+        if cents(first.amount) == 0 or cents(first.amount) != -cents(second.amount):
+            raise HTTPException(422, "两笔转移必须同额反向；分次付款和手续费请使用手工事项分配")
         if transfer_kind == "personal" and not _has_distinct_account_evidence(first, second):
             raise HTTPException(status_code=422, detail="Transfer confirmation requires two distinct transaction accounts")
         candidate.transfer_group_id = f"transfer-{candidate.id}"
@@ -1396,6 +1492,8 @@ def _apply_candidate_decision(db: Session, candidate: ReviewCandidate, payload: 
     elif payload.action == "resolve_duplicate":
         if candidate.candidate_type != "duplicate":
             raise HTTPException(status_code=422, detail="Only duplicate candidates can resolve a retained bill")
+        if len({cents(bill.amount) for bill in members}) != 1:
+            raise HTTPException(422, "重复组的金额或方向不一致，请重新核对来源")
         if payload.retained_bill_id not in {bill.id for bill in members}:
             raise HTTPException(status_code=422, detail="Select one of the duplicate-group bills to retain")
         retained = next(bill for bill in members if bill.id == payload.retained_bill_id)
@@ -1426,7 +1524,8 @@ def decide_candidates_batch(payload: CandidateBatchDecision, db: Session = Depen
         candidate = db.get(ReviewCandidate, item.candidate_id)
         if not candidate:
             raise HTTPException(status_code=404, detail=f"Candidate {item.candidate_id} not found")
-        _apply_candidate_decision(db, candidate, CandidateDecision(action=item.action, retained_bill_id=item.retained_bill_id, idempotency_key=item.idempotency_key))
+        _apply_candidate_decision(db, candidate, CandidateDecision(action=item.action, retained_bill_id=item.retained_bill_id, idempotency_key=item.idempotency_key, expected_action_id=item.expected_action_id, expected_member_ids=item.expected_member_ids))
+        db.flush()
         candidates.append(candidate)
     db.commit()
     for candidate in candidates:
@@ -1448,13 +1547,16 @@ def decide_candidate(candidate_id: int, payload: CandidateDecision, db: Session 
 
 
 @app.post("/api/candidates/{candidate_id}/undo", response_model=ReviewCandidateRead)
-def undo_candidate(candidate_id: int, db: Session = Depends(get_db)):
+def undo_candidate(candidate_id: int, expected_action_id: int | None = Query(default=None, ge=0), db: Session = Depends(get_db)):
     _begin_immediate(db)
     _consolidate_duplicate_candidates(db)
     candidate = _canonical_candidate(db, db.get(ReviewCandidate, candidate_id))
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
-    log = db.scalar(select(CandidateActionLog).where(CandidateActionLog.candidate_id == candidate_id, CandidateActionLog.action != "undo", CandidateActionLog.undone.is_(False)).order_by(CandidateActionLog.id.desc()))
+    latest = db.scalar(select(CandidateActionLog.id).where(CandidateActionLog.candidate_id == candidate.id).order_by(CandidateActionLog.id.desc()).limit(1)) or 0
+    if expected_action_id is not None and expected_action_id != latest:
+        raise HTTPException(409, "候选已有后续操作，不能撤销另一项决定，请刷新")
+    log = db.scalar(select(CandidateActionLog).where(CandidateActionLog.candidate_id == candidate.id, CandidateActionLog.action != "undo", CandidateActionLog.undone.is_(False)).order_by(CandidateActionLog.id.desc()))
     if not log:
         raise HTTPException(status_code=409, detail="No reversible candidate action is available")
     members = _candidate_members(db, candidate)
@@ -1466,12 +1568,8 @@ def undo_candidate(candidate_id: int, db: Session = Depends(get_db)):
     candidate.transfer_kind = previous.get("transfer_kind")
     candidate.retained_bill_id = previous["retained_bill_id"]
     candidate.resolved_at = datetime.fromisoformat(previous["resolved_at"]) if previous["resolved_at"] else None
-    for bill_id, bill_state in snapshot["bills"].items():
-        bill = db.get(Bill, int(bill_id))
-        if bill:
-            bill.aggregate_excluded = bill_state["aggregate_excluded"]
-            bill.transfer_group_id = bill_state["transfer_group_id"]
-            bill.duplicate_of_id = bill_state["duplicate_of_id"]
+    db.flush()
+    _rebuild_review_effects(db, {int(bill_id) for bill_id in snapshot["bills"]})
     log.undone = True
     log.undone_at = datetime.now()
     db.add(CandidateActionLog(
@@ -1549,10 +1647,7 @@ def delete_bill(bill_id: int, db: Session = Depends(get_db)):
     bill = db.get(Bill, bill_id)
     if not bill:
         raise HTTPException(status_code=404, detail="Bill not found")
-    if db.scalar(select(LedgerOrigin.id).where(LedgerOrigin.bill_id == bill_id)):
-        raise HTTPException(status_code=409, detail="Imported facts cannot be deleted")
-    db.delete(bill)
-    db.commit()
+    raise HTTPException(status_code=409, detail="账本事实不可删除；请通过复核修正解释并保留审计")
 
 
 @app.get("/api/assets", response_model=list[AssetRead])
@@ -1575,38 +1670,59 @@ def _ledger_summary(db: Session, clauses: list, filters: dict[str, object]) -> d
     allocations = db.scalars(select(RefundAllocation).where(
         RefundAllocation.status == "confirmed",
         RefundAllocation.refund_bill_id.in_(bill_ids),
-        RefundAllocation.expense_bill_id.in_(bill_ids),
+        RefundAllocation.expense_bill_id.in_(select(Bill.id).where(Bill.aggregate_excluded.is_(False))),
     )).all() if bill_ids else []
-    refund_offset = sum(allocation.amount for allocation in allocations)
-    gross_income = sum(bill.amount for bill in bills if bill.amount > 0)
-    spending = sum(bill.amount for bill in bills if bill.amount < 0)
-    income = gross_income - refund_offset
-    refunds_by_bill: dict[int, float] = {}
+    refund_ids = set(db.scalars(select(RefundDesignation.bill_id)).all())
+    refunds_by_bill: dict[int, int] = {}
     for allocation in allocations:
-        refunds_by_bill[allocation.refund_bill_id] = refunds_by_bill.get(allocation.refund_bill_id, 0.0) + allocation.amount
+        refunds_by_bill[allocation.refund_bill_id] = refunds_by_bill.get(allocation.refund_bill_id, 0) + cents(allocation.amount)
+    matter_lines = {}
+    matters = current_matters(db)
+    for matter in matters:
+        for line in matter["lines"]:
+            matter_lines.setdefault(line["bill_id"], []).append({**line, "matter_id": matter["id"]})
+    contributions = []
     trend: dict[str, dict[str, float | int]] = {}
     for bill in bills:
+        amount = cents(bill.amount)
+        lines = matter_lines.get(bill.id, [])
+        income = amount if amount > 0 and bill.id not in refund_ids else 0
+        spending = amount if amount < 0 else 0
+        unresolved = 0
+        if lines:
+            income = sum(line["amount_cents"] for line in lines if line["role"] == "income")
+            spending = -sum(line["amount_cents"] for line in lines if line["role"] == "expense")
+            unresolved = abs(amount) - sum(line["amount_cents"] for line in lines)
+        allocated = refunds_by_bill.get(bill.id, 0)
+        contributions.append({"bill_id": bill.id, "merchant": bill.merchant, "occurred_at": bill.occurred_at.isoformat(), "income": money(income), "spending": money(spending), "refund_offset": money(allocated), "net": money(income + spending + allocated), "cash_amount": bill.amount, "unallocated_refund": money(amount - allocated) if bill.id in refund_ids else 0, "unresolved_amount": money(unresolved), "matter_ids": sorted({line["matter_id"] for line in lines})})
         day = str(bill.occurred_at.date())
-        point = trend.setdefault(day, {"income": 0.0, "spending": 0.0, "refund_offset": 0.0, "net": 0.0, "bill_count": 0})
-        allocated = refunds_by_bill.get(bill.id, 0.0)
-        if bill.amount > 0:
-            point["income"] += bill.amount - allocated
-            point["refund_offset"] += allocated
-        else:
-            point["spending"] += bill.amount
-        point["net"] += bill.amount
+        point = trend.setdefault(day, {"income": 0, "spending": 0, "refund_offset": 0, "net": 0, "bill_count": 0})
+        point["income"] += income
+        point["spending"] += spending
+        point["refund_offset"] += allocated
+        point["net"] += income + spending + allocated
         point["bill_count"] += 1
+    totals = {key: money(sum(cents(row[key]) for row in contributions)) for key in ("income", "spending", "refund_offset", "net", "unallocated_refund", "unresolved_amount")}
+    warnings = _review_warnings(db)
+    unreviewed_count = sum(1 for bill in bills if bill.id not in matter_lines and bill.id not in refund_ids)
+    cash_filters = {**filters, "date_from": date.fromisoformat(filters["date_from"]) if filters["date_from"] else None, "date_to": date.fromisoformat(filters["date_to"]) if filters["date_to"] else None}
+    cash_clauses = _ledger_clauses(db, **cash_filters, aggregate_excluded=None)
+    cash_bills = db.scalars(select(Bill).where(*cash_clauses, Bill.duplicate_of_id.is_(None))).all()
     return {
-        "income": income,
-        "spending": spending,
-        "refund_offset": refund_offset,
-        "net": gross_income + spending,
+        **totals,
+        "cash_net": money(sum(cents(bill.amount) for bill in cash_bills)),
+        "contributions": contributions,
+        "unreviewed_count": unreviewed_count,
+        "review_warnings": warnings,
+        "provisional": bool(warnings or unreviewed_count or totals["unallocated_refund"] or totals["unresolved_amount"]),
+        "open_balances": [{"matter_id": matter["id"], **balance, "amount": money(balance["amount_cents"])} for matter in matters for balance in matter["balances"] if balance["amount_cents"]],
+        "issue_count": db.scalar(select(func.count(ImportRowIssue.id)).where(ImportRowIssue.resolved_at.is_(None))) or 0,
         "bill_count": len(bills),
         "effective_count": len(bills),
         "transaction_ids": bill_ids,
         "composition": {
-            "income": [bill.id for bill in bills if bill.amount > 0],
-            "spending": [bill.id for bill in bills if bill.amount < 0],
+            "income": [row["bill_id"] for row in contributions if row["income"]],
+            "spending": [row["bill_id"] for row in contributions if row["spending"]],
             "refund_offset": [{"allocation_id": allocation.id, "refund_bill_id": allocation.refund_bill_id, "expense_bill_id": allocation.expense_bill_id, "amount": allocation.amount} for allocation in allocations],
             "net": bill_ids,
             "effective_count": bill_ids,
@@ -1614,9 +1730,9 @@ def _ledger_summary(db: Session, clauses: list, filters: dict[str, object]) -> d
         "import_count": db.scalar(select(func.count(LedgerOrigin.id)).where(LedgerOrigin.bill_id.in_(bill_ids))) or 0 if bill_ids else 0,
         "candidate_count": db.scalar(select(func.count(ReviewCandidate.id)).where(ReviewCandidate.status == "pending")) or 0,
         "transfer_group_count": len({group for group in db.scalars(select(Bill.transfer_group_id).where(Bill.transfer_group_id.is_not(None))).all() if group}),
-        "trend": [{"day": day, **point} for day, point in trend.items()],
+        "trend": [{"day": day, **{key: money(value) if key != "bill_count" else value for key, value in point.items()}} for day, point in trend.items()],
         "filters": filters,
-        "basis_version": "pirc-9-v1",
+        "basis_version": "review-foundation-v2",
         "generated_at": datetime.now().isoformat(),
     }
 
@@ -1682,9 +1798,123 @@ def ledger_drilldown(
         "transaction_ids": summary["transaction_ids"],
         "summary": {key: summary[key] for key in ("income", "spending", "refund_offset", "net", "effective_count")},
         "composition": summary["composition"],
+        "contributions": summary["contributions"],
         "transactions": transactions,
         "excluded": [{"bill_id": bill.id, "reason": "confirmed_duplicate" if bill.duplicate_of_id else "confirmed_transfer"} for bill in excluded],
         "filters": filters,
         "basis_version": summary["basis_version"],
         "generated_at": summary["generated_at"],
     }
+
+
+@app.get("/api/import-issues")
+def list_import_issues(db: Session = Depends(get_db)):
+    result = []
+    for issue in db.scalars(select(ImportRowIssue).order_by(ImportRowIssue.id.desc())).all():
+        batch = db.get(ImportBatch, issue.import_batch_id)
+        result.append({"id": issue.id, "filename": batch.filename, "batch_id": batch.id, "row_number": issue.source_row_number, "raw_fields": json.loads(issue.raw_payload), "error": issue.error, "bill_id": issue.bill_id, "resolved_at": issue.resolved_at, "resolution": issue.resolution})
+        result[-1]["history"] = [{"action": action.action, "payload": json.loads(action.payload), "actor": action.actor, "created_at": action.created_at} for action in db.scalars(select(ImportIssueAction).where(ImportIssueAction.issue_id == issue.id).order_by(ImportIssueAction.id)).all()]
+    return result
+
+
+@app.post("/api/import-issues/{issue_id}/resolve")
+def resolve_import_issue(issue_id: int, payload: IssueResolve, db: Session = Depends(get_db)):
+    _begin_immediate(db)
+    issue = db.get(ImportRowIssue, issue_id)
+    if not issue:
+        raise HTTPException(404, "错误记录不存在")
+    if issue.resolved_at:
+        raise HTTPException(409, "该记录已处理，请刷新")
+    batch = db.get(ImportBatch, issue.import_batch_id)
+    bill = Bill(**payload.model_dump(exclude={"reason"}), category="未分类", tags="")
+    db.add(bill)
+    db.flush()
+    raw = json.loads(issue.raw_payload)
+    reference = next((raw[key] for key in ("交易号", "支付宝交易号", "交易单号", "交易订单号") if raw.get(key)), "")
+    db.add(LedgerOrigin(bill_id=bill.id, source_type=batch.source_type, source_reference=reference, import_batch_id=batch.id, source_row_number=issue.source_row_number, raw_payload=issue.raw_payload))
+    issue.bill_id, issue.resolved_at = bill.id, datetime.now()
+    issue.resolution = json.dumps({"actor": "local-user", "reason": payload.reason, "corrected_fields": payload.model_dump(mode="json", exclude={"reason"})}, ensure_ascii=False, sort_keys=True)
+    db.add(ImportIssueAction(issue_id=issue.id, action="resolve", payload=issue.resolution, created_at=datetime.now()))
+    batch.imported_count += 1
+    _generate_candidates(db, bill)
+    db.commit()
+    return bill_read(db, bill)
+
+
+@app.post("/api/import-issues/{issue_id}/dismiss")
+def dismiss_import_issue(issue_id: int, payload: UndoRequest, db: Session = Depends(get_db)):
+    if not payload.reason.strip():
+        raise HTTPException(422, "请填写为何该记录不属于实际人民币收付")
+    _begin_immediate(db)
+    issue = db.get(ImportRowIssue, issue_id)
+    if not issue:
+        raise HTTPException(404, "错误记录不存在")
+    if issue.resolved_at:
+        raise HTTPException(409, "记录已处理，请刷新")
+    issue.resolved_at = datetime.now()
+    issue.resolution = json.dumps({"actor": "local-user", "action": "not_a_posted_cny_transaction", "reason": payload.reason}, ensure_ascii=False)
+    db.add(ImportIssueAction(issue_id=issue.id, action="dismiss", payload=issue.resolution, created_at=datetime.now()))
+    db.commit()
+    return {"id": issue.id, "status": "not_posted", "reason": payload.reason}
+
+
+@app.post("/api/import-issues/{issue_id}/reopen")
+def reopen_import_issue(issue_id: int, payload: UndoRequest, db: Session = Depends(get_db)):
+    _begin_immediate(db)
+    issue = db.get(ImportRowIssue, issue_id)
+    if not issue:
+        raise HTTPException(404, "错误记录不存在")
+    if not issue.resolved_at or issue.bill_id:
+        raise HTTPException(409, "只能重新核验已标记为非收付、且未产生流水的记录")
+    issue.resolved_at = None
+    db.add(ImportIssueAction(issue_id=issue.id, action="reopen", payload=json.dumps({"reason": payload.reason}, ensure_ascii=False), created_at=datetime.now()))
+    db.commit()
+    return {"id": issue.id, "status": "pending"}
+
+
+@app.get("/api/refunds")
+def list_refunds(db: Session = Depends(get_db)):
+    result = []
+    for designation in db.scalars(select(RefundDesignation).order_by(RefundDesignation.bill_id.desc())).all():
+        bill = db.get(Bill, designation.bill_id)
+        allocations = db.scalars(select(RefundAllocation).where(RefundAllocation.refund_bill_id == bill.id).order_by(RefundAllocation.id)).all()
+        history = db.scalars(select(RefundNatureAudit).where(RefundNatureAudit.bill_id == bill.id).order_by(RefundNatureAudit.id)).all()
+        allocated = sum(cents(row.amount) for row in allocations if row.status == "confirmed")
+        result.append({"bill": bill_read(db, bill), "unallocated": money(cents(bill.amount) - allocated), "allocations": [_refund_allocation_read(row) for row in allocations], "nature_audit_id": history[-1].id if history else 0, "history": [{"id": row.id, "action": row.action, "reason": row.reason, "actor": row.actor, "created_at": row.created_at} for row in history]})
+    return result
+
+
+@app.put("/api/transactions/{bill_id}/nature")
+def set_bill_nature(bill_id: int, payload: NatureRequest, db: Session = Depends(get_db)):
+    _begin_immediate(db)
+    bill = db.get(Bill, bill_id)
+    if not bill:
+        raise HTTPException(404, "流水不存在")
+    latest = db.scalar(select(RefundNatureAudit.id).where(RefundNatureAudit.bill_id == bill_id).order_by(RefundNatureAudit.id.desc()).limit(1)) or 0
+    if latest != payload.expected_audit_id:
+        raise HTTPException(409, "退款性质已有变化，请刷新后重试")
+    if bill.amount <= 0 or bill.aggregate_excluded:
+        raise HTTPException(422, "仅能对未被排除的正向流水确认退款性质")
+    assert_no_matters(db, {bill_id})
+    designation = db.get(RefundDesignation, bill_id)
+    if payload.nature == "ordinary":
+        if db.scalar(select(RefundAllocation.id).where(RefundAllocation.refund_bill_id == bill_id, RefundAllocation.status == "confirmed").limit(1)):
+            raise HTTPException(409, "请先撤销有效退款分配，再修改退款性质")
+        if designation:
+            db.delete(designation)
+    elif not designation:
+        db.add(RefundDesignation(bill_id=bill_id, created_at=datetime.now()))
+    db.add(RefundNatureAudit(bill_id=bill_id, action=payload.nature, reason=payload.reason, actor="local-user", created_at=datetime.now()))
+    db.commit()
+    return {"bill_id": bill_id, "nature": payload.nature}
+
+
+@app.get("/api/transactions/{bill_id}/nature")
+def get_bill_nature(bill_id: int, db: Session = Depends(get_db)):
+    if not db.get(Bill, bill_id):
+        raise HTTPException(404, "流水不存在")
+    latest = db.scalar(select(RefundNatureAudit.id).where(RefundNatureAudit.bill_id == bill_id).order_by(RefundNatureAudit.id.desc()).limit(1)) or 0
+    return {"nature": "refund" if db.get(RefundDesignation, bill_id) else "ordinary", "audit_id": latest}
+
+
+register_matter_routes(app, get_db)

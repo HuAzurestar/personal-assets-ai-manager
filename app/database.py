@@ -25,6 +25,7 @@ class Bill(Base):
     merchant: Mapped[str] = mapped_column(String(200))
     note: Mapped[str] = mapped_column(Text, default="")
     amount: Mapped[float] = mapped_column(Float)
+    currency: Mapped[str] = mapped_column(String(3), default="CNY")
     category: Mapped[str] = mapped_column(String(80), default="未分类")
     tags: Mapped[str] = mapped_column(String(500), default="")
     account_name: Mapped[str] = mapped_column(String(120), default="未提供账户")
@@ -131,6 +132,28 @@ class LedgerOrigin(Base):
     raw_payload: Mapped[str] = mapped_column(Text, default="")
     import_batch_id: Mapped[int | None] = mapped_column(ForeignKey("import_batches.id"), nullable=True)
     source_row_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class ImportRowIssue(Base):
+    __tablename__ = "import_row_issues"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    import_batch_id: Mapped[int] = mapped_column(ForeignKey("import_batches.id"))
+    source_row_number: Mapped[int] = mapped_column(Integer)
+    raw_payload: Mapped[str] = mapped_column(Text)
+    error: Mapped[str] = mapped_column(Text)
+    resolution: Mapped[str] = mapped_column(Text, default="")
+    bill_id: Mapped[int | None] = mapped_column(ForeignKey("bills.id"), nullable=True)
+    resolved_at: Mapped[str | None] = mapped_column(DateTime(timezone=False), nullable=True)
+
+
+class ImportIssueAction(Base):
+    __tablename__ = "import_issue_actions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    issue_id: Mapped[int] = mapped_column(ForeignKey("import_row_issues.id"))
+    action: Mapped[str] = mapped_column(String(32))
+    payload: Mapped[str] = mapped_column(Text)
+    actor: Mapped[str] = mapped_column(String(80), default="local-user")
+    created_at: Mapped[str] = mapped_column(DateTime(timezone=False))
 
 
 class TagAudit(Base):
@@ -242,6 +265,46 @@ class RefundAllocationAudit(Base):
     created_at: Mapped[str] = mapped_column(DateTime(timezone=False))
 
 
+class RefundDesignation(Base):
+    """Refund nature survives undoing an allocation; never becomes income."""
+    __tablename__ = "refund_designations"
+    bill_id: Mapped[int] = mapped_column(ForeignKey("bills.id"), primary_key=True)
+    created_at: Mapped[str] = mapped_column(DateTime(timezone=False))
+
+
+class RefundNatureAudit(Base):
+    __tablename__ = "refund_nature_audits"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    bill_id: Mapped[int] = mapped_column(ForeignKey("bills.id"))
+    action: Mapped[str] = mapped_column(String(32))
+    reason: Mapped[str] = mapped_column(Text)
+    actor: Mapped[str] = mapped_column(String(80), default="local-user")
+    created_at: Mapped[str] = mapped_column(DateTime(timezone=False))
+
+
+class ReviewMatter(Base):
+    __tablename__ = "review_matters"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[str] = mapped_column(DateTime(timezone=False))
+
+
+class ReviewMatterRevision(Base):
+    """Immutable confirmed snapshots; current pointer lives on ReviewMatter."""
+    __tablename__ = "review_matter_revisions"
+    __table_args__ = (UniqueConstraint("matter_id", "version"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    matter_id: Mapped[int] = mapped_column(ForeignKey("review_matters.id"))
+    version: Mapped[int] = mapped_column(Integer)
+    action: Mapped[str] = mapped_column(String(32))
+    snapshot: Mapped[str] = mapped_column(Text)
+    reason: Mapped[str] = mapped_column(Text)
+    actor: Mapped[str] = mapped_column(String(80), default="local-user")
+    idempotency_key: Mapped[str] = mapped_column(String(120), unique=True)
+    request_payload: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(DateTime(timezone=False))
+
+
 class AssetSnapshot(Base):
     __tablename__ = "asset_snapshots"
 
@@ -259,6 +322,7 @@ def init_db() -> None:
             "import_batches": {"batch_token": "VARCHAR(64)"},
             "ledger_origins": {"source_row_number": "INTEGER"},
             "bills": {
+                "currency": "VARCHAR(3) NOT NULL DEFAULT 'CNY'",
                 "account_name": "VARCHAR(120) NOT NULL DEFAULT '未提供账户'",
                 "aggregate_excluded": "BOOLEAN NOT NULL DEFAULT 0",
                 "transfer_group_id": "VARCHAR(64)",
@@ -312,6 +376,13 @@ def init_db() -> None:
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_bills_tag_state_category_page ON bills(json_extract(tag_state_json, '$.category'), occurred_at DESC, id DESC)"))
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_bills_tag_state_scenario_page ON bills(json_extract(tag_state_json, '$.scenario'), occurred_at DESC, id DESC)"))
     with SessionLocal() as session:
+        # Preserve evidence of refund nature even when old allocations were revoked.
+        for bill_id in session.scalars(select(RefundAllocation.refund_bill_id).distinct()).all():
+            if session.scalar(select(RefundNatureAudit.id).where(RefundNatureAudit.bill_id == bill_id).limit(1)):
+                continue
+            if not session.get(RefundDesignation, bill_id):
+                session.add(RefundDesignation(bill_id=bill_id, created_at=datetime.now()))
+                session.add(RefundNatureAudit(bill_id=bill_id, action="refund", reason="迁移已有退款性质", actor="migration", created_at=datetime.now()))
         if not session.scalar(select(TagView.id).limit(1)):
             for name, tags in (("消费类别", ("餐饮", "交通", "住宿", "购物")), ("使用场景", ("日常", "计划", "意外"))):
                 view = TagView(name=name, created_at=datetime.now())

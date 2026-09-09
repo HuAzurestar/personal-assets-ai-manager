@@ -1,3 +1,4 @@
+import { reviewTools } from './review.js';
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
 const esc = (value) =>
@@ -275,6 +276,7 @@ async function render({ preservePosition = false } = {}) {
     if (epoch !== state.epoch) return;
     root.innerHTML = result.html;
     Object.assign(state, result.cache || {});
+    review.decorate(page, root);
     if (preservePosition)
       $$(".table-wrap").forEach((el, i) => {
         el.scrollTop = tableScrolls[i]?.top || 0;
@@ -310,7 +312,7 @@ async function summaryPage(params) {
   ]);
   const max = Math.max(1, ...d.trend.map((t) => Math.abs(t.spending)));
   return {
-    cache: { pendingCandidateCount: candidates.total },
+    cache: { pendingCandidateCount: candidates.total, summary: d },
     html: `<form data-form="filters" class="toolbar">${input("date_from", "起始日期", "date", params.get("date_from"))}${input("date_to", "结束日期", "date", params.get("date_to"))}<button>应用日期</button>${button("全部日期", "clear-filters")}</form><div class="cards"><button class="metric accent" data-action="drill" data-direction=""><span>净收支</span><strong>${money(d.net)}</strong><small>所选日期内 · 点击查看流水</small></button><button class="metric" data-action="drill" data-direction="income"><span>收入</span><strong>${money(d.income)}</strong><small>已扣除确认的退款抵扣</small></button><button class="metric" data-action="drill" data-direction="expense"><span>支出</span><strong>${money(Math.abs(d.spending))}</strong><small>不含重复与已确认转移</small></button><button class="metric" data-action="drill" data-direction=""><span>参与汇总的流水</span><strong>${d.effective_count ?? d.bill_count}</strong><small>所选日期内的有效记录</small></button></div><div class="two-col"><section class="panel"><div class="section-head"><h2>待复核</h2><span class="badge ${candidates.total ? "warn" : ""}">${candidates.total} 条</span></div><p class="muted">${candidates.total ? "有可能重复或转移的记录，等你核对。" : "当前没有待复核的候选。"}</p>${button(candidates.total ? "开始复核" : "查看复核记录", "review", "", candidates.total > 0)}</section><section class="panel"><h2>原始记录完整保留</h2><p class="muted">累计保存 ${all.total} 条流水，其中 ${excluded.total} 条已排除汇总。复核不会删除原始记录。</p>${button("查看所有流水", "all-ledger")}</section></div><section class="panel"><div class="section-head"><h2>每日收支</h2><small>按日核对 · 收支均为人民币</small></div>${
       d.trend.length
         ? table(
@@ -526,9 +528,9 @@ function candidateActions(c) {
       `data-id="${c.id}" data-decision="confirm_personal_transfer" ${sufficient ? "" : 'disabled title="需要两个不同账户的证据"'}`,
     ) +
     button(
-      "他人转移 / 代收代付",
-      "candidate-action",
-      `data-id="${c.id}" data-decision="confirm_third_party_transfer"`,
+      "建立往来事项",
+      "candidate-matter",
+      `data-id="${c.id}"`,
     ) +
     button(
       "忽略建议",
@@ -711,7 +713,8 @@ function preventCancel(event) {
 async function assignTags(ids) {
   const epoch = state.epoch;
   const bill = state.bills.find((b) => b.id === ids[0]);
-  const views = await request("/api/tag-views");
+  const [views, audits] = await Promise.all([request("/api/tag-views"), request(`/api/bills/${ids[0]}/tags`)]);
+  const expectedAudit = audits.find(a => !a.superseded)?.id || 0;
   if (epoch !== state.epoch) return;
   const bulk = ids.length > 1;
   const d = modal(
@@ -732,7 +735,7 @@ async function assignTags(ids) {
           ? "/api/transactions/bulk-tag-state"
           : `/api/transactions/${ids[0]}/tag-state`,
         "PUT",
-        bulk ? { bill_ids: ids, tag_state, merge: true } : { tag_state },
+        bulk ? { bill_ids: ids, tag_state, merge: true, expected_revisions: Object.fromEntries(state.bills.filter(b => ids.includes(b.id)).map(b => [b.id, b.tag_revision_id])) } : { tag_state, expected_audit_id: expectedAudit },
       );
       d.close();
       toast("标签已保存");
@@ -802,10 +805,11 @@ async function billDetail(id) {
   const bill = state.bills.find((b) => b.id === id);
   const origin = await request(`/api/transactions/${id}/source`);
   if (epoch !== state.epoch) return;
-  modal(
+  const detailDialog = modal(
     "流水详情",
     `<div class="section-head"><h2>${esc(bill.merchant)}</h2><strong>${money(bill.amount)}</strong></div>${excludedMarkup(bill)}<dl><dt>交易时间</dt><dd>${date(bill.occurred_at)}</dd><dt>账户</dt><dd>${esc(bill.account_name)}</dd><dt>来源</dt><dd>${sourceName(bill.source_type)}</dd><dt>备注</dt><dd>${esc(bill.note) || "—"}</dd><dt>标签</dt><dd>${tagsMarkup(bill)}</dd><dt>原始文件</dt><dd>${esc(origin.artifact?.filename || "手工记录")}</dd><dt>原始流水号</dt><dd>${esc(origin.origin?.source_reference || "—")}</dd></dl><details open><summary>原始字段</summary><pre>${esc(JSON.stringify(origin.raw_fields, null, 2))}</pre></details>`,
   );
+  await review.billActions(detailDialog, bill);
 }
 async function candidateDetail(id) {
   const epoch = state.epoch;
@@ -867,16 +871,19 @@ async function candidateDecision(button) {
           : `将对 ${ids.length} 组候选执行“${decision === "ignored" ? "忽略建议" : "稍后处理"}”，本次不改变收支统计。`;
     if (!(await confirmReview(effect))) return;
   }
+  let recordedAction = null;
   const operation = async () => {
     if (button.dataset.action === "candidate-undo")
-      await request(`/api/candidates/${id}/undo`, { method: "POST" });
+      await request(`/api/candidates/${id}/undo?expected_action_id=${c.current_action_id}`, { method: "POST" });
     else if (batch)
       await jsonRequest("/api/candidates/batch", "POST", {
-        items: ids.map((candidate_id) => ({ candidate_id, action: decision })),
+        items: ids.map((candidate_id) => { const c = state.candidates.find(item => item.id === candidate_id); return { candidate_id, action: decision, expected_action_id: c.current_action_id, expected_member_ids: c.member_bills.map(b => b.id) }; }),
       });
     else
-      await jsonRequest(`/api/candidates/${id}`, "POST", {
+      recordedAction = await jsonRequest(`/api/candidates/${id}`, "POST", {
         action: decision,
+        expected_action_id: c?.current_action_id,
+        expected_member_ids: c?.member_bills.map(b => b.id),
         ...(button.dataset.retained
           ? { retained_bill_id: Number(button.dataset.retained) }
           : {}),
@@ -891,7 +898,7 @@ async function candidateDecision(button) {
         : "处理已保存，可在复核记录中撤销",
       !batch && button.dataset.action !== "candidate-undo"
         ? async () => {
-            await request(`/api/candidates/${id}/undo`, { method: "POST" });
+            await request(`/api/candidates/${id}/undo?expected_action_id=${recordedAction.current_action_id}`, { method: "POST" });
             await render({ preservePosition: true });
             toast("已撤销本次处理");
           }
@@ -1020,7 +1027,7 @@ async function previewImport(d) {
         (f) =>
           `<article class="import-file"><h3>${esc(f.filename)} <span class="badge ${f.ok && !f.duplicate ? "" : "warn"}">${f.duplicate ? "已导入，将跳过" : f.ok ? `${f.preview.row_count} 条` : "无法导入"}</span></h3>${f.error ? `<p class="error">${esc(message(f.error))}</p>` : ""}${
             f.preview
-              ? `<small>前 ${f.preview.preview_rows.length} 条原始字段预览 · 请核对时间、金额及收支方向</small>${table(
+              ? `${f.preview.issues?.length ? `<p class="error" role="alert">${f.preview.issues.length} 条数据存在问题；确认后保留原始证据，待修正后入账。</p>${f.preview.issues.slice(0, 20).map(i => `<p>第 ${i.row_number} 行：${esc(i.error)}</p>`).join('')}` : ''}<small>前 ${f.preview.preview_rows.length} 条原始字段预览 · 请核对时间、金额及收支方向</small>${table(
                   ["时间", "交易方", "金额", "收支", "备注"],
                   f.preview.preview_rows.map(
                     (r) =>
@@ -1062,8 +1069,10 @@ async function confirmImport(d) {
       (n, f) => n + (f.import_batch?.imported_count || 0),
       0,
     );
+    const issueCount = imported.reduce((n, f) => n + (f.import_batch?.issue_count || 0), 0);
     $("#import-preview", d).innerHTML =
       `<div class="success" role="status">本次导入 ${count} 条流水，${imported.length} 个文件成功。</div>${result.files.map((f) => `<article class="import-file"><strong>${esc(f.filename)}</strong><p class="${f.status === "imported" ? "muted" : "error"}">${f.status === "imported" ? `已导入 ${f.import_batch.imported_count} 条流水` : esc(message(f.error || "文件未导入，请重新预览。"))}</p></article>`).join("")}<div class="actions">${button("查看流水", "import-done", "", true)}${button("查看候选", "import-review")}</div>`;
+    if (issueCount) $('#import-preview', d).insertAdjacentHTML('afterbegin', `<p class="error" role="alert">另有 ${issueCount} 条待核验记录，未计入金额。请到“复核 → 数据问题”修正。</p>`);
   });
 }
 function selectionChanged() {
@@ -1207,10 +1216,13 @@ document.addEventListener("click", async (event) => {
         }),
       );
     else if (a === "drill") {
-      const params = new URLSearchParams(state.params);
-      if (b.dataset.direction) params.set("direction", b.dataset.direction);
-      navigate("data", params);
-    } else if (a === "assign") await assignTags([id]);
+      await review.drill(b.dataset.metric || ({ income: 'income', expense: 'spending' }[b.dataset.direction]) || 'net');
+    } else if (a === 'review-matters') await review.matters();
+    else if (a === 'new-matter') await review.editor(null, state.bills.filter(bill => state.selected.has(bill.id)));
+    else if (a === 'review-refunds') await review.refunds();
+    else if (a === 'review-issues') await review.issues();
+    else if (a === 'candidate-matter') { d?.close(); await review.editor(null, state.candidates.find(c => c.id === id).member_bills); }
+    else if (a === "assign") await assignTags([id]);
     else if (a === "bulk-tags") await assignTags([...state.selected]);
     else if (a === "bill-detail") await billDetail(id);
     else if (["new-view", "edit-view", "new-tag", "edit-tag"].includes(a))
@@ -1250,5 +1262,6 @@ document.addEventListener("click", async (event) => {
     }
   }
 });
+const review = reviewTools({ $, $$, esc, money, date, request, jsonRequest, modal, input, select, table, formSave, confirmReview, render, state, toast });
 if (!location.hash) history.replaceState(null, "", "#summary");
 readRoute();

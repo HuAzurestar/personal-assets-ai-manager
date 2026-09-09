@@ -73,13 +73,22 @@ def test_new_workbench_is_the_served_entrypoint(ui_client):
 
 
 def test_confirmed_transfer_filter_includes_personal_and_third_party(ui_client):
-    client, _ = ui_client
+    client, sessions = ui_client
     for hour, amount, decision in [(10, 100, 'confirm_personal_transfer'), (11, 200, 'confirm_third_party_transfer')]:
         first = client.post('/api/bills', json={'occurred_at': f'2026-09-08T{hour}:00:00', 'merchant': f'转账{hour}', 'amount': -amount, 'account_name': '银行卡'}).json()
         client.post('/api/bills', json={'occurred_at': f'2026-09-08T{hour}:01:00', 'merchant': f'转账{hour}', 'amount': amount, 'account_name': '余额'})
         candidates = client.get('/api/candidates/page?status=needs_review').json()['items']
         candidate = next(c for c in candidates if first['id'] in {c['bill']['id'], c['related_bill']['id']})
-        assert client.post(f"/api/candidates/{candidate['id']}", json={'action': decision}).status_code == 200
+        if decision == 'confirm_third_party_transfer':
+            assert client.post(f"/api/candidates/{candidate['id']}", json={'action': decision}).status_code == 422
+            # Legacy results remain visible, although creating new blanket
+            # third-party exclusions is no longer permitted.
+            with sessions() as db:
+                old = db.get(ReviewCandidate, candidate['id'])
+                old.status = 'third_party_transfer_grouped'
+                db.commit()
+        else:
+            assert client.post(f"/api/candidates/{candidate['id']}", json={'action': decision}).status_code == 200
     result = client.get('/api/candidates/page?status=transfer_grouped').json()
     assert result['total'] == 2
     assert {c['status'] for c in result['items']} == {'personal_transfer_grouped', 'third_party_transfer_grouped'}
