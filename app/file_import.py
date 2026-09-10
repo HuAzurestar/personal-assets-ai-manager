@@ -65,6 +65,13 @@ def parse_upload(source_type: str, content: bytes, filename: str, password: str 
 
 
 def normalise_rows(parsed: ParsedFile) -> list[ImportedRow]:
+    valid, issues = inspect_rows(parsed)
+    if issues:
+        raise ValueError(f"第 {issues[0]['row_number']} 行：{issues[0]['error']}")
+    return [row for _, row in valid]
+
+
+def inspect_rows(parsed: ParsedFile) -> tuple[list[tuple[int, ImportedRow]], list[dict]]:
     mapping = parsed.mapping
     missing = [field for field in REQUIRED_MAPPING_FIELDS if not mapping.get(field)]
     if missing:
@@ -72,21 +79,28 @@ def normalise_rows(parsed: ParsedFile) -> list[ImportedRow]:
     unknown_columns = [column for column in mapping.values() if column and column not in parsed.columns]
     if unknown_columns:
         raise ValueError("A selected mapping column is not present in the uploaded file")
-    imported: list[ImportedRow] = []
-    for index, row in enumerate(parsed.rows, start=2):
+    imported = []
+    issues = []
+    for index, row in zip(parsed.row_numbers, parsed.rows, strict=True):
         alias_row = {
             HEADER_ALIASES[field][0]: row.get(column, "")
             for field, column in mapping.items()
             if column
         }
         try:
+            status = next((row[name].strip() for name in ("交易状态", "当前状态") if row.get(name, "").strip()), "")
+            if status and status not in {"交易成功", "支付成功", "转账成功", "收款成功", "退款成功", "已退款", "SUCCESS"}:
+                raise ValueError(f"交易状态“{status}”需核验是否实际收付")
+            currency = next((row[name].strip() for name in ("币种", "货币") if row.get(name, "").strip()), "")
+            if currency and currency.upper() not in {"CNY", "RMB", "人民币", "元"}:
+                raise ValueError(f"当前只支持人民币金额，不能将 {currency} 当作人民币入账")
             normalised = _normalise(alias_row)
-            imported.append(replace(normalised, raw_payload=json.dumps(row, ensure_ascii=False, sort_keys=True)))
+            imported.append((index, replace(normalised, raw_payload=json.dumps(row, ensure_ascii=False, sort_keys=True))))
         except ValueError as error:
-            raise ValueError(f"Could not parse row {index}: {error}") from error
-    if not imported:
+            issues.append({"row_number": index, "error": str(error), "raw_fields": row})
+    if not imported and not issues:
         raise ValueError("No transaction rows were found")
-    return imported
+    return imported, issues
 
 
 def preview_rows(parsed: ParsedFile, limit: int = 8) -> list[dict[str, str]]:

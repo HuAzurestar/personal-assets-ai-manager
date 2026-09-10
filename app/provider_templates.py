@@ -49,7 +49,9 @@ def locate_provider_table(source_type: str, table: list[list[str]]) -> tuple[lis
                 values = dict(zip(headers, row))
                 if not any(value.strip() for value in values.values()):
                     continue
-                if not values.get(mapping["occurred_at"] or "", "").strip():
+                # Only explicit one-cell footer markers are non-transaction rows.
+                nonempty = [value.strip() for value in values.values() if value.strip()]
+                if len(nonempty) == 1 and (nonempty[0].startswith(("共计", "导出时间", "温馨提示", "说明：", "收入：", "支出：")) or set(nonempty[0]) <= {"-", "="}):
                     continue
                 rows.append(values)
             if not rows:

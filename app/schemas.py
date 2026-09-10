@@ -1,14 +1,23 @@
 from datetime import date, datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from app.money import cents
 
 
 class BillCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     occurred_at: datetime
     merchant: str = Field(min_length=1, max_length=200)
     note: str = ""
     amount: float
+    currency: str = Field(default="CNY", pattern="^CNY$")
     account_name: str = Field(default="手工未提供账户", min_length=1, max_length=120)
+
+    @field_validator("amount")
+    @classmethod
+    def exact_amount(cls, value):
+        cents(value)
+        return value
 
 
 class BillRead(BillCreate):
@@ -24,6 +33,7 @@ class BillRead(BillCreate):
     duplicate_of_id: int | None = None
     view_tags: list["ViewTagAssignmentRead"] = []
     tag_state: dict[str, str] = Field(default_factory=dict)
+    tag_revision_id: int = 0
 
 
 class AssetCreate(BaseModel):
@@ -61,6 +71,16 @@ class UndoRequest(BaseModel):
     reason: str = Field(default="", max_length=500)
 
 
+class IssueResolve(BillCreate):
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class NatureRequest(BaseModel):
+    nature: str = Field(pattern="^(refund|ordinary)$")
+    reason: str = Field(min_length=1, max_length=500)
+    expected_audit_id: int = Field(default=0, ge=0)
+
+
 class TagAuditRead(BaseModel):
     id: int
     category: str
@@ -87,6 +107,7 @@ class ImportBatchRead(BaseModel):
     row_count: int
     imported_count: int
     candidate_count: int
+    issue_count: int = 0
     file_sha256: str | None = None
     file_format: str | None = None
     archive_entry: str | None = None
@@ -102,6 +123,8 @@ class ImportPreviewRead(BaseModel):
     row_count: int
     columns: list[str]
     preview_rows: list[dict[str, str]]
+    valid_count: int = 0
+    issues: list[dict] = Field(default_factory=list)
 
 
 class BatchFilePayload(BaseModel):
@@ -141,6 +164,7 @@ class BatchImportRead(BaseModel):
 
 class ReviewCandidateRead(BaseModel):
     id: int
+    current_action_id: int = 0
     candidate_type: str
     confidence: float
     reason: str
@@ -161,6 +185,8 @@ class CandidateDecision(BaseModel):
     action: str = Field(pattern="^(confirm_transfer|confirm_personal_transfer|confirm_third_party_transfer|resolve_duplicate|reject_duplicate|ignored|deferred)$")
     retained_bill_id: int | None = None
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=120)
+    expected_action_id: int | None = None
+    expected_member_ids: list[int] | None = None
 
 
 class CandidateBatchItem(BaseModel):
@@ -168,6 +194,8 @@ class CandidateBatchItem(BaseModel):
     action: str = Field(pattern="^(confirm_transfer|confirm_personal_transfer|confirm_third_party_transfer|resolve_duplicate|reject_duplicate|ignored|deferred)$")
     retained_bill_id: int | None = None
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=120)
+    expected_action_id: int | None = None
+    expected_member_ids: list[int] | None = None
 
 
 class CandidateBatchDecision(BaseModel):
@@ -237,13 +265,17 @@ class ViewTagAssignmentRequest(BaseModel):
 
 class TagStateAssignmentRequest(BaseModel):
     tag_state: dict[str, str] = Field(default_factory=dict)
-    strategy: str = Field(default="manual", max_length=60)
+    strategy: str = Field(default="manual", pattern="^(manual|local_rules|llm_suggestion|authorised_auto)$")
     confidence: float = Field(default=0.95, ge=0, le=1)
+    expected_audit_id: int | None = None
+    reason: str = Field(default="", max_length=500)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=120)
 
 
 class TagStateBulkAssignmentRequest(TagStateAssignmentRequest):
     bill_ids: list[int] = Field(min_length=1, max_length=100)
     merge: bool = False
+    expected_revisions: dict[int, int] | None = None
 
 
 class TransactionPageRead(BaseModel):
@@ -267,6 +299,12 @@ class RefundAllocationCreate(BaseModel):
     amount: float = Field(gt=0)
     reason: str = Field(default="", max_length=500)
     idempotency_key: str = Field(min_length=1, max_length=120)
+
+    @field_validator("amount")
+    @classmethod
+    def exact_amount(cls, value):
+        cents(value)
+        return value
 
 
 class RefundAllocationRead(BaseModel):

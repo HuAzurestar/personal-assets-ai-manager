@@ -22,7 +22,8 @@ def test_health_and_bill_flow(tmp_path, monkeypatch):
         assert client.get("/api/health").json()["service"] == "personal-assets-ai-manager"
         created = client.post("/api/bills", json={"occurred_at": "2026-08-25T10:00:00", "merchant": "滴滴出行", "amount": -18.5, "note": "通勤"})
         assert created.status_code == 201
-        assert created.json()["category"] == "交通出行"
+        assert created.json()["category"] == "未分类"
+        assert client.get(f"/api/bills/{created.json()['id']}/tags").json()[0]["action"] == "suggest"
         assert client.get("/api/dashboard").status_code == 200
 
 
@@ -543,13 +544,11 @@ def test_candidate_detail_legacy_duplicate_and_transfer_tracking(tmp_path):
             external = next(item for item in client.get("/api/candidates").json() if item["candidate_type"] == "transfer" and {item["bill"]["id"], item["related_bill"]["id"]} == {external_out["id"], external_in["id"]})
             assert external["status"] == "evidence_insufficient"
             third_party = client.post(f"/api/candidates/{external['id']}", json={"action": "confirm_third_party_transfer"})
-            assert third_party.status_code == 200
-            assert third_party.json()["status"] == "third_party_transfer_grouped"
-            assert third_party.json()["transfer_kind"] == "third_party"
+            assert third_party.status_code == 422
             third_party_bills = {bill["id"]: bill for bill in client.get("/api/bills").json()}
-            assert third_party_bills[external_out["id"]]["aggregate_excluded"] and third_party_bills[external_in["id"]]["aggregate_excluded"]
-            assert client.get("/api/dashboard").json()["spending"] == -20
-            assert client.post(f"/api/candidates/{external['id']}/undo").json()["status"] == "evidence_insufficient"
+            assert not third_party_bills[external_out["id"]]["aggregate_excluded"]
+            assert not third_party_bills[external_in["id"]]["aggregate_excluded"]
+            assert client.post(f"/api/candidates/{external['id']}/undo").status_code == 409
             assert client.get("/api/dashboard").json()["spending"] == -60
     finally:
         app.dependency_overrides.clear()
@@ -883,12 +882,14 @@ def test_effective_ledger_uses_one_filtered_set_for_list_summary_and_drilldown(t
             listed_ids = {item["id"] for item in listed["items"]}
             assert duplicate_b["id"] not in listed_ids
             assert listed_ids == set(summary["transaction_ids"]) == set(drilldown["transaction_ids"])
-            assert summary["income"] == 40
+            assert summary["income"] == 0
             assert summary["spending"] == -320
             assert summary["refund_offset"] == 60
-            assert summary["net"] == -220
+            assert summary["net"] == -260
+            assert summary["cash_net"] == -220
+            assert summary["unallocated_refund"] == 40
             assert summary["effective_count"] == len(listed_ids)
-            assert summary["basis_version"] == drilldown["basis_version"] == "pirc-9-v1"
+            assert summary["basis_version"] == drilldown["basis_version"] == "review-foundation-v2"
             assert drilldown["filters"] == summary["filters"] == listed["filters"]
             assert any(item["bill_id"] == duplicate_b["id"] and item["reason"] == "confirmed_duplicate" for item in drilldown["excluded"])
             assert all(item["bill_id"] != other_b["id"] for item in drilldown["excluded"])

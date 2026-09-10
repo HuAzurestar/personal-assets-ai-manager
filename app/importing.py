@@ -4,6 +4,7 @@ import csv
 import io
 import json
 import re
+from app.money import cents, money
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -67,14 +68,18 @@ def _normalise(row: dict[str, str]) -> ImportedRow:
     if not merchant:
         raise ValueError("Missing transaction counterparty")
     raw_amount = _value(row, "amount")
-    normalised_amount = re.sub(r"[^0-9.-]", "", raw_amount)
+    normalised_amount = raw_amount.strip().removeprefix("¥").removeprefix("￥").strip()
     if not normalised_amount:
         raise ValueError("Missing transaction amount")
     try:
-        amount = float(normalised_amount)
+        if not re.fullmatch(r"[+-]?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?", normalised_amount):
+            raise ValueError("Invalid amount")
+        amount = money(cents(normalised_amount.replace(",", "")))
     except ValueError as error:
         raise ValueError(f"Unrecognised transaction amount: {raw_amount}") from error
     direction = _value(row, "direction")
+    if direction not in {"支出", "付款", "支", "收入", "收款", "收"}:
+        raise ValueError(f"收支方向缺失或无法确定：{direction or '未提供'}，需要人工核验")
     if direction in {"支出", "付款", "支"} and amount > 0:
         amount = -amount
     elif direction in {"收入", "收款", "收"} and amount < 0:
