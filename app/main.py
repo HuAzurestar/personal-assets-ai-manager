@@ -678,14 +678,14 @@ def _ledger_clauses(
     direction: str | None = None,
     q: str | None = None,
     tag: list[str] | None = None,
-    aggregate_excluded: bool = False,
+    aggregate_excluded: bool | None = False,
 ) -> list:
     source, account, tag = source or [], account or [], tag or []
     if date_from and date_to and date_from > date_to:
         raise HTTPException(status_code=422, detail="date_from must be before date_to")
     if amount_min is not None and amount_max is not None and amount_min > amount_max:
         raise HTTPException(status_code=422, detail="amount_min must not exceed amount_max")
-    clauses = [Bill.aggregate_excluded.is_(aggregate_excluded)]
+    clauses = [] if aggregate_excluded is None else [Bill.aggregate_excluded.is_(aggregate_excluded)]
     if date_from:
         clauses.append(Bill.occurred_at >= datetime.combine(date_from, time.min))
     if date_to:
@@ -761,9 +761,11 @@ def list_transactions(
     direction: str | None = Query(default=None, pattern="^(income|expense|transfer)$"),
     q: str | None = Query(default=None, max_length=200),
     tag: list[str] = Query(default=[]),
+    scope: str = Query(default="effective", pattern="^(effective|all|excluded)$"),
     db: Session = Depends(get_db),
 ):
-    clauses = _ledger_clauses(db, date_from, date_to, amount_min, amount_max, source, account, direction, q, tag)
+    excluded = {"effective": False, "all": None, "excluded": True}[scope]
+    clauses = _ledger_clauses(db, date_from, date_to, amount_min, amount_max, source, account, direction, q, tag, aggregate_excluded=excluded)
     order_column = Bill.occurred_at if sort_by == "occurred_at" else Bill.amount
     order_fn = asc if sort_order == "asc" else desc
     statement = select(Bill).where(*clauses).order_by(order_fn(order_column), order_fn(Bill.id))
@@ -906,7 +908,8 @@ def assign_tag_state_bulk(payload: TagStateBulkAssignmentRequest, db: Session = 
     if len(bills) != len(set(payload.bill_ids)):
         raise HTTPException(status_code=404, detail="One or more transactions were not found")
     for bill in bills:
-        _write_tag_state(db, bill, payload.tag_state, payload.strategy, payload.confidence, "named_tag_state_bulk")
+        tag_state = {**json.loads(bill.tag_state_json or "{}"), **payload.tag_state} if payload.merge else payload.tag_state
+        _write_tag_state(db, bill, tag_state, payload.strategy, payload.confidence, "named_tag_state_bulk")
     db.commit()
     return {"updated": len(bills), "bill_ids": [bill.id for bill in bills]}
 
@@ -1324,7 +1327,11 @@ def page_candidates(
     _consolidate_duplicate_candidates(db)
     db.commit()
     filters = [ReviewCandidate.status != "superseded_duplicate_group"]
-    if status:
+    if status == "transfer_grouped":
+        filters.append(ReviewCandidate.status.in_(["transfer_grouped", "personal_transfer_grouped", "third_party_transfer_grouped"]))
+    elif status == "needs_review":
+        filters.append(ReviewCandidate.status.in_(["pending", "evidence_insufficient", "legacy_duplicate_needs_review"]))
+    elif status:
         filters.append(ReviewCandidate.status == status)
     if candidate_type:
         filters.append(ReviewCandidate.candidate_type == candidate_type)
