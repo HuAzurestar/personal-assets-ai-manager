@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import re
 from contextlib import asynccontextmanager
@@ -24,7 +25,7 @@ from app.tagging import classify, classify_rules
 from app.database import RefundDesignation, ImportRowIssue, RefundNatureAudit, ImportIssueAction
 from app.schemas import IssueResolve, NatureRequest
 from app.money import cents, money
-from app.review_matters import allocated_bills, assert_no_matters, current_matters, register_matter_routes
+from app.review_matters import allocated_bills, assert_no_matters, current_matters, matter_read, register_matter_routes
 
 APP_DIR = Path(__file__).parent
 
@@ -919,6 +920,26 @@ def assign_tag_state_bulk(payload: TagStateBulkAssignmentRequest, db: Session = 
     bills = db.scalars(select(Bill).where(Bill.id.in_(payload.bill_ids)).order_by(Bill.id)).all()
     if len(bills) != len(set(payload.bill_ids)):
         raise HTTPException(status_code=404, detail="One or more transactions were not found")
+    encoded = json.dumps(payload.model_dump(), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    audit_keys = {
+        bill.id: f"bulk-tag-{hashlib.sha256(f'{payload.idempotency_key}:{bill.id}'.encode()).hexdigest()}"
+        for bill in bills
+    } if payload.idempotency_key else {}
+    if audit_keys:
+        existing = {
+            audit.bill_id: audit
+            for audit in db.scalars(select(TagAudit).where(TagAudit.idempotency_key.in_(audit_keys.values()))).all()
+        }
+        if existing:
+            if set(existing) != {bill.id for bill in bills}:
+                raise HTTPException(409, "批量标签请求只保存了部分结果，请核验审计后使用新请求重试")
+            for bill in bills:
+                audit = existing[bill.id]
+                latest = db.scalar(select(TagAudit.id).where(TagAudit.bill_id == bill.id, TagAudit.superseded.is_(False)).order_by(TagAudit.id.desc()).limit(1)) or 0
+                if audit.idempotency_key != audit_keys[bill.id] or audit.request_payload != encoded or audit.undone or audit.id != latest:
+                    raise HTTPException(409, "批量标签请求或当前状态已发生变化，请刷新后重试")
+            db.commit()
+            return {"updated": len(bills), "bill_ids": [bill.id for bill in bills]}
     if payload.expected_revisions is not None:
         for bill in bills:
             current = db.scalar(select(TagAudit.id).where(TagAudit.bill_id == bill.id, TagAudit.superseded.is_(False)).order_by(TagAudit.id.desc()).limit(1)) or 0
@@ -926,7 +947,7 @@ def assign_tag_state_bulk(payload: TagStateBulkAssignmentRequest, db: Session = 
                 raise HTTPException(409, f"流水 {bill.id} 的标签已有修改，本次批量操作未生效，请刷新")
     for bill in bills:
         tag_state = {**json.loads(bill.tag_state_json or "{}"), **payload.tag_state} if payload.merge else payload.tag_state
-        _write_tag_state(db, bill, tag_state, payload.strategy, payload.confidence, "named_tag_state_bulk")
+        _write_tag_state(db, bill, tag_state, payload.strategy, payload.confidence, "named_tag_state_bulk", payload.reason, audit_keys.get(bill.id), encoded)
     db.commit()
     return {"updated": len(bills), "bill_ids": [bill.id for bill in bills]}
 
@@ -1093,6 +1114,14 @@ def apply_tag(bill_id: int, payload: TagApply, db: Session = Depends(get_db)):
 @app.post("/api/bills/{bill_id}/tags/{audit_id}/undo", response_model=TagAuditRead)
 def undo_tag_revision(bill_id: int, audit_id: int, payload: UndoRequest, db: Session = Depends(get_db)):
     _begin_immediate(db)
+    request_payload = json.dumps({"bill_id": bill_id, "audit_id": audit_id, **payload.model_dump()}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    if payload.idempotency_key:
+        existing = db.scalar(select(TagAudit).where(TagAudit.idempotency_key == payload.idempotency_key))
+        if existing:
+            if existing.bill_id != bill_id or existing.action != "undo" or existing.reverses_audit_id != audit_id or existing.request_payload != request_payload or existing.superseded:
+                raise HTTPException(409, "标签撤销请求或当前状态已发生变化，请刷新后重试")
+            db.commit()
+            return _tag_audit_read(existing)
     bill = db.get(Bill, bill_id)
     audit = db.get(TagAudit, audit_id)
     if not bill or not audit or audit.bill_id != bill_id:
@@ -1130,6 +1159,8 @@ def undo_tag_revision(bill_id: int, audit_id: int, payload: UndoRequest, db: Ses
         before_state_json=before_state,
         before_category=before_category,
         reverses_audit_id=audit.id,
+        idempotency_key=payload.idempotency_key,
+        request_payload=request_payload,
         created_at=datetime.now(),
     )
     db.add(undo_audit)
@@ -1182,6 +1213,17 @@ def revise_account(bill_id: int, payload: AccountRevisionRequest, db: Session = 
 @app.post("/api/transactions/{bill_id}/account-revisions/{revision_id}/undo")
 def undo_account_revision(bill_id: int, revision_id: int, payload: UndoRequest, db: Session = Depends(get_db)):
     _begin_immediate(db)
+    request_payload = json.dumps({"bill_id": bill_id, "revision_id": revision_id, **payload.model_dump()}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    if payload.idempotency_key:
+        existing = db.scalar(select(AccountRevision).where(AccountRevision.idempotency_key == payload.idempotency_key))
+        if existing:
+            if existing.bill_id != bill_id or existing.action != "undo" or existing.reverses_revision_id != revision_id or existing.request_payload != request_payload:
+                raise HTTPException(409, "账户撤销请求已用于其他操作")
+            latest = db.scalar(select(AccountRevision.id).where(AccountRevision.bill_id == bill_id).order_by(AccountRevision.id.desc()).limit(1)) or 0
+            if latest != existing.id:
+                raise HTTPException(409, "账户已有后续修订，请刷新后重试")
+            db.commit()
+            return {"revision_id": existing.id, "bill_id": bill_id, "account_name": existing.after_account, "action": existing.action, "actor": existing.actor, "reason": existing.reason, "reverses_revision_id": revision_id}
     bill = db.get(Bill, bill_id)
     revision = db.get(AccountRevision, revision_id)
     if not bill or not revision or revision.bill_id != bill_id:
@@ -1207,6 +1249,8 @@ def undo_account_revision(bill_id: int, revision_id: int, payload: UndoRequest, 
         actor="local-user",
         reason=payload.reason,
         reverses_revision_id=revision.id,
+        idempotency_key=payload.idempotency_key,
+        request_payload=request_payload,
         created_at=datetime.now(),
     )
     db.add(reversal)
@@ -1306,6 +1350,17 @@ def create_refund_allocation(payload: RefundAllocationCreate, db: Session = Depe
 @app.post("/api/refund-allocations/{allocation_id}/undo", response_model=RefundAllocationRead)
 def undo_refund_allocation(allocation_id: int, payload: UndoRequest, db: Session = Depends(get_db)):
     _begin_immediate(db)
+    request_payload = json.dumps({"allocation_id": allocation_id, **payload.model_dump()}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    if payload.idempotency_key:
+        existing = db.scalar(select(RefundAllocationAudit).where(RefundAllocationAudit.idempotency_key == payload.idempotency_key))
+        if existing:
+            if existing.allocation_id != allocation_id or existing.action != "revoke" or existing.request_payload != request_payload:
+                raise HTTPException(409, "退款撤销请求已用于其他操作")
+            allocation = db.get(RefundAllocation, allocation_id)
+            if not allocation or allocation.status != "revoked":
+                raise HTTPException(409, "退款分配状态已发生变化，请刷新后重试")
+            db.commit()
+            return _refund_allocation_read(allocation)
     allocation = db.get(RefundAllocation, allocation_id)
     if not allocation:
         db.rollback()
@@ -1324,6 +1379,8 @@ def undo_refund_allocation(allocation_id: int, payload: UndoRequest, db: Session
         before_state=json.dumps({"status": "confirmed", "amount": allocation.amount}),
         after_state=json.dumps({"status": "revoked", "amount": allocation.amount}),
         reverses_audit_id=confirmation.id if confirmation else None,
+        idempotency_key=payload.idempotency_key,
+        request_payload=request_payload,
         created_at=datetime.now(),
     ))
     db.commit()
@@ -1336,7 +1393,7 @@ def list_refund_allocation_audits(allocation_id: int, db: Session = Depends(get_
     if not db.get(RefundAllocation, allocation_id):
         raise HTTPException(status_code=404, detail="Refund allocation not found")
     audits = db.scalars(select(RefundAllocationAudit).where(RefundAllocationAudit.allocation_id == allocation_id).order_by(RefundAllocationAudit.id)).all()
-    return [{"id": audit.id, "action": audit.action, "actor": audit.actor, "reason": audit.reason, "before_state": json.loads(audit.before_state), "after_state": json.loads(audit.after_state), "reverses_audit_id": audit.reverses_audit_id, "created_at": audit.created_at} for audit in audits]
+    return [{"id": audit.id, "action": audit.action, "actor": audit.actor, "reason": audit.reason, "before_state": json.loads(audit.before_state), "after_state": json.loads(audit.after_state), "reverses_audit_id": audit.reverses_audit_id, "idempotency_key": audit.idempotency_key, "created_at": audit.created_at} for audit in audits]
 
 
 @app.get("/api/candidates", response_model=list[ReviewCandidateRead])
@@ -1473,7 +1530,7 @@ def _apply_candidate_decision(db: Session, candidate: ReviewCandidate, payload: 
         raise HTTPException(status_code=409, detail="Candidate evidence is incomplete")
     if payload.action in {"confirm_transfer", "confirm_personal_transfer", "confirm_third_party_transfer", "resolve_duplicate"}:
         _assert_review_available(db, candidate, {bill.id for bill in members})
-    log = CandidateActionLog(candidate_id=candidate.id, action=payload.action, before_state=_candidate_snapshot(candidate, members), actor="local-user", reason=candidate.reason, idempotency_key=payload.idempotency_key, request_payload=request_payload, created_at=datetime.now())
+    log = CandidateActionLog(candidate_id=candidate.id, action=payload.action, before_state=_candidate_snapshot(candidate, members), actor="local-user", reason=payload.reason or candidate.reason, idempotency_key=payload.idempotency_key, request_payload=request_payload, created_at=datetime.now())
     db.add(log)
     if payload.action in {"confirm_transfer", "confirm_personal_transfer", "confirm_third_party_transfer"}:
         if candidate.candidate_type != "transfer":
@@ -1524,7 +1581,7 @@ def decide_candidates_batch(payload: CandidateBatchDecision, db: Session = Depen
         candidate = db.get(ReviewCandidate, item.candidate_id)
         if not candidate:
             raise HTTPException(status_code=404, detail=f"Candidate {item.candidate_id} not found")
-        _apply_candidate_decision(db, candidate, CandidateDecision(action=item.action, retained_bill_id=item.retained_bill_id, idempotency_key=item.idempotency_key, expected_action_id=item.expected_action_id, expected_member_ids=item.expected_member_ids))
+        _apply_candidate_decision(db, candidate, CandidateDecision(action=item.action, retained_bill_id=item.retained_bill_id, idempotency_key=item.idempotency_key, expected_action_id=item.expected_action_id, expected_member_ids=item.expected_member_ids, reason=item.reason))
         db.flush()
         candidates.append(candidate)
     db.commit()
@@ -1547,12 +1604,24 @@ def decide_candidate(candidate_id: int, payload: CandidateDecision, db: Session 
 
 
 @app.post("/api/candidates/{candidate_id}/undo", response_model=ReviewCandidateRead)
-def undo_candidate(candidate_id: int, expected_action_id: int | None = Query(default=None, ge=0), db: Session = Depends(get_db)):
+def undo_candidate(candidate_id: int, payload: UndoRequest | None = None, expected_action_id: int | None = Query(default=None, ge=0), db: Session = Depends(get_db)):
+    payload = payload or UndoRequest()
     _begin_immediate(db)
     _consolidate_duplicate_candidates(db)
     candidate = _canonical_candidate(db, db.get(ReviewCandidate, candidate_id))
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
+    request_payload = json.dumps({"candidate_id": candidate.id, "expected_action_id": expected_action_id, **payload.model_dump()}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    if payload.idempotency_key:
+        existing = db.scalar(select(CandidateActionLog).where(CandidateActionLog.idempotency_key == payload.idempotency_key))
+        if existing:
+            if existing.candidate_id != candidate.id or existing.action != "undo" or existing.request_payload != request_payload:
+                raise HTTPException(409, "候选撤销请求已用于其他操作")
+            latest = db.scalar(select(CandidateActionLog.id).where(CandidateActionLog.candidate_id == candidate.id).order_by(CandidateActionLog.id.desc()).limit(1)) or 0
+            if latest != existing.id:
+                raise HTTPException(409, "候选已有后续操作，请刷新后重试")
+            db.commit()
+            return candidate_read(db, candidate)
     latest = db.scalar(select(CandidateActionLog.id).where(CandidateActionLog.candidate_id == candidate.id).order_by(CandidateActionLog.id.desc()).limit(1)) or 0
     if expected_action_id is not None and expected_action_id != latest:
         raise HTTPException(409, "候选已有后续操作，不能撤销另一项决定，请刷新")
@@ -1578,8 +1647,10 @@ def undo_candidate(candidate_id: int, expected_action_id: int | None = Query(def
         before_state=current_snapshot,
         after_state=_candidate_snapshot(candidate, members),
         actor="local-user",
-        reason="Undo candidate decision",
+        reason=payload.reason or "Undo candidate decision",
         reverses_action_id=log.id,
+        idempotency_key=payload.idempotency_key,
+        request_payload=request_payload,
         created_at=datetime.now(),
     ))
     db.commit()
@@ -1774,25 +1845,58 @@ def ledger_drilldown(
     excluded_clauses = _ledger_clauses(db, date_from, date_to, amount_min, amount_max, source, account, direction, q, tag, aggregate_excluded=True)
     excluded = db.scalars(select(Bill).where(*excluded_clauses).order_by(Bill.id)).all()
     bills = db.scalars(select(Bill).where(Bill.id.in_(summary["transaction_ids"])).order_by(Bill.occurred_at, Bill.id)).all() if summary["transaction_ids"] else []
+    candidates_by_bill: dict[int, list[ReviewCandidate]] = {}
+    for candidate in db.scalars(select(ReviewCandidate).where(ReviewCandidate.status != "superseded_duplicate_group").order_by(ReviewCandidate.id)).all():
+        for member_id in _candidate_member_ids(candidate):
+            candidates_by_bill.setdefault(member_id, []).append(candidate)
+    contribution_by_bill = {row["bill_id"]: row for row in summary["contributions"]}
+    candidate_audit_cache: dict[int, list[dict]] = {}
+    allocation_audit_cache: dict[int, dict] = {}
+    matter_cache: dict[int, dict] = {}
+
+    def candidate_audits(candidate: ReviewCandidate) -> list[dict]:
+        if candidate.id in candidate_audit_cache:
+            return candidate_audit_cache[candidate.id]
+        logs = db.scalars(select(CandidateActionLog).where(CandidateActionLog.candidate_id == candidate.id).order_by(CandidateActionLog.created_at, CandidateActionLog.id)).all()
+        candidate_audit_cache[candidate.id] = [{"id": log.id, "candidate_id": candidate.id, "action": log.action, "actor": log.actor, "reason": log.reason, "before_state": json.loads(log.before_state), "after_state": json.loads(log.after_state) if log.after_state else None, "reverses_action_id": log.reverses_action_id, "idempotency_key": log.idempotency_key, "undone": log.undone, "undone_at": log.undone_at, "created_at": log.created_at} for log in logs]
+        return candidate_audit_cache[candidate.id]
+
+    def allocation_with_audits(allocation: RefundAllocation) -> dict:
+        if allocation.id in allocation_audit_cache:
+            return allocation_audit_cache[allocation.id]
+        audits = db.scalars(select(RefundAllocationAudit).where(RefundAllocationAudit.allocation_id == allocation.id).order_by(RefundAllocationAudit.id)).all()
+        allocation_audit_cache[allocation.id] = {
+            **_refund_allocation_read(allocation).model_dump(mode="json"),
+            "audits": [{"id": audit.id, "action": audit.action, "actor": audit.actor, "reason": audit.reason, "before_state": json.loads(audit.before_state), "after_state": json.loads(audit.after_state), "reverses_audit_id": audit.reverses_audit_id, "idempotency_key": audit.idempotency_key, "created_at": audit.created_at} for audit in audits],
+        }
+        return allocation_audit_cache[allocation.id]
+
+    def review_matter(matter_id: int) -> dict:
+        if matter_id not in matter_cache:
+            matter_cache[matter_id] = matter_read(db, matter_id)
+        return matter_cache[matter_id]
+
     transactions = []
     for bill in bills:
         tag_audits = db.scalars(select(TagAudit).where(TagAudit.bill_id == bill.id).order_by(TagAudit.created_at, TagAudit.id)).all()
         account_revisions = db.scalars(select(AccountRevision).where(AccountRevision.bill_id == bill.id).order_by(AccountRevision.created_at, AccountRevision.id)).all()
-        candidate_ids = db.scalars(select(ReviewCandidate.id).where(
-            (ReviewCandidate.bill_id == bill.id) | (ReviewCandidate.related_bill_id == bill.id),
-            ReviewCandidate.status != "superseded_duplicate_group",
-        ).order_by(ReviewCandidate.id)).all()
+        bill_candidates = candidates_by_bill.get(bill.id, [])
         refund_allocations = db.scalars(select(RefundAllocation).where(
             (RefundAllocation.refund_bill_id == bill.id) | (RefundAllocation.expense_bill_id == bill.id),
             RefundAllocation.status == "confirmed",
         ).order_by(RefundAllocation.id)).all()
+        nature_audits = db.scalars(select(RefundNatureAudit).where(RefundNatureAudit.bill_id == bill.id).order_by(RefundNatureAudit.id)).all()
+        matter_ids = contribution_by_bill.get(bill.id, {}).get("matter_ids", [])
         transactions.append({
             "bill": bill_read(db, bill),
             "source": transaction_source(bill.id, db),
             "tag_audits": [_tag_audit_read(audit) for audit in tag_audits],
             "account_revisions": [{"id": revision.id, "before_account": revision.before_account, "after_account": revision.after_account, "action": revision.action, "actor": revision.actor, "reason": revision.reason, "reverses_revision_id": revision.reverses_revision_id, "undone": revision.undone, "undone_at": revision.undone_at, "created_at": revision.created_at} for revision in account_revisions],
-            "candidate_ids": candidate_ids,
-            "refund_allocations": [_refund_allocation_read(allocation) for allocation in refund_allocations],
+            "candidate_ids": [candidate.id for candidate in bill_candidates],
+            "candidate_actions": [audit for candidate in bill_candidates for audit in candidate_audits(candidate)],
+            "refund_allocations": [allocation_with_audits(allocation) for allocation in refund_allocations],
+            "refund_nature_audits": [{"id": audit.id, "action": audit.action, "actor": audit.actor, "reason": audit.reason, "before_nature": audit.before_nature, "after_nature": audit.after_nature, "idempotency_key": audit.idempotency_key, "created_at": audit.created_at} for audit in nature_audits],
+            "review_matters": [review_matter(matter_id) for matter_id in matter_ids],
         })
     return {
         "transaction_ids": summary["transaction_ids"],
@@ -1800,7 +1904,12 @@ def ledger_drilldown(
         "composition": summary["composition"],
         "contributions": summary["contributions"],
         "transactions": transactions,
-        "excluded": [{"bill_id": bill.id, "reason": "confirmed_duplicate" if bill.duplicate_of_id else "confirmed_transfer"} for bill in excluded],
+        "excluded": [{
+            "bill_id": bill.id,
+            "reason": "confirmed_duplicate" if bill.duplicate_of_id else "confirmed_transfer",
+            "source": transaction_source(bill.id, db),
+            "candidate_actions": [audit for candidate in candidates_by_bill.get(bill.id, []) for audit in candidate_audits(candidate)],
+        } for bill in excluded],
         "filters": filters,
         "basis_version": summary["basis_version"],
         "generated_at": summary["generated_at"],
@@ -1880,7 +1989,7 @@ def list_refunds(db: Session = Depends(get_db)):
         allocations = db.scalars(select(RefundAllocation).where(RefundAllocation.refund_bill_id == bill.id).order_by(RefundAllocation.id)).all()
         history = db.scalars(select(RefundNatureAudit).where(RefundNatureAudit.bill_id == bill.id).order_by(RefundNatureAudit.id)).all()
         allocated = sum(cents(row.amount) for row in allocations if row.status == "confirmed")
-        result.append({"bill": bill_read(db, bill), "unallocated": money(cents(bill.amount) - allocated), "allocations": [_refund_allocation_read(row) for row in allocations], "nature_audit_id": history[-1].id if history else 0, "history": [{"id": row.id, "action": row.action, "reason": row.reason, "actor": row.actor, "created_at": row.created_at} for row in history]})
+        result.append({"bill": bill_read(db, bill), "unallocated": money(cents(bill.amount) - allocated), "allocations": [_refund_allocation_read(row) for row in allocations], "nature_audit_id": history[-1].id if history else 0, "history": [{"id": row.id, "action": row.action, "reason": row.reason, "actor": row.actor, "before_nature": row.before_nature, "after_nature": row.after_nature, "idempotency_key": row.idempotency_key, "created_at": row.created_at} for row in history]})
     return result
 
 
@@ -1890,6 +1999,15 @@ def set_bill_nature(bill_id: int, payload: NatureRequest, db: Session = Depends(
     bill = db.get(Bill, bill_id)
     if not bill:
         raise HTTPException(404, "流水不存在")
+    request_payload = json.dumps({"bill_id": bill_id, **payload.model_dump()}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    if payload.idempotency_key:
+        existing = db.scalar(select(RefundNatureAudit).where(RefundNatureAudit.idempotency_key == payload.idempotency_key))
+        if existing:
+            latest = db.scalar(select(RefundNatureAudit.id).where(RefundNatureAudit.bill_id == bill_id).order_by(RefundNatureAudit.id.desc()).limit(1)) or 0
+            if existing.bill_id != bill_id or existing.request_payload != request_payload or existing.id != latest:
+                raise HTTPException(409, "退款性质请求或当前状态已发生变化，请刷新后重试")
+            db.commit()
+            return {"bill_id": bill_id, "nature": existing.after_nature, "audit_id": existing.id}
     latest = db.scalar(select(RefundNatureAudit.id).where(RefundNatureAudit.bill_id == bill_id).order_by(RefundNatureAudit.id.desc()).limit(1)) or 0
     if latest != payload.expected_audit_id:
         raise HTTPException(409, "退款性质已有变化，请刷新后重试")
@@ -1897,6 +2015,7 @@ def set_bill_nature(bill_id: int, payload: NatureRequest, db: Session = Depends(
         raise HTTPException(422, "仅能对未被排除的正向流水确认退款性质")
     assert_no_matters(db, {bill_id})
     designation = db.get(RefundDesignation, bill_id)
+    before_nature = "refund" if designation else "ordinary"
     if payload.nature == "ordinary":
         if db.scalar(select(RefundAllocation.id).where(RefundAllocation.refund_bill_id == bill_id, RefundAllocation.status == "confirmed").limit(1)):
             raise HTTPException(409, "请先撤销有效退款分配，再修改退款性质")
@@ -1904,9 +2023,11 @@ def set_bill_nature(bill_id: int, payload: NatureRequest, db: Session = Depends(
             db.delete(designation)
     elif not designation:
         db.add(RefundDesignation(bill_id=bill_id, created_at=datetime.now()))
-    db.add(RefundNatureAudit(bill_id=bill_id, action=payload.nature, reason=payload.reason, actor="local-user", created_at=datetime.now()))
+    audit = RefundNatureAudit(bill_id=bill_id, action=payload.nature, reason=payload.reason, actor="local-user", before_nature=before_nature, after_nature=payload.nature, idempotency_key=payload.idempotency_key, request_payload=request_payload, created_at=datetime.now())
+    db.add(audit)
     db.commit()
-    return {"bill_id": bill_id, "nature": payload.nature}
+    db.refresh(audit)
+    return {"bill_id": bill_id, "nature": payload.nature, "audit_id": audit.id}
 
 
 @app.get("/api/transactions/{bill_id}/nature")

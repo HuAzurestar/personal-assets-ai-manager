@@ -722,6 +722,8 @@ async function assignTags(ids) {
     `<form><p class="muted">${bulk ? "只修改你选中的维度，其余标签保持不变。" : "每个分类维度选择一个标签。"}</p>${views.map((v) => select(v.system_name, v.name, [...(bulk ? [["", "保持原标签"]] : []), ...v.tags.filter((t) => !t.archived).map((t) => [t.system_name, t.name])], bulk ? "" : bill?.tag_state?.[v.system_name] || "unclassified")).join("")}<div class="actions"><button type="button" data-cancel>取消</button><button class="primary">保存标签</button></div></form>`,
   );
   $("[data-cancel]", d).onclick = () => d.close();
+  let previousPayload = "";
+  let retryPayload = null;
   $("form", d).onsubmit = async (e) => {
     e.preventDefault();
     const tag_state = Object.fromEntries(
@@ -729,13 +731,20 @@ async function assignTags(ids) {
     );
     if (bulk && !Object.keys(tag_state).length)
       return errorIn(d, "请至少选择一个要修改的分类维度。");
+    const payload = bulk
+      ? { bill_ids: ids, tag_state, merge: true, expected_revisions: Object.fromEntries(state.bills.filter(b => ids.includes(b.id)).map(b => [b.id, b.tag_revision_id])), reason: "用户批量修订标签" }
+      : { tag_state, expected_audit_id: expectedAudit, reason: "用户修订标签" };
+    if (JSON.stringify(payload) !== previousPayload) {
+      previousPayload = JSON.stringify(payload);
+      retryPayload = { ...payload, idempotency_key: crypto.randomUUID() };
+    }
     await formSave(d, async () => {
       await jsonRequest(
         bulk
           ? "/api/transactions/bulk-tag-state"
           : `/api/transactions/${ids[0]}/tag-state`,
         "PUT",
-        bulk ? { bill_ids: ids, tag_state, merge: true, expected_revisions: Object.fromEntries(state.bills.filter(b => ids.includes(b.id)).map(b => [b.id, b.tag_revision_id])) } : { tag_state, expected_audit_id: expectedAudit },
+        retryPayload,
       );
       d.close();
       toast("标签已保存");
@@ -872,18 +881,22 @@ async function candidateDecision(button) {
     if (!(await confirmReview(effect))) return;
   }
   let recordedAction = null;
+  const operationKey = crypto.randomUUID();
+  const batchKeys = new Map(ids.map((candidateId) => [candidateId, crypto.randomUUID()]));
   const operation = async () => {
     if (button.dataset.action === "candidate-undo")
-      await request(`/api/candidates/${id}/undo?expected_action_id=${c.current_action_id}`, { method: "POST" });
+      await jsonRequest(`/api/candidates/${id}/undo?expected_action_id=${c.current_action_id}`, "POST", { idempotency_key: operationKey, reason: "用户撤销候选决定" });
     else if (batch)
       await jsonRequest("/api/candidates/batch", "POST", {
-        items: ids.map((candidate_id) => { const c = state.candidates.find(item => item.id === candidate_id); return { candidate_id, action: decision, expected_action_id: c.current_action_id, expected_member_ids: c.member_bills.map(b => b.id) }; }),
+        items: ids.map((candidate_id) => { const c = state.candidates.find(item => item.id === candidate_id); return { candidate_id, action: decision, expected_action_id: c.current_action_id, expected_member_ids: c.member_bills.map(b => b.id), idempotency_key: batchKeys.get(candidate_id), reason: "用户批量处理候选" }; }),
       });
     else
       recordedAction = await jsonRequest(`/api/candidates/${id}`, "POST", {
         action: decision,
+        idempotency_key: operationKey,
         expected_action_id: c?.current_action_id,
         expected_member_ids: c?.member_bills.map(b => b.id),
+        reason: "用户核对候选后确认",
         ...(button.dataset.retained
           ? { retained_bill_id: Number(button.dataset.retained) }
           : {}),
@@ -897,8 +910,8 @@ async function candidateDecision(button) {
           : "已撤销，原始状态已恢复"
         : "处理已保存，可在复核记录中撤销",
       !batch && button.dataset.action !== "candidate-undo"
-        ? async () => {
-            await request(`/api/candidates/${id}/undo?expected_action_id=${recordedAction.current_action_id}`, { method: "POST" });
+          ? async () => {
+            await jsonRequest(`/api/candidates/${id}/undo?expected_action_id=${recordedAction.current_action_id}`, "POST", { idempotency_key: crypto.randomUUID(), reason: "用户从成功提示撤销候选决定" });
             await render({ preservePosition: true });
             toast("已撤销本次处理");
           }

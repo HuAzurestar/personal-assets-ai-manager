@@ -79,13 +79,13 @@ export function reviewTools(h) {
     $$('[data-audit]', d).forEach(b => b.onclick = async () => { try { const audits = await request(`/api/refund-allocations/${b.dataset.audit}/audits`); modal('退款分配审计', `<pre>${esc(JSON.stringify(audits, null, 2))}</pre>`); } catch(e) { toast(e.message); } });
     $$('[data-undo-refund]', d).forEach(b => b.onclick = () => formSave(d, async () => {
       if (!(await confirmReview('只撤销选中的退款分配，其他分配保持有效；本笔金额回到未分配退款。'))) return;
-      await jsonRequest(`/api/refund-allocations/${b.dataset.undoRefund}/undo`, 'POST', { reason: '用户撤销退款分配' });
+      await jsonRequest(`/api/refund-allocations/${b.dataset.undoRefund}/undo`, 'POST', { reason: '用户撤销退款分配', idempotency_key: b.dataset.idempotencyKey ||= key() });
       d.close(); await render({ preservePosition: true }); await refunds();
     }));
     $$('[data-nature]', d).forEach(b => b.onclick = () => formSave(d, async () => {
       const item = items.find(i => i.bill.id === Number(b.dataset.nature));
       if (!(await confirmReview('撤销退款性质后，该正向流水会恢复为普通流入并进入原有收入口径。'))) return;
-      await jsonRequest(`/api/transactions/${item.bill.id}/nature`, 'PUT', { nature: 'ordinary', expected_audit_id: item.nature_audit_id, reason: '用户纠正错误的退款性质' });
+      await jsonRequest(`/api/transactions/${item.bill.id}/nature`, 'PUT', { nature: 'ordinary', expected_audit_id: item.nature_audit_id, reason: '用户纠正错误的退款性质', idempotency_key: b.dataset.idempotencyKey ||= key() });
       await saved(d, '退款性质已纠正');
     }));
   }
@@ -166,17 +166,17 @@ export function reviewTools(h) {
     if (refundButton) refundButton.onclick = () => formSave(d, async () => {
       if (nature.nature !== 'refund') {
         if (!(await confirmReview('确认这笔流入属于退款：整笔退出收入口径；尚未关联原支出的部分保留为未分配退款。'))) return;
-        await jsonRequest(`/api/transactions/${bill.id}/nature`, 'PUT', { nature: 'refund', reason: '用户在流水详情确认退款性质', expected_audit_id: nature.audit_id });
+        await jsonRequest(`/api/transactions/${bill.id}/nature`, 'PUT', { nature: 'refund', reason: '用户在流水详情确认退款性质', expected_audit_id: nature.audit_id, idempotency_key: refundButton.dataset.idempotencyKey ||= key() });
       }
       d.close(); await render({ preservePosition: true }); await refunds();
     });
-    $$('[data-undo-tag]', d).forEach(b => b.onclick = () => formSave(d, async () => { await jsonRequest(`/api/bills/${bill.id}/tags/${b.dataset.undoTag}/undo`, 'POST', {reason: '用户撤销标签修订'}); await saved(d, '标签已恢复，可继续修改'); }));
+    $$('[data-undo-tag]', d).forEach(b => b.onclick = () => formSave(d, async () => { await jsonRequest(`/api/bills/${bill.id}/tags/${b.dataset.undoTag}/undo`, 'POST', {reason: '用户撤销标签修订', idempotency_key: b.dataset.idempotencyKey ||= key()}); await saved(d, '标签已恢复，可继续修改'); }));
     $$('[data-accept-tag]', d).forEach(b => b.onclick = () => formSave(d, async () => {
       const suggestion = audits.find(a => a.id === Number(b.dataset.acceptTag));
-      await jsonRequest(`/api/transactions/${bill.id}/tag-state`, 'PUT', {tag_state: suggestion.tag_state, strategy: 'manual', expected_audit_id: current?.id || 0, reason: `用户采用建议 ${suggestion.id}`});
+      await jsonRequest(`/api/transactions/${bill.id}/tag-state`, 'PUT', {tag_state: suggestion.tag_state, strategy: 'manual', expected_audit_id: current?.id || 0, reason: `用户采用建议 ${suggestion.id}`, idempotency_key: b.dataset.idempotencyKey ||= key()});
       await saved(d, '建议已由本人确认');
     }));
-    $$('[data-undo-account]', d).forEach(b => b.onclick = () => formSave(d, async () => { await jsonRequest(`/api/transactions/${bill.id}/account-revisions/${b.dataset.undoAccount}/undo`, 'POST', {reason: '用户撤销账户修订'}); await saved(d, '账户修订已撤销'); }));
+    $$('[data-undo-account]', d).forEach(b => b.onclick = () => formSave(d, async () => { await jsonRequest(`/api/transactions/${bill.id}/account-revisions/${b.dataset.undoAccount}/undo`, 'POST', {reason: '用户撤销账户修订', idempotency_key: b.dataset.idempotencyKey ||= key()}); await saved(d, '账户修订已撤销'); }));
   }
   return { matters, editor, refunds, issues, drill, account, decorate, billActions };
 }

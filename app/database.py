@@ -262,6 +262,8 @@ class RefundAllocationAudit(Base):
     before_state: Mapped[str] = mapped_column(Text)
     after_state: Mapped[str] = mapped_column(Text)
     reverses_audit_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(120), nullable=True, unique=True)
+    request_payload: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[str] = mapped_column(DateTime(timezone=False))
 
 
@@ -279,6 +281,10 @@ class RefundNatureAudit(Base):
     action: Mapped[str] = mapped_column(String(32))
     reason: Mapped[str] = mapped_column(Text)
     actor: Mapped[str] = mapped_column(String(80), default="local-user")
+    before_nature: Mapped[str] = mapped_column(String(32), default="ordinary")
+    after_nature: Mapped[str] = mapped_column(String(32), default="refund")
+    idempotency_key: Mapped[str | None] = mapped_column(String(120), nullable=True, unique=True)
+    request_payload: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[str] = mapped_column(DateTime(timezone=False))
 
 
@@ -349,6 +355,16 @@ def init_db() -> None:
                 "idempotency_key": "VARCHAR(120)",
                 "request_payload": "TEXT NOT NULL DEFAULT ''",
             },
+            "refund_allocation_audits": {
+                "idempotency_key": "VARCHAR(120)",
+                "request_payload": "TEXT NOT NULL DEFAULT ''",
+            },
+            "refund_nature_audits": {
+                "before_nature": "VARCHAR(32) NOT NULL DEFAULT 'ordinary'",
+                "after_nature": "VARCHAR(32) NOT NULL DEFAULT 'refund'",
+                "idempotency_key": "VARCHAR(120)",
+                "request_payload": "TEXT NOT NULL DEFAULT ''",
+            },
         }
         migrations["tag_audits"].update({
             "action": "VARCHAR(40) NOT NULL DEFAULT 'confirm'",
@@ -363,15 +379,25 @@ def init_db() -> None:
             "request_payload": "TEXT NOT NULL DEFAULT ''",
         })
         with engine.begin() as connection:
+            added_columns: set[tuple[str, str]] = set()
             for table, columns in migrations.items():
                 existing = {item["name"] for item in inspect(engine).get_columns(table)}
                 for name, definition in columns.items():
                     if name not in existing:
                         connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {definition}"))
+                        added_columns.add((table, name))
+            if ("refund_nature_audits", "before_nature") in added_columns:
+                connection.execute(text("""
+                    UPDATE refund_nature_audits
+                    SET before_nature = CASE WHEN action = 'ordinary' THEN 'refund' ELSE 'ordinary' END,
+                        after_nature = CASE WHEN action = 'ordinary' THEN 'ordinary' ELSE 'refund' END
+                """))
             connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_tag_views_system_name ON tag_views(system_name) WHERE system_name <> ''"))
             connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_import_artifacts_source_sha256 ON import_artifacts(source_type, sha256)"))
             connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_tag_audits_idempotency_key ON tag_audits(idempotency_key) WHERE idempotency_key IS NOT NULL"))
             connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_candidate_actions_idempotency_key ON candidate_action_logs(idempotency_key) WHERE idempotency_key IS NOT NULL"))
+            connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_refund_allocation_audits_idempotency_key ON refund_allocation_audits(idempotency_key) WHERE idempotency_key IS NOT NULL"))
+            connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_refund_nature_audits_idempotency_key ON refund_nature_audits(idempotency_key) WHERE idempotency_key IS NOT NULL"))
             connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_view_tags_view_system_name ON view_tags(view_id, system_name) WHERE system_name <> ''"))
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_bills_tag_state_category_page ON bills(json_extract(tag_state_json, '$.category'), occurred_at DESC, id DESC)"))
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_bills_tag_state_scenario_page ON bills(json_extract(tag_state_json, '$.scenario'), occurred_at DESC, id DESC)"))
@@ -382,7 +408,7 @@ def init_db() -> None:
                 continue
             if not session.get(RefundDesignation, bill_id):
                 session.add(RefundDesignation(bill_id=bill_id, created_at=datetime.now()))
-                session.add(RefundNatureAudit(bill_id=bill_id, action="refund", reason="迁移已有退款性质", actor="migration", created_at=datetime.now()))
+                session.add(RefundNatureAudit(bill_id=bill_id, action="refund", reason="迁移已有退款性质", actor="migration", before_nature="ordinary", after_nature="refund", created_at=datetime.now()))
         if not session.scalar(select(TagView.id).limit(1)):
             for name, tags in (("消费类别", ("餐饮", "交通", "住宿", "购物")), ("使用场景", ("日常", "计划", "意外"))):
                 view = TagView(name=name, created_at=datetime.now())

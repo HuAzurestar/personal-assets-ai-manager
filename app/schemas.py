@@ -4,8 +4,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.money import cents
 
 
-class BillCreate(BaseModel):
+class StrictRequest(BaseModel):
+    """Write contracts reject fields that the ledger would otherwise ignore."""
+
     model_config = ConfigDict(extra="forbid")
+
+
+class BillCreate(StrictRequest):
     occurred_at: datetime
     merchant: str = Field(min_length=1, max_length=200)
     note: str = ""
@@ -36,7 +41,7 @@ class BillRead(BillCreate):
     tag_revision_id: int = 0
 
 
-class AssetCreate(BaseModel):
+class AssetCreate(StrictRequest):
     account_name: str = Field(min_length=1, max_length=120)
     account_type: str = Field(min_length=1, max_length=80)
     balance: float
@@ -47,7 +52,7 @@ class AssetRead(AssetCreate):
     id: int
 
 
-class TagRequest(BaseModel):
+class TagRequest(StrictRequest):
     merchant: str
     note: str = ""
 
@@ -58,7 +63,7 @@ class TagResult(BaseModel):
     provider: str
 
 
-class TagApply(BaseModel):
+class TagApply(StrictRequest):
     strategy: str = Field(pattern="^(local_rules|llm_suggestion|manual|authorised_auto)$")
     category: str | None = None
     tags: list[str] | None = None
@@ -67,18 +72,20 @@ class TagApply(BaseModel):
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=120)
 
 
-class UndoRequest(BaseModel):
+class UndoRequest(StrictRequest):
     reason: str = Field(default="", max_length=500)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=120)
 
 
 class IssueResolve(BillCreate):
     reason: str = Field(min_length=1, max_length=500)
 
 
-class NatureRequest(BaseModel):
+class NatureRequest(StrictRequest):
     nature: str = Field(pattern="^(refund|ordinary)$")
     reason: str = Field(min_length=1, max_length=500)
     expected_audit_id: int = Field(default=0, ge=0)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=120)
 
 
 class TagAuditRead(BaseModel):
@@ -127,7 +134,7 @@ class ImportPreviewRead(BaseModel):
     issues: list[dict] = Field(default_factory=list)
 
 
-class BatchFilePayload(BaseModel):
+class BatchFilePayload(StrictRequest):
     filename: str = Field(min_length=1, max_length=255)
     content_base64: str = Field(min_length=1)
 
@@ -152,7 +159,7 @@ class BatchImportItemRead(BaseModel):
     import_batch: ImportBatchRead | None = None
 
 
-class BatchImportRequest(BaseModel):
+class BatchImportRequest(StrictRequest):
     files: list[BatchFilePayload] = Field(min_length=1, max_length=100)
     batch_token: str | None = Field(default=None, max_length=64)
 
@@ -181,24 +188,26 @@ class ReviewCandidateRead(BaseModel):
     related_bill: BillRead
 
 
-class CandidateDecision(BaseModel):
+class CandidateDecision(StrictRequest):
     action: str = Field(pattern="^(confirm_transfer|confirm_personal_transfer|confirm_third_party_transfer|resolve_duplicate|reject_duplicate|ignored|deferred)$")
     retained_bill_id: int | None = None
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=120)
     expected_action_id: int | None = None
     expected_member_ids: list[int] | None = None
+    reason: str = Field(default="", max_length=500)
 
 
-class CandidateBatchItem(BaseModel):
+class CandidateBatchItem(StrictRequest):
     candidate_id: int
     action: str = Field(pattern="^(confirm_transfer|confirm_personal_transfer|confirm_third_party_transfer|resolve_duplicate|reject_duplicate|ignored|deferred)$")
     retained_bill_id: int | None = None
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=120)
     expected_action_id: int | None = None
     expected_member_ids: list[int] | None = None
+    reason: str = Field(default="", max_length=500)
 
 
-class CandidateBatchDecision(BaseModel):
+class CandidateBatchDecision(StrictRequest):
     items: list[CandidateBatchItem] = Field(min_length=1, max_length=100)
 
 
@@ -225,22 +234,22 @@ class TagViewRead(BaseModel):
     tags: list[ViewTagRead]
 
 
-class TagViewCreate(BaseModel):
+class TagViewCreate(StrictRequest):
     name: str = Field(min_length=1, max_length=120)
     system_name: str | None = Field(default=None, pattern="^[a-z][a-z0-9_]{0,63}$")
 
 
-class TagViewUpdate(BaseModel):
+class TagViewUpdate(StrictRequest):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     archived: bool | None = None
 
 
-class ViewTagCreate(BaseModel):
+class ViewTagCreate(StrictRequest):
     name: str = Field(min_length=1, max_length=120)
     system_name: str | None = Field(default=None, pattern="^[a-z][a-z0-9_]{0,63}$")
 
 
-class ViewTagUpdate(BaseModel):
+class ViewTagUpdate(StrictRequest):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     archived: bool | None = None
     migrate_to_tag_id: int | None = None
@@ -257,13 +266,13 @@ class ViewTagAssignmentRead(BaseModel):
     confidence: float
 
 
-class ViewTagAssignmentRequest(BaseModel):
+class ViewTagAssignmentRequest(StrictRequest):
     tag_id: int
     strategy: str = Field(default="manual", max_length=60)
     confidence: float = Field(default=0.95, ge=0, le=1)
 
 
-class TagStateAssignmentRequest(BaseModel):
+class TagStateAssignmentRequest(StrictRequest):
     tag_state: dict[str, str] = Field(default_factory=dict)
     strategy: str = Field(default="manual", pattern="^(manual|local_rules|llm_suggestion|authorised_auto)$")
     confidence: float = Field(default=0.95, ge=0, le=1)
@@ -287,13 +296,13 @@ class TransactionPageRead(BaseModel):
     sort: dict[str, str]
 
 
-class AccountRevisionRequest(BaseModel):
+class AccountRevisionRequest(StrictRequest):
     account_name: str = Field(min_length=1, max_length=120)
     reason: str = Field(default="", max_length=500)
     idempotency_key: str = Field(min_length=1, max_length=120)
 
 
-class RefundAllocationCreate(BaseModel):
+class RefundAllocationCreate(StrictRequest):
     refund_bill_id: int
     expense_bill_id: int
     amount: float = Field(gt=0)

@@ -319,3 +319,148 @@ def test_currency_cannot_be_silently_ignored(ledger):
     client, _ = ledger
     response = client.post('/api/bills', json={'occurred_at': '2026-09-01T10:00:00', 'merchant': '美元', 'amount': 100, 'currency': 'USD'})
     assert response.status_code == 422
+
+
+def test_review_retries_are_idempotent_and_unknown_fields_are_rejected(ledger):
+    client, _ = ledger
+    assert client.post('/api/bills', json={
+        'occurred_at': '2026-09-01T09:00:00', 'merchant': '未知字段', 'amount': -1, 'ignored_amount': 999,
+    }).status_code == 422
+
+    tagged = bill(client, '标签与账户', -20, 1, '账户 A')
+    tag_change = client.put(f'/api/transactions/{tagged}/tag-state', json={
+        'tag_state': {'category': 'food', 'scenario': 'daily'},
+        'expected_audit_id': 0,
+        'reason': '本人确认分类',
+        'idempotency_key': 'tag-confirm-once',
+    })
+    assert tag_change.status_code == 200
+    tag_audit = next(row for row in client.get(f'/api/bills/{tagged}/tags').json() if not row['superseded'])
+    undo_tag = {'reason': '撤销错误分类', 'idempotency_key': 'tag-undo-once'}
+    first_tag_undo = client.post(f"/api/bills/{tagged}/tags/{tag_audit['id']}/undo", json=undo_tag)
+    repeated_tag_undo = client.post(f"/api/bills/{tagged}/tags/{tag_audit['id']}/undo", json=undo_tag)
+    assert first_tag_undo.status_code == repeated_tag_undo.status_code == 200
+    assert first_tag_undo.json()['id'] == repeated_tag_undo.json()['id']
+    assert sum(row['action'] == 'undo' for row in client.get(f'/api/bills/{tagged}/tags').json()) == 1
+
+    account = client.put(f'/api/transactions/{tagged}/account', json={
+        'account_name': '账户 B', 'reason': '核对账户', 'idempotency_key': 'account-confirm-once',
+    }).json()
+    undo_account = {'reason': '恢复原账户', 'idempotency_key': 'account-undo-once'}
+    first_account_undo = client.post(f"/api/transactions/{tagged}/account-revisions/{account['revision_id']}/undo", json=undo_account)
+    repeated_account_undo = client.post(f"/api/transactions/{tagged}/account-revisions/{account['revision_id']}/undo", json=undo_account)
+    assert first_account_undo.status_code == repeated_account_undo.status_code == 200
+    assert first_account_undo.json()['revision_id'] == repeated_account_undo.json()['revision_id']
+    assert [row['action'] for row in client.get(f'/api/transactions/{tagged}/account-revisions').json()] == ['confirm', 'undo']
+
+    expense = bill(client, '退款原支出', -100, 5)
+    refund = bill(client, '退款到账', 50, 6)
+    allocation = client.post('/api/refund-allocations', json={
+        'refund_bill_id': refund, 'expense_bill_id': expense, 'amount': 40,
+        'reason': '核对订单号', 'idempotency_key': 'refund-confirm-once',
+    }).json()
+    undo_refund = {'reason': '撤销错误关联', 'idempotency_key': 'refund-undo-once'}
+    first_refund_undo = client.post(f"/api/refund-allocations/{allocation['id']}/undo", json=undo_refund)
+    repeated_refund_undo = client.post(f"/api/refund-allocations/{allocation['id']}/undo", json=undo_refund)
+    assert first_refund_undo.status_code == repeated_refund_undo.status_code == 200
+    assert first_refund_undo.json()['id'] == repeated_refund_undo.json()['id']
+    assert [row['action'] for row in client.get(f"/api/refund-allocations/{allocation['id']}/audits").json()] == ['confirm', 'revoke']
+
+    ordinary = bill(client, '待确认退款性质', 25, 9)
+    nature = {'nature': 'refund', 'reason': '平台显示退款成功', 'expected_audit_id': 0, 'idempotency_key': 'nature-once'}
+    first_nature = client.put(f'/api/transactions/{ordinary}/nature', json=nature)
+    repeated_nature = client.put(f'/api/transactions/{ordinary}/nature', json=nature)
+    assert first_nature.status_code == repeated_nature.status_code == 200
+    assert first_nature.json()['audit_id'] == repeated_nature.json()['audit_id']
+    nature_history = next(item for item in client.get('/api/refunds').json() if item['bill']['id'] == ordinary)['history']
+    assert len(nature_history) == 1
+    assert (nature_history[0]['before_nature'], nature_history[0]['after_nature']) == ('ordinary', 'refund')
+
+    duplicate_a = bill(client, '重试重复项', -10, 20)
+    duplicate_b = bill(client, '重试重复项', -10, 21)
+    candidate = next(row for row in client.get('/api/candidates').json() if duplicate_a in {item['id'] for item in row['member_bills']})
+    confirmed = client.post(f"/api/candidates/{candidate['id']}", json={
+        'action': 'resolve_duplicate', 'retained_bill_id': duplicate_a,
+        'expected_action_id': candidate['current_action_id'], 'expected_member_ids': [duplicate_a, duplicate_b],
+        'reason': '原始流水号重复', 'idempotency_key': 'candidate-confirm-once',
+    }).json()
+    undo_candidate = {'reason': '重新核对后撤销', 'idempotency_key': 'candidate-undo-once'}
+    first_candidate_undo = client.post(f"/api/candidates/{candidate['id']}/undo?expected_action_id={confirmed['current_action_id']}", json=undo_candidate)
+    repeated_candidate_undo = client.post(f"/api/candidates/{candidate['id']}/undo?expected_action_id={confirmed['current_action_id']}", json=undo_candidate)
+    assert first_candidate_undo.status_code == repeated_candidate_undo.status_code == 200
+    actions = client.get(f"/api/candidates/{candidate['id']}/actions").json()
+    assert [row['action'] for row in actions] == ['undo', 'resolve_duplicate']
+
+    bulk_a = bill(client, '批量标签 A', -3, 30)
+    bulk_b = bill(client, '批量标签 B', -4, 31)
+    revisions = {row['id']: row['tag_revision_id'] for row in client.get('/api/transactions?page_size=100').json()['items'] if row['id'] in {bulk_a, bulk_b}}
+    bulk_payload = {
+        'bill_ids': [bulk_a, bulk_b], 'tag_state': {'scenario': 'planned'}, 'merge': True,
+        'expected_revisions': revisions, 'reason': '批量确认场景', 'idempotency_key': 'bulk-tag-once',
+    }
+    first_bulk = client.put('/api/transactions/bulk-tag-state', json=bulk_payload)
+    repeated_bulk = client.put('/api/transactions/bulk-tag-state', json=bulk_payload)
+    assert first_bulk.status_code == repeated_bulk.status_code == 200
+    assert first_bulk.json() == repeated_bulk.json()
+    assert all(sum(not row['superseded'] for row in client.get(f'/api/bills/{bill_id}/tags').json()) == 1 for bill_id in (bulk_a, bulk_b))
+
+
+def test_drilldown_contains_complete_revision_evidence(ledger):
+    client, _ = ledger
+    matter_bill = bill(client, '事项费用', -30, 1)
+    created_matter = client.post('/api/review-matters', json=matter(
+        [line(matter_bill, 30, 'expense')], key='drill-matter', title='回钻事项', scenarios=['核验'],
+    ))
+    assert created_matter.status_code == 201
+
+    expense = bill(client, '回钻原支出', -100, 3)
+    refund = bill(client, '回钻退款', 50, 4)
+    allocation = client.post('/api/refund-allocations', json={
+        'refund_bill_id': refund, 'expense_bill_id': expense, 'amount': 40,
+        'reason': '回钻退款依据', 'idempotency_key': 'drill-refund',
+    })
+    assert allocation.status_code == 201
+
+    duplicate_a = bill(client, '回钻重复', -8, 10)
+    duplicate_b = bill(client, '回钻重复', -8, 11)
+    candidate = next(row for row in client.get('/api/candidates').json() if duplicate_a in {item['id'] for item in row['member_bills']})
+    assert client.post(f"/api/candidates/{candidate['id']}", json={
+        'action': 'resolve_duplicate', 'retained_bill_id': duplicate_a,
+        'reason': '回钻重复依据', 'idempotency_key': 'drill-duplicate',
+    }).status_code == 200
+
+    drill = client.get('/api/ledger/drilldown').json()
+    matter_detail = next(row for row in drill['transactions'] if row['bill']['id'] == matter_bill)
+    assert matter_detail['review_matters'][0]['history'][0]['reason'] == '核对原始账单后确认'
+    refund_detail = next(row for row in drill['transactions'] if row['bill']['id'] == refund)
+    assert refund_detail['refund_nature_audits'][0]['after_nature'] == 'refund'
+    assert refund_detail['refund_allocations'][0]['audits'][0]['action'] == 'confirm'
+    duplicate_detail = next(row for row in drill['transactions'] if row['bill']['id'] == duplicate_a)
+    assert duplicate_detail['candidate_actions'][0]['reason'] == '回钻重复依据'
+    excluded = next(row for row in drill['excluded'] if row['bill_id'] == duplicate_b)
+    assert excluded['reason'] == 'confirmed_duplicate'
+    assert excluded['candidate_actions'][0]['action'] == 'resolve_duplicate'
+
+
+def test_refund_audit_migration_backfills_nature_transitions(tmp_path, monkeypatch):
+    engine = create_engine(f"sqlite:///{tmp_path / 'legacy-audits.db'}", connect_args={"check_same_thread": False})
+    with engine.begin() as connection:
+        connection.execute(text("""
+            CREATE TABLE refund_nature_audits (
+                id INTEGER PRIMARY KEY,
+                bill_id INTEGER NOT NULL,
+                action VARCHAR(32) NOT NULL,
+                reason TEXT NOT NULL,
+                actor VARCHAR(80) NOT NULL DEFAULT 'local-user',
+                created_at DATETIME NOT NULL
+            )
+        """))
+        connection.execute(text("INSERT INTO refund_nature_audits (bill_id, action, reason, created_at) VALUES (1, 'refund', '旧确认', CURRENT_TIMESTAMP), (1, 'ordinary', '旧撤销', CURRENT_TIMESTAMP)"))
+    sessions = sessionmaker(bind=engine, autoflush=False)
+    monkeypatch.setattr(database, 'engine', engine)
+    monkeypatch.setattr(database, 'SessionLocal', sessions)
+    database.init_db()
+    with engine.connect() as connection:
+        rows = connection.execute(text('SELECT action, before_nature, after_nature FROM refund_nature_audits ORDER BY id')).all()
+    assert rows == [('refund', 'ordinary', 'refund'), ('ordinary', 'refund', 'ordinary')]
+    engine.dispose()
