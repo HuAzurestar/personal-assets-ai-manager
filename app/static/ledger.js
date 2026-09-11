@@ -1,4 +1,5 @@
 import { reviewTools } from './review.js';
+import { openSmartImport } from './intake.js';
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
 const esc = (value) =>
@@ -18,7 +19,7 @@ const date = (value) =>
     .replace("T", " ")
     .slice(0, 16);
 const sourceName = (value) =>
-  ({ alipay: "支付宝", wechat: "微信", manual: "手工" })[value] ||
+  ({ alipay: "支付宝", wechat: "微信", ccb: "建设银行", abc: "农业银行", cmb: "招商银行", manual: "手工" })[value] ||
   value ||
   "手工";
 const statusNames = {
@@ -398,6 +399,9 @@ async function dataPage(params) {
       ["", "全部"],
       ["alipay", "支付宝"],
       ["wechat", "微信"],
+      ["ccb", "建设银行"],
+      ["abc", "农业银行"],
+      ["cmb", "招商银行"],
       ["manual", "手工"],
     ],
     p("source"),
@@ -446,12 +450,12 @@ async function dataPage(params) {
   )}</div><button>应用筛选</button></details></form>`;
   const rows = result.items.map(
     (b) =>
-      `<tr><td><input type="checkbox" data-select-bill="${b.id}" aria-label="选择 ${esc(b.merchant)} 的流水 ${b.id}"></td><td><strong>${esc(b.merchant)}</strong><small>${esc(b.note)}</small>${excludedMarkup(b)}</td><td>${date(b.occurred_at)}<small>${sourceName(b.source_type)} · ${esc(b.account_name)}</small></td><td class="money ${b.amount > 0 ? "income" : "expense"}">${money(b.amount)}</td><td>${tagsMarkup(b)}</td><td><button data-action="bill-detail" data-id="${b.id}">详情</button> <button data-action="assign" data-id="${b.id}">标签</button></td></tr>`,
+      `<tr><td><input type="checkbox" data-select-bill="${b.id}" aria-label="选择 ${esc(b.merchant)} 的流水 ${b.id}"></td><td><strong>${esc(b.merchant)}</strong><small>${esc(b.note)}</small>${excludedMarkup(b)}</td><td>${(b.time_precision === 'day' ? b.occurred_at.slice(0,10) : date(b.occurred_at))}<small>${sourceName(b.source_type)} · ${esc(b.account_name)}</small></td><td class="money ${b.amount > 0 ? "income" : "expense"}">${money(b.amount)}</td><td>${tagsMarkup(b)}</td><td><button data-action="bill-detail" data-id="${b.id}">详情</button> <button data-action="assign" data-id="${b.id}">标签</button></td></tr>`,
   );
   const mobile = result.items
     .map(
       (b) =>
-        `<article class="transaction-card"><div class="section-head"><label class="inline-check"><input type="checkbox" data-select-bill="${b.id}" aria-label="选择 ${esc(b.merchant)} 的流水 ${b.id}"><strong>${esc(b.merchant)}</strong></label><strong class="${b.amount > 0 ? "income" : ""}">${money(b.amount)}</strong></div><p class="muted">${date(b.occurred_at)} · ${sourceName(b.source_type)} · ${esc(b.account_name)}</p>${excludedMarkup(b)}${tagsMarkup(b)}<div class="actions"><button data-action="bill-detail" data-id="${b.id}">详情</button><button data-action="assign" data-id="${b.id}">选择标签</button></div></article>`,
+        `<article class="transaction-card"><div class="section-head"><label class="inline-check"><input type="checkbox" data-select-bill="${b.id}" aria-label="选择 ${esc(b.merchant)} 的流水 ${b.id}"><strong>${esc(b.merchant)}</strong></label><strong class="${b.amount > 0 ? "income" : ""}">${money(b.amount)}</strong></div><p class="muted">${(b.time_precision === 'day' ? b.occurred_at.slice(0,10) : date(b.occurred_at))} · ${sourceName(b.source_type)} · ${esc(b.account_name)}</p>${excludedMarkup(b)}${tagsMarkup(b)}<div class="actions"><button data-action="bill-detail" data-id="${b.id}">详情</button><button data-action="assign" data-id="${b.id}">选择标签</button></div></article>`,
     )
     .join("");
   return {
@@ -482,7 +486,7 @@ async function tagsPage(params) {
   };
 }
 function evidence(b, index) {
-  return `<div class="evidence"><strong>${String.fromCharCode(65 + index)} · ${esc(b.merchant)}</strong><div class="amount">${money(b.amount)}</div><p>${esc(b.account_name || "未提供账户")} · ${esc(b.direction)}</p><p class="muted">${date(b.occurred_at)} · ${sourceName(b.source_type)}</p><p class="muted">批次 ${b.import_batch_id || "—"} · 流水 ${esc(b.source_reference || b.id)}</p>${excludedMarkup(b)}</div>`;
+  return `<div class="evidence"><strong>${String.fromCharCode(65 + index)} · ${esc(b.merchant)}</strong><div class="amount">${money(b.amount)}</div><p>${esc(b.account_name || "未提供账户")} · ${esc(b.direction)}</p><p class="muted">${(b.time_precision === 'day' ? b.occurred_at.slice(0,10) : date(b.occurred_at))} · ${sourceName(b.source_type)}</p><p class="muted">批次 ${b.import_batch_id || "—"} · 流水 ${esc(b.source_reference || b.id)}</p>${excludedMarkup(b)}</div>`;
 }
 function candidateActions(c) {
   if (!actionable(c))
@@ -807,7 +811,7 @@ async function billDetail(id) {
   if (epoch !== state.epoch) return;
   const detailDialog = modal(
     "流水详情",
-    `<div class="section-head"><h2>${esc(bill.merchant)}</h2><strong>${money(bill.amount)}</strong></div>${excludedMarkup(bill)}<dl><dt>交易时间</dt><dd>${date(bill.occurred_at)}</dd><dt>账户</dt><dd>${esc(bill.account_name)}</dd><dt>来源</dt><dd>${sourceName(bill.source_type)}</dd><dt>备注</dt><dd>${esc(bill.note) || "—"}</dd><dt>标签</dt><dd>${tagsMarkup(bill)}</dd><dt>原始文件</dt><dd>${esc(origin.artifact?.filename || "手工记录")}</dd><dt>原始流水号</dt><dd>${esc(origin.origin?.source_reference || "—")}</dd></dl><details open><summary>原始字段</summary><pre>${esc(JSON.stringify(origin.raw_fields, null, 2))}</pre></details>`,
+    `<div class="section-head"><h2>${esc(bill.merchant)}</h2><strong>${money(bill.amount)}</strong></div>${excludedMarkup(bill)}<dl><dt>交易时间</dt><dd>${(bill.time_precision === 'day' ? bill.occurred_at.slice(0,10) : date(bill.occurred_at))}</dd><dt>账户</dt><dd>${esc(bill.account_name)}</dd><dt>来源</dt><dd>${sourceName(bill.source_type)}</dd><dt>备注</dt><dd>${esc(bill.note) || "—"}</dd><dt>标签</dt><dd>${tagsMarkup(bill)}</dd><dt>原始文件</dt><dd>${esc(origin.artifact?.filename || "手工记录")}</dd><dt>原始流水号</dt><dd>${esc(origin.origin?.source_reference || "—")}</dd></dl><details open><summary>原始字段</summary><pre>${esc(JSON.stringify(origin.raw_fields, null, 2))}</pre></details>${(origin.evidence || []).map(e => `<details><summary>${esc(e.filename)} · 第 ${e.row_number} 行</summary><pre>${esc(JSON.stringify(e.raw_fields,null,2))}</pre></details>`).join("")}`,
   );
   await review.billActions(detailDialog, bill);
 }
@@ -908,172 +912,8 @@ async function candidateDecision(button) {
   if (d) await formSave(d, operation);
   else await operation();
 }
-function importStep(d, index) {
-  $$(".steps span", d).forEach((node, i) => {
-    node.classList.toggle("active", i === index);
-    if (i === index) node.setAttribute("aria-current", "step");
-    else node.removeAttribute("aria-current");
-  });
-}
-function invalidateImport(d) {
-  importStep(d, 0);
-  $$(".form-error", d).forEach((node) => node.remove());
-  state.importVersion++;
-  state.pendingImport = null;
-  $("#import-preview", d).innerHTML =
-    '<p class="muted">文件或平台已变化，请重新预览。</p>';
-  $("#import-password", d).value = "";
-  $("#password-label", d).hidden = ![
-    $("#import-files", d),
-    $("#import-folder", d),
-  ].some((x) =>
-    [...x.files].some((f) => f.name.toLowerCase().endsWith(".zip")),
-  );
-}
 function openImport() {
-  state.pendingImport = null;
-  state.importVersion++;
-  const d = modal(
-    "导入账单",
-    `<div class="steps"><span class="active">1 选择文件</span><span>2 核对预览</span><span>3 导入结果</span></div><p class="muted">选择平台后上传它导出的账单；支持 CSV、XLS、XLSX 和密码 ZIP。</p>${select(
-      "provider",
-      "账单平台",
-      [
-        ["alipay", "支付宝"],
-        ["wechat", "微信"],
-      ],
-      "alipay",
-    )}<div class="import-files"><label>选择账单文件<input type="file" id="import-files" multiple accept=".csv,.xls,.xlsx,.zip"></label><label>或选择文件夹<input type="file" id="import-folder" webkitdirectory multiple></label></div><label id="password-label" hidden>ZIP 密码（仅本次请求使用）<input type="password" id="import-password" autocomplete="off"></label><div class="actions">${button("预览账单", "preview-import", "", true)}</div><div id="import-preview" aria-live="polite"></div>`,
-    { wide: true, id: "import-dialog" },
-  );
-  $$("input[type=file]", d).forEach(
-    (input) =>
-      (input.onchange = () => {
-        const other =
-          input.id === "import-files"
-            ? $("#import-folder", d)
-            : $("#import-files", d);
-        other.value = "";
-        invalidateImport(d);
-      }),
-  );
-  $("select", d).onchange = () => invalidateImport(d);
-  d.addEventListener("close", () => {
-    state.importVersion++;
-    state.pendingImport = null;
-    $("#import-password", d).value = "";
-  });
-}
-async function previewImport(d) {
-  $$(".form-error", d).forEach((node) => node.remove());
-  const version = ++state.importVersion;
-  state.pendingImport = null;
-  const files = [
-    ...$("#import-files", d).files,
-    ...$("#import-folder", d).files,
-  ];
-  if (!files.length) throw new Error("请先选择账单文件或文件夹。");
-  if (files.length > 100)
-    throw new Error("一次最多预览 100 个文件，请分批选择。");
-  if (files.some((file) => file.size > 25 * 1024 * 1024))
-    throw new Error("单个文件不能超过 25 MB，请拆分账单后导入。");
-  const source = $("select[name=provider]", d).value;
-  const target = $("#import-preview", d);
-  target.innerHTML = '<p class="busy">正在解析账单…</p>';
-  const password = $("#import-password", d).value;
-  $("#import-password", d).value = "";
-  try {
-    const payload = {
-      files: await Promise.all(
-        files.map(async (f) => ({
-          filename: f.name,
-          content_base64: await new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(String(reader.result).split(",")[1]);
-            reader.onerror = () =>
-              reject(new Error("文件读取失败，请重新选择。"));
-            reader.readAsDataURL(f);
-          }),
-        })),
-      ),
-    };
-    const result = await request(`/api/imports/${source}/batch/preview`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(password ? { "X-Import-Password": password } : {}),
-      },
-      body: JSON.stringify(payload),
-    });
-    if (version !== state.importVersion || !d.isConnected) return;
-    const eligible = result.files
-      .map((f, i) => (f.ok && !f.duplicate ? i : -1))
-      .filter((i) => i >= 0);
-    const needsPassword = eligible.some((i) =>
-      files[i].name.toLowerCase().endsWith(".zip"),
-    );
-    state.pendingImport = {
-      version,
-      source,
-      payload: {
-        files: eligible.map((i) => payload.files[i]),
-        batch_token: result.batch_token,
-      },
-      needsPassword,
-    };
-    importStep(d, 1);
-    target.innerHTML = `<h3>核对预览 · ${sourceName(source)}</h3>${result.files
-      .map(
-        (f) =>
-          `<article class="import-file"><h3>${esc(f.filename)} <span class="badge ${f.ok && !f.duplicate ? "" : "warn"}">${f.duplicate ? "已导入，将跳过" : f.ok ? `${f.preview.row_count} 条` : "无法导入"}</span></h3>${f.error ? `<p class="error">${esc(message(f.error))}</p>` : ""}${
-            f.preview
-              ? `${f.preview.issues?.length ? `<p class="error" role="alert">${f.preview.issues.length} 条数据存在问题；确认后保留原始证据，待修正后入账。</p>${f.preview.issues.slice(0, 20).map(i => `<p>第 ${i.row_number} 行：${esc(i.error)}</p>`).join('')}` : ''}<small>前 ${f.preview.preview_rows.length} 条原始字段预览 · 请核对时间、金额及收支方向</small>${table(
-                  ["时间", "交易方", "金额", "收支", "备注"],
-                  f.preview.preview_rows.map(
-                    (r) =>
-                      `<tr><td>${esc(r["交易时间"])}</td><td>${esc(r["交易方"])}</td><td>${esc(r["金额"])}</td><td>${esc(r["收支"])}</td><td>${esc(r["备注"])}</td></tr>`,
-                  ),
-                )}`
-              : ""
-          }</article>`,
-      )
-      .join(
-        "",
-      )}<p class="muted">将导入 ${eligible.length} 个有效文件，其他文件不会提交。</p>${needsPassword ? '<p class="notice">预览密码已清空。确认前请在上方再次输入 ZIP 密码。</p>' : ""}<div class="actions">${button(`确认导入 ${eligible.length} 个文件`, "confirm-import", `id="confirm-import" ${eligible.length ? "" : "disabled"}`, true)}</div>`;
-  } catch (error) {
-    if (version === state.importVersion && d.isConnected)
-      target.innerHTML = `<p class="error" role="alert">${esc(message(error))}</p>`;
-  }
-}
-async function confirmImport(d) {
-  const pending = state.pendingImport;
-  if (!pending || pending.version !== state.importVersion)
-    throw new Error("文件已变化，请重新预览。");
-  const password = $("#import-password", d).value;
-  if (pending.needsPassword && !password)
-    throw new Error("请再次输入 ZIP 密码后确认导入。");
-  $("#import-password", d).value = "";
-  await formSave(d, async () => {
-    const result = await request(`/api/imports/${pending.source}/batch`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(password ? { "X-Import-Password": password } : {}),
-      },
-      body: JSON.stringify(pending.payload),
-    });
-    state.pendingImport = null;
-    importStep(d, 2);
-    const imported = result.files.filter((f) => f.status === "imported");
-    const count = imported.reduce(
-      (n, f) => n + (f.import_batch?.imported_count || 0),
-      0,
-    );
-    const issueCount = imported.reduce((n, f) => n + (f.import_batch?.issue_count || 0), 0);
-    $("#import-preview", d).innerHTML =
-      `<div class="success" role="status">本次导入 ${count} 条流水，${imported.length} 个文件成功。</div>${result.files.map((f) => `<article class="import-file"><strong>${esc(f.filename)}</strong><p class="${f.status === "imported" ? "muted" : "error"}">${f.status === "imported" ? `已导入 ${f.import_batch.imported_count} 条流水` : esc(message(f.error || "文件未导入，请重新预览。"))}</p></article>`).join("")}<div class="actions">${button("查看流水", "import-done", "", true)}${button("查看候选", "import-review")}</div>`;
-    if (issueCount) $('#import-preview', d).insertAdjacentHTML('afterbegin', `<p class="error" role="alert">另有 ${issueCount} 条待核验记录，未计入金额。请到“复核 → 数据问题”修正。</p>`);
-  });
+  openSmartImport({ modal, request, jsonRequest, esc, money, sourceName, navigate });
 }
 function selectionChanged() {
   const isBill = state.page === "data";
@@ -1181,8 +1021,6 @@ document.addEventListener("click", async (event) => {
           : "主题已切换；浏览器禁止保存，刷新后可能恢复默认。",
       );
     } else if (a === "import") openImport();
-    else if (a === "preview-import") await previewImport(d);
-    else if (a === "confirm-import") await confirmImport(d);
     else if (a === "import-done" || a === "import-review") {
       d.close();
       navigate(

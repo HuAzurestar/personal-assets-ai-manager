@@ -521,6 +521,9 @@ dialog::backdrop {
   background: #132b286b;
   backdrop-filter: blur(3px);
 }
+#import-dialog::backdrop {
+  backdrop-filter: none;
+}
 .dialog-head {
   display: flex;
   justify-content: space-between;
@@ -733,14 +736,18 @@ dialog::backdrop {
   }
   .mobile-cards {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 12px;
   }
   .transaction-card {
+    min-width: 0;
+    overflow-wrap: anywhere;
     padding: 15px;
     border: 1px solid var(--line);
     border-radius: 10px;
   }
   .transaction-card .section-head {
+    align-items: flex-start;
     margin-bottom: 10px;
   }
   .transaction-card p {
@@ -878,3 +885,17 @@ dialog::backdrop {
     grid-template-columns: 80px minmax(0, 1fr);
   }
 }
+/* Import stays in one dialog; long statements scroll within their preview. */
+.intake-drop { border: 2px dashed var(--border, #888); border-radius: 12px; padding: 24px; text-align: center; }
+.intake-drop.dragging { outline: 3px solid var(--accent, #3aa); }
+.intake-drop label { display: inline-block; margin: 8px; }
+.intake-drop input { display: block; max-width: 260px; margin-top: 8px; }
+.intake-drop small, .intake-table small { display: block; }
+.intake-table { max-height: 360px; overflow: auto; margin-top: 12px; }
+.intake-table pre { max-width: 540px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.intake-table th { position: sticky; top: 0; background: var(--surface, #24272d); }
+.intake-confirm { position: sticky; bottom: 0; padding: 12px; background: var(--surface, #24272d); border-top: 1px solid var(--border, #888); }
+.import-file > label { display: inline-block; max-width: 100%; margin: 8px 16px 8px 0; }
+.transaction-card .inline-check { min-width: 0; }
+.transaction-card .section-head > strong { flex-shrink: 0; }
+.import-file select { max-width: 100%; }
