@@ -16,7 +16,7 @@ import xlrd
 from app.importing import HEADER_ALIASES, ImportedRow, _normalise
 from app.provider_templates import locate_provider_table
 
-SUPPORTED_EXTENSIONS = {".csv", ".xls", ".xlsx", ".zip"}
+SUPPORTED_EXTENSIONS = {".csv", ".xls", ".xlsx", ".pdf", ".zip"}
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 MAX_ARCHIVE_ENTRY_BYTES = 25 * 1024 * 1024
 MAX_ROWS = 10_000
@@ -124,7 +124,7 @@ def _read_zip(content: bytes, password: str | None) -> tuple[str, bytes]:
             if len(entries) != 1:
                 raise ValueError("ZIP must contain exactly one CSV, XLS, or XLSX file")
             entry = entries[0]
-            entry_path = PurePosixPath(entry.filename)
+            entry_path = PurePosixPath(entry.filename.replace('\\', '/'))
             if entry_path.is_absolute() or ".." in entry_path.parts or entry_path.suffix.lower() not in SUPPORTED_EXTENSIONS - {".zip"}:
                 raise ValueError("ZIP contains an unsupported file entry")
             if entry.file_size > MAX_ARCHIVE_ENTRY_BYTES or entry.file_size > MAX_UPLOAD_BYTES * 20:
@@ -158,6 +158,9 @@ def _read_tabular(payload: bytes, extension: str, source_type: str) -> tuple[lis
         raise ValueError("Unsupported tabular file format")
     if not table:
         raise ValueError("Import file has no rows")
+    from app.statement_parser import identify
+    header_index = next((i for i, row in enumerate(table) if any(str(v).strip() in {'金额','金额(元)','金额（元）','交易金额'} for v in row)), len(table))
+    identify('\n'.join(' '.join(map(str, row)) for row in table[:header_index]), '', table[header_index] if header_index < len(table) else [], source_type)
     headers, rows, mapping = locate_provider_table(source_type, table)
     if len(rows) > MAX_ROWS:
         raise ValueError("Import file exceeds the 10,000-row safety limit")

@@ -21,6 +21,9 @@ class BillCreate(BaseModel):
 
 
 class BillRead(BillCreate):
+    account_id: int | None = None
+    time_precision: str = "second"
+    import_nature: str = "ordinary"
     id: int
     category: str
     tags: list[str]
@@ -100,6 +103,7 @@ class TagAuditRead(BaseModel):
 
 
 class ImportBatchRead(BaseModel):
+    supplemented_count: int = 0
     id: int
     source_type: str
     filename: str

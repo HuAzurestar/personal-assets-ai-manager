@@ -15,8 +15,13 @@ from app.main import app, get_db
 
 
 def test_health_and_bill_flow(tmp_path, monkeypatch):
-    # Application setup uses a persistent DB in normal operation; this baseline
-    # test validates the public health surface independently of user data.
+    # Never let this baseline smoke test write into the user's default ledger.
+    import app.main as main
+    engine = create_engine(f"sqlite:///{tmp_path / 'health.db'}", connect_args={"check_same_thread": False})
+    sessions = sessionmaker(bind=engine, autoflush=False)
+    monkeypatch.setattr(database, "engine", engine)
+    monkeypatch.setattr(database, "SessionLocal", sessions)
+    monkeypatch.setattr(main, "SessionLocal", sessions)
     with TestClient(app) as client:
         assert client.get("/api/health").json()["status"] == "ok"
         assert client.get("/api/health").json()["service"] == "personal-assets-ai-manager"
@@ -25,6 +30,7 @@ def test_health_and_bill_flow(tmp_path, monkeypatch):
         assert created.json()["category"] == "未分类"
         assert client.get(f"/api/bills/{created.json()['id']}/tags").json()[0]["action"] == "suggest"
         assert client.get("/api/dashboard").status_code == 200
+    engine.dispose()
 
 
 def test_init_db_assigns_system_names_to_all_default_tags(tmp_path, monkeypatch):

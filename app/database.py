@@ -29,10 +29,56 @@ class Bill(Base):
     category: Mapped[str] = mapped_column(String(80), default="未分类")
     tags: Mapped[str] = mapped_column(String(500), default="")
     account_name: Mapped[str] = mapped_column(String(120), default="未提供账户")
+    account_id: Mapped[int | None] = mapped_column(ForeignKey("accounts.id"), nullable=True)
+    time_precision: Mapped[str] = mapped_column(String(12), default="second")
+    import_nature: Mapped[str] = mapped_column(String(24), default="ordinary")
     aggregate_excluded: Mapped[bool] = mapped_column(Boolean, default=False)
     transfer_group_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     duplicate_of_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tag_state_json: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class Account(Base):
+    __tablename__ = "accounts"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    identity: Mapped[str] = mapped_column(String(160), unique=True)
+    provider: Mapped[str] = mapped_column(String(32))
+    display_name: Mapped[str] = mapped_column(String(120))
+    number: Mapped[str] = mapped_column(String(64), default="")
+    owner: Mapped[str] = mapped_column(String(120), default="")
+
+
+class AccountBinding(Base):
+    __tablename__ = "account_bindings"
+    detected_identity: Mapped[str] = mapped_column(String(160), primary_key=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"))
+    basis: Mapped[str] = mapped_column(String(120))
+
+
+class ImportEvidence(Base):
+    __tablename__ = "import_evidence"
+    __table_args__ = (UniqueConstraint("import_batch_id", "row_number"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    bill_id: Mapped[int | None] = mapped_column(ForeignKey("bills.id"), nullable=True, index=True)
+    import_batch_id: Mapped[int] = mapped_column(ForeignKey("import_batches.id"))
+    row_number: Mapped[int] = mapped_column(Integer)
+    record_json: Mapped[str] = mapped_column(Text)
+    disposition: Mapped[str] = mapped_column(String(32))
+
+
+class ImportIdentity(Base):
+    __tablename__ = "import_identities"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    bill_id: Mapped[int] = mapped_column(ForeignKey("bills.id"), index=True)
+
+
+class ImportPreview(Base):
+    __tablename__ = "import_previews"
+    token: Mapped[str] = mapped_column(String(64), primary_key=True)
+    payload_json: Mapped[str] = mapped_column(Text)
+    plan_json: Mapped[str] = mapped_column(Text)
+    result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
 
 
 class Tag(Base):
@@ -226,6 +272,8 @@ class AccountRevision(Base):
     bill_id: Mapped[int] = mapped_column(ForeignKey("bills.id"))
     before_account: Mapped[str] = mapped_column(String(120))
     after_account: Mapped[str] = mapped_column(String(120))
+    before_account_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    after_account_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     action: Mapped[str] = mapped_column(String(40), default="confirm")
     actor: Mapped[str] = mapped_column(String(80), default="local-user")
     reason: Mapped[str] = mapped_column(Text, default="")
@@ -319,9 +367,13 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     if DATABASE_URL.startswith("sqlite"):
         migrations = {
+            "account_revisions": {"before_account_id": "INTEGER", "after_account_id": "INTEGER"},
             "import_batches": {"batch_token": "VARCHAR(64)"},
             "ledger_origins": {"source_row_number": "INTEGER"},
             "bills": {
+                "account_id": "INTEGER REFERENCES accounts(id)",
+                "time_precision": "VARCHAR(12) NOT NULL DEFAULT 'second'",
+                "import_nature": "VARCHAR(24) NOT NULL DEFAULT 'ordinary'",
                 "currency": "VARCHAR(3) NOT NULL DEFAULT 'CNY'",
                 "account_name": "VARCHAR(120) NOT NULL DEFAULT '未提供账户'",
                 "aggregate_excluded": "BOOLEAN NOT NULL DEFAULT 0",

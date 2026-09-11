@@ -27,6 +27,8 @@ from app.money import cents, money
 from app.review_matters import allocated_bills, assert_no_matters, current_matters, register_matter_routes
 
 APP_DIR = Path(__file__).parent
+from app.smart_import import register_import_routes
+from app.database import ImportEvidence, ImportIdentity, Account
 
 
 @asynccontextmanager
@@ -51,6 +53,8 @@ def get_db():
         db.close()
 
 
+register_import_routes(app, get_db)
+
 STRATEGY_CONFIDENCE = {
     "local_rules": 0.45,
     "llm_suggestion": 0.70,
@@ -71,6 +75,7 @@ CATEGORY_SYSTEM_NAME_ALIASES = {
 # This is deliberately a fixed application schema allow-list.  The database
 # observer never accepts a SQL expression or an arbitrary SQLite object name.
 DATABASE_OBSERVER_TABLES = frozenset({
+    "accounts", "account_bindings", "import_evidence", "import_identities",
     "review_matters", "review_matter_revisions", "refund_designations", "refund_nature_audits", "import_row_issues", "import_issue_actions",
     "asset_snapshots",
     "account_revisions",
@@ -319,6 +324,9 @@ def bill_read(db: Session, bill: Bill) -> BillRead:
         source_reference=origin.source_reference if origin else None,
         import_batch_id=origin.import_batch_id if origin else None,
         account_name=bill.account_name,
+        account_id=bill.account_id,
+        time_precision=bill.time_precision,
+        import_nature=bill.import_nature,
         direction="收入" if bill.amount >= 0 else "支出",
         aggregate_excluded=bill.aggregate_excluded,
         transfer_group_id=bill.transfer_group_id,
@@ -467,6 +475,8 @@ def _generate_candidates(db: Session, bill: Bill) -> int:
 
 
 def _has_distinct_account_evidence(first: Bill, second: Bill) -> bool:
+    if first.account_id is not None and second.account_id is not None:
+        return first.account_id != second.account_id
     unknown_accounts = {"", "未提供账户", "手工未提供账户"}
     return first.account_name not in unknown_accounts and second.account_name not in unknown_accounts and first.account_name != second.account_name
 
@@ -548,6 +558,8 @@ def _batch_read(batch: ImportBatch, parsed, candidate_count: int, issue_count: i
 
 
 def _commit_parsed(db: Session, source_type: str, parsed, batch_token: str | None = None) -> ImportBatchRead:
+    from app.statement_parser import payment_account
+    from app.smart_import import identity_keys, dump
     duplicate = db.scalar(select(ImportArtifact).where(ImportArtifact.source_type == source_type, ImportArtifact.sha256 == parsed.file_sha256))
     if duplicate:
         raise ValueError("该来源文件已导入，已跳过重复文件")
@@ -557,11 +569,44 @@ def _commit_parsed(db: Session, source_type: str, parsed, batch_token: str | Non
     db.flush()
     db.add(ImportArtifact(import_batch_id=batch.id, source_type=source_type, filename=parsed.filename, file_format=parsed.file_format, archive_entry=parsed.archive_entry, sha256=parsed.file_sha256))
     candidate_count = 0
+    supplemented_count = 0
+    references = {}
+    for origin in db.scalars(select(LedgerOrigin).where(LedgerOrigin.source_type == source_type)).all():
+        raw = json.loads(origin.raw_payload or '{}')
+        ref = next((raw[k].strip() for k in ('交易订单号','交易单号','支付宝交易号','交易号') if raw.get(k)), origin.source_reference)
+        if ref:
+            references.setdefault(ref, []).append(origin.bill_id)
+    for item in db.scalars(select(ImportEvidence).where(ImportEvidence.bill_id.is_not(None))).all():
+        prior = json.loads(item.record_json)
+        if prior['source_type'] == source_type and prior.get('reference'):
+            ids = references.setdefault(prior['reference'], [])
+            if item.bill_id not in ids:
+                ids.append(item.bill_id)
     for source_row_number, row in imported_rows:
+        record = {'source_type':source_type, 'profile':'', 'reference':row.reference, 'amount_minor':cents(row.amount),
+                  'balance_minor':None, 'occurred_at':row.occurred_at.isoformat(), 'currency':'CNY', 'merchant':row.merchant,
+                  'note':row.note, 'nature':'ordinary', 'time_precision':'second', 'disposition':'posted',
+                  'account':payment_account(source_type,'',row.account_name), 'raw':json.loads(row.raw_payload), 'row_number':source_row_number}
+        matches = references.get(row.reference, []) if row.reference else []
+        if len(matches) > 1:
+            raise ValueError('同一交易标识已有多笔流水，请先核验历史重复')
+        if matches:
+            existing = db.get(Bill, matches[0])
+            if cents(existing.amount) != cents(row.amount) or existing.occurred_at.date() != row.occurred_at.date():
+                raise ValueError('交易标识相同但日期或金额冲突，不能覆盖已有交易')
+            db.add(ImportEvidence(bill_id=existing.id, import_batch_id=batch.id, row_number=source_row_number,
+                                  record_json=dump(record), disposition='supplement'))
+            supplemented_count += 1
+            continue
         bill = Bill(occurred_at=row.occurred_at, merchant=row.merchant, note=row.note, amount=row.amount, account_name=row.account_name, category="未分类", tags="")
         db.add(bill)
         db.flush()
         db.add(LedgerOrigin(bill_id=bill.id, source_type=source_type, source_reference=row.reference, raw_payload=row.raw_payload, import_batch_id=batch.id, source_row_number=source_row_number))
+        db.add(ImportEvidence(bill_id=bill.id, import_batch_id=batch.id, row_number=source_row_number, record_json=dump(record), disposition='new'))
+        for key in identity_keys(record):
+            db.add(ImportIdentity(key=key,bill_id=bill.id))
+        if row.reference:
+            references[row.reference] = [bill.id]
         category, tags, provider = classify_rules(row.merchant, row.note)
         _apply_tag(db, bill, "local_rules", category, tags, provider, STRATEGY_CONFIDENCE["local_rules"])
         candidate_count += _generate_candidates(db, bill)
@@ -569,7 +614,9 @@ def _commit_parsed(db: Session, source_type: str, parsed, batch_token: str | Non
     for issue in issues:
         db.add(ImportRowIssue(import_batch_id=batch.id, source_row_number=issue["row_number"], raw_payload=json.dumps(issue["raw_fields"], ensure_ascii=False, sort_keys=True), error=issue["error"]))
     db.commit()
-    return _batch_read(batch, parsed, candidate_count, len(issues))
+    result = _batch_read(batch, parsed, candidate_count, len(issues))
+    result.supplemented_count = supplemented_count
+    return result
 
 
 def _decode_batch_file(encoded: str, filename: str) -> bytes:
@@ -660,6 +707,15 @@ def transaction_source(bill_id: int, db: Session = Depends(get_db)):
         raw_fields = json.loads(origin.raw_payload or "{}")
     except (json.JSONDecodeError, TypeError):
         raw_fields = {"unparsed": origin.raw_payload}
+    evidence = []
+    for item in db.scalars(select(ImportEvidence).where(ImportEvidence.bill_id == bill_id).order_by(ImportEvidence.id)).all():
+        record = json.loads(item.record_json)
+        evidence_batch = db.get(ImportBatch, item.import_batch_id)
+        evidence.append({"filename": evidence_batch.filename, "source_type": evidence_batch.source_type,
+                         "row_number": item.row_number, "raw_fields": record['raw'], "disposition": item.disposition})
+        for key, value in record['raw'].items():
+            if not raw_fields.get(key):
+                raw_fields[key] = value
     return {
         "bill_id": bill_id,
         "origin": {
@@ -680,6 +736,7 @@ def transaction_source(bill_id: int, db: Session = Depends(get_db)):
             "imported_at": batch.imported_at,
         } if batch else None),
         "raw_fields": raw_fields,
+        "evidence": evidence,
     }
 
 
@@ -711,7 +768,9 @@ def _ledger_clauses(
     if amount_max is not None:
         clauses.append(func.abs(Bill.amount) <= amount_max)
     if source:
-        clauses.append(Bill.id.in_(select(LedgerOrigin.bill_id).where(LedgerOrigin.source_type.in_(source))))
+        source_bills = select(LedgerOrigin.bill_id).where(LedgerOrigin.source_type.in_(source)).union(
+            select(ImportEvidence.bill_id).join(ImportBatch, ImportEvidence.import_batch_id == ImportBatch.id).where(ImportBatch.source_type.in_(source)))
+        clauses.append(Bill.id.in_(source_bills))
     if account:
         clauses.append(Bill.account_name.in_(account))
     if direction == "income":
@@ -1161,10 +1220,14 @@ def revise_account(bill_id: int, payload: AccountRevisionRequest, db: Session = 
     if not bill:
         raise HTTPException(status_code=404, detail="Transaction not found")
     _assert_account_editable(db, bill)
+    selected_accounts = db.scalars(select(Account).where(Account.display_name == payload.account_name)).all()
+    selected_id = selected_accounts[0].id if len(selected_accounts) == 1 else None
     revision = AccountRevision(
         bill_id=bill_id,
         before_account=bill.account_name,
         after_account=payload.account_name,
+        before_account_id=bill.account_id,
+        after_account_id=selected_id,
         action="confirm",
         actor="local-user",
         reason=payload.reason,
@@ -1173,6 +1236,7 @@ def revise_account(bill_id: int, payload: AccountRevisionRequest, db: Session = 
         created_at=datetime.now(),
     )
     bill.account_name = payload.account_name
+    bill.account_id = selected_id
     db.add(revision)
     db.commit()
     db.refresh(revision)
@@ -1199,6 +1263,7 @@ def undo_account_revision(bill_id: int, revision_id: int, payload: UndoRequest, 
     revision.undone = True
     revision.undone_at = datetime.now()
     bill.account_name = revision.before_account
+    bill.account_id = revision.before_account_id
     reversal = AccountRevision(
         bill_id=bill_id,
         before_account=revision.after_account,
@@ -1414,7 +1479,7 @@ def _rebuild_review_effects(db: Session, bill_ids: set[int]) -> None:
     """Recompute only affected facts from remaining decisions, never old snapshots."""
     bills = {bill.id: bill for bill in db.scalars(select(Bill).where(Bill.id.in_(bill_ids))).all()}
     for bill in bills.values():
-        bill.aggregate_excluded, bill.duplicate_of_id, bill.transfer_group_id = False, None, None
+        bill.aggregate_excluded, bill.duplicate_of_id, bill.transfer_group_id = bill.import_nature == "neutral", None, None
     for candidate in db.scalars(select(ReviewCandidate).where(ReviewCandidate.status.in_(ACTIVE_EXCLUSION_STATES)).order_by(ReviewCandidate.id)).all():
         for bill_id in bill_ids & set(_candidate_member_ids(candidate)):
             bill = bills.get(bill_id)
