@@ -356,12 +356,16 @@ physical table has already been migrated.
     only `TARGET_TABLE_NAMES`, and fails unless the result is exactly 11 tables.
   - The current development database was reset and verified as those 11 empty
     target tables. No compatibility or asset table remains in that ledger file.
-- [ ] P4 — switch the production runtime and UI
-  - `app.target_main` is already target-only. The default `run.py` still starts
-    legacy `app.main`, whose lifespan would recreate compatibility tables.
-  - Switch the entry point only together with either a target-contract UI or an
-    explicit API-only release; otherwise the existing UI would start against
-    tables it no longer owns.
+- [x] P4 — switch the production runtime and UI
+  - `run.py` starts `app.target_main:app`; its lifespan initializes only the 11
+    target tables and cannot recreate compatibility tables.
+  - The target workbench uses only versioned import, ledger, Review, and tag
+    contracts. It supports import preview/revision/confirmation, hot ledger
+    list/summary, bounded detail, tag assignment, financial Review lifecycle,
+    account correction, and fact-conflict resolution.
+  - Runtime regression verifies the served JavaScript contains no legacy hot
+    endpoints and that a complete startup/import/review cycle leaves exactly
+    `TARGET_TABLE_NAMES` in SQLite.
 
 Single-candidate, single-refund, and single-transaction detail endpoints are not
 N+1 list paths. They remain lower priority unless profiling shows a slow query.
@@ -451,13 +455,14 @@ N+1 list paths. They remain lower priority unless profiling shows a slow query.
     the same transaction. Dismiss/reopen and explicit LINK_EXISTING/CREATE_NEW
     resolution keep raw evidence, normalized lines, history, and any new Fact
     consistent without another issue table.
-- [ ] Switch the production UI from legacy transaction/review/tag contracts to
+- [x] Switch the production UI from legacy transaction/review/tag contracts to
   the versioned target contracts.
 - [x] Recreate the empty development database without legacy or post-merge
   compatibility tables. `asset_snapshots` was removed from the ledger file and
   remains a separately scoped future module.
 
-The physical delete remains intentionally last. The target-only runtime now
-proves that the replacement import/list/detail/summary and financial Review core
-does not require a legacy table. The production runtime/UI switch is the one
-remaining functional dependency, not a data-migration or backup dependency.
+The development database has already been destructively rebuilt because it has
+no production data. The target-only runtime and workbench now prove that normal
+import/list/detail/summary, tag, account, fact-conflict, and financial Review
+flows do not require a legacy table. Legacy Python modules remain test-only
+cleanup debt; they are not a runtime or database dependency.

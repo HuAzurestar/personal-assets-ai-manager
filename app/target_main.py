@@ -6,8 +6,12 @@ compatibility table while the legacy UI is still being retired.
 """
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 
 from app.api.controllers.intake import target_router as target_intake_router
 from app.api.controllers.target_ledger import v1_router as target_ledger_router
@@ -15,6 +19,10 @@ from app.api.controllers.target_review import router as target_review_router
 from app.api.controllers.target_tag import router as target_tag_router
 from app.config import APP_DISPLAY_NAME
 from app.database import init_target_db
+
+
+APP_DIR = Path(__file__).parent
+templates = Jinja2Templates(directory=APP_DIR / "templates")
 
 
 @asynccontextmanager
@@ -28,10 +36,20 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+app.mount("/static", StaticFiles(directory=APP_DIR / "static"), name="static")
 app.include_router(target_intake_router)
 app.include_router(target_ledger_router)
 app.include_router(target_review_router)
 app.include_router(target_tag_router)
+
+
+@app.get("/", response_class=HTMLResponse)
+def home(request: Request):
+    return templates.TemplateResponse(
+        request=request,
+        name="target.html",
+        context={"app_name": APP_DISPLAY_NAME},
+    )
 
 
 @app.get("/api/health")

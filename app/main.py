@@ -16,6 +16,7 @@ from sqlalchemy import MetaData, Table, func, inspect, select, text
 from sqlalchemy.exc import OperationalError, IntegrityError
 from sqlalchemy.orm import Session
 
+from app import database
 from app.api.controllers.dashboard import router as dashboard_router
 from app.api.controllers.import_issue import router as import_issue_router
 from app.api.controllers.intake import router as intake_router, target_router as target_intake_router
@@ -47,7 +48,9 @@ from app.database import ImportEvidence, ImportIdentity, Account
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
-    with SessionLocal() as db:
+    # Legacy regression runtime only: resolve the factory dynamically so its
+    # initializer and startup query cannot target different databases.
+    with database.SessionLocal() as db:
         _consolidate_duplicate_candidates(db)
         db.commit()
     yield

@@ -1,0 +1,34 @@
+.target-shell .brand-text strong { display:block; }
+.target-shell .brand-text small { line-height:1.35; }
+.target-shell .metric { cursor:default; }
+.target-shell .metric:hover { background:var(--surface); border-color:var(--line); }
+.target-shell .metric.accent:hover { background:var(--accent); border-color:var(--accent); }
+.target-shell .money-pair { display:grid; gap:3px; white-space:nowrap; }
+.target-shell .tag-list { display:flex; flex-wrap:wrap; gap:6px; }
+.target-shell .tag { display:inline-flex; padding:4px 8px; border-radius:999px; background:var(--soft); color:var(--accent); font-size:12px; }
+.target-shell .status-line { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.target-shell .review-card { border:1px solid var(--line); border-radius:12px; padding:16px; margin-top:12px; }
+.target-shell .review-card h3 { margin-bottom:6px; }
+.target-shell .raw-json { max-height:300px; overflow:auto; }
+.target-shell pre { white-space:pre-wrap; overflow-wrap:anywhere; }
+.target-shell textarea { width:100%; min-height:110px; resize:vertical; padding:10px; border:1px solid var(--line); border-radius:8px; background:var(--surface); color:var(--text); font:13px/1.5 ui-monospace,Consolas,monospace; }
+.target-shell .file-list { display:grid; gap:10px; margin:14px 0; }
+.target-shell .file-pill { display:flex; justify-content:space-between; gap:12px; padding:10px 12px; border:1px solid var(--line); border-radius:8px; }
+.target-shell .activity-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
+.target-shell .activity-item { padding:14px; background:var(--subtle); border-radius:10px; }
+.target-shell .stack { display:grid; gap:14px; }
+.target-shell .inset { padding:14px 0 4px; }
+.target-shell fieldset { border:1px solid var(--line); border-radius:10px; padding:14px; }
+.target-shell legend { padding:0 6px; color:var(--muted); }
+.target-shell .success { color:#168044; }
+.target-shell .error-list { color:var(--danger,#b42318); }
+.target-shell .inline-form { display:flex; flex-wrap:wrap; gap:10px; align-items:end; }
+.target-shell .inline-form > label { min-width:150px; flex:1; }
+.target-shell .empty-state { text-align:center; padding:44px 20px; color:var(--muted); }
+@media (max-width:760px) {
+  .target-shell .cards { grid-template-columns:1fr 1fr; }
+  .target-shell .page-header { align-items:flex-start; }
+}
+@media (max-width:480px) {
+  .target-shell .cards { grid-template-columns:1fr; }
+}

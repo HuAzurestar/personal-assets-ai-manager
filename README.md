@@ -1,5 +1,24 @@
 # personal-assets-ai-manager（个人账本与资产管家）
 
+## PIRC-9 目标运行时（当前实现，以本节为准）
+
+`python run.py` 现在启动 `app.target_main:app`。它只初始化并访问 11 张目标表，首页也只调用 `/paam/import/v1`、`/paam/ledger/v1`、`/paam/review/v1` 和 `/paam/tag/v1`。旧 `app.main`、旧页面和旧接口仅作为迁移期回归样本保留，不是运行入口，也不会在正常启动时重建旧表。
+
+- 事实层：`import_file`、`bill_fact`、`bill_raw`。导入支持支付宝、微信、建行、农行、招行；预览可处理账号匹配和无标识交易歧义，确认后原子写入。
+- 审查层：`review_case`、`review_case_bill`、`review_history`。AA、借入/借出、退款、转账、换汇、重复、账户修正、标签修改和事实冲突使用统一的版本与历史模型。
+- 增强层：`ledger_entry`、`ledger_entry_source`、`ledger_entry_tag`、`tag_view`、`tag`。列表和汇总只读取热投影；原始文本与完整审查历史只在单条详情加载。
+- SQLite 不声明显式外键；一对一关系使用唯一约束，服务写入前批量校验隐式关联。金额使用整数原子值、精度和币种，不使用 Float。
+- 流水列表固定执行 count、投影页、标签批量查询三次 SELECT；不会按行循环查 Fact、标签或 Review，也不使用 `SELECT *`。
+
+当前数据库结构和逐字段说明见 [数据模型](docs/data-model.md)，查询重构清单见 [SQL 查询重构记录](docs/sql-query-refactor.md)。验证命令：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+node --check app/static/target-ledger.js
+```
+
+以下章节记录旧实现的能力与迁移背景；其中 `/api/*`、23 张旧表和旧工作台描述不再代表默认运行时。
+
 ## 2026-09 复核基座（当前金额与复核规则以本节为准）
 
 新增手工事项与金额分配：在流水页选中记录后建立事项，或从“手工事项与往来”新建。支持 AA、代垫、借还款及多笔转移的基本手工分配、关联修改、历史和撤销。每笔分配使用精确到分的金额，事务与版本检查阻止重复占用或旧页面覆盖。

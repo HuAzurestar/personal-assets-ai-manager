@@ -1,6 +1,7 @@
 import base64
 import csv
 import io
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, inspect
@@ -8,6 +9,9 @@ from sqlalchemy.orm import sessionmaker
 
 from app import database, target_main
 from app.core.intake_preview_store import target_intake_preview_store
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _wechat_csv(rows=None) -> bytes:
@@ -32,6 +36,9 @@ def _wechat_csv(rows=None) -> bytes:
 
 
 def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch):
+    assert 'uvicorn.run("app.target_main:app"' in (ROOT / "run.py").read_text(
+        encoding="utf-8"
+    )
     engine = create_engine(
         f"sqlite:///{tmp_path / 'runtime.db'}",
         connect_args={"check_same_thread": False},
@@ -46,6 +53,22 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
                 "status": "ok",
                 "schema": "pirc-9-target",
             }
+            home = client.get("/")
+            assert home.status_code == 200
+            assert "/static/target-ledger.js" in home.text
+            assert "/static/ledger.js" not in home.text
+            script = client.get("/static/target-ledger.js")
+            assert script.status_code == 200
+            assert "/paam/ledger/v1/" in script.text
+            assert "/paam/import/v1/preview/" in script.text
+            for legacy_path in (
+                "/api/transactions",
+                "/api/dashboard",
+                "/api/tag-views",
+                "/api/candidates",
+                "/api/intake",
+            ):
+                assert legacy_path not in script.text
             preview_response = client.post(
                 "/paam/import/v1/preview",
                 json={"files": [{

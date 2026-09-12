@@ -353,7 +353,7 @@ then loaded in bounded ID batches; no query runs inside an entity loop.
 | `review_matter_revisions` | Current state becomes case/bills; history migrates |
 | `asset_snapshots` | Keep outside the ledger core in the asset module, or archive/drop only after usage and row-count verification |
 
-No legacy table is dropped in the first deployment. The migration sequence is: create target tables, backfill, dual/shadow read, compare IDs/amounts/hashes, switch reads, stop legacy writes, observe, then drop explicitly approved tables.
+For a production database with existing records, use this conservative migration sequence: create target tables, backfill, dual/shadow read, compare IDs/amounts/hashes, switch reads, stop legacy writes, observe, then drop explicitly approved tables. The current development database had no production data, so it was explicitly rebuilt directly to the target schema.
 
 ## Post-merge table reconciliation
 
@@ -381,8 +381,8 @@ the API/UI, run empty-schema and supplied-sample acceptance, then recreate the
 database with the eleven ledger tables (plus independently approved modules)
 and no compatibility tables.
 
-The target-only runtime entry is `app.target_main:app`. Its startup calls
-`init_target_db()` and creates exactly those eleven ledger tables. During the
-transition, `app.main:app` continues to expose compatibility UI routes as well
-as the versioned target routes; this is a code-compatibility boundary only and
-does not change the final table contract.
+The production runtime entry is `app.target_main:app`; `run.py` starts it by
+default. Its startup calls `init_target_db()` and creates exactly those eleven
+ledger tables. `app.main:app` remains only as migration-era regression code and
+must not be used with the target development database because its lifespan owns
+the retired compatibility schema.

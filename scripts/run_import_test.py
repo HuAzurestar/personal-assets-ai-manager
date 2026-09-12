@@ -13,4 +13,4 @@ if __name__ == "__main__":
     os.environ["PAAM_DATABASE_URL"] = "sqlite:///" + str(data / "ledger.db")
     import uvicorn
 
-    uvicorn.run("app.main:app", host="127.0.0.1", port=8765, log_level="warning")
+    uvicorn.run("app.target_main:app", host="127.0.0.1", port=8765, log_level="warning")
