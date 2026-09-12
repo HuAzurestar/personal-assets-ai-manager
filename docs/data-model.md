@@ -70,6 +70,11 @@ Business columns are `NOT NULL`. Optional text uses `DEFAULT ''`; unknown semant
 
 Money is `amount_value / 10^amount_scale`. Different currencies are never directly summed. A new raw record that contradicts immutable fact fields becomes `CONFLICT` and enters Review.
 
+The target importer commits a row-level contradiction as an `INVALID`
+`bill_raw` row with `issue_code=FACT_CONFLICT` and `bill_id=0`; it never changes
+the accepted fact. Whole-file parse failures and ambiguous identity choices
+still block confirmation because they do not yet identify a durable source row.
+
 ## Review layer
 
 ### `review_case` — current review decision

@@ -414,6 +414,10 @@ N+1 list paths. They remain lower priority unless profiling shows a slow query.
 - [x] Verify all seven supplied files through the target write path: 827 raw
   rows become 803 facts and 803 ledger projections while every compatibility
   table remains empty.
+- [x] Persist row-level immutable-fact conflicts as `bill_raw` with
+  `parse_status=INVALID`, `issue_code=FACT_CONFLICT`, and `bill_id=0`. Valid
+  rows in the same confirmation remain atomic; a conflict never fabricates or
+  overwrites a `bill_fact`.
 - [x] Switch financial Review commands to the target Review and Ledger tables.
   `AA / LOAN_BORROW / LOAN_LEND / REFUND / TRANSFER / FX_EXCHANGE / DUPLICATE`
   share one create/update/confirm/revoke/restore lifecycle. Commands batch-load
@@ -427,7 +431,8 @@ N+1 list paths. They remain lower priority unless profiling shows a slow query.
   tag dictionary list remains two SELECTs.
 - [ ] Define and implement TAG Review assignment semantics for a ledger entry
   that combines several facts, including how assignments split on revoke.
-- [ ] Switch ACCOUNT and FACT_CONFLICT commands to unified target Review.
+- [ ] Switch ACCOUNT correction and FACT_CONFLICT resolution commands to
+  unified target Review. Conflict evidence persistence is already target-only.
 - [ ] Switch the production UI from legacy transaction/review/tag contracts to
   the versioned target contracts.
 - [ ] Recreate the empty development database without the 23 legacy tables or

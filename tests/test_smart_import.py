@@ -299,17 +299,21 @@ def test_target_intake_supplements_raw_evidence_and_blocks_fact_conflicts(ledger
         assert db.query(ImportFile).count() == 2
 
     conflict = target_preview(csv_bytes(amount="20.00", note="conflict"))
-    assert not conflict["can_confirm"]
+    assert conflict["can_confirm"]
     assert conflict["counts"]["error"] == 1
-    rejected = client.post(
+    recorded = client.post(
         f"/paam/import/v1/preview/confirm/{conflict['token']}",
         json={"version": conflict["version"]},
     )
-    assert rejected.status_code == 422
+    assert recorded.status_code == 200, recorded.text
     with sessions() as db:
         assert db.query(BillFact).count() == 1
-        assert db.query(BillRaw).count() == 2
-        assert db.query(ImportFile).count() == 2
+        assert db.query(BillRaw).count() == 3
+        assert db.query(ImportFile).count() == 3
+        issue = db.scalar(select(BillRaw).where(BillRaw.parse_status == "INVALID"))
+        assert issue.bill_id == 0
+        assert issue.issue_code == "FACT_CONFLICT"
+        assert issue.issue_message
 
 
 def test_confirm_select_count_does_not_grow_per_import_row(ledger):

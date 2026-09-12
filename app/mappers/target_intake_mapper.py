@@ -26,7 +26,7 @@ class TargetIntakeMapper:
         decisions: dict[str, str] | None = None,
     ) -> dict[str, object]:
         known_accounts = self._known_accounts()
-        return build_plan(
+        plan = build_plan(
             documents,
             known_accounts,
             {},
@@ -34,6 +34,16 @@ class TargetIntakeMapper:
             accounts,
             decisions,
         )
+        # Persist row-level conflicts as bill_raw evidence. Whole-file parse
+        # failures and unresolved identity choices still block confirmation.
+        plan["can_confirm"] = not (
+            plan["counts"].get("errors", 0)
+            or plan["counts"].get("ambiguous", 0)
+        )
+        plan["version"] = digest({
+            key: value for key, value in plan.items() if key != "version"
+        })
+        return plan
 
     def _known_accounts(self) -> dict[int, dict[str, object]]:
         ranked = select(
@@ -278,7 +288,13 @@ class TargetIntakeMapper:
                     raw_payload=dump(envelope),
                     raw_hash=digest(raw),
                     parse_status=parse_status,
-                    issue_code="PARSE_ERROR" if action == "error" else "",
+                    issue_code=(
+                        "FACT_CONFLICT"
+                        if action == "error" and row.get("keys")
+                        else "PARSE_ERROR"
+                        if action == "error"
+                        else ""
+                    ),
                     issue_message=row.get("error", ""),
                     created_time=now,
                     updated_time=now,
