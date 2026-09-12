@@ -446,11 +446,12 @@ POST_MERGE_COMPATIBILITY_TABLE_NAMES = (
 SEPARATE_MODULE_TABLE_NAMES = ("asset_snapshots",)
 
 
-def ensure_target_schema() -> None:
-    """Create/advance only the shadow schema; never migrate legacy data."""
+def ensure_target_schema(bind=None) -> None:
+    """Create/advance only the PIRC-9 schema; never create legacy tables."""
+    target_bind = engine if bind is None else bind
     for table_name in TARGET_TABLE_NAMES:
-        Base.metadata.tables[table_name].create(bind=engine, checkfirst=True)
-    if DATABASE_URL.startswith("sqlite"):
+        Base.metadata.tables[table_name].create(bind=target_bind, checkfirst=True)
+    if target_bind.dialect.name == "sqlite":
         additions = {
             "review_case_bill": {
                 "party": "VARCHAR(120) NOT NULL DEFAULT ''",
@@ -463,16 +464,21 @@ def ensure_target_schema() -> None:
                 "out_account_code": "VARCHAR(120) NOT NULL DEFAULT 'UNKNOWN'",
             },
         }
-        with engine.begin() as connection:
+        with target_bind.begin() as connection:
             for table_name, definitions in additions.items():
                 columns = {
-                    item["name"] for item in inspect(engine).get_columns(table_name)
+                    item["name"] for item in inspect(target_bind).get_columns(table_name)
                 }
                 for column_name, definition in definitions.items():
                     if column_name not in columns:
                         connection.execute(text(
                             f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}"
                         ))
+
+
+def init_target_db(bind=None) -> None:
+    """Initialize an empty runtime database with exactly the 11 target tables."""
+    ensure_target_schema(bind=bind)
 
 
 def init_db() -> None:

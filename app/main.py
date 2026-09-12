@@ -18,14 +18,14 @@ from sqlalchemy.orm import Session
 
 from app.api.controllers.dashboard import router as dashboard_router
 from app.api.controllers.import_issue import router as import_issue_router
-from app.api.controllers.intake import router as intake_router
+from app.api.controllers.intake import router as intake_router, target_router as target_intake_router
 from app.api.controllers.ledger import router as ledger_router
 from app.api.controllers.matter import router as matter_router
 from app.api.controllers.refund import router as refund_router
 from app.api.controllers.review import router as review_router
 from app.api.controllers.tag import router as tag_router
 from app.api.controllers.tag_view import router as tag_view_router
-from app.api.controllers.target_ledger import router as target_ledger_router
+from app.api.controllers.target_ledger import router as target_ledger_router, v1_router as target_ledger_v1_router
 from app.api.deps import get_db
 from app.config import APP_DISPLAY_NAME, APP_SLUG
 from app.database import AccountRevision, AssetSnapshot, Bill, BillViewTag, CandidateActionLog, ImportArtifact, ImportBatch, LedgerOrigin, RefundAllocation, ReviewCandidate, SessionLocal, TagAudit, TagView, ViewTag, init_db
@@ -56,6 +56,7 @@ app.mount("/static", StaticFiles(directory=APP_DIR / "static"), name="static")
 app.include_router(dashboard_router)
 app.include_router(import_issue_router)
 app.include_router(intake_router)
+app.include_router(target_intake_router)
 app.include_router(ledger_router)
 app.include_router(matter_router)
 app.include_router(refund_router)
@@ -63,6 +64,7 @@ app.include_router(review_router)
 app.include_router(tag_router)
 app.include_router(tag_view_router)
 app.include_router(target_ledger_router)
+app.include_router(target_ledger_v1_router)
 templates = Jinja2Templates(directory=APP_DIR / "templates")
 
 

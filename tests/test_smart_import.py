@@ -3,6 +3,7 @@ import csv
 import io
 import json
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 
 import pytest
 import xlwt
@@ -11,7 +12,9 @@ from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 
 from app import database, main
+from app.core.intake_preview_store import target_intake_preview_store
 from app.database import Bill, ImportEvidence, ImportPreview, Account
+from app.models.target import BillFact, BillRaw, ImportFile, LedgerEntry, LedgerEntrySource
 from app.statement_parser import parse_statement, normalise_statement_row
 
 
@@ -25,8 +28,10 @@ def ledger(tmp_path, monkeypatch):
     monkeypatch.setattr(database, "engine", engine)
     monkeypatch.setattr(database, "SessionLocal", sessions)
     monkeypatch.setattr(main, "SessionLocal", sessions)
+    target_intake_preview_store.clear()
     with TestClient(main.app) as client:
         yield client, sessions
+    target_intake_preview_store.clear()
     engine.dispose()
 
 
@@ -97,6 +102,27 @@ def confirm(client, preview):
     )
 
 
+def target_upload(client, items):
+    response = client.post(
+        "/paam/import/v1/preview",
+        json={
+            "files": [
+                {"filename": name, "content_base64": base64.b64encode(content).decode()}
+                for name, content in items
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["body"]
+
+
+def target_confirm(client, preview):
+    return client.post(
+        f"/paam/import/v1/preview/confirm/{preview['token']}",
+        json={"version": preview["version"]},
+    )
+
+
 def test_versioned_intake_api_uses_envelope_and_bounded_preview_queries(ledger):
     client, sessions = ledger
     statements = []
@@ -127,6 +153,165 @@ def test_versioned_intake_api_uses_envelope_and_bounded_preview_queries(ledger):
     assert all("SELECT *" not in statement.upper() for statement in statements)
 
 
+def test_versioned_intake_writes_only_pirc9_fact_tables(ledger):
+    client, sessions = ledger
+    preview_response = client.post(
+        "/paam/import/v1/preview",
+        json={
+            "files": [{
+                "filename": "wechat.csv",
+                "content_base64": base64.b64encode(csv_bytes()).decode(),
+            }]
+        },
+    )
+    preview = preview_response.json()["body"]
+    confirmed = client.post(
+        f"/paam/import/v1/preview/confirm/{preview['token']}",
+        json={"version": preview["version"]},
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    result = confirmed.json()["body"]
+    assert result["counts"]["new"] == 1
+
+    with sessions() as db:
+        assert db.query(ImportFile).count() == 1
+        assert db.query(BillRaw).count() == 1
+        assert db.query(BillFact).count() == 1
+        assert db.query(LedgerEntry).count() == 1
+        assert db.query(LedgerEntrySource).count() == 1
+        assert db.query(Bill).count() == 0
+        assert db.query(ImportEvidence).count() == 0
+        fact = db.scalar(select(BillFact))
+        assert fact.amount_value == 1000
+        assert fact.amount_scale == 2
+        assert fact.cash_direction == "OUT"
+
+    ledger_page = client.get("/api/shadow/v1/ledger/entries").json()
+    assert ledger_page["total"] == 1
+    assert ledger_page["items"][0]["ledger_type"] == "EXPENSE"
+    assert ledger_page["items"][0]["outgoing"]["amount_value"] == 1000
+
+    history = client.get("/paam/import/v1/batch/list").json()["body"]
+    assert history[0]["id"] == result["import_file_ids"][0]
+    raw_rows = client.get(
+        "/paam/import/v1/batch/row/list",
+        params={"batch_id": result["import_file_ids"][0]},
+    ).json()["body"]
+    assert len(raw_rows) == 1
+    assert raw_rows[0]["bill_id"] == result["bill_fact_ids"][0]
+
+    replay = client.post(
+        "/paam/import/v1/preview",
+        json={
+            "files": [{
+                "filename": "wechat-again.csv",
+                "content_base64": base64.b64encode(csv_bytes()).decode(),
+            }]
+        },
+    ).json()["body"]
+    assert replay["counts"]["duplicate_file"] == 1
+    repeated = client.post(
+        f"/paam/import/v1/preview/confirm/{replay['token']}",
+        json={"version": replay["version"]},
+    )
+    assert repeated.status_code == 200
+    with sessions() as db:
+        assert db.query(ImportFile).count() == 1
+        assert db.query(BillRaw).count() == 1
+        assert db.query(BillFact).count() == 1
+        assert db.query(LedgerEntry).count() == 1
+        assert db.query(LedgerEntrySource).count() == 1
+
+
+def test_target_default_projection_does_not_reuse_fact_primary_key(ledger):
+    client, sessions = ledger
+    occurred = datetime(2026, 7, 1, 12)
+    with sessions() as db:
+        db.add(LedgerEntry(
+            id=1,
+            ledger_type="LOAN_BORROW",
+            allocation_status="CONFIRMED",
+            title="existing review projection",
+            start_time=occurred,
+            end_time=occurred,
+            in_amount_value=100,
+            in_amount_scale=2,
+            in_currency_code="CNY",
+            out_amount_value=0,
+            out_amount_scale=2,
+            out_currency_code="CNY",
+            in_account_code="wallet",
+            out_account_code="UNKNOWN",
+            input_hash="review-hash",
+            projection_version=1,
+        ))
+        db.add(LedgerEntrySource(
+            ledger_id=1,
+            source_kind="REVIEW_CASE",
+            source_id=99,
+        ))
+        db.commit()
+
+    preview = target_upload(client, [("wechat.csv", csv_bytes())])
+    response = target_confirm(client, preview)
+    assert response.status_code == 200, response.text
+    with sessions() as db:
+        fact = db.scalar(select(BillFact))
+        fact_source = db.scalar(select(LedgerEntrySource).where(
+            LedgerEntrySource.source_kind == "BILL_FACT"
+        ))
+        assert fact.id == 1
+        assert fact_source.ledger_id != fact.id
+        assert db.query(LedgerEntry).count() == 2
+
+
+def test_target_intake_supplements_raw_evidence_and_blocks_fact_conflicts(ledger):
+    client, sessions = ledger
+
+    def target_preview(content: bytes):
+        response = client.post(
+            "/paam/import/v1/preview",
+            json={
+                "files": [{
+                    "filename": "wechat.csv",
+                    "content_base64": base64.b64encode(content).decode(),
+                }]
+            },
+        )
+        assert response.status_code == 200, response.text
+        return response.json()["body"]
+
+    first = target_preview(csv_bytes(note="first evidence"))
+    assert client.post(
+        f"/paam/import/v1/preview/confirm/{first['token']}",
+        json={"version": first["version"]},
+    ).status_code == 200
+
+    richer = target_preview(csv_bytes(note="richer evidence", extra=True))
+    assert richer["counts"]["supplement"] == 1
+    assert client.post(
+        f"/paam/import/v1/preview/confirm/{richer['token']}",
+        json={"version": richer["version"]},
+    ).status_code == 200
+    with sessions() as db:
+        assert db.query(BillFact).count() == 1
+        assert db.query(BillRaw).count() == 2
+        assert db.query(ImportFile).count() == 2
+
+    conflict = target_preview(csv_bytes(amount="20.00", note="conflict"))
+    assert not conflict["can_confirm"]
+    assert conflict["counts"]["error"] == 1
+    rejected = client.post(
+        f"/paam/import/v1/preview/confirm/{conflict['token']}",
+        json={"version": conflict["version"]},
+    )
+    assert rejected.status_code == 422
+    with sessions() as db:
+        assert db.query(BillFact).count() == 1
+        assert db.query(BillRaw).count() == 2
+        assert db.query(ImportFile).count() == 2
+
+
 def test_confirm_select_count_does_not_grow_per_import_row(ledger):
     client, sessions = ledger
     engine = sessions.kw["bind"]
@@ -151,6 +336,79 @@ def test_confirm_select_count_does_not_grow_per_import_row(ledger):
     one_row = confirm_select_count(csv_many(1, "one"))
     twenty_rows = confirm_select_count(csv_many(20, "many"))
     assert twenty_rows <= one_row + 2
+
+
+def test_target_confirm_select_count_does_not_grow_per_import_row(ledger):
+    client, sessions = ledger
+    engine = sessions.kw["bind"]
+
+    def target_confirm_select_count(content: bytes) -> int:
+        preview_response = client.post(
+            "/paam/import/v1/preview",
+            json={
+                "files": [{
+                    "filename": "wechat.csv",
+                    "content_base64": base64.b64encode(content).decode(),
+                }]
+            },
+        )
+        assert preview_response.status_code == 200, preview_response.text
+        preview = preview_response.json()["body"]
+        statements = []
+
+        def count_selects(_connection, _cursor, statement, _parameters, _context, _many):
+            if statement.lstrip().upper().startswith("SELECT"):
+                statements.append(statement)
+
+        event.listen(engine, "before_cursor_execute", count_selects)
+        try:
+            response = client.post(
+                f"/paam/import/v1/preview/confirm/{preview['token']}",
+                json={"version": preview["version"]},
+            )
+        finally:
+            event.remove(engine, "before_cursor_execute", count_selects)
+        assert response.status_code == 200, response.text
+        assert all("SELECT *" not in statement.upper() for statement in statements)
+        return len(statements)
+
+    one_row = target_confirm_select_count(csv_many(1, "target-one"))
+    twenty_rows = target_confirm_select_count(csv_many(20, "target-many"))
+    assert twenty_rows <= one_row + 2
+
+
+def test_target_projection_classifies_refund_without_counting_it_as_income(ledger):
+    client, sessions = ledger
+    preview = target_upload(client, [(
+        "refund.csv",
+        csv_bytes(reference="refund", status="退款成功", direction="收入"),
+    )])
+    assert preview["can_confirm"]
+    response = target_confirm(client, preview)
+    assert response.status_code == 200, response.text
+
+    page = client.get("/api/shadow/v1/ledger/entries").json()
+    assert page["total"] == 1
+    assert page["items"][0]["ledger_type"] == "REFUND"
+    assert page["items"][0]["incoming"]["amount_value"] == 1000
+
+
+def test_target_projection_keeps_neutral_bank_flow_unresolved(ledger):
+    client, sessions = ledger
+    preview = target_upload(client, [(
+        "ccb.xls",
+        ccb_file(rows=[
+            ["1", "基金申购", "20260801", "-10.00", "90.00", "基金账户"],
+        ]),
+    )])
+    assert preview["can_confirm"]
+    response = target_confirm(client, preview)
+    assert response.status_code == 200, response.text
+
+    page = client.get("/api/shadow/v1/ledger/entries").json()
+    assert page["total"] == 1
+    assert page["items"][0]["ledger_type"] == "UNRESOLVED"
+    assert page["items"][0]["allocation_status"] == "PARTIAL"
 
 
 def test_auto_source_optional_fields_and_complementary_evidence(ledger):
@@ -376,6 +634,43 @@ def test_cross_channel_same_card_separate_upload_order(
     assert client.get("/api/dashboard").json()["spending"] == (
         0 if wallet_neutral else -10
     )
+
+
+@pytest.mark.parametrize("bank_first", [True, False])
+@pytest.mark.parametrize("wallet_neutral", [True, False])
+def test_target_cross_channel_projection_is_order_independent(
+    ledger, bank_first, wallet_neutral
+):
+    client, sessions = ledger
+    wallet = (
+        csv_bytes(
+            direction="/" if wallet_neutral else "支出",
+            note="转入零钱通" if wallet_neutral else "商品",
+        )
+        .decode()
+        .replace(",零钱\r\n", ",建设银行储蓄卡(5678)\r\n")
+        .replace(",零钱,", ",建设银行储蓄卡(5678),")
+        .encode()
+    )
+    bank = ccb_file(
+        rows=[["1", "财付通-微信支付", "20260801", "-10.00", "90.00", "财付通"]]
+    )
+    files = [("bank.xls", bank), ("wallet.csv", wallet)]
+    if not bank_first:
+        files.reverse()
+    for item in files:
+        preview = target_upload(client, [item])
+        assert preview["can_confirm"]
+        response = target_confirm(client, preview)
+        assert response.status_code == 200, response.text
+
+    with sessions() as db:
+        assert db.query(BillFact).count() == 1
+        assert db.query(BillRaw).count() == 2
+        assert db.query(LedgerEntry).count() == 1
+        entry = db.scalar(select(LedgerEntry))
+        assert entry.ledger_type == ("UNRESOLVED" if wallet_neutral else "EXPENSE")
+        assert entry.allocation_status == ("PARTIAL" if wallet_neutral else "DEFAULT")
 
 
 def test_legacy_endpoint_cannot_duplicate_smart_import(ledger):

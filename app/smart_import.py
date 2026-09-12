@@ -5,25 +5,9 @@ from __future__ import annotations
 import copy
 import json
 from collections import Counter, defaultdict
-from datetime import datetime, time, timedelta
+from datetime import datetime
 
-from sqlalchemy import select
-
-from app.database import (
-    Account,
-    AccountBinding,
-    AccountRevision,
-    Bill,
-    ImportArtifact,
-    ImportBatch,
-    ImportEvidence,
-    ImportIdentity,
-    LedgerOrigin,
-    RefundDesignation,
-    RefundNatureAudit,
-)
-from app.money import cents, money
-from app.review_matters import allocated_bills
+from app.money import cents
 from app.statement_parser import BANKS, digest
 
 
@@ -77,30 +61,16 @@ def compatible(a, b):
     return a["occurred_at"][:10] == b["occurred_at"][:10]
 
 
-def build_plan(db, documents, overrides=None, decisions=None):
+def build_plan(
+    documents,
+    accounts,
+    bindings,
+    history_loader,
+    overrides=None,
+    decisions=None,
+):
     overrides, decisions = overrides or {}, decisions or {}
     documents = copy.deepcopy(documents)
-    account_rows = db.execute(select(
-        Account.id,
-        Account.identity,
-        Account.provider,
-        Account.display_name,
-        Account.number,
-        Account.owner,
-    )).mappings().all()
-    accounts = {
-        row["id"]: {key: row[key] for key in [
-            "id", "identity", "provider", "display_name", "number", "owner"
-        ]}
-        for row in account_rows
-    }
-    bindings = {
-        row["detected_identity"]: row["account_id"]
-        for row in db.execute(select(
-            AccountBinding.detected_identity,
-            AccountBinding.account_id,
-        )).mappings().all()
-    }
     known = {a["identity"]: a for a in accounts.values()}
     for doc in documents:
         if doc.get("error"):
@@ -170,81 +140,19 @@ def build_plan(db, documents, overrides=None, decisions=None):
             if row.get("reference"):
                 references.add(row["reference"])
 
-    identities = {
-        row["key"]: row["bill_id"]
-        for row in db.execute(select(
-            ImportIdentity.key,
-            ImportIdentity.bill_id,
-        ).where(ImportIdentity.key.in_(lookup_keys))).mappings().all()
-    }
-    identity_bill_ids = set(identities.values())
-    bill_filters = []
-    if occurred_values:
-        first_day = datetime.combine(min(occurred_values).date(), time.min)
-        last_day = datetime.combine(max(occurred_values).date() + timedelta(days=1), time.min)
-        bill_filters.append((Bill.occurred_at >= first_day) & (Bill.occurred_at < last_day))
-    if identity_bill_ids:
-        bill_filters.append(Bill.id.in_(identity_bill_ids))
-    bill_query = select(
-        Bill.id,
-        Bill.amount,
-        Bill.currency,
-        Bill.occurred_at,
-    )
-    if bill_filters:
-        from sqlalchemy import or_
-
-        bill_query = bill_query.where(or_(*bill_filters))
-    else:
-        bill_query = bill_query.where(False)
-    bill_rows = db.execute(bill_query).mappings().all()
-    bills = {row["id"]: row for row in bill_rows}
-    candidate_bill_ids = set(bills)
-    evidence = defaultdict(list)
-    evidence_rows = db.execute(select(
-        ImportEvidence.bill_id,
-        ImportEvidence.record_json,
-    ).where(ImportEvidence.bill_id.in_(candidate_bill_ids))).mappings().all()
-    for item in evidence_rows:
-        if item["bill_id"]:
-            evidence[item["bill_id"]].append(json.loads(item["record_json"]))
-    # Read-only compatibility bridge: old origins retain exact references or platform IDs in raw fields.
-    legacy_refs = defaultdict(list)
-    origin_query = select(
-        LedgerOrigin.bill_id,
-        LedgerOrigin.source_type,
-        LedgerOrigin.source_reference,
-        LedgerOrigin.raw_payload,
-    )
-    if source_types and references:
-        origin_query = origin_query.where(
-            LedgerOrigin.source_type.in_(source_types),
-            LedgerOrigin.source_reference.in_(references),
-        )
-    else:
-        origin_query = origin_query.where(False)
-    for origin in db.execute(origin_query).mappings().all():
-        raw = json.loads(origin["raw_payload"] or "{}")
-        ref = next(
-            (
-                raw[k].strip()
-                for k in ["交易订单号", "交易单号", "支付宝交易号", "交易号"]
-                if raw.get(k)
-            ),
-            origin["source_reference"],
-        )
-        if ref and (
-            origin["bill_id"] not in evidence
-            or any(not record.get("profile") for record in evidence[origin["bill_id"]])
-        ):
-            legacy_refs[(origin["source_type"], ref)].append(origin["bill_id"])
     upload_hashes = {doc.get("sha256") for doc in documents if doc.get("sha256")}
-    seen_files = {
-        sha256
-        for sha256 in db.scalars(
-            select(ImportArtifact.sha256).where(ImportArtifact.sha256.in_(upload_hashes))
-        ).all()
-    }
+    history = history_loader(
+        lookup_keys,
+        occurred_values,
+        source_types,
+        references,
+        upload_hashes,
+    )
+    identities = history["identities"]
+    bills = history["bills"]
+    evidence = defaultdict(list, history["evidence"])
+    legacy_refs = defaultdict(list, history["references"])
+    seen_files = set(history["seen_files"])
     virtual = {}
     counts = Counter()
     for d, doc in enumerate(documents):
@@ -513,204 +421,3 @@ def build_plan(db, documents, overrides=None, decisions=None):
 
 def public_plan(token, plan):
     return {"token": token, **plan}
-
-
-def commit_plan(db, plan):
-    protected_bill_ids = set(allocated_bills(db))
-    protected_bill_ids.update(db.scalars(select(RefundNatureAudit.bill_id)).all())
-    new_targets = {}
-    batches = []
-    account_cache = {a.identity: a for a in db.scalars(select(Account)).all()}
-
-    def ensure_account(spec):
-        account = account_cache.get(spec["identity"])
-        if account is None:
-            account = Account(
-                **{
-                    k: spec[k]
-                    for k in ["identity", "provider", "display_name", "number", "owner"]
-                }
-            )
-            db.add(account)
-            db.flush()
-            account_cache[account.identity] = account
-        return account
-
-    # Create canonical facts first, because a wallet file can precede its bank statement.
-    for doc in plan["documents"]:
-        if doc.get("duplicate"):
-            continue
-        for row in doc["rows"]:
-            if row["action"] != "new":
-                continue
-            spec = row["account"]
-            account = ensure_account(spec)
-            bill = Bill(
-                occurred_at=datetime.fromisoformat(row["occurred_at"]),
-                merchant=row["merchant"],
-                note=row["note"],
-                amount=money(row["amount_minor"]),
-                currency=row["currency"],
-                account_name=account.display_name,
-                account_id=account.id,
-                time_precision=row["time_precision"],
-                import_nature=row["nature"],
-                category="未分类",
-                tags="",
-                aggregate_excluded=row["nature"] == "neutral",
-            )
-            db.add(bill)
-            db.flush()
-            new_targets[row["match"]] = bill.id
-            if row["nature"] == "refund":
-                db.add(RefundDesignation(bill_id=bill.id, created_at=datetime.now()))
-    for doc in plan["documents"]:
-        if doc.get("duplicate"):
-            continue
-        batch = ImportBatch(
-            source_type=doc["source_type"],
-            filename=doc["filename"],
-            imported_at=datetime.now(),
-            row_count=len(doc["rows"]),
-            imported_count=sum(r["action"] == "new" for r in doc["rows"]),
-        )
-        db.add(batch)
-        db.flush()
-        db.add(
-            ImportArtifact(
-                import_batch_id=batch.id,
-                source_type=doc["source_type"],
-                filename=doc["filename"],
-                file_format=doc["format"],
-                archive_entry=doc["archive_entry"],
-                sha256=doc["sha256"],
-            )
-        )
-        for row in doc["rows"]:
-            target = row["match"]
-            bill_id = new_targets.get(target, target) if target is not None else None
-            if bill_id:
-                if (
-                    row.get("detected_account_identity")
-                    and row["detected_account_identity"] != row["account"]["identity"]
-                ):
-                    selected = ensure_account(row["account"])
-                    binding = db.scalar(select(AccountBinding).where(
-                        AccountBinding.detected_identity == row["detected_account_identity"]
-                    ))
-                    if binding is None:
-                        binding = AccountBinding(
-                            detected_identity=row["detected_account_identity"],
-                            account_id=selected.id,
-                            basis=row.get("account_basis", "导入确认"),
-                        )
-                        db.add(binding)
-                    else:
-                        binding.account_id = selected.id
-                        binding.basis = row.get("account_basis", "导入确认")
-                    db.flush()
-                bill = db.get(Bill, bill_id)
-                previous_account = (
-                    db.get(Account, bill.account_id) if bill.account_id else None
-                )
-                if (
-                    row["source_type"] in BANKS
-                    and previous_account
-                    and previous_account.number.startswith("****")
-                    and row["account"]["number"].endswith(previous_account.number[-4:])
-                    and not db.scalar(
-                        select(AccountRevision.id).where(
-                            AccountRevision.bill_id == bill_id
-                        )
-                    )
-                ):
-                    account = ensure_account(row["account"])
-                    bill.account_id = account.id
-                    bill.account_name = account.display_name
-                if not db.scalar(
-                    select(LedgerOrigin.id).where(LedgerOrigin.bill_id == bill_id)
-                ):
-                    db.add(
-                        LedgerOrigin(
-                            bill_id=bill_id,
-                            source_type=doc["source_type"],
-                            source_reference=row["reference"],
-                            import_batch_id=batch.id,
-                            source_row_number=row["row_number"],
-                            raw_payload=dump(row["raw"]),
-                        )
-                    )
-                    db.flush()
-                # Complementary evidence never overwrites existing or manually corrected fields.
-                if not bill.note and row["note"]:
-                    bill.note = row["note"]
-                if bill.time_precision == "day" and row["time_precision"] == "second":
-                    bill.occurred_at = datetime.fromisoformat(row["occurred_at"])
-                    bill.time_precision = "second"
-                # A platform describes the purpose where a bank may only say "payment".
-                # Apply that richer evidence independently of upload order.
-                semantic_editable = (
-                    bill.id not in protected_bill_ids
-                    and not bill.duplicate_of_id
-                    and not bill.transfer_group_id
-                )
-                if (
-                    semantic_editable
-                    and row["source_type"] not in BANKS
-                    and row["account"]["provider"] in BANKS
-                ):
-                    was_auto_neutral = (
-                        bill.import_nature == "neutral"
-                        and not bill.duplicate_of_id
-                        and not bill.transfer_group_id
-                    )
-                    if bill.import_nature != "refund":
-                        bill.import_nature = row["nature"]
-                    if bill.import_nature == "neutral":
-                        bill.aggregate_excluded = True
-                    elif was_auto_neutral:
-                        bill.aggregate_excluded = False
-                elif (
-                    semantic_editable
-                    and row["source_type"] in BANKS
-                    and row["nature"] in {"neutral", "refund"}
-                ):
-                    platform_evidence = db.scalar(
-                        select(ImportEvidence.id)
-                        .join(
-                            ImportBatch,
-                            ImportEvidence.import_batch_id == ImportBatch.id,
-                        )
-                        .where(
-                            ImportEvidence.bill_id == bill_id,
-                            ImportBatch.source_type.not_in(BANKS),
-                        )
-                    )
-                    if not platform_evidence:
-                        if bill.import_nature != "refund":
-                            bill.import_nature = row["nature"]
-                        bill.aggregate_excluded = bill.import_nature == "neutral"
-                if (
-                    semantic_editable
-                    and bill.import_nature == "refund"
-                    and not db.get(RefundDesignation, bill.id)
-                ):
-                    db.add(
-                        RefundDesignation(bill_id=bill.id, created_at=datetime.now())
-                    )
-                    db.flush()
-                for key in row["keys"]:
-                    if not db.scalar(select(ImportIdentity.id).where(ImportIdentity.key == key)):
-                        db.add(ImportIdentity(key=key, bill_id=bill_id))
-                        db.flush()
-            db.add(
-                ImportEvidence(
-                    bill_id=bill_id,
-                    import_batch_id=batch.id,
-                    row_number=row["row_number"],
-                    record_json=dump(row),
-                    disposition=row["action"] if bill_id else row["disposition"],
-                )
-            )
-        batches.append(batch.id)
-    return {"counts": plan["counts"], "batch_ids": batches}

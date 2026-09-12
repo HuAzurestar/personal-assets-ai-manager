@@ -196,9 +196,12 @@ does not identify one. Import institution and file provenance remain detail-only
 
 Every published fact contributes exactly one `BILL_FACT` source row. Every
 confirmed Review that participates in a component contributes exactly one
-`REVIEW_CASE` source row. Source-row IDs are deterministic, so shadow backfill
-is idempotent and a detail request can recover both immutable facts and the
-complete Review trail without querying unrelated entries.
+`REVIEW_CASE` source row. The `(source_kind, source_id)` identity is
+deterministic; the row's database ID is only a surrogate. This makes backfill
+idempotent and lets a detail request recover both immutable facts and the
+complete Review trail without querying unrelated entries. `ledger_entry.id`
+and `bill_fact.id` are deliberately independent to avoid collisions when Fact
+and Review projections share the same hot table.
 
 ## Tags
 
@@ -324,3 +327,9 @@ does not need a dual-read observation window: implement target writes, switch
 the API/UI, run empty-schema and supplied-sample acceptance, then recreate the
 database with the eleven ledger tables (plus independently approved modules)
 and no compatibility tables.
+
+The target-only runtime entry is `app.target_main:app`. Its startup calls
+`init_target_db()` and creates exactly those eleven ledger tables. During the
+transition, `app.main:app` continues to expose compatibility UI routes as well
+as the versioned target routes; this is a code-compatibility boundary only and
+does not change the final table contract.

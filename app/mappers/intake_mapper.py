@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from collections import defaultdict
+from datetime import datetime, time, timedelta
 
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 from sqlalchemy.orm import Session
 
 from app.database import (
@@ -38,7 +39,114 @@ class IntakeMapper:
         accounts: dict[str, str] | None = None,
         decisions: dict[str, str] | None = None,
     ) -> dict[str, object]:
-        return build_plan(self.db, documents, accounts, decisions)
+        account_rows = self.db.execute(select(
+            Account.id,
+            Account.identity,
+            Account.provider,
+            Account.display_name,
+            Account.number,
+            Account.owner,
+        )).mappings().all()
+        known_accounts = {
+            row["id"]: {key: row[key] for key in [
+                "id", "identity", "provider", "display_name", "number", "owner"
+            ]}
+            for row in account_rows
+        }
+        bindings = {
+            row["detected_identity"]: row["account_id"]
+            for row in self.db.execute(select(
+                AccountBinding.detected_identity,
+                AccountBinding.account_id,
+            )).mappings().all()
+        }
+        return build_plan(
+            documents,
+            known_accounts,
+            bindings,
+            self._planning_history,
+            accounts,
+            decisions,
+        )
+
+    def _planning_history(
+        self,
+        lookup_keys: set[str],
+        occurred_values: list[datetime],
+        source_types: set[str],
+        references: set[str],
+        upload_hashes: set[str],
+    ) -> dict[str, object]:
+        identities = {
+            row["key"]: row["bill_id"]
+            for row in self.db.execute(select(
+                ImportIdentity.key,
+                ImportIdentity.bill_id,
+            ).where(ImportIdentity.key.in_(lookup_keys))).mappings().all()
+        }
+        identity_bill_ids = set(identities.values())
+        bill_filters = []
+        if occurred_values:
+            first_day = datetime.combine(min(occurred_values).date(), time.min)
+            last_day = datetime.combine(
+                max(occurred_values).date() + timedelta(days=1), time.min
+            )
+            bill_filters.append(
+                (Bill.occurred_at >= first_day) & (Bill.occurred_at < last_day)
+            )
+        if identity_bill_ids:
+            bill_filters.append(Bill.id.in_(identity_bill_ids))
+        bill_query = select(Bill.id, Bill.amount, Bill.currency, Bill.occurred_at)
+        bill_query = bill_query.where(or_(*bill_filters)) if bill_filters else bill_query.where(False)
+        bill_rows = self.db.execute(bill_query).mappings().all()
+        bills = {row["id"]: row for row in bill_rows}
+        evidence: dict[int, list[dict[str, object]]] = defaultdict(list)
+        evidence_rows = self.db.execute(select(
+            ImportEvidence.bill_id,
+            ImportEvidence.record_json,
+        ).where(ImportEvidence.bill_id.in_(bills))).mappings().all()
+        for item in evidence_rows:
+            if item["bill_id"]:
+                evidence[item["bill_id"]].append(json.loads(item["record_json"]))
+
+        matched_references: dict[tuple[str, str], list[int]] = defaultdict(list)
+        origin_query = select(
+            LedgerOrigin.bill_id,
+            LedgerOrigin.source_type,
+            LedgerOrigin.source_reference,
+            LedgerOrigin.raw_payload,
+        )
+        if source_types and references:
+            origin_query = origin_query.where(
+                LedgerOrigin.source_type.in_(source_types),
+                LedgerOrigin.source_reference.in_(references),
+            )
+        else:
+            origin_query = origin_query.where(False)
+        for origin in self.db.execute(origin_query).mappings().all():
+            raw = json.loads(origin["raw_payload"] or "{}")
+            reference = next((
+                raw[key].strip()
+                for key in ["交易订单号", "交易单号", "支付宝交易号", "交易号"]
+                if raw.get(key)
+            ), origin["source_reference"])
+            if reference and (
+                origin["bill_id"] not in evidence
+                or any(not record.get("profile") for record in evidence[origin["bill_id"]])
+            ):
+                matched_references[(origin["source_type"], reference)].append(
+                    origin["bill_id"]
+                )
+        seen_files = set(self.db.scalars(select(ImportArtifact.sha256).where(
+            ImportArtifact.sha256.in_(upload_hashes)
+        )).all())
+        return {
+            "identities": identities,
+            "bills": bills,
+            "evidence": dict(evidence),
+            "references": dict(matched_references),
+            "seen_files": seen_files,
+        }
 
     def create_preview(
         self,

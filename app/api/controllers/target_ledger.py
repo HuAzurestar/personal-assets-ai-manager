@@ -21,6 +21,7 @@ from app.services.target_ledger_status_service import TargetLedgerStatusService
 
 
 router = APIRouter(prefix="/api/shadow/v1/ledger", tags=["target-ledger-shadow"])
+v1_router = APIRouter(prefix="/paam/ledger/v1", tags=["target-ledger"])
 
 
 @router.get("/status", response_model=TargetLedgerShadowStatusRead)
@@ -29,6 +30,7 @@ def get_target_ledger_status(db: Session = Depends(get_db)):
 
 
 @router.get("/entries", response_model=TargetLedgerPageRead)
+@v1_router.get("/entry/list", response_model=TargetLedgerPageRead)
 def list_target_ledger_entries(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=100),
@@ -66,6 +68,7 @@ def list_target_ledger_entries(
 
 
 @router.get("/entries/{ledger_id}", response_model=TargetLedgerDetailRead)
+@v1_router.get("/entry/detail/{ledger_id}", response_model=TargetLedgerDetailRead)
 def get_target_ledger_detail(
     ledger_id: int,
     db: Session = Depends(get_db),
@@ -77,6 +80,7 @@ def get_target_ledger_detail(
 
 
 @router.get("/summary", response_model=TargetLedgerSummaryRead)
+@v1_router.get("/summary", response_model=TargetLedgerSummaryRead)
 def get_target_ledger_summary(
     date_from: date | None = None,
     date_to: date | None = None,

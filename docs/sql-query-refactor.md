@@ -399,11 +399,29 @@ N+1 list paths. They remain lower priority unless profiling shows a slow query.
 - [x] Reclassified `accounts`, `account_bindings`, `import_evidence`,
   `import_identities`, and `import_previews` as post-merge compatibility tables,
   not PIRC-9 target tables.
-- [ ] Move the multi-source command path directly onto
+- [x] Move the versioned multi-source command path directly onto
   `import_file / bill_raw / bill_fact`; keep preview state outside ledger SQL.
-- [ ] Switch import detail and account evidence reads to `bill_raw` and
+- [x] Switch versioned import detail and account evidence reads to `bill_raw` and
   `bill_fact.account_code`.
+- [x] Rebuild the affected default `ledger_entry` rows in the same confirmation
+  transaction. Refunds publish as `REFUND`; neutral flows publish as
+  `UNRESOLVED/PARTIAL` instead of entering ordinary income or expense.
+- [x] Keep confirmation set-oriented. A regression gate proves that 20 target
+  rows do not add per-row SELECTs, and all target SQL names explicit columns.
+- [x] Add a target-only FastAPI runtime seam and empty-schema initializer. Its
+  database contains exactly the 11 PIRC-9 tables and exposes only versioned
+  import and ledger-read routes.
+- [x] Verify all seven supplied files through the target write path: 827 raw
+  rows become 803 facts and 803 ledger projections while every compatibility
+  table remains empty.
 - [ ] Switch review/projection commands to the target Review and Ledger tables.
+- [ ] Switch the production UI from legacy transaction/review/tag contracts to
+  the versioned target contracts.
 - [ ] Recreate the empty development database without the 23 legacy tables or
   the five post-merge compatibility tables. Preserve `asset_snapshots` only as
   an explicitly separate module.
+
+The physical delete remains intentionally last. The target-only runtime now
+proves that the replacement import/list/detail/summary core does not require a
+legacy table; Review and tag commands are the remaining functional dependency,
+not a data-migration or backup dependency.
