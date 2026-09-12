@@ -18,10 +18,12 @@ Use `docs/data-model.md` as the target schema contract.
   and candidate bills; never load those historical tables in full.
 - Confirmation preloads every referenced ID set and performs grouped flushes.
   Do not call `get()`, `select()`, or `flush()` once per parsed row.
-- Alternate bank/wallet identities may share one fact. Keep the unique identity
-  mapping separate when a single `bill_fact.fact_key` cannot preserve them all.
-- Import previews are cold command state. Never read preview JSON, raw payloads,
-  or account details in ledger list/summary paths.
-- Multi-source support tables follow the common `id / created_time /
-  updated_time` contract and use implicit IDs without SQL foreign keys.
+- Alternate bank/wallet exports may share one fact. Persist each source row in
+  `bill_raw`, link it by `bill_id`, and keep only the accepted canonical identity
+  in `bill_fact.fact_key`; do not add a parallel identity/evidence table.
+- Import previews are bounded, expiring application command state rather than a
+  ledger table. Never read previews, raw payloads, or verbose account details in
+  ledger list/summary paths.
+- Multi-source import writes only `import_file`, `bill_raw`, and `bill_fact` in
+  the Fact layer. New compatibility tables require an explicit model decision.
 - Missing required accounting fields do not receive fabricated defaults and do not produce a fact until resolved.

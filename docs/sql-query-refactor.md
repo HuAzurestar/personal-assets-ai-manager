@@ -393,3 +393,17 @@ N+1 list paths. They remain lower priority unless profiling shows a slow query.
 - [x] Seven supplied files produce 827 evidence rows and 803 canonical
   transactions in an empty temporary DB. Sequential reverse-order import,
   confirmation replay, and reverse-order upload are idempotent.
+
+## P3g model-boundary correction
+
+- [x] Reclassified `accounts`, `account_bindings`, `import_evidence`,
+  `import_identities`, and `import_previews` as post-merge compatibility tables,
+  not PIRC-9 target tables.
+- [ ] Move the multi-source command path directly onto
+  `import_file / bill_raw / bill_fact`; keep preview state outside ledger SQL.
+- [ ] Switch import detail and account evidence reads to `bill_raw` and
+  `bill_fact.account_code`.
+- [ ] Switch review/projection commands to the target Review and Ledger tables.
+- [ ] Recreate the empty development database without the 23 legacy tables or
+  the five post-merge compatibility tables. Preserve `asset_snapshots` only as
+  an explicitly separate module.

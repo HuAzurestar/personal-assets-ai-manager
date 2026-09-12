@@ -2,60 +2,6 @@
 
 Status: target architecture for incremental migration from PIRC-9 commit `887606d`. Existing public APIs remain compatible until shadow-read verification is complete.
 
-## Multi-source intake support tables
-
-All fixed support tables also contain the common `id`, `created_time`, and
-`updated_time` columns and use implicit IDs rather than SQL foreign keys.
-
-### `accounts` — stable payment account dictionary
-
-| Column | Type | Rule / meaning |
-| --- | --- | --- |
-| `identity` | VARCHAR | Unique normalized account identity |
-| `provider` | VARCHAR | Bank or wallet enum |
-| `display_name` | VARCHAR | Short UI name |
-| `number` | VARCHAR | Full/masked account number, default `''` |
-| `owner` | VARCHAR | Exported owner name, default `''` |
-
-This is a small, cold enhancement dictionary. Ledger lists keep only the stable
-account code; verbose account data is loaded for detail/import matching.
-
-### `account_bindings` — sparse detected-to-stable mapping
-
-| Column | Type | Rule / meaning |
-| --- | --- | --- |
-| `detected_identity` | VARCHAR | Unique source-file account identity |
-| `account_id` | INTEGER | Implicit `accounts.id` |
-| `basis` | VARCHAR | Why this mapping was accepted |
-
-### `import_identities` — alternate transaction identities
-
-| Column | Type | Rule / meaning |
-| --- | --- | --- |
-| `key` | CHAR(64) | Unique deterministic source identity hash |
-| `bill_id` | INTEGER | Implicit canonical transaction/fact ID |
-
-One transaction can have bank and wallet identities, so this cannot be reduced
-to one `bill_fact.fact_key` without losing deduplication evidence.
-
-### `import_previews` — cold expiring command state
-
-| Column | Type | Rule / meaning |
-| --- | --- | --- |
-| `token` | VARCHAR | Unique confirmation token |
-| `payload_json` | TEXT | Parsed documents; never bytes/passwords |
-| `plan_json` | TEXT | Deterministic preview/version |
-| `result_json` | TEXT | Idempotent result; empty before confirmation |
-
-Expiry uses the common `created_time`; no second creation timestamp is stored.
-
-`import_evidence` is compatibility storage from the merged branch. Its
-`bill_id/import_batch_id/row_number/record_json/disposition` fields map to target
-`bill_raw` plus `import_file`; it is not a second long-term Fact table. The next
-write-path phase replaces it and the legacy
-`import_batches/import_artifacts/ledger_origins` trio with
-`bill_raw/import_file`, then retires compatibility writes after comparison.
-
 ## Common SQL contract
 
 Every physical table contains:
@@ -352,3 +298,29 @@ then loaded in bounded ID batches; no query runs inside an entity loop.
 | `asset_snapshots` | Keep outside the ledger core in the asset module, or archive/drop only after usage and row-count verification |
 
 No legacy table is dropped in the first deployment. The migration sequence is: create target tables, backfill, dual/shadow read, compare IDs/amounts/hashes, switch reads, stop legacy writes, observe, then drop explicitly approved tables.
+
+## Post-merge table reconciliation
+
+The multi-source branch `9ef5bf5` introduced five physical tables after the
+PIRC-9 target model was agreed. They are implementation compatibility tables,
+not additions to the target contract:
+
+| Added table | PIRC-9 disposition |
+| --- | --- |
+| `accounts` | Do not retain in the ledger core. Store the normalized account in `bill_fact.account_code`; keep verbose/exported account fields in `bill_raw.raw_payload`; explicit corrections remain ACCOUNT Review. |
+| `account_bindings` | Do not retain. Resolve aliases during import; persist only the resulting fact account and raw evidence. A future global account directory requires a separate approved asset/account-module decision. |
+| `import_evidence` | Replace with `bill_raw`; repeated exports are multiple raw rows linked to one fact. |
+| `import_identities` | Do not retain. Match provider references through `bill_raw.source_reference`; use `bill_raw.raw_hash` and bounded fact candidates when no reference exists. The accepted canonical identity remains `bill_fact.fact_key`. |
+| `import_previews` | Do not retain as ledger SQL storage. Use bounded expiring application command state; confirmation still verifies the deterministic plan version. |
+
+Therefore the final ledger core remains exactly the eleven target tables in
+this document. `asset_snapshots` belongs to a separate asset module and is not a
+twelfth ledger table. Until the new write path is complete, all 23 legacy tables
+and these five post-merge tables are compatibility-only and must not become new
+hot read sources.
+
+Because this development database contains no production facts, the final cut
+does not need a dual-read observation window: implement target writes, switch
+the API/UI, run empty-schema and supplied-sample acceptance, then recreate the
+database with the eleven ledger tables (plus independently approved modules)
+and no compatibility tables.

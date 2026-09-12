@@ -408,6 +408,43 @@ TARGET_TABLE_NAMES = (
     "ledger_entry_tag",
 )
 
+# Explicit migration inventory. Keeping these sets in code prevents a merged
+# feature from silently turning a compatibility table into target architecture.
+LEGACY_LEDGER_TABLE_NAMES = (
+    "bills",
+    "tags",
+    "tag_views",
+    "view_tags",
+    "bill_view_tags",
+    "tag_change_logs",
+    "bill_tags",
+    "import_batches",
+    "import_artifacts",
+    "ledger_origins",
+    "import_row_issues",
+    "import_issue_actions",
+    "tag_audits",
+    "review_candidates",
+    "candidate_action_logs",
+    "account_revisions",
+    "refund_allocations",
+    "refund_allocation_audits",
+    "refund_designations",
+    "refund_nature_audits",
+    "review_matters",
+    "review_matter_revisions",
+)
+
+POST_MERGE_COMPATIBILITY_TABLE_NAMES = (
+    "accounts",
+    "account_bindings",
+    "import_evidence",
+    "import_identities",
+    "import_previews",
+)
+
+SEPARATE_MODULE_TABLE_NAMES = ("asset_snapshots",)
+
 
 def ensure_target_schema() -> None:
     """Create/advance only the shadow schema; never migrate legacy data."""
