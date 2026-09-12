@@ -2,6 +2,60 @@
 
 Status: target architecture for incremental migration from PIRC-9 commit `887606d`. Existing public APIs remain compatible until shadow-read verification is complete.
 
+## Multi-source intake support tables
+
+All fixed support tables also contain the common `id`, `created_time`, and
+`updated_time` columns and use implicit IDs rather than SQL foreign keys.
+
+### `accounts` — stable payment account dictionary
+
+| Column | Type | Rule / meaning |
+| --- | --- | --- |
+| `identity` | VARCHAR | Unique normalized account identity |
+| `provider` | VARCHAR | Bank or wallet enum |
+| `display_name` | VARCHAR | Short UI name |
+| `number` | VARCHAR | Full/masked account number, default `''` |
+| `owner` | VARCHAR | Exported owner name, default `''` |
+
+This is a small, cold enhancement dictionary. Ledger lists keep only the stable
+account code; verbose account data is loaded for detail/import matching.
+
+### `account_bindings` — sparse detected-to-stable mapping
+
+| Column | Type | Rule / meaning |
+| --- | --- | --- |
+| `detected_identity` | VARCHAR | Unique source-file account identity |
+| `account_id` | INTEGER | Implicit `accounts.id` |
+| `basis` | VARCHAR | Why this mapping was accepted |
+
+### `import_identities` — alternate transaction identities
+
+| Column | Type | Rule / meaning |
+| --- | --- | --- |
+| `key` | CHAR(64) | Unique deterministic source identity hash |
+| `bill_id` | INTEGER | Implicit canonical transaction/fact ID |
+
+One transaction can have bank and wallet identities, so this cannot be reduced
+to one `bill_fact.fact_key` without losing deduplication evidence.
+
+### `import_previews` — cold expiring command state
+
+| Column | Type | Rule / meaning |
+| --- | --- | --- |
+| `token` | VARCHAR | Unique confirmation token |
+| `payload_json` | TEXT | Parsed documents; never bytes/passwords |
+| `plan_json` | TEXT | Deterministic preview/version |
+| `result_json` | TEXT | Idempotent result; empty before confirmation |
+
+Expiry uses the common `created_time`; no second creation timestamp is stored.
+
+`import_evidence` is compatibility storage from the merged branch. Its
+`bill_id/import_batch_id/row_number/record_json/disposition` fields map to target
+`bill_raw` plus `import_file`; it is not a second long-term Fact table. The next
+write-path phase replaces it and the legacy
+`import_batches/import_artifacts/ledger_origins` trio with
+`bill_raw/import_file`, then retires compatibility writes after comparison.
+
 ## Common SQL contract
 
 Every physical table contains:

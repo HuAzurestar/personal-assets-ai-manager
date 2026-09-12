@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, create_engine, inspect, select, text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, create_engine, func, inspect, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 from app.config import DATABASE_URL, ensure_data_dir
@@ -30,10 +30,68 @@ class Bill(Base):
     category: Mapped[str] = mapped_column(String(80), default="未分类")
     tags: Mapped[str] = mapped_column(String(500), default="")
     account_name: Mapped[str] = mapped_column(String(120), default="未提供账户")
+    account_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    time_precision: Mapped[str] = mapped_column(String(12), default="second")
+    import_nature: Mapped[str] = mapped_column(String(24), default="ordinary")
     aggregate_excluded: Mapped[bool] = mapped_column(Boolean, default=False)
     transfer_group_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     duplicate_of_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tag_state_json: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class Account(Base):
+    __tablename__ = "accounts"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    created_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.current_timestamp())
+    updated_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.current_timestamp())
+    identity: Mapped[str] = mapped_column(String(160), unique=True)
+    provider: Mapped[str] = mapped_column(String(32))
+    display_name: Mapped[str] = mapped_column(String(120))
+    number: Mapped[str] = mapped_column(String(64), default="")
+    owner: Mapped[str] = mapped_column(String(120), default="")
+
+
+class AccountBinding(Base):
+    __tablename__ = "account_bindings"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    created_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.current_timestamp())
+    updated_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.current_timestamp())
+    detected_identity: Mapped[str] = mapped_column(String(160), nullable=False, unique=True)
+    account_id: Mapped[int] = mapped_column(Integer)
+    basis: Mapped[str] = mapped_column(String(120))
+
+
+class ImportEvidence(Base):
+    __tablename__ = "import_evidence"
+    __table_args__ = (UniqueConstraint("import_batch_id", "row_number"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    created_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.current_timestamp())
+    updated_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.current_timestamp())
+    bill_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    import_batch_id: Mapped[int] = mapped_column(Integer)
+    row_number: Mapped[int] = mapped_column(Integer)
+    record_json: Mapped[str] = mapped_column(Text)
+    disposition: Mapped[str] = mapped_column(String(32))
+
+
+class ImportIdentity(Base):
+    __tablename__ = "import_identities"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    created_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.current_timestamp())
+    updated_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.current_timestamp())
+    key: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    bill_id: Mapped[int] = mapped_column(Integer, index=True)
+
+
+class ImportPreview(Base):
+    __tablename__ = "import_previews"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    created_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.current_timestamp())
+    updated_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.current_timestamp())
+    token: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    payload_json: Mapped[str] = mapped_column(Text)
+    plan_json: Mapped[str] = mapped_column(Text)
+    result_json: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
 
 class Tag(Base):
@@ -229,6 +287,8 @@ class AccountRevision(Base):
     bill_id: Mapped[int] = mapped_column(ForeignKey("bills.id"))
     before_account: Mapped[str] = mapped_column(String(120))
     after_account: Mapped[str] = mapped_column(String(120))
+    before_account_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    after_account_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     action: Mapped[str] = mapped_column(String(40), default="confirm")
     actor: Mapped[str] = mapped_column(String(80), default="local-user")
     reason: Mapped[str] = mapped_column(Text, default="")
@@ -383,11 +443,15 @@ def init_db() -> None:
     ensure_target_schema()
     if DATABASE_URL.startswith("sqlite"):
         migrations = {
+            "account_revisions": {"before_account_id": "INTEGER", "after_account_id": "INTEGER"},
             "import_batches": {"batch_token": "VARCHAR(64)"},
             "ledger_origins": {"source_row_number": "INTEGER"},
             "bills": {
                 "currency": "VARCHAR(3) NOT NULL DEFAULT 'CNY'",
                 "account_name": "VARCHAR(120) NOT NULL DEFAULT '未提供账户'",
+                "account_id": "INTEGER",
+                "time_precision": "VARCHAR(12) NOT NULL DEFAULT 'second'",
+                "import_nature": "VARCHAR(24) NOT NULL DEFAULT 'ordinary'",
                 "aggregate_excluded": "BOOLEAN NOT NULL DEFAULT 0",
                 "transfer_group_id": "VARCHAR(64)",
                 "duplicate_of_id": "INTEGER",

@@ -13,4 +13,15 @@ Use `docs/data-model.md` as the target schema contract.
 - A richer repeat export adds another raw row; it does not overwrite the first raw row or accepted fact.
 - Core conflicts create `CONFLICT` raw state and require Review. Never silently replace amount, direction, time, or currency.
 - Keep row parsing set-oriented. Batch-check source references/fingerprints and batch-write accepted rows.
+- A preview first derives the current upload's identity keys, references, and
+  date bounds. Query only matching identities, evidence, origins, artifacts,
+  and candidate bills; never load those historical tables in full.
+- Confirmation preloads every referenced ID set and performs grouped flushes.
+  Do not call `get()`, `select()`, or `flush()` once per parsed row.
+- Alternate bank/wallet identities may share one fact. Keep the unique identity
+  mapping separate when a single `bill_fact.fact_key` cannot preserve them all.
+- Import previews are cold command state. Never read preview JSON, raw payloads,
+  or account details in ledger list/summary paths.
+- Multi-source support tables follow the common `id / created_time /
+  updated_time` contract and use implicit IDs without SQL foreign keys.
 - Missing required accounting fields do not receive fabricated defaults and do not produce a fact until resolved.

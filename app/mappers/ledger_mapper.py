@@ -3,11 +3,19 @@ from __future__ import annotations
 import json
 from datetime import datetime, time
 
-from sqlalchemy import asc, desc, func, select
+from sqlalchemy import asc, desc, func, select, union_all
 from sqlalchemy.orm import Session
 
 from app.core.errors import MultipleTagsForView, UnknownTagSelector
-from app.database import Bill, LedgerOrigin, TagAudit, TagView, ViewTag
+from app.database import (
+    Bill,
+    ImportBatch,
+    ImportEvidence,
+    LedgerOrigin,
+    TagAudit,
+    TagView,
+    ViewTag,
+)
 from app.schemas.ledger import LedgerBillVO, LedgerPageQuery, LedgerPageVO, LedgerTagVO
 
 
@@ -154,7 +162,18 @@ class LedgerMapper:
             clauses.append(func.abs(Bill.amount) <= query.amount_max)
         if query.source:
             clauses.append(Bill.id.in_(
-                select(LedgerOrigin.bill_id).where(LedgerOrigin.source_type.in_(query.source))
+                union_all(
+                    select(LedgerOrigin.bill_id).where(
+                        LedgerOrigin.source_type.in_(query.source)
+                    ),
+                    select(ImportEvidence.bill_id).join(
+                        ImportBatch,
+                        ImportBatch.id == ImportEvidence.import_batch_id,
+                    ).where(
+                        ImportEvidence.bill_id.is_not(None),
+                        ImportBatch.source_type.in_(query.source),
+                    ),
+                )
             ))
         if query.account:
             clauses.append(Bill.account_name.in_(query.account))

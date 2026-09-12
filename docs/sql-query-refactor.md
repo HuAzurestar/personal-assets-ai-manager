@@ -373,3 +373,23 @@ N+1 list paths. They remain lower priority unless profiling shows a slow query.
 - Detail queries are bounded to one explicitly requested entity/case.
 - New UI code uses paginated endpoints; compatibility endpoints remain temporary.
 - API response snapshots and existing regression tests must remain unchanged.
+
+## P3e/P3f completion update (2026-09-12)
+
+- [x] Empty development database reset authorised. There is no production data;
+  the user explicitly chose a destructive reset without backup or legacy-row
+  backfill. Real samples are verified in a separate temporary database first.
+- [x] Multi-source parsing merged from
+  `9ef5bf5a440fb311a24d2e80e3c543e250c5d90e` for Alipay, WeChat, CCB, ABC,
+  and CMB.
+- [x] Preview derives identity keys, references, and a date window first. It no
+  longer loads all bills, evidence, origins, identities, or artifacts.
+- [x] Confirmation batch-loads referenced accounts, bills, bindings, origins,
+  identities, review protection, and evidence state, then flushes grouped
+  writes. A regression gate proves that 20 rows do not add per-row SELECTs.
+- [x] Import API now follows Controller → Service → Mapper → DB. Existing UI
+  routes remain compatible; versioned `/paam/import/v1` routes return the stable
+  `{status,message,body}` envelope.
+- [x] Seven supplied files produce 827 evidence rows and 803 canonical
+  transactions in an empty temporary DB. Sequential reverse-order import,
+  confirmation replay, and reverse-order upload are idempotent.

@@ -177,11 +177,14 @@ def test_import_facts_are_atomic_traceable_and_cannot_be_deleted(client_and_sess
 
     imported = client.post("/api/imports/alipay?filename=statement.csv", content=ALIPAY_CSV)
     assert imported.status_code == 201
-    bill = next(bill for bill in client.get("/api/bills").json() if bill["import_batch_id"] == imported.json()["id"])
+    assert imported.json()["imported_count"] == 0
+    assert imported.json()["supplemented_count"] == 1
+    bill = client.get("/api/bills").json()[0]
     source = client.get(f"/api/transactions/{bill['id']}/source")
     assert source.status_code == 200
-    assert source.json()["batch"]["filename"] == "statement.csv"
-    assert source.json()["artifact"]["sha256"] == imported.json()["file_sha256"]
+    assert source.json()["batch"]["filename"] == "invalid.csv"
+    assert source.json()["artifact"]["sha256"] == failed.json()["file_sha256"]
+    assert [item['filename'] for item in source.json()['evidence']] == ['invalid.csv', 'statement.csv']
     assert source.json()["origin"]["source_reference"] == "ali-001"
     assert source.json()["origin"]["source_row_number"] == 4
     assert source.json()["raw_fields"]["交易号"] == "ali-001"
@@ -189,8 +192,8 @@ def test_import_facts_are_atomic_traceable_and_cannot_be_deleted(client_and_sess
     rejected = client.delete(f"/api/bills/{bill['id']}")
     assert rejected.status_code == 409
     with session_factory() as db:
-        assert db.query(Bill).count() == 2
-        assert db.query(LedgerOrigin).count() == 2
+        assert db.query(Bill).count() == 1
+        assert db.query(LedgerOrigin).count() == 1
 
 
 def test_import_ui_uses_a_one_request_password_field_without_browser_storage(client_and_session):
