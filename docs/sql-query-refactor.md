@@ -414,7 +414,20 @@ N+1 list paths. They remain lower priority unless profiling shows a slow query.
 - [x] Verify all seven supplied files through the target write path: 827 raw
   rows become 803 facts and 803 ledger projections while every compatibility
   table remains empty.
-- [ ] Switch review/projection commands to the target Review and Ledger tables.
+- [x] Switch financial Review commands to the target Review and Ledger tables.
+  `AA / LOAN_BORROW / LOAN_LEND / REFUND / TRANSFER / FX_EXCHANGE / DUPLICATE`
+  share one create/update/confirm/revoke/restore lifecycle. Commands batch-load
+  facts and active owners, append canonical before/after history, and rebuild
+  the affected hot component in the same transaction.
+- [x] Add target tag-dictionary commands. A view owns one protected
+  `unclassified` value, and creating/restoring a view assigns missing defaults
+  to all current ledger entries with set-oriented SQL.
+- [x] Add fixed-query Review/tag gates: Review list remains three SELECTs for
+  twenty cases; confirming one or twenty facts executes the same SELECT count;
+  tag dictionary list remains two SELECTs.
+- [ ] Define and implement TAG Review assignment semantics for a ledger entry
+  that combines several facts, including how assignments split on revoke.
+- [ ] Switch ACCOUNT and FACT_CONFLICT commands to unified target Review.
 - [ ] Switch the production UI from legacy transaction/review/tag contracts to
   the versioned target contracts.
 - [ ] Recreate the empty development database without the 23 legacy tables or
@@ -422,6 +435,7 @@ N+1 list paths. They remain lower priority unless profiling shows a slow query.
   an explicitly separate module.
 
 The physical delete remains intentionally last. The target-only runtime now
-proves that the replacement import/list/detail/summary core does not require a
-legacy table; Review and tag commands are the remaining functional dependency,
-not a data-migration or backup dependency.
+proves that the replacement import/list/detail/summary and financial Review core
+does not require a legacy table. TAG assignment, ACCOUNT/FACT_CONFLICT commands,
+and the UI switch are the remaining functional dependencies, not a data-migration
+or backup dependency.

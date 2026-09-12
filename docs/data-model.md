@@ -140,6 +140,20 @@ history; reopen reverses the preceding dismiss without erasing its evidence.
 
 `(case_id, version)` and non-empty `idempotency_key` are unique. History rows are never updated or deleted; undo appends a reversing row.
 
+Versioned financial Review commands are exposed under `/paam/review/v1`.
+Creation always starts at `PENDING`; edits replace current lines only while a
+case is pending or revoked, while history retains every preceding aggregate.
+Confirmation publishes one connected hot projection, revocation splits its
+facts back into default projections, and restoration republishes the reviewed
+component. Every transition checks `expected_version`, is idempotent by a
+non-empty command key, and updates Review plus projection in one transaction.
+
+Role direction and allocation policy runs in the backend. An omitted line
+amount receives that fact's remaining amount; multiple omitted allocations for
+one fact are rejected as ambiguous. Explicit allocations may be partial but may
+never exceed the immutable fact amount. A fact cannot belong to two confirmed
+financial cases.
+
 ## Enhanced hot ledger
 
 ### `ledger_entry` — published atomic ledger projection
@@ -242,6 +256,12 @@ The active `unclassified` value is used unless a confirmed TAG Review supplies
 an authoritative value. All facts combined into one ledger entry must agree on
 that value; conflicting confirmed values are a migration blocker rather than a
 last-write-wins choice. Pending suggestions never affect the hot projection.
+
+Target dictionary commands are exposed under `/paam/tag/v1`. Creating a view
+also creates its protected `unclassified` value and fills missing defaults for
+existing hot entries with one set-oriented statement. New default projections
+receive the same active-view defaults in bounded batches. Views and values are
+archived rather than physically deleted.
 
 ## Hot summary contract
 

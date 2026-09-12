@@ -47,3 +47,25 @@ class DefaultProjectionWriteVO:
     input_hash: str
     created_time: datetime
     updated_time: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class FinancialProjectionWriteVO:
+    fact_ids: tuple[int, ...]
+    case_id: int
+    ledger_type: str
+    allocation_status: str
+    title: str
+    start_time: datetime
+    end_time: datetime
+    in_amount_value: int
+    in_amount_scale: int
+    in_currency_code: str
+    out_amount_value: int
+    out_amount_scale: int
+    out_currency_code: str
+    in_account_code: str
+    out_account_code: str
+    input_hash: str
+    created_time: datetime
+    updated_time: datetime

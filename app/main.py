@@ -26,6 +26,8 @@ from app.api.controllers.review import router as review_router
 from app.api.controllers.tag import router as tag_router
 from app.api.controllers.tag_view import router as tag_view_router
 from app.api.controllers.target_ledger import router as target_ledger_router, v1_router as target_ledger_v1_router
+from app.api.controllers.target_review import router as target_review_router
+from app.api.controllers.target_tag import router as target_tag_router
 from app.api.deps import get_db
 from app.config import APP_DISPLAY_NAME, APP_SLUG
 from app.database import AccountRevision, AssetSnapshot, Bill, BillViewTag, CandidateActionLog, ImportArtifact, ImportBatch, LedgerOrigin, RefundAllocation, ReviewCandidate, SessionLocal, TagAudit, TagView, ViewTag, init_db
@@ -65,6 +67,8 @@ app.include_router(tag_router)
 app.include_router(tag_view_router)
 app.include_router(target_ledger_router)
 app.include_router(target_ledger_v1_router)
+app.include_router(target_review_router)
+app.include_router(target_tag_router)
 templates = Jinja2Templates(directory=APP_DIR / "templates")
 
 

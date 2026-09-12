@@ -10,8 +10,11 @@ from app.models.target import (
     BillRaw,
     LedgerEntry,
     LedgerEntrySource,
+    LedgerEntryTag,
     ReviewCase,
     ReviewCaseBill,
+    TargetTag,
+    TargetTagView,
 )
 from app.schemas.target_projection import (
     DefaultProjectionFactVO,
@@ -53,7 +56,7 @@ class TargetProjectionMapper:
             BillFact.summary,
             BillFact.created_time,
             BillFact.updated_time,
-        ).where(BillFact.id.in_(fact_ids))).mappings().all()
+        ).where(BillFact.id.in_(fact_ids)).order_by(BillFact.id)).mappings().all()
         return tuple(DefaultProjectionFactVO(**row) for row in rows)
 
     def nature_evidence(
@@ -115,9 +118,14 @@ class TargetProjectionMapper:
             )).all()
         }
         pending_sources = []
+        assigned_ledger_ids: set[int] = set()
         for value in values:
             source = sources.get(value.fact_id)
             entry = entries.get(source.ledger_id) if source is not None else None
+            if entry is not None and entry.id in assigned_ledger_ids:
+                # A revoked financial Review leaves several fact sources on one
+                # hot entry. Split them before restoring per-fact defaults.
+                entry = None
             fields = {
                 "ledger_type": value.ledger_type,
                 "allocation_status": value.allocation_status,
@@ -136,27 +144,70 @@ class TargetProjectionMapper:
                 "updated_time": value.updated_time,
             }
             if entry is None:
-                if source is not None:
-                    raise RuntimeError(
-                        f"ledger source for fact {value.fact_id} points to missing entry"
-                    )
                 entry = LedgerEntry(
                     created_time=value.created_time,
                     projection_version=1,
                     **fields,
                 )
                 self.db.add(entry)
-                pending_sources.append((value, entry))
+                pending_sources.append((value, entry, source))
             elif entry.input_hash != value.input_hash:
                 for key, item in fields.items():
                     setattr(entry, key, item)
                 entry.projection_version += 1
+            if entry.id is not None:
+                assigned_ledger_ids.add(entry.id)
         self.db.flush()
-        for value, entry in pending_sources:
-            self.db.add(LedgerEntrySource(
-                ledger_id=entry.id,
-                source_kind="BILL_FACT",
-                source_id=value.fact_id,
-                created_time=value.created_time,
-                updated_time=value.updated_time,
-            ))
+        for value, entry, source in pending_sources:
+            if source is None:
+                self.db.add(LedgerEntrySource(
+                    ledger_id=entry.id,
+                    source_kind="BILL_FACT",
+                    source_id=value.fact_id,
+                    created_time=value.created_time,
+                    updated_time=value.updated_time,
+                ))
+            else:
+                source.ledger_id = entry.id
+                source.updated_time = value.updated_time
+        self.db.flush()
+        self._ensure_default_tags([entry.id for entry in entries.values()] + [
+            entry.id for _value, entry, _source in pending_sources
+        ])
+
+    def _ensure_default_tags(self, ledger_ids: list[int]) -> None:
+        ledger_ids = list(dict.fromkeys(ledger_ids))
+        if not ledger_ids:
+            return
+        defaults = self.db.execute(select(
+            TargetTag.view_id,
+            TargetTag.id,
+        ).join(
+            TargetTagView,
+            TargetTagView.id == TargetTag.view_id,
+        ).where(
+            TargetTagView.status == "ACTIVE",
+            TargetTag.status == "ACTIVE",
+            TargetTag.system_name == "unclassified",
+        )).mappings().all()
+        if not defaults:
+            return
+        view_by_tag = {row["id"]: row["view_id"] for row in defaults}
+        existing = self.db.execute(select(
+            LedgerEntryTag.ledger_id,
+            TargetTag.view_id,
+        ).join(
+            TargetTag,
+            TargetTag.id == LedgerEntryTag.tag_id,
+        ).where(
+            LedgerEntryTag.ledger_id.in_(ledger_ids),
+            TargetTag.view_id.in_(list(view_by_tag.values())),
+        )).all()
+        existing_pairs = set(existing)
+        for ledger_id in ledger_ids:
+            for row in defaults:
+                if (ledger_id, row["view_id"]) not in existing_pairs:
+                    self.db.add(LedgerEntryTag(
+                        ledger_id=ledger_id,
+                        tag_id=row["id"],
+                    ))

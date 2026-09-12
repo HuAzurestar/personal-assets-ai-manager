@@ -11,6 +11,8 @@ from fastapi import FastAPI
 
 from app.api.controllers.intake import target_router as target_intake_router
 from app.api.controllers.target_ledger import v1_router as target_ledger_router
+from app.api.controllers.target_review import router as target_review_router
+from app.api.controllers.target_tag import router as target_tag_router
 from app.config import APP_DISPLAY_NAME
 from app.database import init_target_db
 
@@ -28,6 +30,8 @@ app = FastAPI(
 )
 app.include_router(target_intake_router)
 app.include_router(target_ledger_router)
+app.include_router(target_review_router)
+app.include_router(target_tag_router)
 
 
 @app.get("/api/health")
