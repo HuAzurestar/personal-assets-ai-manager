@@ -63,6 +63,47 @@ def test_bulk_merge_preserves_other_dimensions_and_is_atomic(ui_client):
     assert client.get('/api/transactions?tag=project:travel').json()['total'] == 2
 
 
+def test_tag_definition_updates_archive_instead_of_deleting(ui_client):
+    client, _ = ui_client
+    created = client.post('/api/tag-views', json={
+        'name': '业务用途',
+        'system_name': 'business_use',
+    })
+    assert created.status_code == 201
+    view = created.json()
+    unclassified = next(tag for tag in view['tags'] if tag['is_unclassified'])
+
+    tag = client.post(f"/api/tag-views/{view['id']}/tags", json={
+        'name': '差旅',
+        'system_name': 'travel',
+    }).json()
+    renamed = client.patch(
+        f"/api/tag-views/{view['id']}/tags/{tag['id']}",
+        json={'name': '出差', 'archived': True},
+    )
+    assert renamed.status_code == 200
+    assert renamed.json()['name'] == '出差' and renamed.json()['archived']
+    assert client.patch(
+        f"/api/tag-views/{view['id']}/tags/{unclassified['id']}",
+        json={'archived': True},
+    ).status_code == 422
+    assert client.delete(
+        f"/api/tag-views/{view['id']}/tags/{tag['id']}"
+    ).status_code == 409
+
+    archived = client.patch(
+        f"/api/tag-views/{view['id']}",
+        json={'name': '业务场景', 'archived': True},
+    )
+    assert archived.status_code == 200
+    assert archived.json()['name'] == '业务场景' and archived.json()['archived']
+    assert all(item['id'] != view['id'] for item in client.get('/api/tag-views').json())
+    assert any(
+        item['id'] == view['id']
+        for item in client.get('/api/tag-views?include_archived=true').json()
+    )
+
+
 def test_new_workbench_is_the_served_entrypoint(ui_client):
     client, _ = ui_client
     html = client.get('/').text
@@ -70,6 +111,29 @@ def test_new_workbench_is_the_served_entrypoint(ui_client):
     assert 'workspace-next.js' not in html
     assert client.get('/static/ledger.js').status_code == 200
     assert client.get('/static/style-cards.html').status_code == 200
+
+
+def test_cold_review_lists_use_paged_summaries_and_lazy_details(ui_client):
+    client, _ = ui_client
+    for path in (
+        '/api/review-matters/page?page_size=20',
+        '/api/refunds/page?page_size=20',
+        '/api/import-issues/page?page_size=20',
+    ):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert set(response.json()) == {'items', 'total', 'page', 'page_size'}
+
+    review_script = client.get('/static/review.js').text
+    assert '/api/review-matters/page?page=${pageNumber}&page_size=50' in review_script
+    assert '/api/refunds/page?page=${pageNumber}&page_size=50' in review_script
+    assert '/api/import-issues/page?page=${pageNumber}&page_size=50' in review_script
+    assert 'data-matter-next' in review_script
+    assert 'data-refund-next' in review_script
+    assert 'data-issue-next' in review_script
+    assert 'request(`/api/review-matters/${b.dataset.edit}`)' in review_script
+    assert 'request(`/api/refunds/${billId}`)' in review_script
+    assert 'request(`/api/import-issues/${b.dataset.issueDetail}`)' in review_script
 
 
 def test_confirmed_transfer_filter_includes_personal_and_third_party(ui_client):

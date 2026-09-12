@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine, inspect, select, text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, create_engine, inspect, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 from app.config import DATABASE_URL, ensure_data_dir
@@ -19,6 +19,7 @@ class Base(DeclarativeBase):
 
 class Bill(Base):
     __tablename__ = "bills"
+    __table_args__ = (Index("ix_bills_occurred_at_id", "occurred_at", "id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     occurred_at: Mapped[str] = mapped_column(DateTime(timezone=False))
@@ -158,6 +159,7 @@ class ImportIssueAction(Base):
 
 class TagAudit(Base):
     __tablename__ = "tag_audits"
+    __table_args__ = (Index("ix_tag_audits_bill_current_id", "bill_id", "superseded", "id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     bill_id: Mapped[int] = mapped_column(ForeignKey("bills.id"))
@@ -203,6 +205,7 @@ class ReviewCandidate(Base):
 
 class CandidateActionLog(Base):
     __tablename__ = "candidate_action_logs"
+    __table_args__ = (Index("ix_candidate_action_logs_candidate_id_id", "candidate_id", "id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     candidate_id: Mapped[int] = mapped_column(ForeignKey("review_candidates.id"))
@@ -239,6 +242,10 @@ class AccountRevision(Base):
 
 class RefundAllocation(Base):
     __tablename__ = "refund_allocations"
+    __table_args__ = (
+        Index("ix_refund_allocations_refund_status_id", "refund_bill_id", "status", "id"),
+        Index("ix_refund_allocations_expense_status_id", "expense_bill_id", "status", "id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     refund_bill_id: Mapped[int] = mapped_column(ForeignKey("bills.id"))
@@ -321,8 +328,59 @@ class AssetSnapshot(Base):
     recorded_at: Mapped[str] = mapped_column(DateTime(timezone=False))
 
 
+# Target tables live in their own module, but must be imported before
+# ``create_all`` so they participate in the same metadata without coupling the
+# legacy models to the migration implementation.
+from app.models import target as _target_models  # noqa: E402,F401
+
+
+TARGET_TABLE_NAMES = (
+    "import_file",
+    "bill_raw",
+    "bill_fact",
+    "review_case",
+    "review_case_bill",
+    "review_history",
+    "ledger_entry",
+    "ledger_entry_source",
+    "tag_view",
+    "tag",
+    "ledger_entry_tag",
+)
+
+
+def ensure_target_schema() -> None:
+    """Create/advance only the shadow schema; never migrate legacy data."""
+    for table_name in TARGET_TABLE_NAMES:
+        Base.metadata.tables[table_name].create(bind=engine, checkfirst=True)
+    if DATABASE_URL.startswith("sqlite"):
+        additions = {
+            "review_case_bill": {
+                "party": "VARCHAR(120) NOT NULL DEFAULT ''",
+            },
+            "bill_fact": {
+                "account_code": "VARCHAR(120) NOT NULL DEFAULT 'UNKNOWN'",
+            },
+            "ledger_entry": {
+                "in_account_code": "VARCHAR(120) NOT NULL DEFAULT 'UNKNOWN'",
+                "out_account_code": "VARCHAR(120) NOT NULL DEFAULT 'UNKNOWN'",
+            },
+        }
+        with engine.begin() as connection:
+            for table_name, definitions in additions.items():
+                columns = {
+                    item["name"] for item in inspect(engine).get_columns(table_name)
+                }
+                for column_name, definition in definitions.items():
+                    if column_name not in columns:
+                        connection.execute(text(
+                            f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}"
+                        ))
+
+
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
+    ensure_target_schema()
     if DATABASE_URL.startswith("sqlite"):
         migrations = {
             "import_batches": {"batch_token": "VARCHAR(64)"},
@@ -401,6 +459,11 @@ def init_db() -> None:
             connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_view_tags_view_system_name ON view_tags(view_id, system_name) WHERE system_name <> ''"))
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_bills_tag_state_category_page ON bills(json_extract(tag_state_json, '$.category'), occurred_at DESC, id DESC)"))
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_bills_tag_state_scenario_page ON bills(json_extract(tag_state_json, '$.scenario'), occurred_at DESC, id DESC)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_bills_occurred_at_id ON bills(occurred_at, id)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_candidate_action_logs_candidate_id_id ON candidate_action_logs(candidate_id, id)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_refund_allocations_refund_status_id ON refund_allocations(refund_bill_id, status, id)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_refund_allocations_expense_status_id ON refund_allocations(expense_bill_id, status, id)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_tag_audits_bill_current_id ON tag_audits(bill_id, superseded, id)"))
     with SessionLocal() as session:
         # Preserve evidence of refund nature even when old allocations were revoked.
         for bill_id in session.scalars(select(RefundAllocation.refund_bill_id).distinct()).all():

@@ -5,14 +5,24 @@ export function reviewTools(h) {
   const key = () => crypto.randomUUID();
   const saved = async (d, text) => { d.close(); await render({ preservePosition: true }); toast(text); };
 
-  async function matters() {
-    const items = await request("/api/review-matters");
-    const d = modal("手工事项与往来", `<p>将一次 AA、代付、借还款或分次转账的金额分别解释。建议不影响这里已确认的分配。</p><button data-new>新建事项</button>${items.map(m => `<section class="panel"><h3>${esc(m.title)} · ${m.status === "confirmed" ? "已确认" : "已撤销"}</h3><p>${m.scenarios.map(esc).join(" / ")}</p><p>${m.status === "confirmed" ? m.balances.map(b => `${b.kind === "receivable" ? "应收" : "应付"} ${esc(b.party)} ${money(b.amount_cents / 100)}`).join("；") || "无往来余额" : "当前不占用流水金额"}</p><button data-edit="${m.id}">${m.status === "confirmed" ? "修改关联与分配" : "查看 / 重新确认"}</button> <button data-history="${m.id}">修改历史</button>${m.status === "confirmed" ? ` <button data-revoke="${m.id}">撤销事项</button>` : ""}</section>`).join("") || "<p>暂无手工事项。可从流水页选中记录后建立。</p>"}`, { wide: true });
+  async function matters(pageNumber = 1) {
+    const page = await request(`/api/review-matters/page?page=${pageNumber}&page_size=50`);
+    const items = page.items;
+    const totalPages = Math.max(1, Math.ceil(page.total / page.page_size));
+    const pager = `<div class="actions">${page.page > 1 ? '<button data-matter-prev>上一页</button>' : ''}<span>第 ${page.page}/${totalPages} 页</span>${page.page < totalPages ? '<button data-matter-next>下一页</button>' : ''}</div>`;
+    const d = modal("手工事项与往来", `<p>将一次 AA、代付、借还款或分次转账的金额分别解释。建议不影响这里已确认的分配。</p><p class="muted">共 ${page.total} 项，本页 ${items.length} 项；账单明细和修改历史仅在打开事项时读取。</p><button data-new>新建事项</button>${items.map(m => `<section class="panel"><h3>${esc(m.title)} · ${m.status === "confirmed" ? "已确认" : "已撤销"}</h3><p>${m.scenarios.map(esc).join(" / ")} · ${m.line_count} 个金额分项</p><p>${m.status === "confirmed" ? m.balances.map(b => `${b.kind === "receivable" ? "应收" : "应付"} ${esc(b.party)} ${money(b.amount_cents / 100)}`).join("；") || "无往来余额" : "当前不占用流水金额"}</p><button data-edit="${m.id}">${m.status === "confirmed" ? "修改关联与分配" : "查看 / 重新确认"}</button> <button data-history="${m.id}">修改历史</button>${m.status === "confirmed" ? ` <button data-revoke="${m.id}">撤销事项</button>` : ""}</section>`).join("") || "<p>暂无手工事项。可从流水页选中记录后建立。</p>"}${pager}`, { wide: true });
+    $('[data-matter-prev]', d)?.addEventListener('click', () => { d.close(); matters(page.page - 1).catch(e => toast(e.message)); });
+    $('[data-matter-next]', d)?.addEventListener('click', () => { d.close(); matters(page.page + 1).catch(e => toast(e.message)); });
     $("[data-new]", d).onclick = () => { d.close(); editor().catch(e => toast(e.message)); };
-    $$('[data-edit]', d).forEach(b => b.onclick = () => { d.close(); editor(items.find(m => m.id === Number(b.dataset.edit))).catch(e => toast(e.message)); });
-    $$('[data-history]', d).forEach(b => b.onclick = () => {
-      const m = items.find(m => m.id === Number(b.dataset.history));
-      modal("事项修改历史", m.history.map(row => `<section><h3>第 ${row.version} 次 · ${row.action === "revoke" ? "撤销" : "确认"}</h3><p>${date(row.created_at)} · ${esc(row.actor)} · ${esc(row.reason) || "未填写说明"}</p><pre>${esc(JSON.stringify(row.snapshot, null, 2))}</pre></section>`).join(""));
+    $$('[data-edit]', d).forEach(b => b.onclick = async () => {
+      try { const detail = await request(`/api/review-matters/${b.dataset.edit}`); d.close(); await editor(detail); }
+      catch (error) { toast(error.message); }
+    });
+    $$('[data-history]', d).forEach(b => b.onclick = async () => {
+      try {
+        const detail = await request(`/api/review-matters/${b.dataset.history}`);
+        modal("事项修改历史", detail.history.map(row => `<section><h3>第 ${row.version} 次 · ${row.action === "revoke" ? "撤销" : "确认"}</h3><p>${date(row.created_at)} · ${esc(row.actor)} · ${esc(row.reason) || "未填写说明"}</p><pre>${esc(JSON.stringify(row.snapshot, null, 2))}</pre></section>`).join(""));
+      } catch (error) { toast(error.message); }
     });
     $$('[data-revoke]', d).forEach(b => b.onclick = () => formSave(d, async () => {
       const m = items.find(m => m.id === Number(b.dataset.revoke));
@@ -72,10 +82,24 @@ export function reviewTools(h) {
     };
   }
 
-  async function refunds() {
-    const items = await request('/api/refunds');
-    const d = modal('退款记录', `<p>退款不属于收入。撤销分配后，金额回到未分配退款；纠正退款性质需要先撤销全部有效分配。</p>${items.map(item => `<section class="panel"><h3>${esc(item.bill.merchant)} · ${money(item.bill.amount)}</h3><p>未分配退款 ${money(item.unallocated)}</p><button data-allocate="${item.bill.id}">关联原支出</button> <button data-nature="${item.bill.id}">纠正退款性质</button>${item.allocations.map(a => `<p>原支出流水 ${a.expense_bill_id} · ${money(a.amount)} · ${a.status === 'confirmed' ? '已确认' : '已撤销'} ${a.status === 'confirmed' ? `<button data-undo-refund="${a.id}">撤销此分配</button>` : ''} <button data-audit="${a.id}">查看审计</button></p>`).join('')}</section>`).join('') || '<p>暂无退款。在正向流水详情中选择“确认为退款”。</p>'}`, { wide: true });
-    $$('[data-allocate]', d).forEach(b => b.onclick = () => { d.close(); refundAllocation(Number(b.dataset.allocate)).catch(e => toast(e.message)); });
+  async function refunds(pageNumber = 1) {
+    const page = await request(`/api/refunds/page?page=${pageNumber}&page_size=50`);
+    const items = page.items;
+    const totalPages = Math.max(1, Math.ceil(page.total / page.page_size));
+    const pager = `<div class="actions">${page.page > 1 ? '<button data-refund-prev>上一页</button>' : ''}<span>第 ${page.page}/${totalPages} 页</span>${page.page < totalPages ? '<button data-refund-next>下一页</button>' : ''}</div>`;
+    const d = modal('退款记录', `<p>退款不属于收入。撤销分配后，金额回到未分配退款；纠正退款性质需要先撤销全部有效分配。</p><p class="muted">共 ${page.total} 笔，本页 ${items.length} 笔；分配和审计在打开详情时读取。</p>${items.map(item => `<section class="panel"><h3>${esc(item.bill.merchant)} · ${money(item.bill.amount)}</h3><p>已分配 ${money(item.allocated)}，未分配 ${money(item.unallocated)} · ${item.confirmed_allocation_count}/${item.allocation_count} 个有效/全部分配</p><button data-refund-detail="${item.bill.id}">查看与处理</button></section>`).join('') || '<p>暂无退款。在正向流水详情中选择“确认为退款”。</p>'}${pager}`, { wide: true });
+    $('[data-refund-prev]', d)?.addEventListener('click', () => { d.close(); refunds(page.page - 1).catch(e => toast(e.message)); });
+    $('[data-refund-next]', d)?.addEventListener('click', () => { d.close(); refunds(page.page + 1).catch(e => toast(e.message)); });
+    $$('[data-refund-detail]', d).forEach(b => b.onclick = () => {
+      d.close();
+      refundDetail(Number(b.dataset.refundDetail)).catch(error => toast(error.message));
+    });
+  }
+
+  async function refundDetail(billId) {
+    const item = await request(`/api/refunds/${billId}`);
+    const d = modal('退款详情', `<section class="panel"><h3>${esc(item.bill.merchant)} · ${money(item.bill.amount)}</h3><p>未分配退款 ${money(item.unallocated)}</p><button data-allocate="${item.bill.id}">关联原支出</button> <button data-nature="${item.bill.id}">纠正退款性质</button>${item.allocations.map(a => `<p>原支出流水 ${a.expense_bill_id} · ${money(a.amount)} · ${a.status === 'confirmed' ? '已确认' : '已撤销'} ${a.status === 'confirmed' ? `<button data-undo-refund="${a.id}">撤销此分配</button>` : ''} <button data-audit="${a.id}">查看审计</button></p>`).join('')}<details><summary>退款性质历史</summary><pre>${esc(JSON.stringify(item.history, null, 2))}</pre></details></section>`, { wide: true });
+    $('[data-allocate]', d).onclick = () => { d.close(); refundAllocation(item.bill.id).catch(e => toast(e.message)); };
     $$('[data-audit]', d).forEach(b => b.onclick = async () => { try { const audits = await request(`/api/refund-allocations/${b.dataset.audit}/audits`); modal('退款分配审计', `<pre>${esc(JSON.stringify(audits, null, 2))}</pre>`); } catch(e) { toast(e.message); } });
     $$('[data-undo-refund]', d).forEach(b => b.onclick = () => formSave(d, async () => {
       if (!(await confirmReview('只撤销选中的退款分配，其他分配保持有效；本笔金额回到未分配退款。'))) return;
@@ -83,7 +107,6 @@ export function reviewTools(h) {
       d.close(); await render({ preservePosition: true }); await refunds();
     }));
     $$('[data-nature]', d).forEach(b => b.onclick = () => formSave(d, async () => {
-      const item = items.find(i => i.bill.id === Number(b.dataset.nature));
       if (!(await confirmReview('撤销退款性质后，该正向流水会恢复为普通流入并进入原有收入口径。'))) return;
       await jsonRequest(`/api/transactions/${item.bill.id}/nature`, 'PUT', { nature: 'ordinary', expected_audit_id: item.nature_audit_id, reason: '用户纠正错误的退款性质', idempotency_key: b.dataset.idempotencyKey ||= key() });
       await saved(d, '退款性质已纠正');
@@ -109,22 +132,35 @@ export function reviewTools(h) {
     };
   }
 
-  async function issues() {
-    const items = await request('/api/import-issues');
+  async function issues(pageNumber = 1) {
+    const page = await request(`/api/import-issues/page?page=${pageNumber}&page_size=50`);
+    const items = page.items;
     const pending = items.filter(i => !i.resolved_at);
-    const d = modal('导入数据问题', `<p role="status">${pending.length} 条待核验。原始字段已保存；这些记录在修正前不进入正式金额。</p>${items.map(i => `<section class="panel"><h3>${esc(i.filename)} · 第 ${i.row_number} 行</h3><p class="${i.resolved_at ? 'muted' : 'error'}">${esc(i.error)}</p><details><summary>原始字段与处理依据</summary><pre>${esc(JSON.stringify(i.raw_fields, null, 2))}</pre><pre>${esc(JSON.stringify(i.history, null, 2))}</pre></details>${i.resolved_at ? `<p>已处理 · ${i.bill_id ? `流水 ${i.bill_id}` : '非实际人民币收付'} · ${date(i.resolved_at)}</p>${!i.bill_id ? `<button data-reopen="${i.id}">重新核验</button>` : ''}` : `<button data-correct="${i.id}">核对并修正</button>`}</section>`).join('') || '<p>没有数据问题。</p>'}`, { wide: true });
+    const totalPages = Math.max(1, Math.ceil(page.total / page.page_size));
+    const pager = `<div class="actions">${page.page > 1 ? '<button data-issue-prev>上一页</button>' : ''}<span>第 ${page.page}/${totalPages} 页</span>${page.page < totalPages ? '<button data-issue-next>下一页</button>' : ''}</div>`;
+    const d = modal('导入数据问题', `<p role="status">本页 ${pending.length} 条待核验，共 ${page.total} 条。原始字段和处理历史仅在打开详情时读取。</p>${items.map(i => `<section class="panel"><h3>${esc(i.filename)} · 第 ${i.row_number} 行</h3><p class="${i.resolved_at ? 'muted' : 'error'}">${esc(i.error)}</p>${i.resolved_at ? `<p>已处理 · ${i.bill_id ? `流水 ${i.bill_id}` : '非实际人民币收付'} · ${date(i.resolved_at)}</p>${!i.bill_id ? `<button data-reopen="${i.id}">重新核验</button>` : ''}` : `<button data-correct="${i.id}">核对并修正</button>`} <button data-issue-detail="${i.id}">查看原始证据</button></section>`).join('') || '<p>没有数据问题。</p>'}${pager}`, { wide: true });
+    $('[data-issue-prev]', d)?.addEventListener('click', () => { d.close(); issues(page.page - 1).catch(e => toast(e.message)); });
+    $('[data-issue-next]', d)?.addEventListener('click', () => { d.close(); issues(page.page + 1).catch(e => toast(e.message)); });
     $$('[data-reopen]', d).forEach(b => b.onclick = () => formSave(d, async () => { await jsonRequest(`/api/import-issues/${b.dataset.reopen}/reopen`, 'POST', {reason: '用户重新核验原始记录'}); d.close(); await issues(); }));
-    $$('[data-correct]', d).forEach(b => b.onclick = () => {
-      const item = items.find(i => i.id === Number(b.dataset.correct));
-      const edit = modal('修正导入记录', `<pre>${esc(JSON.stringify(item.raw_fields, null, 2))}</pre><form>${input('occurred_at', '实际交易时间', 'datetime-local', '', 'required step="1"')}${input('merchant', '交易方', 'text', '', 'required maxlength="200"')}${input('amount', '人民币金额（流出填负数）', 'number', '', 'required step="0.01"')}${input('account_name', '账户', 'text', '', 'required maxlength="120"')}${input('note', '备注', 'text', '')}${input('reason', '修正依据', 'text', '', 'required maxlength="500"')}<p>请核验确实发生了人民币收付。外币或失败交易不能当作人民币付款补入。</p><button class="primary">确认修正并入账</button></form>`);
-      $('form', edit).onsubmit = e => { e.preventDefault(); const payload = Object.fromEntries(new FormData(e.currentTarget)); payload.amount = Number(payload.amount); formSave(edit, async () => { await jsonRequest(`/api/import-issues/${item.id}/resolve`, 'POST', payload); d.close(); await saved(edit, '记录已修正，原始字段保留'); }); };
-      $('form', edit).insertAdjacentHTML('beforeend', '<button type="button" data-not-posted>确认不是实际人民币收付</button>');
-      $('[data-not-posted]', edit).onclick = () => formSave(edit, async () => {
-        const reason = $('[name=reason]', edit).value;
-        if (!(await confirmReview('将此记录确认为非实际人民币收付，不新增账目；原始字段和处理依据保留。'))) return;
-        await jsonRequest(`/api/import-issues/${item.id}/dismiss`, 'POST', {reason});
-        d.close(); await saved(edit, '处理依据已保存，原始记录保留');
-      });
+    $$('[data-issue-detail]', d).forEach(b => b.onclick = async () => {
+      try { const item = await request(`/api/import-issues/${b.dataset.issueDetail}`); modal('导入问题原始证据', `<pre>${esc(JSON.stringify(item.raw_fields, null, 2))}</pre><pre>${esc(JSON.stringify(item.history, null, 2))}</pre>`); }
+      catch (error) { toast(error.message); }
+    });
+    $$('[data-correct]', d).forEach(b => b.onclick = async () => {
+      try {
+        const item = await request(`/api/import-issues/${b.dataset.correct}`);
+        const edit = modal('修正导入记录', `<pre>${esc(JSON.stringify(item.raw_fields, null, 2))}</pre><form>${input('occurred_at', '实际交易时间', 'datetime-local', '', 'required step="1"')}${input('merchant', '交易方', 'text', '', 'required maxlength="200"')}${input('amount', '人民币金额（流出填负数）', 'number', '', 'required step="0.01"')}${input('account_name', '账户', 'text', '', 'required maxlength="120"')}${input('note', '备注', 'text', '')}${input('reason', '修正依据', 'text', '', 'required maxlength="500"')}<p>请核验确实发生了人民币收付。外币或失败交易不能当作人民币付款补入。</p><button class="primary">确认修正并入账</button></form>`);
+        $('form', edit).onsubmit = e => { e.preventDefault(); const payload = Object.fromEntries(new FormData(e.currentTarget)); payload.amount = Number(payload.amount); formSave(edit, async () => { await jsonRequest(`/api/import-issues/${item.id}/resolve`, 'POST', payload); d.close(); await saved(edit, '记录已修正，原始字段保留'); }); };
+        $('form', edit).insertAdjacentHTML('beforeend', '<button type="button" data-not-posted>确认不是实际人民币收付</button>');
+        $('[data-not-posted]', edit).onclick = () => formSave(edit, async () => {
+          const reason = $('[name=reason]', edit).value;
+          if (!(await confirmReview('将此记录确认为非实际人民币收付，不新增账目；原始字段和处理依据保留。'))) return;
+          await jsonRequest(`/api/import-issues/${item.id}/dismiss`, 'POST', {reason});
+          d.close(); await saved(edit, '处理依据已保存，原始记录保留');
+        });
+      } catch (error) {
+        toast(error.message);
+      }
     });
   }
 

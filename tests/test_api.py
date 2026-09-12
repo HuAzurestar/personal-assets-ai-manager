@@ -15,16 +15,32 @@ from app.main import app, get_db
 
 
 def test_health_and_bill_flow(tmp_path, monkeypatch):
-    # Application setup uses a persistent DB in normal operation; this baseline
-    # test validates the public health surface independently of user data.
-    with TestClient(app) as client:
-        assert client.get("/api/health").json()["status"] == "ok"
-        assert client.get("/api/health").json()["service"] == "personal-assets-ai-manager"
-        created = client.post("/api/bills", json={"occurred_at": "2026-08-25T10:00:00", "merchant": "滴滴出行", "amount": -18.5, "note": "通勤"})
-        assert created.status_code == 201
-        assert created.json()["category"] == "未分类"
-        assert client.get(f"/api/bills/{created.json()['id']}/tags").json()[0]["action"] == "suggest"
-        assert client.get("/api/dashboard").status_code == 200
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'health-flow.db'}",
+        connect_args={"check_same_thread": False},
+    )
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    monkeypatch.setattr(database, "DATABASE_URL", f"sqlite:///{tmp_path / 'health-flow.db'}")
+    monkeypatch.setattr(database, "engine", engine)
+    monkeypatch.setattr(database, "SessionLocal", session_factory)
+
+    def override_db():
+        with session_factory() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = override_db
+    try:
+        with TestClient(app) as client:
+            assert client.get("/api/health").json()["status"] == "ok"
+            assert client.get("/api/health").json()["service"] == "personal-assets-ai-manager"
+            created = client.post("/api/bills", json={"occurred_at": "2026-08-25T10:00:00", "merchant": "滴滴出行", "amount": -18.5, "note": "通勤"})
+            assert created.status_code == 201
+            assert created.json()["category"] == "未分类"
+            assert client.get(f"/api/bills/{created.json()['id']}/tags").json()[0]["action"] == "suggest"
+            assert client.get("/api/dashboard").status_code == 200
+    finally:
+        app.dependency_overrides.clear()
+        engine.dispose()
 
 
 def test_init_db_assigns_system_names_to_all_default_tags(tmp_path, monkeypatch):

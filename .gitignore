@@ -9,7 +9,6 @@ build/
 .env
 .agent_context/
 .multica/
-AGENTS.md
 task_plan.md
 findings.md
 progress.md

@@ -52,6 +52,10 @@ def test_aa_partial_payment_rounding_edit_and_immutable_revisions(ledger):
     created = client.post('/api/review-matters', json=payload)
     assert created.status_code == 201, created.text
     m = created.json()
+    detail = client.get(f"/api/review-matters/{m['id']}")
+    assert detail.status_code == 200
+    assert detail.json()['lines'][0]['merchant'] == '聚餐'
+    assert len(detail.json()['history']) == 1
     assert m['balances'][0]['amount_cents'] == 1
     assert client.post('/api/review-matters', json=payload).json()['id'] == m['id']
     summary = client.get('/api/dashboard').json()
@@ -123,6 +127,10 @@ def test_refund_is_never_income_after_partial_allocation_or_undo(ledger):
     refund = bill(client, '本月退款', 100)
     first = client.post('/api/refund-allocations', json={"refund_bill_id": refund, "expense_bill_id": expense, "amount": 60, "idempotency_key": "sixty"})
     assert first.status_code == 201
+    detail = client.get(f'/api/refunds/{refund}')
+    assert detail.status_code == 200
+    assert detail.json()['allocations'][0]['id'] == first.json()['id']
+    assert detail.json()['history']
     month = client.get('/api/dashboard?date_from=2026-09-01').json()
     assert (month['income'], month['refund_offset'], month['unallocated_refund']) == (0, 60, 40)
     all_time = client.get('/api/dashboard').json()
@@ -283,12 +291,12 @@ def test_bulk_tag_stale_input_is_atomic(ledger):
 
 def test_import_constraint_failure_rolls_back_one_file_and_continues(ledger, monkeypatch):
     client, sessions = ledger
-    original = main._generate_candidates
-    def fail_one_row(db, row):
-        if row.merchant == '数据库故障':
+    original = main.CandidateSuggestionService.generate
+    def fail_one_file(service, bill_ids):
+        if len(bill_ids) > 1:
             raise IntegrityError('fixture constraint', {}, Exception('fixture'))
-        return original(db, row)
-    monkeypatch.setattr(main, '_generate_candidates', fail_one_row)
+        return original(service, bill_ids)
+    monkeypatch.setattr(main.CandidateSuggestionService, 'generate', fail_one_file)
     header = '交易创建时间,交易对方,金额（元）,收/支,交易号\n'
     def file(name, merchants):
         rows = ''.join(f'2026-09-01 10:00:00,{merchant},10,支出,{name}-{i}\n' for i, merchant in enumerate(merchants))
@@ -312,6 +320,10 @@ def test_dismissed_issue_can_be_reopened_without_losing_history(ledger):
     history = client.get('/api/import-issues').json()[0]
     assert history['raw_fields'] == issue['raw_fields']
     assert [row['action'] for row in history['history']] == ['dismiss', 'reopen']
+    detail = client.get(f"/api/import-issues/{issue['id']}")
+    assert detail.status_code == 200
+    assert detail.json()['raw_fields'] == issue['raw_fields']
+    assert [row['action'] for row in detail.json()['history']] == ['dismiss', 'reopen']
     assert client.get('/api/dashboard').json()['issue_count'] == 1
 
 
