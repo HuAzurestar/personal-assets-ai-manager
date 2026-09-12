@@ -15,6 +15,7 @@
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q
 node --check app/static/target-ledger.js
+.\.venv\Scripts\python.exe scripts/verify_target_ui.py
 ```
 
 以下章节记录旧实现的能力与迁移背景；其中 `/api/*`、23 张旧表和旧工作台描述不再代表默认运行时。

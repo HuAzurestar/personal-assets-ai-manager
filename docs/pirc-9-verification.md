@@ -45,6 +45,7 @@
 node --check app/static/target-ledger.js
 .\.venv\Scripts\python.exe -m compileall -q app scripts tests
 .\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe scripts/verify_target_ui.py
 ```
 
 目标运行时专项覆盖还会验证：首页和静态资源可访问、前端没有旧热接口字符串、旧接口在目标应用返回 404、导入及 Review 生命周期可用、最终 SQLite 表集合与 `TARGET_TABLE_NAMES` 完全一致。
