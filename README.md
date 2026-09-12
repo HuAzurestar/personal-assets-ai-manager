@@ -4,6 +4,8 @@
 
 `python run.py` 现在启动 `app.target_main:app`。它只初始化并访问 11 张目标表，首页也只调用 `/paam/import/v1`、`/paam/ledger/v1`、`/paam/review/v1` 和 `/paam/tag/v1`。旧 `app.main`、旧页面和旧接口仅作为迁移期回归样本保留，不是运行入口，也不会在正常启动时重建旧表。
 
+目标运行时使用独立的 `app.target_database` Engine、Session 与 `TargetBase`；导入 `app.target_main` 不会加载旧 `app.database` 或注册旧 ORM 表。
+
 - 事实层：`import_file`、`bill_fact`、`bill_raw`。导入支持支付宝、微信、建行、农行、招行；预览可处理账号匹配和无标识交易歧义，确认后原子写入。
 - 审查层：`review_case`、`review_case_bill`、`review_history`。AA、借入/借出、退款、转账、换汇、重复、账户修正、标签修改和事实冲突使用统一的版本与历史模型。
 - 增强层：`ledger_entry`、`ledger_entry_source`、`ledger_entry_tag`、`tag_view`、`tag`。列表和汇总只读取热投影；原始文本与完整审查历史只在单条详情加载。

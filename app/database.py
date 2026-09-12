@@ -388,10 +388,9 @@ class AssetSnapshot(Base):
     recorded_at: Mapped[str] = mapped_column(DateTime(timezone=False))
 
 
-# Target tables live in their own module, but must be imported before
-# ``create_all`` so they participate in the same metadata without coupling the
-# legacy models to the migration implementation.
-from app.models import target as _target_models  # noqa: E402,F401
+# Compatibility runtime delegates target schema ownership to its isolated
+# database module. The production runtime never imports this legacy module.
+from app import target_database as _target_database  # noqa: E402
 
 
 TARGET_TABLE_NAMES = (
@@ -447,38 +446,13 @@ SEPARATE_MODULE_TABLE_NAMES = ("asset_snapshots",)
 
 
 def ensure_target_schema(bind=None) -> None:
-    """Create/advance only the PIRC-9 schema; never create legacy tables."""
-    target_bind = engine if bind is None else bind
-    for table_name in TARGET_TABLE_NAMES:
-        Base.metadata.tables[table_name].create(bind=target_bind, checkfirst=True)
-    if target_bind.dialect.name == "sqlite":
-        additions = {
-            "review_case_bill": {
-                "party": "VARCHAR(120) NOT NULL DEFAULT ''",
-            },
-            "bill_fact": {
-                "account_code": "VARCHAR(120) NOT NULL DEFAULT 'UNKNOWN'",
-            },
-            "ledger_entry": {
-                "in_account_code": "VARCHAR(120) NOT NULL DEFAULT 'UNKNOWN'",
-                "out_account_code": "VARCHAR(120) NOT NULL DEFAULT 'UNKNOWN'",
-            },
-        }
-        with target_bind.begin() as connection:
-            for table_name, definitions in additions.items():
-                columns = {
-                    item["name"] for item in inspect(target_bind).get_columns(table_name)
-                }
-                for column_name, definition in definitions.items():
-                    if column_name not in columns:
-                        connection.execute(text(
-                            f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}"
-                        ))
+    """Compatibility alias for scripts that migrate legacy rows."""
+    _target_database.ensure_target_schema(bind=engine if bind is None else bind)
 
 
 def init_target_db(bind=None) -> None:
-    """Initialize an empty runtime database with exactly the 11 target tables."""
-    ensure_target_schema(bind=bind)
+    """Compatibility alias; production imports ``app.target_database``."""
+    _target_database.init_target_db(bind=engine if bind is None else bind)
 
 
 def init_db() -> None:

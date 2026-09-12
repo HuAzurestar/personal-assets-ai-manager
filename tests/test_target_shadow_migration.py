@@ -4,6 +4,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from app.database import Base, Bill
+from app.target_database import TargetBase
 from app.models.target import BillFact, LedgerEntry
 from app.services.target_shadow_migration_service import TargetShadowMigrationService
 
@@ -11,6 +12,7 @@ from app.services.target_shadow_migration_service import TargetShadowMigrationSe
 def test_complete_target_shadow_pipeline_is_one_call_and_idempotent(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'target-all.db'}")
     Base.metadata.create_all(bind=engine)
+    TargetBase.metadata.create_all(bind=engine)
     sessions = sessionmaker(bind=engine, autoflush=False)
     with sessions() as db:
         db.add(Bill(

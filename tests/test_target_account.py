@@ -9,8 +9,8 @@ from sqlalchemy.orm import sessionmaker
 
 from app.api.controllers.target_ledger import v1_router as target_ledger_router
 from app.api.controllers.target_review import router as target_review_router
-from app.api.deps import get_db
-from app.database import init_target_db
+from app.api.target_deps import get_target_db
+from app.target_database import init_target_db
 from app.models.target import BillFact, LedgerEntrySource, ReviewCase, ReviewHistory
 from app.services.target_projection_service import TargetProjectionService
 
@@ -31,7 +31,7 @@ def target_account_api(tmp_path):
         with sessions() as db:
             yield db
 
-    api.dependency_overrides[get_db] = override_db
+    api.dependency_overrides[get_target_db] = override_db
     with TestClient(api) as client:
         yield client, sessions
     engine.dispose()

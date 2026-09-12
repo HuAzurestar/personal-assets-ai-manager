@@ -383,6 +383,9 @@ and no compatibility tables.
 
 The production runtime entry is `app.target_main:app`; `run.py` starts it by
 default. Its startup calls `init_target_db()` and creates exactly those eleven
-ledger tables. `app.main:app` remains only as migration-era regression code and
+ledger tables. The Engine, Session factory, and `TargetBase` live in
+`app.target_database`; importing the production application does not import the
+legacy `app.database` module or register its ORM metadata. `app.main:app`
+remains only as migration-era regression code and
 must not be used with the target development database because its lifespan owns
 the retired compatibility schema.

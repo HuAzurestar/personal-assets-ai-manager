@@ -7,6 +7,7 @@ from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 
 from app.database import Base, Bill, CandidateActionLog, ReviewCandidate
+from app.target_database import TargetBase
 from app.models.target import ReviewCase, ReviewCaseBill, ReviewHistory
 from app.services.candidate_migration_service import (
     CANDIDATE_CASE_START,
@@ -18,6 +19,7 @@ from app.services.target_migration_service import FactShadowMigrationService
 def _database(tmp_path, suffix: str):
     engine = create_engine(f"sqlite:///{tmp_path / f'candidate-shadow-{suffix}.db'}")
     Base.metadata.create_all(bind=engine)
+    TargetBase.metadata.create_all(bind=engine)
     return engine, sessionmaker(bind=engine, autoflush=False)
 
 

@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.database import TARGET_TABLE_NAMES, init_target_db  # noqa: E402
+from app.target_database import TARGET_TABLE_NAMES, init_target_db  # noqa: E402
 
 
 IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")

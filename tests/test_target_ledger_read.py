@@ -8,9 +8,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
-from app.database import Base
+from app.database import Base as LegacyBase
 from app.api.controllers.target_ledger import router as target_ledger_router
-from app.api.deps import get_db
+from app.api.target_deps import get_target_db
+from app.target_database import TargetBase
 from app.models.target import (
     BillFact,
     BillRaw,
@@ -30,7 +31,8 @@ from app.services.target_ledger_service import TargetLedgerService
 
 def _database(tmp_path, suffix: str):
     engine = create_engine(f"sqlite:///{tmp_path / f'target-ledger-read-{suffix}.db'}")
-    Base.metadata.create_all(bind=engine)
+    LegacyBase.metadata.create_all(bind=engine)
+    TargetBase.metadata.create_all(bind=engine)
     return engine, sessionmaker(bind=engine, autoflush=False)
 
 
@@ -259,7 +261,7 @@ def test_target_ledger_shadow_controller_keeps_native_integer_contract(tmp_path)
         with sessions() as db:
             yield db
 
-    api.dependency_overrides[get_db] = override_db
+    api.dependency_overrides[get_target_db] = override_db
     with TestClient(api) as client:
         page = client.get("/api/shadow/v1/ledger/entries")
         assert page.status_code == 200

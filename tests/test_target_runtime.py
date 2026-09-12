@@ -2,16 +2,36 @@ import base64
 import csv
 import io
 from pathlib import Path
+import subprocess
+import sys
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import sessionmaker
 
-from app import database, target_main
+from app import target_database, target_main
 from app.core.intake_preview_store import target_intake_preview_store
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_importing_target_runtime_does_not_load_legacy_database_module():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; import app.target_main; "
+                "assert 'app.database' not in sys.modules"
+            ),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def _wechat_csv(rows=None) -> bytes:
@@ -44,8 +64,8 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
         connect_args={"check_same_thread": False},
     )
     sessions = sessionmaker(bind=engine, autoflush=False)
-    monkeypatch.setattr(database, "engine", engine)
-    monkeypatch.setattr(database, "SessionLocal", sessions)
+    monkeypatch.setattr(target_database, "engine", engine)
+    monkeypatch.setattr(target_database, "SessionLocal", sessions)
     target_intake_preview_store.clear()
     try:
         with TestClient(target_main.app) as client:
@@ -89,7 +109,9 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
             assert client.get("/api/intake/history").status_code == 404
             assert client.get("/api/shadow/v1/ledger/status").status_code == 404
 
-        assert set(inspect(engine).get_table_names()) == set(database.TARGET_TABLE_NAMES)
+        assert set(inspect(engine).get_table_names()) == set(
+            target_database.TARGET_TABLE_NAMES
+        )
     finally:
         target_intake_preview_store.clear()
         engine.dispose()
@@ -104,8 +126,8 @@ def test_target_review_confirm_revoke_restore_rebuilds_projection(
         connect_args={"check_same_thread": False},
     )
     sessions = sessionmaker(bind=engine, autoflush=False)
-    monkeypatch.setattr(database, "engine", engine)
-    monkeypatch.setattr(database, "SessionLocal", sessions)
+    monkeypatch.setattr(target_database, "engine", engine)
+    monkeypatch.setattr(target_database, "SessionLocal", sessions)
     target_intake_preview_store.clear()
     try:
         with TestClient(target_main.app) as client:

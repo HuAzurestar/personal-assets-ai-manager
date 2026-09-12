@@ -6,6 +6,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from app.database import Base, Bill
+from app.target_database import TargetBase
 from app.models.target import (
     BillFact,
     LedgerEntry,
@@ -20,6 +21,7 @@ from app.services.target_ledger_status_service import TargetLedgerStatusService
 def _seed(tmp_path, count: int):
     engine = create_engine(f"sqlite:///{tmp_path / f'target-status-{count}.db'}")
     Base.metadata.create_all(bind=engine)
+    TargetBase.metadata.create_all(bind=engine)
     sessions = sessionmaker(bind=engine, autoflush=False)
     occurred = datetime(2026, 9, 4, 9)
     with sessions() as db:
@@ -132,6 +134,7 @@ def test_target_ledger_status_is_a_fixed_query_dual_read_gate(tmp_path):
 def test_target_ledger_status_blocks_empty_projection_when_legacy_has_data(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'target-status-empty.db'}")
     Base.metadata.create_all(bind=engine)
+    TargetBase.metadata.create_all(bind=engine)
     sessions = sessionmaker(bind=engine, autoflush=False)
     with sessions() as db:
         db.add(Bill(

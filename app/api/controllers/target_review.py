@@ -5,7 +5,7 @@ from collections.abc import Callable
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db
+from app.api.target_deps import get_target_db
 from app.schemas.target_review import (
     TargetAccountSetRequest,
     TargetFactConflictResolveRequest,
@@ -33,7 +33,7 @@ def _run(operation: Callable[[], object]):
 @router.post("/case/create", response_model=TargetReviewCaseResponse)
 def create_case(
     payload: TargetReviewCreateRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_target_db),
 ):
     return TargetReviewCaseResponse(body=_run(
         lambda: TargetReviewService(db).create(payload)
@@ -44,7 +44,7 @@ def create_case(
 def confirm_case(
     case_id: int,
     payload: TargetReviewTransitionRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_target_db),
 ):
     return TargetReviewCaseResponse(body=_run(
         lambda: TargetReviewService(db).confirm(case_id, payload)
@@ -55,7 +55,7 @@ def confirm_case(
 def update_case(
     case_id: int,
     payload: TargetReviewUpdateRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_target_db),
 ):
     return TargetReviewCaseResponse(body=_run(
         lambda: TargetReviewService(db).update(case_id, payload)
@@ -66,7 +66,7 @@ def update_case(
 def revoke_case(
     case_id: int,
     payload: TargetReviewTransitionRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_target_db),
 ):
     return TargetReviewCaseResponse(body=_run(
         lambda: TargetReviewService(db).revoke(case_id, payload)
@@ -77,7 +77,7 @@ def revoke_case(
 def restore_case(
     case_id: int,
     payload: TargetReviewTransitionRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_target_db),
 ):
     return TargetReviewCaseResponse(body=_run(
         lambda: TargetReviewService(db).confirm(case_id, payload, restore=True)
@@ -85,7 +85,7 @@ def restore_case(
 
 
 @router.get("/case/detail/{case_id}", response_model=TargetReviewCaseResponse)
-def case_detail(case_id: int, db: Session = Depends(get_db)):
+def case_detail(case_id: int, db: Session = Depends(get_target_db)):
     return TargetReviewCaseResponse(body=_run(
         lambda: TargetReviewService(db).detail(case_id)
     ))
@@ -94,7 +94,7 @@ def case_detail(case_id: int, db: Session = Depends(get_db)):
 @router.get("/case/list", response_model=TargetReviewCaseListResponse)
 def case_list(
     limit: int = Query(default=100, ge=1, le=200),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_target_db),
 ):
     return TargetReviewCaseListResponse(body=_run(
         lambda: TargetReviewService(db).list(limit)
@@ -105,7 +105,7 @@ def case_list(
 def set_account(
     fact_id: int,
     payload: TargetAccountSetRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_target_db),
 ):
     return TargetReviewCaseResponse(body=_run(
         lambda: TargetAccountService(db).set(fact_id, payload)
@@ -116,7 +116,7 @@ def set_account(
 def revoke_account(
     case_id: int,
     payload: TargetReviewTransitionRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_target_db),
 ):
     return TargetReviewCaseResponse(body=_run(
         lambda: TargetAccountService(db).revoke(case_id, payload)
@@ -127,7 +127,7 @@ def revoke_account(
 def restore_account(
     case_id: int,
     payload: TargetReviewTransitionRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_target_db),
 ):
     return TargetReviewCaseResponse(body=_run(
         lambda: TargetAccountService(db).revoke(case_id, payload, restore=True)
@@ -138,7 +138,7 @@ def restore_account(
 def resolve_fact_conflict(
     case_id: int,
     payload: TargetFactConflictResolveRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_target_db),
 ):
     return TargetReviewCaseResponse(body=_run(
         lambda: TargetFactConflictService(db).resolve(case_id, payload)
@@ -149,7 +149,7 @@ def resolve_fact_conflict(
 def dismiss_fact_conflict(
     case_id: int,
     payload: TargetReviewTransitionRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_target_db),
 ):
     return TargetReviewCaseResponse(body=_run(
         lambda: TargetFactConflictService(db).dismiss(case_id, payload)
@@ -160,7 +160,7 @@ def dismiss_fact_conflict(
 def reopen_fact_conflict(
     case_id: int,
     payload: TargetReviewTransitionRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_target_db),
 ):
     return TargetReviewCaseResponse(body=_run(
         lambda: TargetFactConflictService(db).reopen(case_id, payload)

@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app import database
+from app import database, target_database
 
 
 @pytest.fixture(autouse=True)
@@ -24,6 +24,8 @@ def isolate_default_database(tmp_path, monkeypatch):
     monkeypatch.setattr(database, "DATABASE_URL", f"sqlite:///{path}")
     monkeypatch.setattr(database, "engine", engine)
     monkeypatch.setattr(database, "SessionLocal", sessions)
+    monkeypatch.setattr(target_database, "engine", engine)
+    monkeypatch.setattr(target_database, "SessionLocal", sessions)
     try:
         yield
     finally:

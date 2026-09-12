@@ -3,9 +3,8 @@ from app.database import (
     LEGACY_LEDGER_TABLE_NAMES,
     POST_MERGE_COMPATIBILITY_TABLE_NAMES,
     SEPARATE_MODULE_TABLE_NAMES,
-    TARGET_TABLE_NAMES,
-    init_target_db,
 )
+from app.target_database import TargetBase, TARGET_TABLE_NAMES, init_target_db
 from sqlalchemy import create_engine, inspect, text
 
 from scripts.reset_target_database import reset
@@ -27,7 +26,8 @@ def test_every_physical_table_has_an_explicit_pirc9_disposition():
     assert not legacy & post_merge
     assert not legacy & separate
     assert not post_merge & separate
-    assert set(Base.metadata.tables) == target | legacy | post_merge | separate
+    assert set(Base.metadata.tables) == legacy | post_merge | separate
+    assert set(TargetBase.metadata.tables) == target
 
 
 def test_empty_target_database_creates_only_the_11_pirc9_tables(tmp_path):

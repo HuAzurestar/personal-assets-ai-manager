@@ -105,7 +105,7 @@ def verify_target_commit(sample_files: list[Path]) -> None:
 
         from fastapi.testclient import TestClient
         from sqlalchemy import inspect, select
-        from app import database
+        from app import target_database
         from app.models.target import BillFact, BillRaw, ImportFile, LedgerEntry
         from app.target_main import app
 
@@ -126,7 +126,7 @@ def verify_target_commit(sample_files: list[Path]) -> None:
                 commit_seconds = perf_counter() - started
                 assert committed.status_code == 200, committed.text
 
-                with database.SessionLocal() as db:
+                with target_database.SessionLocal() as db:
                     fact_count = db.query(BillFact).count()
                     raw_count = db.query(BillRaw).count()
                     file_count = db.query(ImportFile).count()
@@ -160,7 +160,7 @@ def verify_target_commit(sample_files: list[Path]) -> None:
                 assert reversed_plan["counts"]["duplicate_file"] == 827
                 assert confirm(client, reversed_plan).status_code == 200
 
-                with measured_selects(database.engine) as list_selects:
+                with measured_selects(target_database.engine) as list_selects:
                     page = client.get(
                         "/paam/ledger/v1/entry/list?page=1&page_size=100"
                     )
@@ -169,14 +169,16 @@ def verify_target_commit(sample_files: list[Path]) -> None:
                 assert len(list_selects) == 3, list_selects
                 assert all("SELECT *" not in sql.upper() for sql in list_selects)
 
-                with measured_selects(database.engine) as summary_selects:
+                with measured_selects(target_database.engine) as summary_selects:
                     summary = client.get("/paam/ledger/v1/summary")
                 assert summary.status_code == 200, summary.text
                 assert summary.json()["entry_count"] == 803
                 assert len(summary_selects) == 2, summary_selects
 
-                actual_tables = set(inspect(database.engine).get_table_names())
-                assert actual_tables == set(database.TARGET_TABLE_NAMES), actual_tables
+                actual_tables = set(inspect(target_database.engine).get_table_names())
+                assert actual_tables == set(
+                    target_database.TARGET_TABLE_NAMES
+                ), actual_tables
                 print(
                     "PASS target samples:",
                     f"preview={preview_seconds:.3f}s",
@@ -189,7 +191,7 @@ def verify_target_commit(sample_files: list[Path]) -> None:
                     flush=True,
                 )
         finally:
-            database.engine.dispose()
+            target_database.engine.dispose()
 
 
 if __name__ == "__main__":

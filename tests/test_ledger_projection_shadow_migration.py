@@ -7,6 +7,7 @@ from sqlalchemy import create_engine, event, select, update
 from sqlalchemy.orm import sessionmaker
 
 from app.database import Base
+from app.target_database import TargetBase
 from app.models.target import (
     BillFact,
     LedgerEntry,
@@ -25,6 +26,7 @@ from app.services.ledger_projection_migration_service import (
 def _database(tmp_path, suffix: str):
     engine = create_engine(f"sqlite:///{tmp_path / f'ledger-projection-{suffix}.db'}")
     Base.metadata.create_all(bind=engine)
+    TargetBase.metadata.create_all(bind=engine)
     return engine, sessionmaker(bind=engine, autoflush=False)
 
 

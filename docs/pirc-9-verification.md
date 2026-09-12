@@ -34,6 +34,7 @@
 ## 运行时切换
 
 - `run.py` 默认启动 `app.target_main:app`。
+- 目标 Engine、Session 和 `TargetBase` 位于 `app.target_database`；导入目标应用不会加载旧 `app.database`。
 - 首页脚本只调用 `/paam/import/v1`、`/paam/ledger/v1`、`/paam/review/v1`、`/paam/tag/v1`。
 - 启动只调用 `init_target_db()`；开发 SQLite 已重建为精确 11 张目标表。
 - 新 UI 已覆盖概览、流水分页和详情、导入预览/修订/确认、标签字典和分配、财务 Review 创建/修改/确认/撤销/恢复、账户修正与事实冲突处理。

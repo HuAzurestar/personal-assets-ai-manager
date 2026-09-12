@@ -6,6 +6,7 @@ from sqlalchemy import create_engine, event, update
 from sqlalchemy.orm import sessionmaker
 
 from app.database import Base, Bill
+from app.target_database import TargetBase
 from app.models.target import LedgerEntry
 from app.services.ledger_summary_comparison_service import (
     LedgerSummaryShadowComparisonService,
@@ -15,6 +16,7 @@ from app.services.ledger_summary_comparison_service import (
 def _database(tmp_path, suffix: str):
     engine = create_engine(f"sqlite:///{tmp_path / f'summary-comparison-{suffix}.db'}")
     Base.metadata.create_all(bind=engine)
+    TargetBase.metadata.create_all(bind=engine)
     return engine, sessionmaker(bind=engine, autoflush=False)
 
 

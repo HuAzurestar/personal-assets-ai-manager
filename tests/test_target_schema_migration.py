@@ -6,6 +6,7 @@ from sqlalchemy import create_engine, event, inspect, select, text, update
 from sqlalchemy.orm import sessionmaker
 
 import app.database as database
+from app.target_database import TargetBase
 
 from app.database import (
     Base,
@@ -37,6 +38,7 @@ TARGET_TABLES = (
 def _database(tmp_path, suffix: str = "facts"):
     engine = create_engine(f"sqlite:///{tmp_path / f'target-{suffix}.db'}")
     Base.metadata.create_all(bind=engine)
+    TargetBase.metadata.create_all(bind=engine)
     return engine, sessionmaker(bind=engine, autoflush=False)
 
 

@@ -97,7 +97,7 @@ def run() -> None:
                 browser.close()
 
             from sqlalchemy import create_engine, inspect
-            from app.database import TARGET_TABLE_NAMES
+            from app.target_database import TARGET_TABLE_NAMES
 
             engine = create_engine(f"sqlite:///{database_path}")
             try:
@@ -111,9 +111,9 @@ def run() -> None:
             thread.join(timeout=10)
             # SQLite keeps pooled file handles open after the ASGI server exits.
             # Dispose before TemporaryDirectory removes the isolated ledger.
-            from app import database
+            from app import target_database
 
-            database.engine.dispose()
+            target_database.engine.dispose()
 
 
 if __name__ == "__main__":

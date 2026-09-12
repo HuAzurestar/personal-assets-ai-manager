@@ -5,7 +5,7 @@ from datetime import datetime
 from sqlalchemy import BigInteger, DateTime, Index, Integer, SmallInteger, String, Text, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.database import Base
+from app.target_database import TargetBase
 
 
 class TargetTable:
@@ -18,7 +18,7 @@ class TargetTable:
     )
 
 
-class ImportFile(TargetTable, Base):
+class ImportFile(TargetTable, TargetBase):
     __tablename__ = "import_file"
     __table_args__ = (
         Index(
@@ -45,7 +45,7 @@ class ImportFile(TargetTable, Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="PENDING")
 
 
-class BillRaw(TargetTable, Base):
+class BillRaw(TargetTable, TargetBase):
     __tablename__ = "bill_raw"
     __table_args__ = (
         UniqueConstraint("import_file_id", "source_row_number", name="uq_bill_raw_file_row"),
@@ -62,7 +62,7 @@ class BillRaw(TargetTable, Base):
     issue_message: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
 
-class BillFact(TargetTable, Base):
+class BillFact(TargetTable, TargetBase):
     __tablename__ = "bill_fact"
     __table_args__ = (UniqueConstraint("fact_key", name="uq_bill_fact_key"),)
 
@@ -77,7 +77,7 @@ class BillFact(TargetTable, Base):
     summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
 
-class ReviewCase(TargetTable, Base):
+class ReviewCase(TargetTable, TargetBase):
     __tablename__ = "review_case"
 
     review_type: Mapped[str] = mapped_column(String(40), nullable=False, default="UNKNOWN")
@@ -88,7 +88,7 @@ class ReviewCase(TargetTable, Base):
     result_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
 
 
-class ReviewCaseBill(TargetTable, Base):
+class ReviewCaseBill(TargetTable, TargetBase):
     __tablename__ = "review_case_bill"
 
     case_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -100,7 +100,7 @@ class ReviewCaseBill(TargetTable, Base):
     currency_code: Mapped[str] = mapped_column(String(12), nullable=False, default="CNY")
 
 
-class ReviewHistory(TargetTable, Base):
+class ReviewHistory(TargetTable, TargetBase):
     __tablename__ = "review_history"
     __table_args__ = (
         UniqueConstraint("case_id", "version", name="uq_review_history_case_version"),
@@ -126,7 +126,7 @@ class ReviewHistory(TargetTable, Base):
     idempotency_key: Mapped[str] = mapped_column(String(120), nullable=False, default="")
 
 
-class LedgerEntry(TargetTable, Base):
+class LedgerEntry(TargetTable, TargetBase):
     __tablename__ = "ledger_entry"
     __table_args__ = (Index("ix_ledger_entry_time_id", "start_time", "id"),)
 
@@ -147,7 +147,7 @@ class LedgerEntry(TargetTable, Base):
     projection_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
 
-class LedgerEntrySource(TargetTable, Base):
+class LedgerEntrySource(TargetTable, TargetBase):
     __tablename__ = "ledger_entry_source"
     __table_args__ = (
         UniqueConstraint("source_kind", "source_id", name="uq_ledger_entry_source"),
@@ -158,7 +158,7 @@ class LedgerEntrySource(TargetTable, Base):
     source_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
-class TargetTagView(TargetTable, Base):
+class TargetTagView(TargetTable, TargetBase):
     __tablename__ = "tag_view"
     __table_args__ = (UniqueConstraint("system_name", name="uq_target_tag_view_system_name"),)
 
@@ -167,7 +167,7 @@ class TargetTagView(TargetTable, Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="ACTIVE")
 
 
-class TargetTag(TargetTable, Base):
+class TargetTag(TargetTable, TargetBase):
     __tablename__ = "tag"
     __table_args__ = (
         UniqueConstraint("view_id", "system_name", name="uq_target_tag_system_name"),
@@ -179,7 +179,7 @@ class TargetTag(TargetTable, Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="ACTIVE")
 
 
-class LedgerEntryTag(TargetTable, Base):
+class LedgerEntryTag(TargetTable, TargetBase):
     __tablename__ = "ledger_entry_tag"
     __table_args__ = (
         UniqueConstraint("ledger_id", "tag_id", name="uq_ledger_entry_tag"),

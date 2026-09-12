@@ -5,7 +5,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db
+from app.api.target_deps import get_target_db
 from app.core.errors import MultipleTagsForView, UnknownTagSelector
 from app.schemas.target_ledger import (
     TargetLedgerDetailRead,
@@ -24,7 +24,7 @@ v1_router = APIRouter(prefix="/paam/ledger/v1", tags=["target-ledger"])
 
 
 @router.get("/status", response_model=TargetLedgerShadowStatusRead)
-def get_target_ledger_status(db: Session = Depends(get_db)):
+def get_target_ledger_status(db: Session = Depends(get_target_db)):
     from app.services.target_ledger_status_service import TargetLedgerStatusService
 
     return TargetLedgerStatusService(db).status()
@@ -43,7 +43,7 @@ def list_target_ledger_entries(
     currency_code: list[str] = Query(default=[]),
     q: str = Query(default="", max_length=200),
     tag: list[str] = Query(default=[]),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_target_db),
 ):
     if date_from and date_to and date_from > date_to:
         raise HTTPException(status_code=422, detail="date_from must be before date_to")
@@ -72,7 +72,7 @@ def list_target_ledger_entries(
 @v1_router.get("/entry/detail/{ledger_id}", response_model=TargetLedgerDetailRead)
 def get_target_ledger_detail(
     ledger_id: int,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_target_db),
 ):
     detail = TargetLedgerService(db).detail(ledger_id)
     if detail is None:
@@ -85,7 +85,7 @@ def get_target_ledger_detail(
 def get_target_ledger_summary(
     date_from: date | None = None,
     date_to: date | None = None,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_target_db),
 ):
     if date_from and date_to and date_from > date_to:
         raise HTTPException(status_code=422, detail="date_from must be before date_to")

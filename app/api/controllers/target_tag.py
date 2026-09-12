@@ -5,7 +5,7 @@ from collections.abc import Callable
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db
+from app.api.target_deps import get_target_db
 from app.schemas.target_tag import (
     TargetTagAssignmentRequest,
     TargetTagAssignmentResponse,
@@ -30,14 +30,14 @@ def _run(operation: Callable[[], object]):
 
 
 @router.get("/view/list", response_model=TargetTagViewListResponse)
-def list_views(include_archived: bool = False, db: Session = Depends(get_db)):
+def list_views(include_archived: bool = False, db: Session = Depends(get_target_db)):
     return TargetTagViewListResponse(body=_run(
         lambda: TargetTagService(db).list(include_archived)
     ))
 
 
 @router.post("/view/create", response_model=TargetTagViewResponse)
-def create_view(payload: TargetTagViewCreateRequest, db: Session = Depends(get_db)):
+def create_view(payload: TargetTagViewCreateRequest, db: Session = Depends(get_target_db)):
     return TargetTagViewResponse(body=_run(
         lambda: TargetTagService(db).create_view(payload)
     ))
@@ -47,7 +47,7 @@ def create_view(payload: TargetTagViewCreateRequest, db: Session = Depends(get_d
 def set_view_status(
     view_id: int,
     payload: TargetTagStatusRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_target_db),
 ):
     return TargetTagViewResponse(body=_run(
         lambda: TargetTagService(db).set_view_status(view_id, payload)
@@ -58,7 +58,7 @@ def set_view_status(
 def create_tag(
     view_id: int,
     payload: TargetTagCreateRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_target_db),
 ):
     return TargetTagViewResponse(body=_run(
         lambda: TargetTagService(db).create_tag(view_id, payload)
@@ -70,7 +70,7 @@ def set_tag_status(
     view_id: int,
     tag_id: int,
     payload: TargetTagStatusRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_target_db),
 ):
     return TargetTagViewResponse(body=_run(
         lambda: TargetTagService(db).set_tag_status(view_id, tag_id, payload)
@@ -81,7 +81,7 @@ def set_tag_status(
 def set_assignment(
     ledger_id: int,
     payload: TargetTagAssignmentRequest,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_target_db),
 ):
     return TargetTagAssignmentResponse(body=_run(
         lambda: TargetTagAssignmentService(db).assign(ledger_id, payload)

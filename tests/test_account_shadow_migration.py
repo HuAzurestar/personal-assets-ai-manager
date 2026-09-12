@@ -7,6 +7,7 @@ from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 
 from app.database import AccountRevision, Base, Bill
+from app.target_database import TargetBase
 from app.models.target import ReviewCase, ReviewCaseBill, ReviewHistory
 from app.services.account_migration_service import (
     ACCOUNT_CASE_START,
@@ -18,6 +19,7 @@ from app.services.target_migration_service import FactShadowMigrationService
 def _database(tmp_path, suffix: str):
     engine = create_engine(f"sqlite:///{tmp_path / f'account-shadow-{suffix}.db'}")
     Base.metadata.create_all(bind=engine)
+    TargetBase.metadata.create_all(bind=engine)
     return engine, sessionmaker(bind=engine, autoflush=False)
 
 
@@ -163,4 +165,3 @@ def _account_select_count(tmp_path, count: int) -> int:
 
 def test_account_shadow_select_count_does_not_grow_with_rows(tmp_path):
     assert _account_select_count(tmp_path, 10) == _account_select_count(tmp_path, 100) == 9
-

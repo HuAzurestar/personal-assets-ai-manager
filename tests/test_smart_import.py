@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 
-from app import database, main
+from app import database, main, target_database
 from app.core.intake_preview_store import target_intake_preview_store
 from app.database import Bill, ImportEvidence, ImportPreview, Account
 from app.models.target import (
@@ -35,6 +35,8 @@ def ledger(tmp_path, monkeypatch):
     sessions = sessionmaker(bind=engine, autoflush=False)
     monkeypatch.setattr(database, "engine", engine)
     monkeypatch.setattr(database, "SessionLocal", sessions)
+    monkeypatch.setattr(target_database, "engine", engine)
+    monkeypatch.setattr(target_database, "SessionLocal", sessions)
     monkeypatch.setattr(main, "SessionLocal", sessions)
     target_intake_preview_store.clear()
     with TestClient(main.app) as client:
@@ -866,6 +868,8 @@ def test_old_sqlite_schema_migrates_without_rewriting_money(tmp_path, monkeypatc
     sessions = sessionmaker(bind=engine, autoflush=False)
     monkeypatch.setattr(database, "engine", engine)
     monkeypatch.setattr(database, "SessionLocal", sessions)
+    monkeypatch.setattr(target_database, "engine", engine)
+    monkeypatch.setattr(target_database, "SessionLocal", sessions)
     monkeypatch.setattr(main, "SessionLocal", sessions)
     with TestClient(main.app) as client:
         bill = client.get("/api/bills").json()[0]

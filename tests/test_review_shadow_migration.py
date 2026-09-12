@@ -8,6 +8,7 @@ from sqlalchemy import create_engine, event, select, update
 from sqlalchemy.orm import sessionmaker
 
 from app.database import Base, Bill, ReviewMatter, ReviewMatterRevision
+from app.target_database import TargetBase
 from app.models.target import ReviewCase, ReviewCaseBill, ReviewHistory
 from app.services.review_migration_service import (
     MATTER_CASE_START,
@@ -19,6 +20,7 @@ from app.services.target_migration_service import FactShadowMigrationService
 def _database(tmp_path, suffix: str):
     engine = create_engine(f"sqlite:///{tmp_path / f'review-shadow-{suffix}.db'}")
     Base.metadata.create_all(bind=engine)
+    TargetBase.metadata.create_all(bind=engine)
     return engine, sessionmaker(bind=engine, autoflush=False)
 
 
@@ -217,4 +219,3 @@ def _review_select_count(tmp_path, count: int) -> int:
 
 def test_manual_matter_shadow_select_count_does_not_grow_with_rows(tmp_path):
     assert _review_select_count(tmp_path, 10) == _review_select_count(tmp_path, 100) == 9
-

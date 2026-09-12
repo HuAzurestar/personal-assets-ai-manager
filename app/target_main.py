@@ -18,7 +18,7 @@ from app.api.controllers.target_ledger import v1_router as target_ledger_router
 from app.api.controllers.target_review import router as target_review_router
 from app.api.controllers.target_tag import router as target_tag_router
 from app.config import APP_DISPLAY_NAME
-from app.database import init_target_db
+from app.target_database import init_target_db
 
 
 APP_DIR = Path(__file__).parent
