@@ -35,6 +35,7 @@ from app.schemas.target_ledger import (
     TargetReviewHistoryVO,
     TargetReviewLineVO,
 )
+from app.schemas.target_review import FINANCIAL_REVIEW_TYPES
 
 
 class TargetLedgerMapper:
@@ -141,10 +142,15 @@ class TargetLedgerMapper:
                 LedgerEntrySource.source_kind == "BILL_FACT"
             ).scalar_subquery().label("fact_source_count"),
             select(func.count(ReviewCase.id)).where(
-                ReviewCase.status == "CONFIRMED"
+                ReviewCase.status == "CONFIRMED",
+                ReviewCase.review_type.in_(FINANCIAL_REVIEW_TYPES),
             ).scalar_subquery().label("confirmed_review_count"),
-            select(func.count(func.distinct(LedgerEntrySource.source_id))).where(
-                LedgerEntrySource.source_kind == "REVIEW_CASE"
+            select(func.count(func.distinct(LedgerEntrySource.source_id))).join(
+                ReviewCase,
+                ReviewCase.id == LedgerEntrySource.source_id,
+            ).where(
+                LedgerEntrySource.source_kind == "REVIEW_CASE",
+                ReviewCase.review_type.in_(FINANCIAL_REVIEW_TYPES),
             ).scalar_subquery().label("review_source_count"),
             select(func.count(LedgerEntry.id)).scalar_subquery().label("ledger_entry_count"),
             select(func.count(TargetTagView.id)).where(
@@ -343,7 +349,13 @@ class TargetLedgerMapper:
             histories.setdefault(item["case_id"], []).append(TargetReviewHistoryVO(**item))
         return tuple(TargetReviewEvidenceVO(
             **case,
-            is_projection_source=case["id"] in projection_case_ids,
+            is_projection_source=(
+                case["id"] in projection_case_ids
+                or (
+                    case["review_type"] == "TAG"
+                    and case["status"] == "CONFIRMED"
+                )
+            ),
             lines=tuple(lines.get(case["id"], ())),
             history=tuple(histories.get(case["id"], ())),
         ) for case in cases)

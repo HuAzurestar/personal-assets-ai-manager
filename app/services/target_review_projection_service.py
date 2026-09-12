@@ -10,6 +10,7 @@ from app.mappers.target_review_projection_mapper import TargetReviewProjectionMa
 from app.schemas.target_projection import FinancialProjectionWriteVO
 from app.schemas.target_review import TargetReviewCaseRead, TargetReviewFactVO
 from app.services.target_projection_service import TargetProjectionService
+from app.services.target_tag_projection_service import TargetTagProjectionService
 
 
 class TargetReviewProjectionService:
@@ -18,6 +19,7 @@ class TargetReviewProjectionService:
     def __init__(self, db: Session):
         self.mapper = TargetReviewProjectionMapper(db)
         self.defaults = TargetProjectionService(db)
+        self.tags = TargetTagProjectionService(db)
 
     def publish(
         self,
@@ -77,7 +79,7 @@ class TargetReviewProjectionService:
             sort_keys=True,
             separators=(",", ":"),
         ).encode()).hexdigest()
-        self.mapper.publish(FinancialProjectionWriteVO(
+        ledger_id = self.mapper.publish(FinancialProjectionWriteVO(
             fact_ids=fact_ids,
             case_id=case.id,
             ledger_type=ledger_type,
@@ -97,6 +99,7 @@ class TargetReviewProjectionService:
             created_time=min(fact.created_time for fact in facts),
             updated_time=now,
         ))
+        self.tags.sync({fact_id: ledger_id for fact_id in fact_ids})
 
     def revoke(self, case_id: int, fact_ids: list[int]) -> None:
         self.mapper.detach(case_id)

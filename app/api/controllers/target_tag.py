@@ -7,12 +7,15 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
 from app.schemas.target_tag import (
+    TargetTagAssignmentRequest,
+    TargetTagAssignmentResponse,
     TargetTagCreateRequest,
     TargetTagStatusRequest,
     TargetTagViewCreateRequest,
     TargetTagViewListResponse,
     TargetTagViewResponse,
 )
+from app.services.target_tag_assignment_service import TargetTagAssignmentService
 from app.services.target_tag_service import TargetTagError, TargetTagService
 
 
@@ -71,4 +74,15 @@ def set_tag_status(
 ):
     return TargetTagViewResponse(body=_run(
         lambda: TargetTagService(db).set_tag_status(view_id, tag_id, payload)
+    ))
+
+
+@router.put("/assignment/set/{ledger_id}", response_model=TargetTagAssignmentResponse)
+def set_assignment(
+    ledger_id: int,
+    payload: TargetTagAssignmentRequest,
+    db: Session = Depends(get_db),
+):
+    return TargetTagAssignmentResponse(body=_run(
+        lambda: TargetTagAssignmentService(db).assign(ledger_id, payload)
     ))

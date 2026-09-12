@@ -10,11 +10,8 @@ from app.models.target import (
     BillRaw,
     LedgerEntry,
     LedgerEntrySource,
-    LedgerEntryTag,
     ReviewCase,
     ReviewCaseBill,
-    TargetTag,
-    TargetTagView,
 )
 from app.schemas.target_projection import (
     DefaultProjectionFactVO,
@@ -99,9 +96,9 @@ class TargetProjectionMapper:
             ReviewCase.review_type.in_(FINANCIAL_REVIEW_TYPES),
         )).all())
 
-    def write_defaults(self, values: list[DefaultProjectionWriteVO]) -> None:
+    def write_defaults(self, values: list[DefaultProjectionWriteVO]) -> dict[int, int]:
         if not values:
-            return
+            return {}
         fact_ids = [value.fact_id for value in values]
         sources = {
             source.source_id: source
@@ -171,43 +168,11 @@ class TargetProjectionMapper:
                 source.ledger_id = entry.id
                 source.updated_time = value.updated_time
         self.db.flush()
-        self._ensure_default_tags([entry.id for entry in entries.values()] + [
-            entry.id for _value, entry, _source in pending_sources
-        ])
-
-    def _ensure_default_tags(self, ledger_ids: list[int]) -> None:
-        ledger_ids = list(dict.fromkeys(ledger_ids))
-        if not ledger_ids:
-            return
-        defaults = self.db.execute(select(
-            TargetTag.view_id,
-            TargetTag.id,
-        ).join(
-            TargetTagView,
-            TargetTagView.id == TargetTag.view_id,
-        ).where(
-            TargetTagView.status == "ACTIVE",
-            TargetTag.status == "ACTIVE",
-            TargetTag.system_name == "unclassified",
-        )).mappings().all()
-        if not defaults:
-            return
-        view_by_tag = {row["id"]: row["view_id"] for row in defaults}
-        existing = self.db.execute(select(
-            LedgerEntryTag.ledger_id,
-            TargetTag.view_id,
-        ).join(
-            TargetTag,
-            TargetTag.id == LedgerEntryTag.tag_id,
-        ).where(
-            LedgerEntryTag.ledger_id.in_(ledger_ids),
-            TargetTag.view_id.in_(list(view_by_tag.values())),
-        )).all()
-        existing_pairs = set(existing)
-        for ledger_id in ledger_ids:
-            for row in defaults:
-                if (ledger_id, row["view_id"]) not in existing_pairs:
-                    self.db.add(LedgerEntryTag(
-                        ledger_id=ledger_id,
-                        tag_id=row["id"],
-                    ))
+        result = {}
+        for value in values:
+            source = sources.get(value.fact_id)
+            if source is not None and source.ledger_id:
+                result[value.fact_id] = source.ledger_id
+        for value, entry, source in pending_sources:
+            result[value.fact_id] = entry.id
+        return result

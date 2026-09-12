@@ -125,6 +125,7 @@ class TargetTagMapper:
             ))
             if tag_id:
                 self._assign_missing(view_id, tag_id)
+        self.db.flush()
         return True
 
     def set_tag_status(self, view_id: int, tag_id: int, status: str, now: datetime) -> bool:
@@ -133,6 +134,7 @@ class TargetTagMapper:
             return False
         tag.status = status
         tag.updated_time = now
+        self.db.flush()
         return True
 
     def _assign_missing(self, view_id: int, tag_id: int) -> None:

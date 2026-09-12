@@ -4,13 +4,23 @@ from uuid import uuid4
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 
 from app.api.controllers.target_tag import router as target_tag_router
+from app.api.controllers.target_review import router as target_review_router
+from app.api.controllers.target_ledger import v1_router as target_ledger_router
 from app.api.deps import get_db
 from app.database import init_target_db
-from app.models.target import BillFact, LedgerEntryTag, TargetTag, TargetTagView
+from app.models.target import (
+    BillFact,
+    LedgerEntrySource,
+    LedgerEntryTag,
+    ReviewCase,
+    ReviewHistory,
+    TargetTag,
+    TargetTagView,
+)
 from app.services.target_projection_service import TargetProjectionService
 
 
@@ -24,6 +34,8 @@ def target_tag_api(tmp_path):
     init_target_db(bind=engine)
     api = FastAPI()
     api.include_router(target_tag_router)
+    api.include_router(target_review_router)
+    api.include_router(target_ledger_router)
 
     def override_db():
         with sessions() as db:
@@ -35,7 +47,7 @@ def target_tag_api(tmp_path):
     engine.dispose()
 
 
-def _add_facts(sessions, count):
+def _add_facts(sessions, count, directions=None):
     now = datetime(2026, 9, 12, 12)
     with sessions() as db:
         facts = []
@@ -43,7 +55,7 @@ def _add_facts(sessions, count):
             fact = BillFact(
                 fact_key=uuid4().hex,
                 occurred_time=now + timedelta(minutes=index),
-                cash_direction="OUT",
+                cash_direction=(directions[index] if directions else "OUT"),
                 amount_value=1000,
                 amount_scale=2,
                 currency_code="CNY",
@@ -135,3 +147,201 @@ def test_target_tag_list_query_count_is_fixed(target_tag_api):
     assert len(response.json()["body"]) == 20
     assert len(statements) == 2
     assert all("SELECT *" not in statement.upper() for statement in statements)
+
+
+def _create_tag_dictionary(client):
+    view = client.post("/paam/tag/v1/view/create", json={
+        "name": "Category",
+        "system_name": "category",
+    }).json()["body"]
+    response = client.post(f"/paam/tag/v1/tag/create/{view['id']}", json={
+        "name": "Food",
+        "system_name": "food",
+    })
+    assert response.status_code == 200, response.text
+    return view
+
+
+def _ledger_for_fact(sessions, fact_id):
+    with sessions() as db:
+        return db.scalar(select(LedgerEntrySource.ledger_id).where(
+            LedgerEntrySource.source_kind == "BILL_FACT",
+            LedgerEntrySource.source_id == fact_id,
+        ))
+
+
+def _assign(client, ledger_id, version, value, key):
+    return client.put(f"/paam/tag/v1/assignment/set/{ledger_id}", json={
+        "tag_state": {"category": value},
+        "expected_projection_version": version,
+        "reason": "test tag assignment",
+        "idempotency_key": key,
+    })
+
+
+def test_ledger_tag_assignment_is_versioned_idempotent_and_audited_per_fact(
+    target_tag_api,
+):
+    client, sessions, _engine = target_tag_api
+    fact_id = _add_facts(sessions, 1)[0]
+    _create_tag_dictionary(client)
+    ledger_id = _ledger_for_fact(sessions, fact_id)
+
+    assigned = _assign(client, ledger_id, 1, "food", "assign-food")
+    assert assigned.status_code == 200, assigned.text
+    assert assigned.json()["body"]["projection_version"] == 2
+    assert assigned.json()["body"]["tag_state"] == {"category": "food"}
+
+    replay = _assign(client, ledger_id, 1, "food", "assign-food")
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["body"]["projection_version"] == 2
+    assert _assign(client, ledger_id, 1, "unclassified", "assign-food").status_code == 409
+    assert _assign(client, ledger_id, 1, "food", "stale-assignment").status_code == 409
+    detail = client.get(f"/paam/ledger/v1/entry/detail/{ledger_id}").json()
+    assert detail["entry"]["tags"][0]["tag_system_name"] == "food"
+    assert detail["reviews"][0]["review_type"] == "TAG"
+    assert detail["reviews"][0]["is_projection_source"] is True
+
+    with sessions() as db:
+        tag_case = db.scalar(select(ReviewCase).where(ReviewCase.review_type == "TAG"))
+        assert tag_case.status == "CONFIRMED"
+        assert tag_case.result_json == '{"tag_state":{"category":"food"}}'
+        assert db.query(ReviewHistory).filter_by(case_id=tag_case.id).count() == 1
+        assignment = db.scalar(select(LedgerEntryTag).where(
+            LedgerEntryTag.ledger_id == ledger_id
+        ))
+        assert db.get(TargetTag, assignment.tag_id).system_name == "food"
+
+    updated = _assign(client, ledger_id, 2, "unclassified", "assign-default")
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["body"]["projection_version"] == 3
+    with sessions() as db:
+        tag_case = db.scalar(select(ReviewCase).where(ReviewCase.review_type == "TAG"))
+        histories = db.scalars(select(ReviewHistory).where(
+            ReviewHistory.case_id == tag_case.id
+        ).order_by(ReviewHistory.version)).all()
+        assert tag_case.version == 2
+        assert len(histories) == 2
+        assert '"category":"food"' in histories[1].before_json
+        assert '"category":"unclassified"' in histories[1].after_json
+
+
+def test_merged_ledger_tag_assignment_survives_financial_split_and_restore(
+    target_tag_api,
+):
+    client, sessions, _engine = target_tag_api
+    out_id, in_id = _add_facts(sessions, 2, ["OUT", "IN"])
+    _create_tag_dictionary(client)
+    created = client.post("/paam/review/v1/case/create", json={
+        "review_type": "TRANSFER",
+        "title": "Transfer",
+        "result": {},
+        "lines": [
+            {"bill_id": out_id, "role": "TRANSFER_OUT"},
+            {"bill_id": in_id, "role": "TRANSFER_IN"},
+        ],
+        "idempotency_key": "transfer-create",
+    })
+    assert created.status_code == 200, created.text
+    case = created.json()["body"]
+    confirmed = client.post(f"/paam/review/v1/case/confirm/{case['id']}", json={
+        "expected_version": 1,
+        "idempotency_key": "transfer-confirm",
+    })
+    assert confirmed.status_code == 200, confirmed.text
+    ledger = client.get("/paam/ledger/v1/entry/list").json()["items"][0]
+    assigned = _assign(client, ledger["id"], ledger["projection_version"], "food", "merged-food")
+    assert assigned.status_code == 200, assigned.text
+    assert len(assigned.json()["body"]["review_case_ids"]) == 2
+
+    revoked = client.post(f"/paam/review/v1/case/revoke/{case['id']}", json={
+        "expected_version": 2,
+        "idempotency_key": "transfer-revoke",
+    })
+    assert revoked.status_code == 200, revoked.text
+    split = client.get("/paam/ledger/v1/entry/list").json()["items"]
+    assert len(split) == 2
+    assert all(item["tags"][0]["tag_system_name"] == "food" for item in split)
+
+    restored = client.post(f"/paam/review/v1/case/restore/{case['id']}", json={
+        "expected_version": 3,
+        "idempotency_key": "transfer-restore",
+    })
+    assert restored.status_code == 200, restored.text
+    merged = client.get("/paam/ledger/v1/entry/list").json()["items"]
+    assert len(merged) == 1
+    assert merged[0]["tags"][0]["tag_system_name"] == "food"
+
+
+def test_financial_merge_rejects_different_fact_tag_states(target_tag_api):
+    client, sessions, _engine = target_tag_api
+    out_id, in_id = _add_facts(sessions, 2, ["OUT", "IN"])
+    _create_tag_dictionary(client)
+    first_ledger = _ledger_for_fact(sessions, out_id)
+    second_ledger = _ledger_for_fact(sessions, in_id)
+    assert _assign(client, first_ledger, 1, "food", "first-food").status_code == 200
+    assert _assign(client, second_ledger, 1, "unclassified", "second-default").status_code == 200
+    created = client.post("/paam/review/v1/case/create", json={
+        "review_type": "TRANSFER",
+        "title": "Conflicting tags",
+        "result": {},
+        "lines": [
+            {"bill_id": out_id, "role": "TRANSFER_OUT"},
+            {"bill_id": in_id, "role": "TRANSFER_IN"},
+        ],
+        "idempotency_key": "conflict-create",
+    }).json()["body"]
+    confirmed = client.post(f"/paam/review/v1/case/confirm/{created['id']}", json={
+        "expected_version": 1,
+        "idempotency_key": "conflict-confirm",
+    })
+    assert confirmed.status_code == 422
+    with sessions() as db:
+        assert db.get(ReviewCase, created["id"]).status == "PENDING"
+
+
+def test_tag_assignment_select_count_is_independent_of_source_fact_count(
+    target_tag_api,
+):
+    client, sessions, engine = target_tag_api
+    _create_tag_dictionary(client)
+
+    def assign_and_count(ledger_id, version, key):
+        statements = []
+
+        def count_selects(_connection, _cursor, statement, _parameters, _context, _many):
+            if statement.lstrip().upper().startswith("SELECT"):
+                statements.append(statement)
+
+        event.listen(engine, "before_cursor_execute", count_selects)
+        try:
+            response = _assign(client, ledger_id, version, "food", key)
+        finally:
+            event.remove(engine, "before_cursor_execute", count_selects)
+        assert response.status_code == 200, response.text
+        assert all("SELECT *" not in statement.upper() for statement in statements)
+        return len(statements)
+
+    one_fact = _add_facts(sessions, 1)[0]
+    one_count = assign_and_count(_ledger_for_fact(sessions, one_fact), 1, "one-tag")
+
+    many_facts = _add_facts(sessions, 20)
+    created = client.post("/paam/review/v1/case/create", json={
+        "review_type": "AA",
+        "title": "Grouped expenses",
+        "result": {},
+        "lines": [
+            {"bill_id": fact_id, "role": "AA_PAID"}
+            for fact_id in many_facts
+        ],
+        "idempotency_key": "many-create",
+    }).json()["body"]
+    confirmed = client.post(f"/paam/review/v1/case/confirm/{created['id']}", json={
+        "expected_version": 1,
+        "idempotency_key": "many-confirm",
+    })
+    assert confirmed.status_code == 200, confirmed.text
+    many_ledger = _ledger_for_fact(sessions, many_facts[0])
+    many_count = assign_and_count(many_ledger, 2, "many-tag")
+    assert one_count == 6
+    assert many_count == one_count

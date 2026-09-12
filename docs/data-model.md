@@ -132,7 +132,7 @@ history; reopen reverses the preceding dismiss without erasing its evidence.
 | --- | --- | --- | --- |
 | `case_id` | INTEGER | `0` | Implicit case ID |
 | `version` | INTEGER | `1` | Resulting case version |
-| `operation` | ENUM text | `CREATE` | CREATE/CONFIRM/UPDATE/REVOKE/RESTORE |
+| `operation` | ENUM text | `CREATE` | CREATE/CONFIRM/UPDATE/REVOKE/RESTORE/ASSIGN |
 | `schema_version` | INTEGER | `1` | Snapshot contract version |
 | `request_json` | TEXT | `'{}'` | Canonical submitted command |
 | `before_json` | TEXT | `'{}'` | Complete canonical aggregate before change |
@@ -214,8 +214,10 @@ does not identify one. Import institution and file provenance remain detail-only
 `(source_kind, source_id)` is unique. One ledger entry may have many sources; every source resolves to exactly one published projection.
 
 Every published fact contributes exactly one `BILL_FACT` source row. Every
-confirmed Review that participates in a component contributes exactly one
-`REVIEW_CASE` source row. The `(source_kind, source_id)` identity is
+confirmed financial Review that defines component connectivity contributes
+exactly one `REVIEW_CASE` source row. TAG Reviews remain discoverable through
+their `review_case_bill.bill_id` members and publish attributes rather than
+component connectivity. The `(source_kind, source_id)` identity is
 deterministic; the row's database ID is only a surrogate. This makes backfill
 idempotent and lets a detail request recover both immutable facts and the
 complete Review trail without querying unrelated entries. `ledger_entry.id`
@@ -267,6 +269,17 @@ also creates its protected `unclassified` value and fills missing defaults for
 existing hot entries with one set-oriented statement. New default projections
 receive the same active-view defaults in bounded batches. Views and values are
 archived rather than physically deleted.
+
+`PUT /paam/tag/v1/assignment/set/{ledger_id}` is the only target tag-assignment
+command. The UI submits one complete system-name state and the current
+`projection_version`. The backend batch-loads all source Facts and stores the
+same confirmed TAG decision once per Fact, with canonical before/after history.
+It then replaces the hot entry's effective tags in the same transaction. This
+keeps a merged entry simple for the UI while making later financial Review
+revoke/split deterministic. A subsequent merge is rejected when its source
+Facts have different effective tag states. One-Fact and twenty-Fact assignments
+both execute exactly six SELECT statements; writes grow with the audit records,
+not with query round trips.
 
 ## Hot summary contract
 

@@ -12,6 +12,7 @@ from app.schemas.target_tag import (
     TargetTagViewCreateRequest,
     TargetTagViewRead,
 )
+from app.services.target_tag_projection_service import TargetTagProjectionService
 
 
 class TargetTagError(Exception):
@@ -23,6 +24,7 @@ class TargetTagError(Exception):
 class TargetTagService:
     def __init__(self, db: Session):
         self.mapper = TargetTagMapper(db)
+        self.projection = TargetTagProjectionService(db)
 
     def list(self, include_archived: bool = False) -> list[TargetTagViewRead]:
         return self.mapper.list(include_archived)
@@ -32,6 +34,7 @@ class TargetTagService:
             view_id = self.mapper.create_view(
                 payload.name.strip(), payload.system_name, datetime.now()
             )
+            self.projection.sync_all()
             self.mapper.commit()
             return self._required(view_id)
         except IntegrityError as error:
@@ -64,6 +67,7 @@ class TargetTagService:
     ) -> TargetTagViewRead:
         if not self.mapper.set_view_status(view_id, payload.status, datetime.now()):
             raise TargetTagError(404, "tag view not found")
+        self.projection.sync_all()
         self.mapper.commit()
         return self._required(view_id)
 
@@ -81,6 +85,7 @@ class TargetTagService:
             raise TargetTagError(422, "unclassified tag cannot be archived")
         if not self.mapper.set_tag_status(view_id, tag_id, payload.status, datetime.now()):
             raise TargetTagError(404, "tag not found in this view")
+        self.projection.sync_all()
         self.mapper.commit()
         return self._required(view_id)
 

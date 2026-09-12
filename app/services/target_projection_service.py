@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.mappers.target_projection_mapper import TargetProjectionMapper
 from app.schemas.target_projection import DefaultProjectionWriteVO
 from app.statement_parser import BANKS
+from app.services.target_tag_projection_service import TargetTagProjectionService
 
 
 class TargetProjectionService:
@@ -16,6 +17,7 @@ class TargetProjectionService:
 
     def __init__(self, db: Session):
         self.mapper = TargetProjectionMapper(db)
+        self.tags = TargetTagProjectionService(db)
 
     def rebuild_defaults(self, fact_ids: list[int]) -> None:
         fact_ids = list(dict.fromkeys(fact_ids))
@@ -75,7 +77,8 @@ class TargetProjectionService:
                 created_time=fact.created_time,
                 updated_time=fact.updated_time,
             ))
-        self.mapper.write_defaults(writes)
+        fact_ledgers = self.mapper.write_defaults(writes)
+        self.tags.sync(fact_ledgers)
 
     @staticmethod
     def _nature(evidence) -> str:

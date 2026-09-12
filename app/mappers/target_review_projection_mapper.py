@@ -13,7 +13,7 @@ class TargetReviewProjectionMapper:
     def __init__(self, db: Session):
         self.db = db
 
-    def publish(self, value: FinancialProjectionWriteVO) -> None:
+    def publish(self, value: FinancialProjectionWriteVO) -> int:
         source_rows = self.db.execute(select(
             LedgerEntrySource.id,
             LedgerEntrySource.ledger_id,
@@ -95,6 +95,7 @@ class TargetReviewProjectionMapper:
                 LedgerEntryTag.ledger_id.in_(obsolete)
             ))
             self.db.execute(delete(LedgerEntry).where(LedgerEntry.id.in_(obsolete)))
+        return chosen_id
 
     def detach(self, case_id: int) -> None:
         self.db.execute(delete(LedgerEntrySource).where(

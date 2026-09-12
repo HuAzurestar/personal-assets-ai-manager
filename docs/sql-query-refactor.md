@@ -429,8 +429,16 @@ N+1 list paths. They remain lower priority unless profiling shows a slow query.
 - [x] Add fixed-query Review/tag gates: Review list remains three SELECTs for
   twenty cases; confirming one or twenty facts executes the same SELECT count;
   tag dictionary list remains two SELECTs.
-- [ ] Define and implement TAG Review assignment semantics for a ledger entry
+- [x] Define and implement TAG Review assignment semantics for a ledger entry
   that combines several facts, including how assignments split on revoke.
+  - One ledger-level API command batch-loads all source Facts and writes the
+    identical confirmed TAG state into one unified Review case per Fact.
+  - A split restores each Fact's state; a restore/merge republishes one state
+    only when every Fact agrees. Conflicts abort the financial confirmation and
+    roll back its projection transaction.
+  - Assignment uses optimistic `projection_version`, command idempotency, and
+    append-only canonical before/after history. One and twenty source Facts both
+    execute exactly six SELECT statements, with no `SELECT *` or row query loop.
 - [ ] Switch ACCOUNT correction and FACT_CONFLICT resolution commands to
   unified target Review. Conflict evidence persistence is already target-only.
 - [ ] Switch the production UI from legacy transaction/review/tag contracts to
