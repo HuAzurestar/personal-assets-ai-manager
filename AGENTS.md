@@ -37,4 +37,4 @@ Read the relevant module skill before changing that module:
 - `.agents/skills/review-layer/SKILL.md`
 - `.agents/skills/ledger-api/SKILL.md`
 
-The authoritative target table dictionary and legacy-table disposition are in `docs/data-model.md`.
+The authoritative 11-table dictionary and layer boundaries are in `docs/data-model.md`.

@@ -26,7 +26,6 @@ from app.schemas.target_ledger import (
     TargetLedgerEntryVO,
     TargetLedgerPageQuery,
     TargetLedgerPageVO,
-    TargetLedgerReadinessVO,
     TargetLedgerSummaryQuery,
     TargetLedgerTagVO,
     TargetRawEvidenceVO,
@@ -34,7 +33,6 @@ from app.schemas.target_ledger import (
     TargetReviewHistoryVO,
     TargetReviewLineVO,
 )
-from app.schemas.target_review import FINANCIAL_REVIEW_TYPES
 
 
 class TargetLedgerMapper:
@@ -132,36 +130,6 @@ class TargetLedgerMapper:
             import_files=import_files,
             reviews=reviews,
         )
-
-    def readiness(self) -> TargetLedgerReadinessVO:
-        # Shadow-only compatibility check. Keep the legacy model out of the
-        # production target read path until this method is explicitly called.
-        from app.database import Bill
-
-        row = self.db.execute(select(
-            select(func.count(Bill.id)).scalar_subquery().label("legacy_bill_count"),
-            select(func.count(BillFact.id)).scalar_subquery().label("fact_count"),
-            select(func.count(func.distinct(LedgerEntrySource.source_id))).where(
-                LedgerEntrySource.source_kind == "BILL_FACT"
-            ).scalar_subquery().label("fact_source_count"),
-            select(func.count(ReviewCase.id)).where(
-                ReviewCase.status == "CONFIRMED",
-                ReviewCase.review_type.in_(FINANCIAL_REVIEW_TYPES),
-            ).scalar_subquery().label("confirmed_review_count"),
-            select(func.count(func.distinct(LedgerEntrySource.source_id))).join(
-                ReviewCase,
-                ReviewCase.id == LedgerEntrySource.source_id,
-            ).where(
-                LedgerEntrySource.source_kind == "REVIEW_CASE",
-                ReviewCase.review_type.in_(FINANCIAL_REVIEW_TYPES),
-            ).scalar_subquery().label("review_source_count"),
-            select(func.count(LedgerEntry.id)).scalar_subquery().label("ledger_entry_count"),
-            select(func.count(TargetTagView.id)).where(
-                TargetTagView.status == "ACTIVE"
-            ).scalar_subquery().label("active_tag_view_count"),
-            select(func.count(LedgerEntryTag.id)).scalar_subquery().label("ledger_tag_count"),
-        )).mappings().one()
-        return TargetLedgerReadinessVO(**row)
 
     @staticmethod
     def _entry_vo(row, tags) -> TargetLedgerEntryVO:

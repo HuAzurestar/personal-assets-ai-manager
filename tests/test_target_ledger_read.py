@@ -8,8 +8,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
-from app.database import Base as LegacyBase
-from app.api.controllers.target_ledger import router as target_ledger_router
+from app.api.controllers.target_ledger import v1_router as target_ledger_router
 from app.api.target_deps import get_target_db
 from app.target_database import TargetBase
 from app.models.target import (
@@ -31,7 +30,6 @@ from app.services.target_ledger_service import TargetLedgerService
 
 def _database(tmp_path, suffix: str):
     engine = create_engine(f"sqlite:///{tmp_path / f'target-ledger-read-{suffix}.db'}")
-    LegacyBase.metadata.create_all(bind=engine)
     TargetBase.metadata.create_all(bind=engine)
     return engine, sessionmaker(bind=engine, autoflush=False)
 
@@ -247,7 +245,7 @@ def test_target_ledger_detail_missing_entry_stops_after_one_select(tmp_path):
     assert len(statements) == 1
 
 
-def test_target_ledger_shadow_controller_keeps_native_integer_contract(tmp_path):
+def test_target_ledger_controller_keeps_native_integer_contract(tmp_path):
     _, sessions = _database(tmp_path, "controller")
     occurred = datetime(2026, 9, 3, 8)
     with sessions() as db:
@@ -263,7 +261,7 @@ def test_target_ledger_shadow_controller_keeps_native_integer_contract(tmp_path)
 
     api.dependency_overrides[get_target_db] = override_db
     with TestClient(api) as client:
-        page = client.get("/api/shadow/v1/ledger/entries")
+        page = client.get("/paam/ledger/v1/entry/list")
         assert page.status_code == 200
         item = page.json()["items"][0]
         assert item["outgoing"] == {
@@ -272,14 +270,11 @@ def test_target_ledger_shadow_controller_keeps_native_integer_contract(tmp_path)
             "currency_code": "CNY",
         }
         assert item["out_account_code"] == "expense-account"
-        assert client.get("/api/shadow/v1/ledger/entries/404").status_code == 404
-        assert client.get("/api/shadow/v1/ledger/summary").json()["entry_count"] == 1
-        status = client.get("/api/shadow/v1/ledger/status")
-        assert status.status_code == 200
-        assert status.json()["ready"] is False
+        assert client.get("/paam/ledger/v1/entry/detail/404").status_code == 404
+        assert client.get("/paam/ledger/v1/summary").json()["entry_count"] == 1
         assert client.get(
-            "/api/shadow/v1/ledger/entries?tag=category"
+            "/paam/ledger/v1/entry/list?tag=category"
         ).status_code == 422
         assert client.get(
-            "/api/shadow/v1/ledger/entries?tag=category:food&tag=category:travel"
+            "/paam/ledger/v1/entry/list?tag=category:food&tag=category:travel"
         ).status_code == 400

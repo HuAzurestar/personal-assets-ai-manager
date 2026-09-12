@@ -1,9 +1,4 @@
-"""PIRC-9 target-only API application.
-
-This runtime seam deliberately initializes only the 11 target tables.  It lets
-the replacement API be verified without accidentally reading or writing a
-compatibility table while the legacy UI is still being retired.
-"""
+"""PIRC-9 API application backed by exactly the 11 ledger tables."""
 
 from contextlib import asynccontextmanager
 from pathlib import Path

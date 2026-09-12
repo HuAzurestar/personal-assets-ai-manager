@@ -1,7 +1,7 @@
 """PIRC-9-only database boundary.
 
-This module deliberately knows nothing about the retired ORM model. Importing
-the production application therefore cannot register or create legacy tables.
+The production application imports only this metadata and cannot register or
+create tables outside the 11-table ledger contract.
 """
 
 from __future__ import annotations
@@ -50,6 +50,25 @@ TARGET_TABLE_NAMES = (
 )
 
 
+# SQLAlchemy's ``Table.create(checkfirst=True)`` does not add indexes to an
+# existing table. Keep this deliberately small: these are the implicit-ID and
+# hot ordering paths exercised by the target mappers, not speculative indexes.
+TARGET_SQLITE_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS ix_bill_raw_bill_id_id "
+    "ON bill_raw (bill_id, id)",
+    "CREATE INDEX IF NOT EXISTS ix_bill_raw_source_reference_bill_id "
+    "ON bill_raw (source_reference, bill_id) WHERE source_reference <> ''",
+    "CREATE INDEX IF NOT EXISTS ix_bill_fact_occurred_time_id "
+    "ON bill_fact (occurred_time, id)",
+    "CREATE INDEX IF NOT EXISTS ix_review_case_bill_bill_case "
+    "ON review_case_bill (bill_id, case_id)",
+    "CREATE INDEX IF NOT EXISTS ix_review_case_bill_case_id "
+    "ON review_case_bill (case_id, id)",
+    "CREATE INDEX IF NOT EXISTS ix_ledger_entry_source_ledger_kind_id "
+    "ON ledger_entry_source (ledger_id, source_kind, source_id)",
+)
+
+
 def ensure_target_schema(bind=None) -> None:
     """Create/advance only the 11 PIRC-9 tables."""
 
@@ -83,6 +102,8 @@ def ensure_target_schema(bind=None) -> None:
                         f"ALTER TABLE {table_name} "
                         f"ADD COLUMN {column_name} {definition}"
                     ))
+        for statement in TARGET_SQLITE_INDEXES:
+            connection.execute(text(statement))
 
 
 def init_target_db(bind=None) -> None:

@@ -1,66 +1,91 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 
-from app.database import Base
-
-
-def _plan(connection, sql: str) -> list[str]:
-    return [
-        row[3]
-        for row in connection.exec_driver_sql(f"EXPLAIN QUERY PLAN {sql}")
-    ]
+from app.target_database import TargetBase, ensure_target_schema
 
 
-def _uses(plan: list[str], index_name: str) -> bool:
-    return any(index_name in step for step in plan)
+def _target_engine():
+    engine = create_engine("sqlite:///:memory:")
+    TargetBase.metadata.create_all(bind=engine)
+    ensure_target_schema(bind=engine)
+    return engine
 
 
-def test_measured_hot_paths_use_only_the_targeted_indexes(tmp_path):
-    engine = create_engine(f"sqlite:///{tmp_path / 'query-plans.db'}")
-    Base.metadata.create_all(engine)
+def _plan(engine, sql: str, parameters: dict | None = None) -> str:
     with engine.connect() as connection:
-        ledger_page = _plan(connection, """
-            SELECT id
-            FROM bills
-            WHERE aggregate_excluded = 0
-              AND occurred_at BETWEEN '2026-01-01' AND '2026-12-31'
-            ORDER BY occurred_at DESC, id DESC
-            LIMIT 50
-        """)
-        candidate_window = _plan(connection, """
-            SELECT DISTINCT candidate.id
-            FROM bills AS candidate
-            JOIN bills AS target
-              ON target.id IN (1)
-             AND candidate.id != target.id
-             AND candidate.occurred_at BETWEEN
-                 datetime(target.occurred_at, '-5 minutes')
-                 AND datetime(target.occurred_at, '+5 minutes')
-             AND abs(abs(candidate.amount) - abs(target.amount)) <= 0.01
-        """)
-        candidate_actions = _plan(connection, """
-            SELECT candidate_id, max(id)
-            FROM candidate_action_logs
-            WHERE candidate_id IN (1, 2, 3)
-            GROUP BY candidate_id
-        """)
-        refund_allocations = _plan(connection, """
-            SELECT refund_bill_id, expense_bill_id, amount
-            FROM refund_allocations
-            WHERE status = 'confirmed'
-              AND (refund_bill_id = 1 OR expense_bill_id = 2)
-        """)
-        current_tags = _plan(connection, """
-            SELECT bill_id, max(id)
-            FROM tag_audits
-            WHERE bill_id IN (1, 2, 3) AND superseded = 0
-            GROUP BY bill_id
-        """)
-    engine.dispose()
+        rows = connection.execute(
+            text(f"EXPLAIN QUERY PLAN {sql}"),
+            parameters or {},
+        ).all()
+    return "\n".join(str(row) for row in rows)
 
-    assert _uses(ledger_page, "ix_bills_occurred_at_id")
-    assert not any("TEMP B-TREE FOR ORDER BY" in step for step in ledger_page)
-    assert _uses(candidate_window, "ix_bills_occurred_at_id")
-    assert _uses(candidate_actions, "ix_candidate_action_logs_candidate_id_id")
-    assert _uses(refund_allocations, "ix_refund_allocations_refund_status_id")
-    assert _uses(refund_allocations, "ix_refund_allocations_expense_status_id")
-    assert _uses(current_tags, "ix_tag_audits_bill_current_id")
+
+def test_ledger_page_uses_hot_time_index():
+    engine = _target_engine()
+    plan = _plan(
+        engine,
+        "SELECT id, start_time FROM ledger_entry "
+        "WHERE start_time >= :start ORDER BY start_time, id LIMIT 100",
+        {"start": "2025-01-01 00:00:00"},
+    )
+    assert "ix_ledger_entry_time_id" in plan
+
+
+def test_fact_period_lookup_uses_time_index():
+    engine = _target_engine()
+    plan = _plan(
+        engine,
+        "SELECT id, occurred_time FROM bill_fact "
+        "WHERE occurred_time >= :start AND occurred_time < :end "
+        "ORDER BY occurred_time, id",
+        {"start": "2025-01-01 00:00:00", "end": "2025-02-01 00:00:00"},
+    )
+    assert "ix_bill_fact_occurred_time_id" in plan
+
+
+def test_raw_evidence_batch_lookup_uses_bill_index():
+    engine = _target_engine()
+    plan = _plan(
+        engine,
+        "SELECT id, bill_id, raw_payload FROM bill_raw "
+        "WHERE bill_id IN (1, 2, 3) ORDER BY bill_id, id",
+    )
+    assert "ix_bill_raw_bill_id_id" in plan
+
+
+def test_raw_reference_lookup_uses_partial_reference_index():
+    engine = _target_engine()
+    plan = _plan(
+        engine,
+        "SELECT bill_id, source_reference FROM bill_raw "
+        "WHERE source_reference IN ('A', 'B') AND source_reference <> ''",
+    )
+    assert "ix_bill_raw_source_reference_bill_id" in plan
+
+
+def test_ledger_detail_source_lookup_uses_implicit_id_index():
+    engine = _target_engine()
+    plan = _plan(
+        engine,
+        "SELECT source_kind, source_id FROM ledger_entry_source "
+        "WHERE ledger_id = 1 ORDER BY source_kind, source_id",
+    )
+    assert "ix_ledger_entry_source_ledger_kind_id" in plan
+
+
+def test_review_lookup_from_bill_uses_implicit_id_index():
+    engine = _target_engine()
+    plan = _plan(
+        engine,
+        "SELECT case_id FROM review_case_bill WHERE bill_id IN (1, 2, 3)",
+    )
+    assert "ix_review_case_bill_bill_case" in plan
+
+
+def test_review_lines_batch_lookup_uses_case_index():
+    engine = _target_engine()
+    plan = _plan(
+        engine,
+        "SELECT id, case_id, bill_id FROM review_case_bill "
+        "WHERE case_id IN (1, 2, 3) ORDER BY case_id, id",
+    )
+    assert "ix_review_case_bill_case_id" in plan

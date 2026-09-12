@@ -1,391 +1,211 @@
-# PAAM target data model
+# PAAM 目标数据模型
 
-Status: target architecture for incremental migration from PIRC-9 commit `887606d`. Existing public APIs remain compatible until shadow-read verification is complete.
+本文件是 PIRC-9 的权威表字典。账本固定为 11 张表，按“事实、审查、增强热投影”分层。
 
-## Common SQL contract
+## 通用约束
 
-Every physical table contains:
+每张表固定包含：
 
-| Column | Type | Rule |
+| 字段 | 类型 | 规则 |
 | --- | --- | --- |
-| `id` | INTEGER | Primary identifier |
-| `created_time` | DATETIME | `NOT NULL`, SQL default current time |
-| `updated_time` | DATETIME | `NOT NULL`, SQL default current time |
+| `id` | INTEGER | 主键 |
+| `created_time` | DATETIME | `NOT NULL DEFAULT CURRENT_TIMESTAMP` |
+| `updated_time` | DATETIME | `NOT NULL DEFAULT CURRENT_TIMESTAMP` |
 
-Relationships are implicit IDs without SQL `FOREIGN KEY` declarations. Services validate IDs in batches. Indexes are limited to primary/unique identifiers and measured hot lookup paths.
+业务字段使用 `NOT NULL`；缺省文本使用空串，未知语义使用 `UNKNOWN` 等明确状态。缺失的必要金额、方向或时间不能用 0/默认时间伪造。关系全部使用隐式 ID，不声明 SQL `FOREIGN KEY`，由 Service 批量校验并在同一事务内写入。
 
-Business columns are `NOT NULL`. Optional text uses `DEFAULT ''`; unknown semantics use an explicit enum such as `UNKNOWN`. Missing required amount/time/direction never receives a fabricated value and remains an invalid raw row.
+金额表示为 `amount_value / 10^amount_scale`，并带 `currency_code`。禁止 Float；不同币种不得直接相加或隐式换汇。
 
-## Fact layer
+## 一、事实层
 
-### `import_file` — imported artifact
+事实层保存外部来源、原始证据和接受后的规范事实。列表和汇总不读取这一层；只有导入、校验和单条详情读取。
 
-| Column | Type | Default | Meaning |
+### 1. `import_file`：一次导入的来源文件
+
+| 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `batch_code` | VARCHAR | `''` | Groups files submitted together |
-| `source_type` | VARCHAR | `UNKNOWN` | Alipay, WeChat, bank, manual, etc. |
-| `institution_code` | VARCHAR | `UNKNOWN` | Originating bank/platform |
-| `filename` | VARCHAR | `''` | User-visible original name |
-| `file_format` | VARCHAR | `UNKNOWN` | CSV/XLS/XLSX/ZIP |
-| `sha256` | CHAR(64) | `''` | Whole-file fingerprint |
-| `period_start` | ISO datetime text | `''` | Earliest source record time; empty means the file has no accepted dated row |
-| `period_end` | ISO datetime text | `''` | Latest source record time; empty means the file has no accepted dated row |
-| `total_count` | INTEGER | `0` | Source rows considered |
-| `success_count` | INTEGER | `0` | Rows accepted or linked to facts |
-| `skip_count` | INTEGER | `0` | Duplicate/explicitly ignored rows |
-| `issue_count` | INTEGER | `0` | Invalid/conflicting rows |
-| `status` | ENUM text | `PENDING` | PENDING/IMPORTED/PARTIAL/FAILED |
+| `batch_code` | VARCHAR(64) | `''` | 同一次提交的批次标识 |
+| `source_type` | VARCHAR(40) | `UNKNOWN` | 支付宝、微信、银行、手工等来源 |
+| `institution_code` | VARCHAR(40) | `UNKNOWN` | 银行或平台代码 |
+| `filename` | VARCHAR(255) | `''` | 用户看到的原文件名 |
+| `file_format` | VARCHAR(12) | `UNKNOWN` | CSV/XLS/XLSX/PDF/ZIP |
+| `sha256` | VARCHAR(64) | `''` | 整个文件指纹 |
+| `period_start` | VARCHAR(32) | `''` | 文件中最早有效流水时间 |
+| `period_end` | VARCHAR(32) | `''` | 文件中最晚有效流水时间 |
+| `total_count` | INTEGER | `0` | 来源行总数 |
+| `success_count` | INTEGER | `0` | 接受或成功关联的行数 |
+| `skip_count` | INTEGER | `0` | 重复或明确跳过的行数 |
+| `issue_count` | INTEGER | `0` | 解析失败或冲突行数 |
+| `status` | VARCHAR(20) | `PENDING` | PENDING/IMPORTED/PARTIAL/FAILED |
 
-`total_count = success_count + skip_count + issue_count`. `(source_type, sha256)` is unique when SHA is present.
+非空 SHA 使用 `(source_type, sha256)` 唯一索引。`total_count = success_count + skip_count + issue_count`。
 
-### `bill_raw` — immutable source row and parse state
+### 2. `bill_raw`：来源行与原始证据
 
-| Column | Type | Default | Mutability / meaning |
+| 字段 | 类型 | 默认 | 可变性与说明 |
 | --- | --- | --- | --- |
-| `bill_id` | INTEGER | `0` | Mutable implicit fact link; multiple raws may link one fact |
-| `import_file_id` | INTEGER | `0` | Immutable implicit file link |
-| `source_row_number` | INTEGER | `0` | Immutable source position |
-| `source_reference` | VARCHAR | `''` | Provider transaction/order reference |
-| `raw_payload` | TEXT | `'{}'` | Immutable original field JSON |
-| `raw_hash` | CHAR(64) | `''` | Immutable canonical row fingerprint |
-| `parse_status` | ENUM text | `PENDING` | PENDING/SUCCESS/DUPLICATE/SKIPPED/INVALID/CONFLICT |
-| `issue_code` | VARCHAR | `''` | Stable machine-readable error |
-| `issue_message` | TEXT | `''` | Human-readable detail |
+| `bill_id` | INTEGER | `0` | 可变的隐式 Fact ID；未解决时为 0 |
+| `import_file_id` | INTEGER | `0` | 不可变的隐式文件 ID |
+| `source_row_number` | INTEGER | `0` | 不可变的文件内行号 |
+| `source_reference` | VARCHAR(160) | `''` | 来源交易号/订单号 |
+| `raw_payload` | TEXT | `'{}'` | 不可变的原始字段 JSON |
+| `raw_hash` | VARCHAR(64) | `''` | 不可变的规范行指纹 |
+| `parse_status` | VARCHAR(20) | `PENDING` | PENDING/SUCCESS/DUPLICATE/SKIPPED/INVALID |
+| `issue_code` | VARCHAR(80) | `''` | 稳定的机器错误代码 |
+| `issue_message` | TEXT | `''` | 用户可读错误说明 |
 
-`(import_file_id, source_row_number)` is unique. `bill_id` is intentionally not unique: repeated exports may provide several raw evidence rows for one fact.
+唯一约束为 `(import_file_id, source_row_number)`。`bill_id` 不唯一：同一笔真实交易可以因不同导出选项、不同文件或不同来源拥有多条 Raw。处理冲突时只能更新 `bill_id` 和处理状态，不能改原始载荷、指纹、来源文件和行号。
 
-### `bill_fact` — accepted normalized accounting fact
+### 3. `bill_fact`：接受后的规范账单事实
 
-| Column | Type | Default | Mutability / meaning |
+| 字段 | 类型 | 默认 | 可变性与说明 |
 | --- | --- | --- | --- |
-| `fact_key` | VARCHAR | no fabricated default | Immutable stable provider key or accepted canonical fingerprint |
-| `occurred_time` | DATETIME | no fabricated default | Immutable transaction time |
-| `cash_direction` | ENUM text | no fabricated default | Immutable IN/OUT |
-| `amount_value` | BIGINT | no fabricated default | Immutable integer atomic amount |
-| `amount_scale` | SMALLINT | `2` | Immutable decimal scale |
-| `currency_code` | VARCHAR | `CNY` | Immutable currency/unit code |
-| `account_code` | VARCHAR | `UNKNOWN` | Immutable normalized source account; an ACCOUNT Review may override it in the projection |
-| `counterparty` | VARCHAR | `''` | Immutable normalized source counterparty |
-| `summary` | TEXT | `''` | Immutable normalized source description |
+| `fact_key` | VARCHAR(160) | 无伪造默认 | 不可变、唯一的来源身份或已接受指纹 |
+| `occurred_time` | DATETIME | 无伪造默认 | 不可变的发生时间 |
+| `cash_direction` | VARCHAR(8) | 无伪造默认 | 不可变的 IN/OUT |
+| `amount_value` | BIGINT | 无伪造默认 | 不可变的最小精度整数金额 |
+| `amount_scale` | SMALLINT | `2` | 不可变的小数位数 |
+| `currency_code` | VARCHAR(12) | `CNY` | 不可变的币种/单位 |
+| `account_code` | VARCHAR(120) | `UNKNOWN` | 导入时识别的不可变来源账户 |
+| `counterparty` | VARCHAR(200) | `''` | 不可变的规范交易对手 |
+| `summary` | TEXT | `''` | 不可变的规范摘要 |
 
-Money is `amount_value / 10^amount_scale`. Different currencies are never directly summed. A new raw record that contradicts immutable fact fields becomes `CONFLICT` and enters Review.
+Fact 只放跨来源稳定、计算必须的核心字段。客户详情、完整账户文本、追溯文本和 SHA 等只保留在 Raw/File，点开详情时再查。账户修正通过 ACCOUNT Review 覆盖投影，不更新 `bill_fact.account_code`。
 
-The target importer commits a row-level contradiction as an `INVALID`
-`bill_raw` row with `issue_code=FACT_CONFLICT` and `bill_id=0`; it never changes
-the accepted fact. Whole-file parse failures and ambiguous identity choices
-still block confirmation because they do not yet identify a durable source row.
+## 二、审查层
 
-## Review layer
+审查层保存用户对事实的解释。AA、借贷、退款、转账、换汇等共用一套表，用类型与角色实现多态，不按业务类型拆表。
 
-### `review_case` — current review decision
+### 4. `review_case`：当前审查聚合
 
-| Column | Type | Default | Meaning |
+| 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `review_type` | ENUM text | `UNKNOWN` | AA/LOAN_BORROW/LOAN_LEND/REFUND/TRANSFER/FX_EXCHANGE/DUPLICATE/TAG/ACCOUNT/FACT_CONFLICT |
-| `status` | ENUM text | `PENDING` | PENDING/CONFIRMED/REJECTED/REVOKED |
-| `allocation_status` | ENUM text | `PARTIAL` | PARTIAL/COMPLETE/CONFLICT |
-| `version` | INTEGER | `1` | Optimistic concurrency version |
-| `title` | VARCHAR | `''` | Short user-facing description |
-| `result_json` | TEXT | `'{}'` | Small type-specific state; never contains member ID arrays |
+| `review_type` | VARCHAR(40) | `UNKNOWN` | AA/LOAN_BORROW/LOAN_LEND/REFUND/TRANSFER/FX_EXCHANGE/DUPLICATE/TAG/ACCOUNT/FACT_CONFLICT |
+| `status` | VARCHAR(20) | `PENDING` | PENDING/CONFIRMED/REJECTED/REVOKED |
+| `allocation_status` | VARCHAR(20) | `PARTIAL` | PARTIAL/COMPLETE/CONFLICT |
+| `version` | INTEGER | `1` | 乐观并发版本 |
+| `title` | VARCHAR(160) | `''` | 简短展示标题 |
+| `result_json` | TEXT | `'{}'` | 少量类型专属状态；禁止塞成员 ID 数组 |
 
-`(id, version)` identifies the current aggregate version. Clients write with `expected_version`.
+客户端写操作必须携带 `expected_version`。只有 CONFIRMED 的财务 Review 能改变热投影；待审建议不能改变实际账本。
 
-### `review_case_bill` — bills and amounts participating in a case
+### 5. `review_case_bill`：一个 Case 的多个账单与分配
 
-| Column | Type | Default | Meaning |
+| 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `case_id` | INTEGER | `0` | Implicit case ID |
-| `bill_id` | INTEGER | `0` | Implicit fact ID |
-| `role` | ENUM text | `UNKNOWN` | AA_PAID, AA_RECEIVED, LOAN_RECEIVED, LOAN_REPAID, LOAN_LENT, LOAN_RECOVERED, REFUND_EXPENSE, REFUND_RECEIVED, TRANSFER_OUT, TRANSFER_IN, TRANSFER_FEE, DUPLICATE_MEMBER, DUPLICATE_RETAINED, DUPLICATE_EXCLUDED, etc. |
-| `party` | VARCHAR | `''` | Counterparty/person for AA and loan allocations; empty for roles that do not need one |
-| `amount_value` | BIGINT | `0` | Explicit allocated atomic amount; common commands default to full remaining amount before storage |
-| `amount_scale` | SMALLINT | `2` | Scale used by this allocation |
-| `currency_code` | VARCHAR | `CNY` | Allocation currency; must agree with its fact |
+| `case_id` | INTEGER | `0` | 隐式 Case ID |
+| `bill_id` | INTEGER | `0` | 隐式 Fact ID |
+| `role` | VARCHAR(40) | `UNKNOWN` | 该 Fact 在当前类型中的作用 |
+| `party` | VARCHAR(120) | `''` | AA/借贷等需要的对方；不需要时空串 |
+| `amount_value` | BIGINT | `0` | 明确保存的本次分配整数金额 |
+| `amount_scale` | SMALLINT | `2` | 分配金额精度 |
+| `currency_code` | VARCHAR(12) | `CNY` | 分配币种，必须与 Fact 一致 |
 
-Rows order by `id`; there is no separate position column. Services batch-check that confirmed cases do not allocate more than the available fact amount.
+常见角色包括 `AA_PAID`、`AA_RECEIVED`、`LOAN_RECEIVED`、`LOAN_REPAID`、`LOAN_LENT`、`LOAN_RECOVERED`、`REFUND_EXPENSE`、`REFUND_RECEIVED`、`TRANSFER_OUT`、`TRANSFER_IN`、`TRANSFER_FEE`、`DUPLICATE_RETAINED`、`DUPLICATE_EXCLUDED`。省略金额时，后端可以按剩余全额计算，但入库时金额必须明确。排序使用 `(case_id, id)`，不设 `position` 字段。
 
-A refund inflow owns one `REFUND` case even when it is allocated to several
-expenses. Its current lines contain one full `REFUND_RECEIVED` row plus active
-`REFUND_EXPENSE` allocation rows. Revoked allocations remain in
-`review_history`, not in the current line set.
+### 6. `review_history`：只追加的确定性审计
 
-An `ACCOUNT` case exists only when a user explicitly corrects a transaction's
-account. The original imported account remains raw evidence; the current
-reviewed account is stored in the case result and its complete change chain is
-stored in `review_history`.
-
-`PUT /paam/review/v1/account/set/{fact_id}` creates or advances that Fact's one
-ACCOUNT case. It checks the current hot `projection_version`, stores the full
-Fact amount on one `ACCOUNT` line, and republishes either the default entry or
-its connected financial Review entry in the same transaction. Revoke and
-restore switch only the effective enhancement state; they never update
-`bill_fact.account_code`. The ACCOUNT case ID/version participates in the hot
-projection hash even when its selected value equals the imported value.
-
-A `TAG` case exists for a bill with tag audit activity. Confirmed selections are
-the authoritative enhancement state; rule/LLM suggestions remain non-publishing
-proposals. The compact case result keeps the current category/system-name map
-and at most one latest proposal, while every confirm, suggestion, and undo stays
-deterministically reconstructable in `review_history`.
-
-A `FACT_CONFLICT` case points to its immutable `bill_raw` row through the compact
-`bill_raw_id` result field. Pending or dismissed rows have no fabricated bill
-member. A resolved conflict gains exactly one `FACT_ACCEPTED` case line after a
-real `bill_fact` exists. Resolve, dismiss, and reopen actions remain an append-only
-history; reopen reverses the preceding dismiss without erasing its evidence.
-
-Target imports create the pending conflict case in the same transaction as the
-invalid raw evidence. Review commands can dismiss it, reopen a dismissal, link
-the evidence to an explicitly selected existing Fact, or accept it as a new
-Fact with a conflict-specific immutable identity. Linking never rewrites the
-selected Fact; creating publishes one new default ledger entry. The transition,
-raw status, optional new Fact, history, and projection commit atomically.
-
-### `review_history` — append-only deterministic audit
-
-| Column | Type | Default | Meaning |
+| 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `case_id` | INTEGER | `0` | Implicit case ID |
-| `version` | INTEGER | `1` | Resulting case version |
-| `operation` | ENUM text | `CREATE` | CREATE/CONFIRM/UPDATE/REVOKE/RESTORE/ASSIGN/ACCOUNT_SET/RESOLVE/DISMISS/REOPEN |
-| `schema_version` | INTEGER | `1` | Snapshot contract version |
-| `request_json` | TEXT | `'{}'` | Canonical submitted command |
-| `before_json` | TEXT | `'{}'` | Complete canonical aggregate before change |
-| `after_json` | TEXT | `'{}'` | Complete canonical aggregate after change |
-| `snapshot_hash` | CHAR(64) | `''` | Integrity hash of canonical after state |
-| `reverses_history_id` | INTEGER | `0` | Implicit history ID reversed by this event |
-| `actor` | VARCHAR | `local-user` | Actor identity |
-| `reason` | TEXT | `''` | Human reason |
-| `idempotency_key` | VARCHAR | `''` | Unique non-empty command key |
+| `case_id` | INTEGER | `0` | 隐式 Case ID |
+| `version` | INTEGER | `1` | 本操作完成后的 Case 版本 |
+| `operation` | VARCHAR(20) | `CREATE` | CREATE/UPDATE/CONFIRM/REVOKE/RESTORE/ASSIGN/ACCOUNT_SET/RESOLVE/DISMISS/REOPEN |
+| `schema_version` | INTEGER | `1` | 快照结构版本 |
+| `request_json` | TEXT | `'{}'` | 规范化命令内容 |
+| `before_json` | TEXT | `'{}'` | 操作前完整聚合快照 |
+| `after_json` | TEXT | `'{}'` | 操作后完整聚合快照 |
+| `snapshot_hash` | VARCHAR(64) | `''` | `after_json` 的完整性指纹 |
+| `reverses_history_id` | INTEGER | `0` | 本操作反向对应的历史 ID |
+| `actor` | VARCHAR(120) | `local-user` | 操作者 |
+| `reason` | TEXT | `''` | 操作原因 |
+| `idempotency_key` | VARCHAR(120) | `''` | 非空时全局唯一的命令幂等键 |
 
-`(case_id, version)` and non-empty `idempotency_key` are unique. History rows are never updated or deleted; undo appends a reversing row.
+唯一约束为 `(case_id, version)` 和非空 `idempotency_key`。历史不 UPDATE、不 DELETE；撤销/恢复追加新记录。request + before + after + hash 足以确定性重放和核对具体字段变化。
 
-Versioned financial Review commands are exposed under `/paam/review/v1`.
-Creation always starts at `PENDING`; edits replace current lines only while a
-case is pending or revoked, while history retains every preceding aggregate.
-Confirmation publishes one connected hot projection, revocation splits its
-facts back into default projections, and restoration republishes the reviewed
-component. Every transition checks `expected_version`, is idempotent by a
-non-empty command key, and updates Review plus projection in one transaction.
+## 三、增强热投影层
 
-Role direction and allocation policy runs in the backend. An omitted line
-amount receives that fact's remaining amount; multiple omitted allocations for
-one fact are rejected as ambiguous. Explicit allocations may be partial but may
-never exceed the immutable fact amount. A fact cannot belong to two confirmed
-financial cases.
+该层是 UI 日常读取的可重建结果。准确性来自 `bill_fact + confirmed review`；投影服务是唯一写入者。
 
-## Enhanced hot ledger
+### 7. `ledger_entry`：最终展示的一条实际账本记录
 
-### `ledger_entry` — published atomic ledger projection
-
-| Column | Type | Default | Meaning |
+| 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `ledger_type` | ENUM text | `UNRESOLVED` | INCOME/EXPENSE/AA/LOAN_BORROW/LOAN_LEND/REFUND/TRANSFER/FX_EXCHANGE/PASS_THROUGH/UNRESOLVED |
-| `allocation_status` | ENUM text | `DEFAULT` | DEFAULT/PARTIAL/COMPLETE/EXCLUDED/CONFLICT |
-| `title` | VARCHAR | `''` | Compact list label |
-| `start_time` | DATETIME | no fabricated default | First contributing fact time |
-| `end_time` | DATETIME | no fabricated default | Last contributing fact time |
-| `in_amount_value` | BIGINT | `0` | Total incoming atomic value |
-| `in_amount_scale` | SMALLINT | `2` | Incoming scale |
-| `in_currency_code` | VARCHAR | `CNY` | Incoming currency |
-| `out_amount_value` | BIGINT | `0` | Total outgoing atomic value |
-| `out_amount_scale` | SMALLINT | `2` | Outgoing scale |
-| `out_currency_code` | VARCHAR | `CNY` | Outgoing currency |
-| `in_account_code` | VARCHAR | `UNKNOWN` | Effective incoming account; `MULTIPLE` means detail contains several accounts |
-| `out_account_code` | VARCHAR | `UNKNOWN` | Effective outgoing account; `MULTIPLE` means detail contains several accounts |
-| `input_hash` | CHAR(64) | `''` | Hash of sorted fact/review inputs |
-| `projection_version` | INTEGER | `1` | Projection rule version |
+| `ledger_type` | VARCHAR(40) | `UNRESOLVED` | INCOME/EXPENSE/AA/LOAN_BORROW/LOAN_LEND/REFUND/TRANSFER/FX_EXCHANGE/PASS_THROUGH/UNRESOLVED |
+| `allocation_status` | VARCHAR(20) | `DEFAULT` | DEFAULT/PARTIAL/COMPLETE/EXCLUDED/CONFLICT；唯一发布状态 |
+| `title` | VARCHAR(200) | `''` | 列表使用的紧凑标题 |
+| `start_time` | DATETIME | 无伪造默认 | 来源 Fact 的最早时间 |
+| `end_time` | DATETIME | 无伪造默认 | 来源 Fact 的最晚时间 |
+| `in_amount_value` | BIGINT | `0` | 流入整数金额 |
+| `in_amount_scale` | SMALLINT | `2` | 流入精度 |
+| `in_currency_code` | VARCHAR(12) | `CNY` | 流入币种 |
+| `out_amount_value` | BIGINT | `0` | 流出整数金额 |
+| `out_amount_scale` | SMALLINT | `2` | 流出精度 |
+| `out_currency_code` | VARCHAR(12) | `CNY` | 流出币种 |
+| `in_account_code` | VARCHAR(120) | `UNKNOWN` | 有效流入账户；多个时为 MULTIPLE |
+| `out_account_code` | VARCHAR(120) | `UNKNOWN` | 有效流出账户；多个时为 MULTIPLE |
+| `input_hash` | VARCHAR(64) | `''` | 排序后的 Fact/Review 输入指纹 |
+| `projection_version` | INTEGER | `1` | 投影规则版本及并发依据 |
 
-Only the projection service updates this table. For cross-currency entries, in/out are shown separately and never subtracted without a future valuation policy.
+普通 Fact 是一条 INCOME 或 EXPENSE。特殊 Review 把数个 Fact 投影成一条 AA、借贷、退款、转账或换汇记录，并分别保留 in/out，避免把代收、退款和账户间转账误当收入。跨币种两侧分别展示，在未来明确汇率政策前不计算净额。
 
-Projection groups facts by confirmed financial Review connectivity. A normal
-fact remains one INCOME or EXPENSE entry; AA, loan, refund, transfer, and FX
-cases produce one entry for their connected facts. A confirmed duplicate case
-counts only its `DUPLICATE_RETAINED` fact while keeping excluded facts available
-for lineage. Cash legs always come from full immutable fact amounts, not from
-display labels or mutable legacy totals. Different scales of the same currency
-are normalized exactly; multiple currencies in the same direction block the
-projection instead of being silently combined. A missing zero leg uses the real
-unit/scale of the opposite leg for display and does not create a financial value.
+### 8. `ledger_entry_source`：投影反向追溯
 
-`input_hash` covers sorted immutable fact fields plus every confirmed Review
-version, result, and normalized line in the component. Target drift is reported;
-shadow migration never overwrites a mismatching entry.
-
-Account projection follows the same deterministic rule. The immutable Fact
-keeps the imported account code; a confirmed ACCOUNT Review supplies the
-effective code. Each cash direction projects its single effective account,
-`MULTIPLE` when several accounts contribute, or `UNKNOWN` when source evidence
-does not identify one. Import institution and file provenance remain detail-only.
-
-### `ledger_entry_source` — deterministic projection lineage
-
-| Column | Type | Default | Meaning |
+| 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `ledger_id` | INTEGER | `0` | Implicit ledger entry ID |
-| `source_kind` | ENUM text | `BILL_FACT` | BILL_FACT or REVIEW_CASE |
-| `source_id` | INTEGER | `0` | Corresponding implicit ID |
+| `ledger_id` | INTEGER | `0` | 隐式 Ledger ID |
+| `source_kind` | VARCHAR(20) | `BILL_FACT` | BILL_FACT 或 REVIEW_CASE |
+| `source_id` | INTEGER | `0` | 对应来源 ID |
 
-`(source_kind, source_id)` is unique. One ledger entry may have many sources; every source resolves to exactly one published projection.
+`(source_kind, source_id)` 唯一，因此一个 Fact 只属于一个最终投影，反向也能从投影唯一找到全部 Fact/Review。详情由此批量读取来源，不扫描无关表。
 
-Every published fact contributes exactly one `BILL_FACT` source row. Every
-confirmed financial Review that defines component connectivity contributes
-exactly one `REVIEW_CASE` source row. TAG Reviews remain discoverable through
-their `review_case_bill.bill_id` members and publish attributes rather than
-component connectivity. The `(source_kind, source_id)` identity is
-deterministic; the row's database ID is only a surrogate. This makes backfill
-idempotent and lets a detail request recover both immutable facts and the
-complete Review trail without querying unrelated entries. `ledger_entry.id`
-and `bill_fact.id` are deliberately independent to avoid collisions when Fact
-and Review projections share the same hot table.
+### 9. `tag_view`：标签维度
 
-## Tags
-
-### `tag_view`
-
-| Column | Type | Default | Meaning |
+| 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `name` | VARCHAR | `''` | Display name |
-| `system_name` | VARCHAR | `''` | Stable code |
-| `status` | ENUM text | `ACTIVE` | ACTIVE/ARCHIVED |
+| `name` | VARCHAR(120) | `''` | 展示名 |
+| `system_name` | VARCHAR(64) | `''` | 唯一稳定代码 |
+| `status` | VARCHAR(20) | `ACTIVE` | ACTIVE/ARCHIVED |
 
-### `tag`
+### 10. `tag`：标签值
 
-| Column | Type | Default | Meaning |
+| 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `view_id` | INTEGER | `0` | Implicit tag view ID |
-| `name` | VARCHAR | `''` | Display value |
-| `system_name` | VARCHAR | `''` | Stable value code |
-| `status` | ENUM text | `ACTIVE` | ACTIVE/ARCHIVED |
+| `view_id` | INTEGER | `0` | 隐式 Tag View ID |
+| `name` | VARCHAR(120) | `''` | 展示值 |
+| `system_name` | VARCHAR(64) | `''` | 维度内稳定代码 |
+| `status` | VARCHAR(20) | `ACTIVE` | ACTIVE/ARCHIVED |
 
-Target tag views and values preserve their legacy IDs so Review tag system names
-can be resolved without a translation table. Legacy tag values do not have their
-own timestamps; their target `created_time` and `updated_time` therefore use the
-real creation time of the owning tag view. An archived view makes all its values
-effectively archived.
+`(view_id, system_name)` 唯一。每个活动维度有受保护的 `unclassified` 默认值；定义采用归档而不是删除。
 
-### `ledger_entry_tag`
+### 11. `ledger_entry_tag`：热投影标签
 
-| Column | Type | Default | Meaning |
+| 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `ledger_id` | INTEGER | `0` | Implicit ledger entry ID |
-| `tag_id` | INTEGER | `0` | Implicit tag ID |
+| `ledger_id` | INTEGER | `0` | 隐式 Ledger ID |
+| `tag_id` | INTEGER | `0` | 隐式 Tag ID |
 
-`(ledger_id, tag_id)` is unique. Page tags load in one bounded ID batch. Do not introduce Elasticsearch for exact tag filtering at the current scale.
+`(ledger_id, tag_id)` 唯一。列表页按返回的 Ledger ID 一次批量读取。当前规模无需 Elasticsearch；引入第二套存储会增加一致性成本。
 
-Each active tag view contributes exactly one effective tag to a ledger entry.
-The active `unclassified` value is used unless a confirmed TAG Review supplies
-an authoritative value. All facts combined into one ledger entry must agree on
-that value; conflicting confirmed values are a migration blocker rather than a
-last-write-wins choice. Pending suggestions never affect the hot projection.
+## 热、冷与读取规则
 
-Target dictionary commands are exposed under `/paam/tag/v1`. Creating a view
-also creates its protected `unclassified` value and fills missing defaults for
-existing hot entries with one set-oriented statement. New default projections
-receive the same active-view defaults in bounded batches. Views and values are
-archived rather than physically deleted.
+| 数据 | 热度 | 正常读取方式 |
+| --- | --- | --- |
+| `ledger_entry` | 热 | 列表、筛选、汇总的主表 |
+| `ledger_entry_tag`、`tag`、`tag_view` | 热/温 | 列表按 ID 批量取；字典独立取 |
+| `ledger_entry_source` | 温 | 仅单条详情和投影重建 |
+| `bill_fact` | 温 | 导入核对、审查、单条详情 |
+| `review_case`、`review_case_bill` | 温 | 审查工作台与单条详情 |
+| `import_file`、`bill_raw`、`review_history` | 冷 | 来源追溯、问题核查、审计详情 |
 
-`PUT /paam/tag/v1/assignment/set/{ledger_id}` is the only target tag-assignment
-command. The UI submits one complete system-name state and the current
-`projection_version`. The backend batch-loads all source Facts and stores the
-same confirmed TAG decision once per Fact, with canonical before/after history.
-It then replaces the hot entry's effective tags in the same transaction. This
-keeps a merged entry simple for the UI while making later financial Review
-revoke/split deterministic. A subsequent merge is rejected when its source
-Facts have different effective tag states. One-Fact and twenty-Fact assignments
-both execute exactly six SELECT statements; writes grow with the audit records,
-not with query round trips.
+流水列表禁止读取 Raw、文件元数据、Review 明细和历史；这些详细文本只在用户点开一条记录时按 ID 批量取。SHA 前端可以短显示，但后端保留完整值。
 
-## Hot summary contract
+## 删除结论
 
-Dashboard summaries read only `ledger_entry` and use integer arithmetic. The
-Mapper performs one count query and one grouped-leg query, independent of page
-or table size; raw evidence and Review history are not loaded.
+旧 23 张业务表和 5 张过渡表已经从模型、运行时与开发 SQLite 物理删除。它们的必要语义已分别进入：
 
-- INCOME and EXPENSE contribute their matching cash legs.
-- REFUND reduces actual expense while remaining visible as refund activity.
-- Same-currency AA and TRANSFER entries recognize only their in/out difference
-  as actual income or expense (for example, a transfer fee).
-- Loan legs and cross-currency exchange legs remain separately visible
-  activities; they do not become income/expense without a valuation policy.
-- Values with different scales in the same currency are normalized exactly.
-  Different currencies are never added together.
+- 文件/批次/来源/异常：`import_file + bill_raw`。
+- 规范流水：`bill_fact`。
+- 退款/AA/借贷/转账/重复/账户/标签/冲突：统一 Review 三表。
+- 最终实际流水：Ledger 三表与标签三表。
 
-## Read-model contract
-
-The target ledger list reads only explicit `ledger_entry` columns plus one
-batched tag query for the returned ledger IDs. Count, page, and tag assembly are
-therefore fixed at three SELECT statements for 10 or 100 rows. Raw payloads,
-import metadata, Review lines, and history are not list fields.
-
-A single-entry detail request follows `ledger_entry_source` to its immutable
-facts and confirmed projection Reviews. It additionally finds pending/rejected
-Reviews related to those facts and marks them `is_projection_source = false`,
-so pending work is visible without being confused with published accounting
-state. Raw rows, import-file metadata, Review lines, and append-only history are
-then loaded in bounded ID batches; no query runs inside an entity loop.
-
-## Legacy 23-table disposition
-
-| Existing table | Target action |
-| --- | --- |
-| `bills` | Backfill `bill_fact`; publish `ledger_entry`; retire after shadow verification |
-| `tags` | Dead compatibility table; delete after migration validation |
-| `tag_views` | Migrate/rename to `tag_view` |
-| `view_tags` | Migrate/rename to `tag` |
-| `bill_view_tags` | Dead compatibility table; delete |
-| `tag_change_logs` | Migrate required history to `review_history`; retire |
-| `bill_tags` | Dead compatibility table; delete |
-| `import_batches` | Merge into `import_file` |
-| `import_artifacts` | Merge into `import_file` |
-| `ledger_origins` | Migrate to `bill_raw` and its file link |
-| `import_row_issues` | Fold current problem state into `bill_raw` |
-| `import_issue_actions` | Migrate resolve/dismiss/reopen history to FACT_CONFLICT Review; retire |
-| `tag_audits` | Current effect becomes Review/projection; history migrates; retire |
-| `review_candidates` | Migrate to pending `review_case` rows |
-| `candidate_action_logs` | Migrate to `review_history` |
-| `account_revisions` | Migrate to ACCOUNT Review and history |
-| `refund_allocations` | Migrate to REFUND case bills |
-| `refund_allocation_audits` | Migrate to `review_history` |
-| `refund_designations` | Current effect becomes REFUND ledger type |
-| `refund_nature_audits` | Migrate to `review_history` |
-| `review_matters` | Migrate to `review_case` |
-| `review_matter_revisions` | Current state becomes case/bills; history migrates |
-| `asset_snapshots` | Keep outside the ledger core in the asset module, or archive/drop only after usage and row-count verification |
-
-For a production database with existing records, use this conservative migration sequence: create target tables, backfill, dual/shadow read, compare IDs/amounts/hashes, switch reads, stop legacy writes, observe, then drop explicitly approved tables. The current development database had no production data, so it was explicitly rebuilt directly to the target schema.
-
-## Post-merge table reconciliation
-
-The multi-source branch `9ef5bf5` introduced five physical tables after the
-PIRC-9 target model was agreed. They are implementation compatibility tables,
-not additions to the target contract:
-
-| Added table | PIRC-9 disposition |
-| --- | --- |
-| `accounts` | Do not retain in the ledger core. Store the normalized account in `bill_fact.account_code`; keep verbose/exported account fields in `bill_raw.raw_payload`; explicit corrections remain ACCOUNT Review. |
-| `account_bindings` | Do not retain. Resolve aliases during import; persist only the resulting fact account and raw evidence. A future global account directory requires a separate approved asset/account-module decision. |
-| `import_evidence` | Replace with `bill_raw`; repeated exports are multiple raw rows linked to one fact. |
-| `import_identities` | Do not retain. Match provider references through `bill_raw.source_reference`; use `bill_raw.raw_hash` and bounded fact candidates when no reference exists. The accepted canonical identity remains `bill_fact.fact_key`. |
-| `import_previews` | Do not retain as ledger SQL storage. Use bounded expiring application command state; confirmation still verifies the deterministic plan version. |
-
-Therefore the final ledger core remains exactly the eleven target tables in
-this document. `asset_snapshots` belongs to a separate asset module and is not a
-twelfth ledger table. Until the new write path is complete, all 23 legacy tables
-and these five post-merge tables are compatibility-only and must not become new
-hot read sources.
-
-Because this development database contains no production facts, the final cut
-does not need a dual-read observation window: implement target writes, switch
-the API/UI, run empty-schema and supplied-sample acceptance, then recreate the
-database with the eleven ledger tables (plus independently approved modules)
-and no compatibility tables.
-
-The production runtime entry is `app.target_main:app`; `run.py` starts it by
-default. Its startup calls `init_target_db()` and creates exactly those eleven
-ledger tables. The Engine, Session factory, and `TargetBase` live in
-`app.target_database`; importing the production application does not import the
-legacy `app.database` module or register its ORM metadata. `app.main:app`
-remains only as migration-era regression code and
-must not be used with the target development database because its lifespan owns
-the retired compatibility schema.
+开发库没有生产数据，因此按已确认方案直接清空重建，没有旧数据回填或双写阶段。Git 历史仍可用于追溯被删除实现，但任何新功能不得恢复兼容表或影子 API。

@@ -162,18 +162,6 @@ class TargetLedgerDetailVO:
 
 
 @dataclass(frozen=True, slots=True)
-class TargetLedgerReadinessVO:
-    legacy_bill_count: int
-    fact_count: int
-    fact_source_count: int
-    confirmed_review_count: int
-    review_source_count: int
-    ledger_entry_count: int
-    active_tag_view_count: int
-    ledger_tag_count: int
-
-
-@dataclass(frozen=True, slots=True)
 class TargetLedgerAggregateVO:
     day: str
     ledger_type: str
@@ -334,34 +322,3 @@ class TargetLedgerDetailRead(BaseModel):
     raw_evidence: list[TargetRawEvidenceRead]
     import_files: list[TargetImportFileRead]
     reviews: list[TargetReviewEvidenceRead]
-
-
-class LedgerSummaryBasisRead(BaseModel):
-    income_value: int
-    expense_value: int
-    refund_offset_value: int
-    net_value: int
-
-
-class LedgerSummaryShadowComparisonRead(BaseModel):
-    matched: bool
-    comparable: bool
-    legacy_entry_count: int
-    target_entry_count: int
-    legacy: LedgerSummaryBasisRead
-    target: LedgerSummaryBasisRead
-    differences: list[str]
-
-
-class TargetLedgerShadowStatusRead(BaseModel):
-    ready: bool
-    legacy_bill_count: int
-    fact_count: int
-    fact_source_count: int
-    confirmed_review_count: int
-    review_source_count: int
-    ledger_entry_count: int
-    active_tag_view_count: int
-    ledger_tag_count: int
-    summary: LedgerSummaryShadowComparisonRead
-    blockers: list[str]

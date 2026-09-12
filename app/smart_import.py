@@ -151,7 +151,7 @@ def build_plan(
     identities = history["identities"]
     bills = history["bills"]
     evidence = defaultdict(list, history["evidence"])
-    legacy_refs = defaultdict(list, history["references"])
+    known_refs = defaultdict(list, history["references"])
     seen_files = set(history["seen_files"])
     virtual = {}
     counts = Counter()
@@ -191,12 +191,12 @@ def build_plan(
                 keys = candidate_keys if candidate_keys is not None else identity_keys(row, ordinal)
                 row["keys"] = keys
                 targets = {identities[k] for k in keys if k in identities}
-                legacy = (
-                    legacy_refs.get((row["source_type"], row["reference"]), [])
+                matched_refs = (
+                    known_refs.get((row["source_type"], row["reference"]), [])
                     if row["reference"]
                     else []
                 )
-                targets.update(legacy)
+                targets.update(matched_refs)
                 if len(targets) > 1:
                     row.update(
                         action="error",

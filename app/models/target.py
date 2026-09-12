@@ -49,6 +49,13 @@ class BillRaw(TargetTable, TargetBase):
     __tablename__ = "bill_raw"
     __table_args__ = (
         UniqueConstraint("import_file_id", "source_row_number", name="uq_bill_raw_file_row"),
+        Index("ix_bill_raw_bill_id_id", "bill_id", "id"),
+        Index(
+            "ix_bill_raw_source_reference_bill_id",
+            "source_reference",
+            "bill_id",
+            sqlite_where=text("source_reference <> ''"),
+        ),
     )
 
     bill_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -64,7 +71,10 @@ class BillRaw(TargetTable, TargetBase):
 
 class BillFact(TargetTable, TargetBase):
     __tablename__ = "bill_fact"
-    __table_args__ = (UniqueConstraint("fact_key", name="uq_bill_fact_key"),)
+    __table_args__ = (
+        UniqueConstraint("fact_key", name="uq_bill_fact_key"),
+        Index("ix_bill_fact_occurred_time_id", "occurred_time", "id"),
+    )
 
     fact_key: Mapped[str] = mapped_column(String(160), nullable=False)
     occurred_time: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False)
@@ -90,6 +100,10 @@ class ReviewCase(TargetTable, TargetBase):
 
 class ReviewCaseBill(TargetTable, TargetBase):
     __tablename__ = "review_case_bill"
+    __table_args__ = (
+        Index("ix_review_case_bill_bill_case", "bill_id", "case_id"),
+        Index("ix_review_case_bill_case_id", "case_id", "id"),
+    )
 
     case_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     bill_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -151,6 +165,12 @@ class LedgerEntrySource(TargetTable, TargetBase):
     __tablename__ = "ledger_entry_source"
     __table_args__ = (
         UniqueConstraint("source_kind", "source_id", name="uq_ledger_entry_source"),
+        Index(
+            "ix_ledger_entry_source_ledger_kind_id",
+            "ledger_id",
+            "source_kind",
+            "source_id",
+        ),
     )
 
     ledger_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

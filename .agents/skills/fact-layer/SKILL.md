@@ -11,11 +11,11 @@ Use `docs/data-model.md` as the target schema contract.
 - `bill_raw` represents one immutable source row. `(import_file_id, source_row_number)` is unique. Multiple raw rows may point to the same `bill_fact`.
 - `bill_fact` contains only stable normalized accounting facts. Optional export fields remain raw evidence.
 - A richer repeat export adds another raw row; it does not overwrite the first raw row or accepted fact.
-- Core conflicts create `CONFLICT` raw state and require Review. Never silently replace amount, direction, time, or currency.
+- Core conflicts create an `INVALID` raw row with `issue_code=FACT_CONFLICT` and require Review. Never silently replace amount, direction, time, or currency.
 - Keep row parsing set-oriented. Batch-check source references/fingerprints and batch-write accepted rows.
 - A preview first derives the current upload's identity keys, references, and
-  date bounds. Query only matching identities, evidence, origins, artifacts,
-  and candidate bills; never load those historical tables in full.
+  date bounds. Query only matching raw evidence, imported files, and candidate
+  facts; never load historical tables in full.
 - Confirmation preloads every referenced ID set and performs grouped flushes.
   Do not call `get()`, `select()`, or `flush()` once per parsed row.
 - Alternate bank/wallet exports may share one fact. Persist each source row in

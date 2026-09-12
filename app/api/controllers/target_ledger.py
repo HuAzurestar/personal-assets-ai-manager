@@ -13,24 +13,14 @@ from app.schemas.target_ledger import (
     TargetLedgerPageRead,
     TargetLedgerSummaryQuery,
     TargetLedgerSummaryRead,
-    TargetLedgerShadowStatusRead,
 )
 from app.services.target_ledger_service import TargetLedgerService
 from app.services.target_ledger_summary_service import TargetLedgerSummaryService
 
 
-router = APIRouter(prefix="/api/shadow/v1/ledger", tags=["target-ledger-shadow"])
 v1_router = APIRouter(prefix="/paam/ledger/v1", tags=["target-ledger"])
 
 
-@router.get("/status", response_model=TargetLedgerShadowStatusRead)
-def get_target_ledger_status(db: Session = Depends(get_target_db)):
-    from app.services.target_ledger_status_service import TargetLedgerStatusService
-
-    return TargetLedgerStatusService(db).status()
-
-
-@router.get("/entries", response_model=TargetLedgerPageRead)
 @v1_router.get("/entry/list", response_model=TargetLedgerPageRead)
 def list_target_ledger_entries(
     page: int = Query(default=1, ge=1),
@@ -68,7 +58,6 @@ def list_target_ledger_entries(
         raise HTTPException(status_code=422, detail=str(error)) from error
 
 
-@router.get("/entries/{ledger_id}", response_model=TargetLedgerDetailRead)
 @v1_router.get("/entry/detail/{ledger_id}", response_model=TargetLedgerDetailRead)
 def get_target_ledger_detail(
     ledger_id: int,
@@ -80,7 +69,6 @@ def get_target_ledger_detail(
     return detail
 
 
-@router.get("/summary", response_model=TargetLedgerSummaryRead)
 @v1_router.get("/summary", response_model=TargetLedgerSummaryRead)
 def get_target_ledger_summary(
     date_from: date | None = None,

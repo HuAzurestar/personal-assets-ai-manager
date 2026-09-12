@@ -25,7 +25,7 @@ from app.schemas.target_ledger import (
 
 
 class TargetLedgerService:
-    """Target ledger list/detail use cases without legacy DTO coupling."""
+    """Ledger list/detail use cases over the hot projection."""
 
     def __init__(self, db: Session):
         self.mapper = TargetLedgerMapper(db)
