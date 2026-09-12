@@ -349,17 +349,19 @@ physical table has already been migrated.
   - A single `TargetShadowMigrationService.backfill_and_compare()` orchestration
     and `scripts/backfill_target_all.py` provide an idempotent full migration
     entry point. No legacy row is updated or deleted.
-- [ ] P3e — controlled on-disk shadow backfill and observation
-  - Back up the SQLite file, apply additive account columns, and run the unified
-    backfill against the real target tables.
-  - Require `matched=true` and shadow status `ready=true`; retain the old API as
-    the production source during an observation window.
-  - Exercise real page/detail/summary shadow endpoints before proposing the UI
-    read switch.
-- [ ] P4 — retire compatibility storage after observation
-  - Stop legacy writes only after shadow comparisons pass. Delete the three dead
-    tag tables and other approved compatibility tables in a later explicit
-    migration, never in the initial target-schema deployment.
+- [x] P3e — empty on-disk target reset
+  - The user confirmed this is development-only data and explicitly selected an
+    empty destructive reset without backup or legacy backfill.
+  - `scripts/reset_target_database.py` drops the named SQLite tables, initializes
+    only `TARGET_TABLE_NAMES`, and fails unless the result is exactly 11 tables.
+  - The current development database was reset and verified as those 11 empty
+    target tables. No compatibility or asset table remains in that ledger file.
+- [ ] P4 — switch the production runtime and UI
+  - `app.target_main` is already target-only. The default `run.py` still starts
+    legacy `app.main`, whose lifespan would recreate compatibility tables.
+  - Switch the entry point only together with either a target-contract UI or an
+    explicit API-only release; otherwise the existing UI would start against
+    tables it no longer owns.
 
 Single-candidate, single-refund, and single-transaction detail endpoints are not
 N+1 list paths. They remain lower priority unless profiling shows a slow query.
@@ -451,12 +453,11 @@ N+1 list paths. They remain lower priority unless profiling shows a slow query.
     consistent without another issue table.
 - [ ] Switch the production UI from legacy transaction/review/tag contracts to
   the versioned target contracts.
-- [ ] Recreate the empty development database without the 23 legacy tables or
-  the five post-merge compatibility tables. Preserve `asset_snapshots` only as
-  an explicitly separate module.
+- [x] Recreate the empty development database without legacy or post-merge
+  compatibility tables. `asset_snapshots` was removed from the ledger file and
+  remains a separately scoped future module.
 
 The physical delete remains intentionally last. The target-only runtime now
 proves that the replacement import/list/detail/summary and financial Review core
-does not require a legacy table. The production UI switch and final empty-file
-database reset are the remaining functional dependencies, not a data-migration
-or backup dependency.
+does not require a legacy table. The production runtime/UI switch is the one
+remaining functional dependency, not a data-migration or backup dependency.

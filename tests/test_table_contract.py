@@ -6,7 +6,9 @@ from app.database import (
     TARGET_TABLE_NAMES,
     init_target_db,
 )
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, text
+
+from scripts.reset_target_database import reset
 
 
 def test_every_physical_table_has_an_explicit_pirc9_disposition():
@@ -35,3 +37,16 @@ def test_empty_target_database_creates_only_the_11_pirc9_tables(tmp_path):
         assert set(inspect(engine).get_table_names()) == set(TARGET_TABLE_NAMES)
     finally:
         engine.dispose()
+
+
+def test_reset_target_database_drops_all_non_target_tables(tmp_path):
+    path = tmp_path / "mixed.db"
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("CREATE TABLE legacy_example (id INTEGER PRIMARY KEY)"))
+    finally:
+        engine.dispose()
+
+    actual = reset(path)
+    assert set(actual) == set(TARGET_TABLE_NAMES)
