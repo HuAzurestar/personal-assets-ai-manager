@@ -388,6 +388,10 @@ N+1 list paths. They remain lower priority unless profiling shows a slow query.
 - [x] Multi-source parsing merged from
   `9ef5bf5a440fb311a24d2e80e3c543e250c5d90e` for Alipay, WeChat, CCB, ABC,
   and CMB.
+- [x] Seven supplied real files pass the target-only import in both file orders:
+  827 raw rows, 803 facts/projections, 17 supplementary evidence links, 7
+  non-posted records, zero parse errors, and an identical canonical signature.
+  A 100-row target page remains 3 SELECTs and summary remains 2 SELECTs.
 - [x] Preview derives identity keys, references, and a date window first. It no
   longer loads all bills, evidence, origins, identities, or artifacts.
 - [x] Confirmation batch-loads referenced accounts, bills, bindings, origins,

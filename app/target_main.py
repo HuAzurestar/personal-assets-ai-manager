@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from app.api.controllers.intake import target_router as target_intake_router
+from app.api.controllers.target_intake import router as target_intake_router
 from app.api.controllers.target_ledger import v1_router as target_ledger_router
 from app.api.controllers.target_review import router as target_review_router
 from app.api.controllers.target_tag import router as target_tag_router

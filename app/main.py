@@ -19,7 +19,8 @@ from sqlalchemy.orm import Session
 from app import database
 from app.api.controllers.dashboard import router as dashboard_router
 from app.api.controllers.import_issue import router as import_issue_router
-from app.api.controllers.intake import router as intake_router, target_router as target_intake_router
+from app.api.controllers.intake import router as intake_router
+from app.api.controllers.target_intake import router as target_intake_router
 from app.api.controllers.ledger import router as ledger_router
 from app.api.controllers.matter import router as matter_router
 from app.api.controllers.refund import router as refund_router

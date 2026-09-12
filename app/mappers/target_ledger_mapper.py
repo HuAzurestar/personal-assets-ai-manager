@@ -5,7 +5,6 @@ from datetime import datetime, time
 from sqlalchemy import asc, case, desc, exists, func, literal, or_, select, union_all
 from sqlalchemy.orm import Session
 
-from app.database import Bill
 from app.models.target import (
     BillFact,
     BillRaw,
@@ -135,6 +134,10 @@ class TargetLedgerMapper:
         )
 
     def readiness(self) -> TargetLedgerReadinessVO:
+        # Shadow-only compatibility check. Keep the legacy model out of the
+        # production target read path until this method is explicitly called.
+        from app.database import Bill
+
         row = self.db.execute(select(
             select(func.count(Bill.id)).scalar_subquery().label("legacy_bill_count"),
             select(func.count(BillFact.id)).scalar_subquery().label("fact_count"),

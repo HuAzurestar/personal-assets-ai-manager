@@ -1,148 +1,199 @@
-"""Optional local sample verification. Does not copy or print private row data."""
+"""Verify private local samples without copying or printing transaction rows."""
 
-import collections
+from __future__ import annotations
+
 import base64
+import collections
+from contextlib import contextmanager
 import hashlib
 import json
 import os
 from pathlib import Path
+from time import perf_counter
 import sys
 import tempfile
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
 from app.statement_parser import parse_statement
 
+
 SAMPLE_SUFFIXES = {".csv", ".xls", ".xlsx", ".pdf", ".zip"}
-sample_files = sorted(
-    file
-    for file in Path("E:/Worktable/Download").iterdir()
-    if file.is_file() and file.suffix.lower() in SAMPLE_SUFFIXES
-)
+SAMPLE_DIR = Path("E:/Worktable/Download")
 
-for file in sample_files:
+
+def samples() -> list[Path]:
+    if not SAMPLE_DIR.is_dir():
+        raise SystemExit(f"sample directory does not exist: {SAMPLE_DIR}")
+    return sorted(
+        file
+        for file in SAMPLE_DIR.iterdir()
+        if file.is_file() and file.suffix.lower() in SAMPLE_SUFFIXES
+    )
+
+
+def verify_parsers(sample_files: list[Path]) -> None:
+    for file in sample_files:
+        try:
+            parsed = parse_statement(file.read_bytes(), file.name)
+            print(json.dumps({
+                "file": file.name,
+                "source": parsed["source_type"],
+                "rows": len(parsed["rows"]),
+                "errors": dict(collections.Counter(
+                    row["error"] for row in parsed["rows"] if row["error"]
+                )),
+                "dispositions": dict(collections.Counter(
+                    row["disposition"] for row in parsed["rows"]
+                )),
+                "precision": dict(collections.Counter(
+                    row.get("time_precision") for row in parsed["rows"]
+                )),
+                "references": sum(
+                    bool(row.get("reference")) for row in parsed["rows"]
+                ),
+            }, ensure_ascii=False), flush=True)
+        except Exception as error:
+            print(file.name, type(error).__name__, str(error), flush=True)
+            raise
+
+
+def upload_payload(sample_files: list[Path]) -> list[dict[str, str]]:
+    return [{
+        "filename": file.name,
+        "content_base64": base64.b64encode(file.read_bytes()).decode(),
+    } for file in sample_files]
+
+
+def preview(client, files):
+    response = client.post("/paam/import/v1/preview", json={"files": files})
+    assert response.status_code == 200, response.text
+    return response.json()["body"]
+
+
+def confirm(client, plan):
+    return client.post(
+        f"/paam/import/v1/preview/confirm/{plan['token']}",
+        json={"version": plan["version"]},
+    )
+
+
+@contextmanager
+def measured_selects(engine):
+    from sqlalchemy import event
+
+    statements: list[str] = []
+
+    def capture(_connection, _cursor, statement, _parameters, _context, _many):
+        if statement.lstrip().upper().startswith("SELECT"):
+            statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", capture)
     try:
-        parsed = parse_statement(file.read_bytes(), file.name)
-        print(
-            json.dumps(
-                {
-                    "file": file.name,
-                    "source": parsed["source_type"],
-                    "rows": len(parsed["rows"]),
-                    "errors": dict(
-                        collections.Counter(
-                            r["error"] for r in parsed["rows"] if r["error"]
-                        )
-                    ),
-                    "dispositions": dict(
-                        collections.Counter(r["disposition"] for r in parsed["rows"])
-                    ),
-                    "precision": dict(
-                        collections.Counter(
-                            r.get("time_precision") for r in parsed["rows"]
-                        )
-                    ),
-                    "references": sum(bool(r.get("reference")) for r in parsed["rows"]),
-                },
-                ensure_ascii=False,
-            ),
-            flush=True,
-        )
-    except Exception as error:
-        print(file.name, type(error).__name__, str(error), flush=True)
+        yield statements
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
 
-if "--commit" in sys.argv:
-    with tempfile.TemporaryDirectory(prefix="paam-samples-") as temp:
+
+def verify_target_commit(sample_files: list[Path]) -> None:
+    with tempfile.TemporaryDirectory(prefix="paam-target-samples-") as temp:
+        database_path = Path(temp) / "sample.db"
         os.environ["PAAM_DATA_DIR"] = temp
-        os.environ["PAAM_DATABASE_URL"] = "sqlite:///" + str(Path(temp) / "sample.db")
-        from fastapi.testclient import TestClient
-        from app.main import app
-        from app.database import engine, SessionLocal, Bill, ImportEvidence, Account
-        from sqlalchemy import select
+        os.environ["PAAM_DATABASE_URL"] = f"sqlite:///{database_path}"
 
-        files = [
-            {
-                "filename": f.name,
-                "content_base64": base64.b64encode(f.read_bytes()).decode(),
-            }
-            for f in sample_files
-        ]
-        with TestClient(app) as client:
-            if "--reverse" in sys.argv:
-                files = list(reversed(files))
-            if "--sequential" in sys.argv:
-                for item in files:
-                    p = client.post(
-                        "/api/intake/preview", json={"files": [item]}
-                    ).json()
-                    print("SEQUENTIAL", item["filename"], p["counts"], flush=True)
-                    assert p["can_confirm"]
-                    r = client.post(
-                        f"/api/intake/{p['token']}/confirm",
-                        json={"version": p["version"]},
+        from fastapi.testclient import TestClient
+        from sqlalchemy import inspect, select
+        from app import database
+        from app.models.target import BillFact, BillRaw, ImportFile, LedgerEntry
+        from app.target_main import app
+
+        files = upload_payload(sample_files)
+        if "--reverse" in sys.argv:
+            files.reverse()
+        try:
+            with TestClient(app) as client:
+                started = perf_counter()
+                plan = preview(client, files)
+                preview_seconds = perf_counter() - started
+                print("PREVIEW", plan["counts"], f"{preview_seconds:.3f}s", flush=True)
+                assert plan["can_confirm"], "target preview needs an explicit decision"
+                assert sum(len(doc["rows"]) for doc in plan["documents"]) == 827
+
+                started = perf_counter()
+                committed = confirm(client, plan)
+                commit_seconds = perf_counter() - started
+                assert committed.status_code == 200, committed.text
+
+                with database.SessionLocal() as db:
+                    fact_count = db.query(BillFact).count()
+                    raw_count = db.query(BillRaw).count()
+                    file_count = db.query(ImportFile).count()
+                    ledger_count = db.query(LedgerEntry).count()
+                    canonical = sorted(
+                        (
+                            fact.account_code,
+                            fact.occurred_time.isoformat(),
+                            fact.cash_direction,
+                            fact.amount_value,
+                            fact.amount_scale,
+                            fact.currency_code,
+                        )
+                        for fact in db.scalars(select(BillFact)).all()
                     )
-                    assert r.status_code == 200, r.text
-            response = client.post("/api/intake/preview", json={"files": files})
-            assert response.status_code == 200, response.text
-            preview = response.json()
-            print("PREVIEW", preview["counts"], flush=True)
-            assert preview["can_confirm"]
-            assert sum(len(d["rows"]) for d in preview["documents"]) == 827
-            commit = client.post(
-                f"/api/intake/{preview['token']}/confirm",
-                json={"version": preview["version"]},
-            )
-            assert commit.status_code == 200, commit.text
-            with SessionLocal() as db:
-                snapshot = [
-                    (b.id, b.amount)
-                    for b in db.scalars(select(Bill).order_by(Bill.id)).all()
-                ]
-                assert len(snapshot) == 803
-                canonical = sorted(
-                    (
-                        db.get(Account, b.account_id).identity,
-                        b.occurred_at.date().isoformat(),
-                        round(b.amount * 100),
-                        b.import_nature,
-                    )
-                    for b in db.scalars(select(Bill)).all()
+                assert (fact_count, raw_count, file_count, ledger_count) == (
+                    803,
+                    827,
+                    7,
+                    803,
                 )
+                signature = hashlib.sha256(
+                    json.dumps(canonical, ensure_ascii=False).encode()
+                ).hexdigest()
+
+                replay = confirm(client, plan)
+                assert replay.status_code == 200
+                assert replay.json() == committed.json()
+                reversed_plan = preview(client, list(reversed(files)))
+                assert reversed_plan["counts"].get("new", 0) == 0
+                assert reversed_plan["counts"]["duplicate_file"] == 827
+                assert confirm(client, reversed_plan).status_code == 200
+
+                with measured_selects(database.engine) as list_selects:
+                    page = client.get(
+                        "/paam/ledger/v1/entry/list?page=1&page_size=100"
+                    )
+                assert page.status_code == 200, page.text
+                assert page.json()["total"] == 803
+                assert len(list_selects) == 3, list_selects
+                assert all("SELECT *" not in sql.upper() for sql in list_selects)
+
+                with measured_selects(database.engine) as summary_selects:
+                    summary = client.get("/paam/ledger/v1/summary")
+                assert summary.status_code == 200, summary.text
+                assert summary.json()["entry_count"] == 803
+                assert len(summary_selects) == 2, summary_selects
+
+                actual_tables = set(inspect(database.engine).get_table_names())
+                assert actual_tables == set(database.TARGET_TABLE_NAMES), actual_tables
                 print(
-                    "MONEY_AND_ACCOUNT_SIGNATURE",
-                    hashlib.sha256(json.dumps(canonical).encode()).hexdigest(),
+                    "PASS target samples:",
+                    f"preview={preview_seconds:.3f}s",
+                    f"commit={commit_seconds:.3f}s",
+                    f"facts={fact_count}",
+                    f"raw={raw_count}",
+                    f"signature={signature}",
+                    f"list_selects={len(list_selects)}",
+                    f"summary_selects={len(summary_selects)}",
                     flush=True,
                 )
-                assert db.query(ImportEvidence).count() == 827
-                print(
-                    "SAVED",
-                    len(snapshot),
-                    "facts;",
-                    db.query(ImportEvidence).count(),
-                    "evidence rows",
-                    flush=True,
-                )
-            again = client.post(
-                f"/api/intake/{preview['token']}/confirm",
-                json={"version": preview["version"]},
-            )
-            assert again.status_code == 200
-            replay = client.post(
-                "/api/intake/preview", json={"files": list(reversed(files))}
-            ).json()
-            assert replay["counts"].get("new", 0) == 0
-            assert replay["counts"]["duplicate_file"] == 827
-            replay_commit = client.post(
-                f"/api/intake/{replay['token']}/confirm",
-                json={"version": replay["version"]},
-            )
-            assert replay_commit.status_code == 200, replay_commit.text
-            with SessionLocal() as db:
-                assert snapshot == [
-                    (b.id, b.amount)
-                    for b in db.scalars(select(Bill).order_by(Bill.id)).all()
-                ]
-            print(
-                "PASS real files: all rows retained, retry and reverse-order reupload unchanged",
-                flush=True,
-            )
-        engine.dispose()
+        finally:
+            database.engine.dispose()
+
+
+if __name__ == "__main__":
+    selected = samples()
+    verify_parsers(selected)
+    if "--commit" in sys.argv:
+        verify_target_commit(selected)

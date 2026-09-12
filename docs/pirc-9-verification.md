@@ -49,3 +49,15 @@ node --check app/static/target-ledger.js
 ```
 
 目标运行时专项覆盖还会验证：首页和静态资源可访问、前端没有旧热接口字符串、旧接口在目标应用返回 404、导入及 Review 生命周期可用、最终 SQLite 表集合与 `TARGET_TABLE_NAMES` 完全一致。
+
+## 真实样本结果（2026-09-12）
+
+本机 `E:\Worktable\Download` 的 7 份支付宝、微信、建行、农行和招行文件在独立临时数据库完成正序与逆序验收：
+
+- 827 条来源记录全部留存，其中 803 个新 Fact、17 条补充证据、7 条非入账记录，解析错误为 0。
+- 写入后得到 803 个 `ledger_entry`；Fact 数、Raw 数及投影数与预览完全一致。
+- 两种文件顺序生成相同事实签名 `a43d8a2aafd669dfaf913f7f7d257c513ec8abe81fb6594908fb02ab8dbc8ac6`。
+- 本机预览约 1.68–1.69 秒，确认约 1.54–1.82 秒。
+- 反序重传和同 token 重试均未新增事实；100 行列表为 3 次 SELECT，汇总为 2 次 SELECT。
+
+复验命令：`python reports/verify_smart_samples.py --commit --reverse`。脚本不复制或打印私人交易明细。

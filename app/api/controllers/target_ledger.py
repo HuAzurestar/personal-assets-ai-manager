@@ -17,7 +17,6 @@ from app.schemas.target_ledger import (
 )
 from app.services.target_ledger_service import TargetLedgerService
 from app.services.target_ledger_summary_service import TargetLedgerSummaryService
-from app.services.target_ledger_status_service import TargetLedgerStatusService
 
 
 router = APIRouter(prefix="/api/shadow/v1/ledger", tags=["target-ledger-shadow"])
@@ -26,6 +25,8 @@ v1_router = APIRouter(prefix="/paam/ledger/v1", tags=["target-ledger"])
 
 @router.get("/status", response_model=TargetLedgerShadowStatusRead)
 def get_target_ledger_status(db: Session = Depends(get_db)):
+    from app.services.target_ledger_status_service import TargetLedgerStatusService
+
     return TargetLedgerStatusService(db).status()
 
 

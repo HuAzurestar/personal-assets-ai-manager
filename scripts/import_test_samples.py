@@ -17,29 +17,31 @@ if __name__ == "__main__":
         if file.suffix.lower() in {".csv", ".xlsx", ".xls", ".pdf"}
     ]
     with httpx.Client(base_url="http://127.0.0.1:8765", timeout=120) as client:
-        preview = client.post("/api/intake/preview", json={"files": files})
+        preview = client.post("/paam/import/v1/preview", json={"files": files})
         preview.raise_for_status()
-        plan = preview.json()
+        plan = preview.json()["body"]
         assert plan["can_confirm"], "Preview needs attention; no confirmation was sent"
         print("Preview:", plan["counts"], flush=True)
         response = client.post(
-            f"/api/intake/{plan['token']}/confirm", json={"version": plan["version"]}
+            f"/paam/import/v1/preview/confirm/{plan['token']}",
+            json={"version": plan["version"]},
         )
         response.raise_for_status()
-        print("Confirmed:", response.json(), flush=True)
+        print("Confirmed:", response.json()["body"], flush=True)
         records = client.get(
-            "/api/transactions", params={"scope": "all", "page_size": 100}
+            "/paam/ledger/v1/entry/list", params={"page_size": 100}
         )
         records.raise_for_status()
         assert records.json()["total"] == 803
         repeated = client.post(
-            f"/api/intake/{plan['token']}/confirm", json={"version": plan["version"]}
+            f"/paam/import/v1/preview/confirm/{plan['token']}",
+            json={"version": plan["version"]},
         )
         repeated.raise_for_status()
         assert repeated.json() == response.json()
         again = client.post(
-            "/api/intake/preview", json={"files": list(reversed(files))}
-        ).json()
+            "/paam/import/v1/preview", json={"files": list(reversed(files))}
+        ).json()["body"]
         assert again["counts"].get("new", 0) == 0
         assert again["counts"]["duplicate_file"] == 827
         print(
