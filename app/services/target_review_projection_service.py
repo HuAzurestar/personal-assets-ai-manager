@@ -11,6 +11,7 @@ from app.schemas.target_projection import FinancialProjectionWriteVO
 from app.schemas.target_review import TargetReviewCaseRead, TargetReviewFactVO
 from app.services.target_projection_service import TargetProjectionService
 from app.services.target_tag_projection_service import TargetTagProjectionService
+from app.services.target_account_projection_service import TargetAccountProjectionService
 
 
 class TargetReviewProjectionService:
@@ -20,6 +21,7 @@ class TargetReviewProjectionService:
         self.mapper = TargetReviewProjectionMapper(db)
         self.defaults = TargetProjectionService(db)
         self.tags = TargetTagProjectionService(db)
+        self.accounts = TargetAccountProjectionService(db)
 
     def publish(
         self,
@@ -28,6 +30,7 @@ class TargetReviewProjectionService:
         now: datetime,
     ) -> None:
         fact_by_id = {fact.id: fact for fact in facts}
+        accounts = self.accounts.effective(facts)
         fact_ids = tuple(sorted(fact_by_id))
         contributing = list(facts)
         if case.review_type == "DUPLICATE":
@@ -48,11 +51,11 @@ class TargetReviewProjectionService:
             0, fallback.amount_scale, fallback.currency_code
         )
         in_accounts = {
-            fact.account_code or "UNKNOWN"
+            accounts[fact.id].account_code
             for fact in contributing if fact.cash_direction == "IN"
         }
         out_accounts = {
-            fact.account_code or "UNKNOWN"
+            accounts[fact.id].account_code
             for fact in contributing if fact.cash_direction == "OUT"
         }
         ledger_type = case.review_type
@@ -68,7 +71,9 @@ class TargetReviewProjectionService:
                 "amount_value": fact.amount_value,
                 "amount_scale": fact.amount_scale,
                 "currency_code": fact.currency_code,
-                "account_code": fact.account_code,
+                "account_code": accounts[fact.id].account_code,
+                "account_review_case_id": accounts[fact.id].review_case_id,
+                "account_review_version": accounts[fact.id].review_version,
                 "counterparty": fact.counterparty,
                 "summary": fact.summary,
             } for fact in sorted(facts, key=lambda item: item.id)],

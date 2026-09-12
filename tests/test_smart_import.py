@@ -14,7 +14,15 @@ from sqlalchemy.orm import sessionmaker
 from app import database, main
 from app.core.intake_preview_store import target_intake_preview_store
 from app.database import Bill, ImportEvidence, ImportPreview, Account
-from app.models.target import BillFact, BillRaw, ImportFile, LedgerEntry, LedgerEntrySource
+from app.models.target import (
+    BillFact,
+    BillRaw,
+    ImportFile,
+    LedgerEntry,
+    LedgerEntrySource,
+    ReviewCase,
+    ReviewHistory,
+)
 from app.statement_parser import parse_statement, normalise_statement_row
 
 
@@ -314,6 +322,77 @@ def test_target_intake_supplements_raw_evidence_and_blocks_fact_conflicts(ledger
         assert issue.bill_id == 0
         assert issue.issue_code == "FACT_CONFLICT"
         assert issue.issue_message
+        conflict_case = db.scalar(select(ReviewCase).where(
+            ReviewCase.review_type == "FACT_CONFLICT"
+        ))
+        assert conflict_case.status == "PENDING"
+        assert json.loads(conflict_case.result_json)["bill_raw_id"] == issue.id
+        assert db.query(ReviewHistory).filter_by(case_id=conflict_case.id).count() == 1
+        case_id = conflict_case.id
+        existing_fact_id = db.scalar(select(BillFact.id))
+
+    dismissed = client.post(f"/paam/review/v1/fact-conflict/dismiss/{case_id}", json={
+        "expected_version": 1,
+        "reason": "not a new transaction",
+        "idempotency_key": "conflict-dismiss",
+    })
+    assert dismissed.status_code == 200, dismissed.text
+    assert dismissed.json()["body"]["status"] == "REJECTED"
+    reopened = client.post(f"/paam/review/v1/fact-conflict/reopen/{case_id}", json={
+        "expected_version": 2,
+        "reason": "needs another check",
+        "idempotency_key": "conflict-reopen",
+    })
+    assert reopened.status_code == 200, reopened.text
+    assert reopened.json()["body"]["history"][-1]["reverses_history_id"] > 0
+    resolved = client.post(f"/paam/review/v1/fact-conflict/resolve/{case_id}", json={
+        "resolution_type": "LINK_EXISTING",
+        "existing_bill_id": existing_fact_id,
+        "expected_version": 3,
+        "reason": "same immutable transaction; retain extra evidence",
+        "idempotency_key": "conflict-resolve",
+    })
+    assert resolved.status_code == 200, resolved.text
+    assert resolved.json()["body"]["status"] == "CONFIRMED"
+    assert resolved.json()["body"]["lines"][0]["role"] == "FACT_ACCEPTED"
+    with sessions() as db:
+        issue = db.scalar(select(BillRaw).where(BillRaw.issue_code == "FACT_CONFLICT"))
+        assert issue.parse_status == "SUCCESS"
+        assert issue.bill_id == existing_fact_id
+        assert db.query(BillFact).count() == 1
+
+
+def test_target_fact_conflict_can_be_accepted_as_a_distinct_fact(ledger):
+    client, sessions = ledger
+    first = target_upload(client, [("wechat.csv", csv_bytes(note="first"))])
+    assert target_confirm(client, first).status_code == 200
+    conflict = target_upload(client, [(
+        "wechat.csv",
+        csv_bytes(amount="20.00", note="actually separate"),
+    )])
+    assert target_confirm(client, conflict).status_code == 200
+    with sessions() as db:
+        case_id = db.scalar(select(ReviewCase.id).where(
+            ReviewCase.review_type == "FACT_CONFLICT"
+        ))
+    resolved = client.post(f"/paam/review/v1/fact-conflict/resolve/{case_id}", json={
+        "resolution_type": "CREATE_NEW",
+        "expected_version": 1,
+        "reason": "verified as a separate transaction",
+        "idempotency_key": "conflict-create-new",
+    })
+    assert resolved.status_code == 200, resolved.text
+    new_fact_id = resolved.json()["body"]["lines"][0]["bill_id"]
+    with sessions() as db:
+        facts = db.scalars(select(BillFact).order_by(BillFact.id)).all()
+        assert [fact.amount_value for fact in facts] == [1000, 2000]
+        assert new_fact_id == facts[1].id
+        assert db.query(LedgerEntry).count() == 2
+        conflict_raw = db.scalar(select(BillRaw).where(
+            BillRaw.issue_code == "FACT_CONFLICT"
+        ))
+        assert conflict_raw.bill_id == new_fact_id
+        assert conflict_raw.parse_status == "SUCCESS"
 
 
 def test_confirm_select_count_does_not_grow_per_import_row(ledger):

@@ -352,7 +352,7 @@ class TargetLedgerMapper:
             is_projection_source=(
                 case["id"] in projection_case_ids
                 or (
-                    case["review_type"] == "TAG"
+                    case["review_type"] in {"TAG", "ACCOUNT"}
                     and case["status"] == "CONFIRMED"
                 )
             ),

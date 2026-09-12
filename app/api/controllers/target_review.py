@@ -7,12 +7,16 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
 from app.schemas.target_review import (
+    TargetAccountSetRequest,
+    TargetFactConflictResolveRequest,
     TargetReviewCaseListResponse,
     TargetReviewCaseResponse,
     TargetReviewCreateRequest,
     TargetReviewTransitionRequest,
     TargetReviewUpdateRequest,
 )
+from app.services.target_account_service import TargetAccountService
+from app.services.target_fact_conflict_service import TargetFactConflictService
 from app.services.target_review_service import TargetReviewError, TargetReviewService
 
 
@@ -94,4 +98,70 @@ def case_list(
 ):
     return TargetReviewCaseListResponse(body=_run(
         lambda: TargetReviewService(db).list(limit)
+    ))
+
+
+@router.put("/account/set/{fact_id}", response_model=TargetReviewCaseResponse)
+def set_account(
+    fact_id: int,
+    payload: TargetAccountSetRequest,
+    db: Session = Depends(get_db),
+):
+    return TargetReviewCaseResponse(body=_run(
+        lambda: TargetAccountService(db).set(fact_id, payload)
+    ))
+
+
+@router.post("/account/revoke/{case_id}", response_model=TargetReviewCaseResponse)
+def revoke_account(
+    case_id: int,
+    payload: TargetReviewTransitionRequest,
+    db: Session = Depends(get_db),
+):
+    return TargetReviewCaseResponse(body=_run(
+        lambda: TargetAccountService(db).revoke(case_id, payload)
+    ))
+
+
+@router.post("/account/restore/{case_id}", response_model=TargetReviewCaseResponse)
+def restore_account(
+    case_id: int,
+    payload: TargetReviewTransitionRequest,
+    db: Session = Depends(get_db),
+):
+    return TargetReviewCaseResponse(body=_run(
+        lambda: TargetAccountService(db).revoke(case_id, payload, restore=True)
+    ))
+
+
+@router.post("/fact-conflict/resolve/{case_id}", response_model=TargetReviewCaseResponse)
+def resolve_fact_conflict(
+    case_id: int,
+    payload: TargetFactConflictResolveRequest,
+    db: Session = Depends(get_db),
+):
+    return TargetReviewCaseResponse(body=_run(
+        lambda: TargetFactConflictService(db).resolve(case_id, payload)
+    ))
+
+
+@router.post("/fact-conflict/dismiss/{case_id}", response_model=TargetReviewCaseResponse)
+def dismiss_fact_conflict(
+    case_id: int,
+    payload: TargetReviewTransitionRequest,
+    db: Session = Depends(get_db),
+):
+    return TargetReviewCaseResponse(body=_run(
+        lambda: TargetFactConflictService(db).dismiss(case_id, payload)
+    ))
+
+
+@router.post("/fact-conflict/reopen/{case_id}", response_model=TargetReviewCaseResponse)
+def reopen_fact_conflict(
+    case_id: int,
+    payload: TargetReviewTransitionRequest,
+    db: Session = Depends(get_db),
+):
+    return TargetReviewCaseResponse(body=_run(
+        lambda: TargetFactConflictService(db).reopen(case_id, payload)
     ))

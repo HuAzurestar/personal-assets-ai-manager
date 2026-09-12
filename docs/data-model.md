@@ -114,6 +114,14 @@ account. The original imported account remains raw evidence; the current
 reviewed account is stored in the case result and its complete change chain is
 stored in `review_history`.
 
+`PUT /paam/review/v1/account/set/{fact_id}` creates or advances that Fact's one
+ACCOUNT case. It checks the current hot `projection_version`, stores the full
+Fact amount on one `ACCOUNT` line, and republishes either the default entry or
+its connected financial Review entry in the same transaction. Revoke and
+restore switch only the effective enhancement state; they never update
+`bill_fact.account_code`. The ACCOUNT case ID/version participates in the hot
+projection hash even when its selected value equals the imported value.
+
 A `TAG` case exists for a bill with tag audit activity. Confirmed selections are
 the authoritative enhancement state; rule/LLM suggestions remain non-publishing
 proposals. The compact case result keeps the current category/system-name map
@@ -126,13 +134,20 @@ member. A resolved conflict gains exactly one `FACT_ACCEPTED` case line after a
 real `bill_fact` exists. Resolve, dismiss, and reopen actions remain an append-only
 history; reopen reverses the preceding dismiss without erasing its evidence.
 
+Target imports create the pending conflict case in the same transaction as the
+invalid raw evidence. Review commands can dismiss it, reopen a dismissal, link
+the evidence to an explicitly selected existing Fact, or accept it as a new
+Fact with a conflict-specific immutable identity. Linking never rewrites the
+selected Fact; creating publishes one new default ledger entry. The transition,
+raw status, optional new Fact, history, and projection commit atomically.
+
 ### `review_history` — append-only deterministic audit
 
 | Column | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `case_id` | INTEGER | `0` | Implicit case ID |
 | `version` | INTEGER | `1` | Resulting case version |
-| `operation` | ENUM text | `CREATE` | CREATE/CONFIRM/UPDATE/REVOKE/RESTORE/ASSIGN |
+| `operation` | ENUM text | `CREATE` | CREATE/CONFIRM/UPDATE/REVOKE/RESTORE/ASSIGN/ACCOUNT_SET/RESOLVE/DISMISS/REOPEN |
 | `schema_version` | INTEGER | `1` | Snapshot contract version |
 | `request_json` | TEXT | `'{}'` | Canonical submitted command |
 | `before_json` | TEXT | `'{}'` | Complete canonical aggregate before change |

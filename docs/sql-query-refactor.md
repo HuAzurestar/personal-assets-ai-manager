@@ -439,8 +439,16 @@ N+1 list paths. They remain lower priority unless profiling shows a slow query.
   - Assignment uses optimistic `projection_version`, command idempotency, and
     append-only canonical before/after history. One and twenty source Facts both
     execute exactly six SELECT statements, with no `SELECT *` or row query loop.
-- [ ] Switch ACCOUNT correction and FACT_CONFLICT resolution commands to
-  unified target Review. Conflict evidence persistence is already target-only.
+- [x] Switch ACCOUNT correction and FACT_CONFLICT resolution commands to
+  unified target Review.
+  - ACCOUNT set/revoke/restore preserves the imported Fact account, appends
+    canonical Review history, and republishes default or connected financial
+    projections atomically. Account Review identity/version is hashed into the
+    projection input.
+  - A conflicting import row now creates its pending FACT_CONFLICT Review in
+    the same transaction. Dismiss/reopen and explicit LINK_EXISTING/CREATE_NEW
+    resolution keep raw evidence, normalized lines, history, and any new Fact
+    consistent without another issue table.
 - [ ] Switch the production UI from legacy transaction/review/tag contracts to
   the versioned target contracts.
 - [ ] Recreate the empty development database without the 23 legacy tables or
@@ -449,6 +457,6 @@ N+1 list paths. They remain lower priority unless profiling shows a slow query.
 
 The physical delete remains intentionally last. The target-only runtime now
 proves that the replacement import/list/detail/summary and financial Review core
-does not require a legacy table. TAG assignment, ACCOUNT/FACT_CONFLICT commands,
-and the UI switch are the remaining functional dependencies, not a data-migration
+does not require a legacy table. The production UI switch and final empty-file
+database reset are the remaining functional dependencies, not a data-migration
 or backup dependency.

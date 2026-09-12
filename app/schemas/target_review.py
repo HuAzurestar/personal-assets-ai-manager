@@ -101,6 +101,27 @@ class TargetReviewUpdateRequest(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=120)
 
 
+class TargetAccountSetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    account_code: str = Field(min_length=1, max_length=120)
+    expected_projection_version: int = Field(ge=1)
+    actor: str = Field(default="local-user", min_length=1, max_length=120)
+    reason: str = Field(default="", max_length=2000)
+    idempotency_key: str = Field(min_length=1, max_length=120)
+
+
+class TargetFactConflictResolveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    resolution_type: Literal["LINK_EXISTING", "CREATE_NEW"]
+    existing_bill_id: int = Field(default=0, ge=0)
+    expected_version: int = Field(ge=1)
+    actor: str = Field(default="local-user", min_length=1, max_length=120)
+    reason: str = Field(default="", max_length=2000)
+    idempotency_key: str = Field(min_length=1, max_length=120)
+
+
 class TargetReviewLineRead(BaseModel):
     id: int
     bill_id: int

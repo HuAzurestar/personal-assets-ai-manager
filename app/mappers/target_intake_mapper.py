@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from collections import defaultdict
 from datetime import datetime, time, timedelta
 from decimal import Decimal
@@ -8,7 +9,7 @@ from decimal import Decimal
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
 
-from app.models.target import BillFact, BillRaw, ImportFile
+from app.models.target import BillFact, BillRaw, ImportFile, ReviewCase, ReviewHistory
 from app.smart_import import build_plan, dump
 from app.statement_parser import digest
 
@@ -258,6 +259,7 @@ class TargetIntakeMapper:
             import_files.append((doc, item))
         self.db.flush()
 
+        conflicts = []
         for doc, import_file in import_files:
             for row in doc["rows"]:
                 target = row.get("match")
@@ -280,7 +282,7 @@ class TargetIntakeMapper:
                         if key not in {"raw", "candidates", "error"}
                     },
                 }
-                self.db.add(BillRaw(
+                raw_row = BillRaw(
                     bill_id=bill_id,
                     import_file_id=import_file.id,
                     source_row_number=row["row_number"],
@@ -298,7 +300,62 @@ class TargetIntakeMapper:
                     issue_message=row.get("error", ""),
                     created_time=now,
                     updated_time=now,
-                ))
+                )
+                self.db.add(raw_row)
+                if raw_row.issue_code == "FACT_CONFLICT":
+                    conflicts.append((raw_row, row))
+        self.db.flush()
+        for raw_row, row in conflicts:
+            title = f"Fact conflict: {raw_row.source_reference or raw_row.id}"
+            result_json = dump({
+                "bill_raw_id": raw_row.id,
+                "issue_code": raw_row.issue_code,
+                "issue_message": raw_row.issue_message,
+                "resolution": {},
+            })
+            case = ReviewCase(
+                review_type="FACT_CONFLICT",
+                status="PENDING",
+                allocation_status="CONFLICT",
+                version=1,
+                title=title,
+                result_json=result_json,
+                created_time=now,
+                updated_time=now,
+            )
+            self.db.add(case)
+            self.db.flush()
+            after_json = dump({
+                "id": case.id,
+                "review_type": "FACT_CONFLICT",
+                "status": "PENDING",
+                "allocation_status": "CONFLICT",
+                "version": 1,
+                "title": title,
+                "result": json.loads(result_json),
+                "lines": [],
+            })
+            request_json = dump({
+                "operation": "CREATE",
+                "bill_raw_id": raw_row.id,
+                "source_reference": raw_row.source_reference,
+            })
+            self.db.add(ReviewHistory(
+                case_id=case.id,
+                version=1,
+                operation="CREATE",
+                schema_version=1,
+                request_json=request_json,
+                before_json="{}",
+                after_json=after_json,
+                snapshot_hash=hashlib.sha256(after_json.encode()).hexdigest(),
+                reverses_history_id=0,
+                actor="import",
+                reason=row.get("error", ""),
+                idempotency_key=f"fact-conflict-create:{raw_row.id}",
+                created_time=now,
+                updated_time=now,
+            ))
         self.db.flush()
         affected_fact_ids = sorted({
             new_targets.get(row.get("match"), row.get("match"))

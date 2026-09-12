@@ -10,6 +10,7 @@ from app.mappers.target_projection_mapper import TargetProjectionMapper
 from app.schemas.target_projection import DefaultProjectionWriteVO
 from app.statement_parser import BANKS
 from app.services.target_tag_projection_service import TargetTagProjectionService
+from app.services.target_account_projection_service import TargetAccountProjectionService
 
 
 class TargetProjectionService:
@@ -18,10 +19,12 @@ class TargetProjectionService:
     def __init__(self, db: Session):
         self.mapper = TargetProjectionMapper(db)
         self.tags = TargetTagProjectionService(db)
+        self.accounts = TargetAccountProjectionService(db)
 
     def rebuild_defaults(self, fact_ids: list[int]) -> None:
         fact_ids = list(dict.fromkeys(fact_ids))
         facts = self.mapper.facts(fact_ids)
+        accounts = self.accounts.effective(facts)
         evidence_by_fact = defaultdict(list)
         for item in self.mapper.nature_evidence(fact_ids):
             evidence_by_fact[item.bill_id].append(item)
@@ -41,8 +44,10 @@ class TargetProjectionService:
                 allocation_status = "DEFAULT"
             incoming = fact.amount_value if fact.cash_direction == "IN" else 0
             outgoing = fact.amount_value if fact.cash_direction == "OUT" else 0
-            account_in = fact.account_code if incoming else "UNKNOWN"
-            account_out = fact.account_code if outgoing else "UNKNOWN"
+            account_state = accounts[fact.id]
+            effective_account = account_state.account_code
+            account_in = effective_account if incoming else "UNKNOWN"
+            account_out = effective_account if outgoing else "UNKNOWN"
             input_hash = hashlib.sha256(json.dumps({
                 "fact": [
                     fact.fact_key,
@@ -51,7 +56,9 @@ class TargetProjectionService:
                     fact.amount_value,
                     fact.amount_scale,
                     fact.currency_code,
-                    fact.account_code,
+                    effective_account,
+                    account_state.review_case_id,
+                    account_state.review_version,
                     fact.counterparty,
                     fact.summary,
                 ],
