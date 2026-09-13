@@ -15,7 +15,19 @@ const statusNames = {
   REJECTED: "已忽略", DEFAULT: "默认", COMPLETE: "完整",
   PARTIAL: "部分", CONFLICT: "冲突",
 };
-const state = { page: "summary", params: new URLSearchParams(), importPlan: null, renderVersion: 0 };
+const now = new Date();
+const state = {
+  page: "summary",
+  params: new URLSearchParams(),
+  importPlan: null,
+  renderVersion: 0,
+  ledgerCalendar: {
+    year: now.getFullYear(),
+    month: now.getMonth(),
+    next: "start",
+    error: "",
+  },
+};
 
 async function request(url, options = {}) {
   const response = await fetch(url, options).catch(() => {
@@ -72,7 +84,99 @@ function tags(entry) {
 }
 function pager(result) {
   const pages = Math.max(1, Math.ceil(result.total / result.page_size));
-  return `<div class="pagination"><span>共 ${result.total} 条 · 第 ${result.page}/${pages} 页</span><button data-action="page" data-value="${result.page - 1}" ${result.page <= 1 ? "disabled" : ""}>上一页</button><button data-action="page" data-value="${result.page + 1}" ${result.page >= pages ? "disabled" : ""}>下一页</button></div>`;
+  const visible = [...new Set([1, pages, result.page - 1, result.page, result.page + 1])]
+    .filter((page) => page >= 1 && page <= pages)
+    .sort((left, right) => left - right);
+  const numbers = [];
+  visible.forEach((page, index) => {
+    if (index && page - visible[index - 1] > 1) numbers.push('<span class="page-gap">…</span>');
+    numbers.push(`<button data-action="page" data-value="${page}" class="${page === result.page ? "active" : ""}" ${page === result.page ? 'aria-current="page"' : ""}>${page}</button>`);
+  });
+  const start = result.total ? (result.page - 1) * result.page_size + 1 : 0;
+  const end = Math.min(result.total, result.page * result.page_size);
+  return `<div class="pagination ledger-pagination">
+    <label class="page-size">每页<select data-action="ledger-page-size"><option value="10" ${result.page_size === 10 ? "selected" : ""}>10 条</option><option value="25" ${result.page_size === 25 ? "selected" : ""}>25 条</option><option value="50" ${result.page_size === 50 ? "selected" : ""}>50 条</option></select></label>
+    <div class="page-buttons"><button data-action="page" data-value="${result.page - 1}" ${result.page <= 1 ? "disabled" : ""} aria-label="上一页">‹</button>${numbers.join("")}<button data-action="page" data-value="${result.page + 1}" ${result.page >= pages ? "disabled" : ""} aria-label="下一页">›</button></div>
+    <span class="range">${start}–${end} / ${result.total}</span>
+  </div>`;
+}
+
+function amountValue(item) {
+  return Number(item?.amount_value || 0);
+}
+
+function signedMoney(item, direction) {
+  if (!amountValue(item)) return "0";
+  return `${direction === "IN" ? "＋" : "−"} ${money(item)}`;
+}
+
+function ledgerAmounts(entry) {
+  const hasIncoming = amountValue(entry.incoming) > 0;
+  const hasOutgoing = amountValue(entry.outgoing) > 0;
+  if (!hasIncoming && !hasOutgoing) return '<span class="ledger-amount zero">0</span>';
+  return `${hasIncoming ? `<span class="ledger-amount plus">＋ ${money(entry.incoming)}</span>` : ""}${hasOutgoing ? `<span class="ledger-amount minus">− ${money(entry.outgoing)}</span>` : ""}`;
+}
+
+function ledgerAccountPath(entry) {
+  const hasIncoming = amountValue(entry.incoming) > 0;
+  const hasOutgoing = amountValue(entry.outgoing) > 0;
+  if (hasIncoming && hasOutgoing) return `${esc(entry.out_account_code)} <span>↔</span> ${esc(entry.in_account_code)}`;
+  if (hasIncoming) return `流入 <span>→</span> ${esc(entry.in_account_code)}`;
+  if (hasOutgoing) return `${esc(entry.out_account_code)} <span>→</span> 流出`;
+  return "尚未形成现金方向";
+}
+
+function dateRangeLabel(start, end) {
+  if (start && end) return `${start} — ${end}`;
+  if (start) return `${start} — 请选择结束时间`;
+  return "选择开始与结束时间";
+}
+
+function calendarGrid(start, end) {
+  const { year, month } = state.ledgerCalendar;
+  const leading = (new Date(year, month, 1).getDay() + 6) % 7;
+  const count = new Date(year, month + 1, 0).getDate();
+  const cells = Array.from({ length: leading }, () => '<span class="ledger-calendar-blank"></span>');
+  for (let day = 1; day <= count; day += 1) {
+    const value = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const classes = [
+      "ledger-calendar-day",
+      value === start ? "start" : "",
+      value === end ? "end" : "",
+      start && end && value > start && value < end ? "in-range" : "",
+    ].filter(Boolean).join(" ");
+    cells.push(`<button type="button" class="${classes}" data-action="ledger-date-day" data-value="${value}" aria-label="${value}">${day}</button>`);
+  }
+  return cells.join("");
+}
+
+function calendarHint(start, end) {
+  if (state.ledgerCalendar.error) return state.ledgerCalendar.error;
+  if (start && end) return `已选择 ${start} 至 ${end}；下次点击会重新设置开始时间。`;
+  if (start) return `开始时间是 ${start}；请再点击一次选择结束时间。`;
+  return "第 1 次点击设置开始时间，第 2 次点击设置结束时间。";
+}
+
+function ledgerDatePicker() {
+  const start = state.params.get("date_from") || "";
+  const end = state.params.get("date_to") || "";
+  const anchor = start ? new Date(`${start}T12:00:00`) : now;
+  state.ledgerCalendar.year = anchor.getFullYear();
+  state.ledgerCalendar.month = anchor.getMonth();
+  state.ledgerCalendar.next = start && !end ? "end" : "start";
+  state.ledgerCalendar.error = "";
+  return `<div class="ledger-date-picker">
+    <input type="hidden" name="date_from" value="${esc(start)}">
+    <input type="hidden" name="date_to" value="${esc(end)}">
+    <button type="button" class="ledger-date-trigger ${start ? "" : "is-empty"}" data-action="ledger-date-toggle" aria-expanded="false"><span class="calendar-icon" aria-hidden="true">▣</span><span class="ledger-date-caption">${dateRangeLabel(start, end)}</span></button>
+    <div class="ledger-date-popover" hidden>
+      <div class="ledger-calendar-head"><strong class="ledger-calendar-month">${state.ledgerCalendar.year} 年 ${state.ledgerCalendar.month + 1} 月</strong><div><button type="button" data-action="ledger-date-month" data-value="-1" aria-label="上个月">‹</button><button type="button" data-action="ledger-date-month" data-value="1" aria-label="下个月">›</button></div></div>
+      <p class="ledger-date-hint">${calendarHint(start, end)}</p>
+      <div class="ledger-calendar-week"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
+      <div class="ledger-calendar-grid">${calendarGrid(start, end)}</div>
+      <div class="ledger-calendar-foot"><small>奇数次设开始，偶数次设结束</small><button type="button" class="quiet" data-action="ledger-date-clear">清除</button></div>
+    </div>
+  </div>`;
 }
 function modal(title, body, wide = true) {
   const dialog = document.createElement("dialog");
@@ -98,7 +202,7 @@ $("#app").innerHTML = `<div class="workspace target-shell"><aside class="sidebar
 
 const pageInfo = {
   summary: ["收支概览", "只读取热投影；不加载原始文本和历史。"],
-  ledger: ["实际流水", "事实与已确认 Review 合成的最终账本。"],
+  ledger: ["实际流水", "收支由最终投影决定；业务类型只说明事实之间的聚合关系。"],
   import: ["导入事实", "原始记录保留，确认后生成不可变 Fact。"],
   tags: ["标签管理", "每个有效维度在最终流水上只有一个值。"],
   reviews: ["统一审查", "财务、标签、账户与事实冲突共用一套历史模型。"],
@@ -164,11 +268,89 @@ async function ledgerPage() {
     request(`/paam/ledger/v1/entry/list?${query}`),
     request("/paam/tag/v1/view/list"),
   ]);
-  const rows = result.items.map((entry) => `<tr><td>${entry.id}</td><td>${date(entry.start_time)}</td><td><strong>${esc(entry.title || "未命名")}</strong><div class="status-line"><span class="badge neutral">${esc(typeNames[entry.ledger_type] || entry.ledger_type)}</span><small>${esc(statusNames[entry.allocation_status] || entry.allocation_status)}</small></div></td><td><div class="money-pair"><span class="income">入 ${money(entry.incoming)}</span><span>出 ${money(entry.outgoing)}</span></div></td><td>${esc(entry.in_account_code)} / ${esc(entry.out_account_code)}</td><td>${tags(entry)}</td><td><button data-action="detail" data-id="${entry.id}">详情</button></td></tr>`);
-  const tagOptions = views.flatMap((view) => view.tags.map((tag) => [
-    `${view.system_name}:${tag.system_name}`, `${view.name}：${tag.name}`,
-  ]));
-  return `<section class="panel"><form class="toolbar" data-form="ledger-filter"><label class="grow">搜索<input name="q" value="${esc(state.params.get("q") || "")}" placeholder="标题、交易方或摘要"></label><label>业务类型<select name="ledger_type"><option value="">全部</option>${Object.entries(typeNames).map(([value, label]) => `<option value="${value}" ${state.params.get("ledger_type") === value ? "selected" : ""}>${label}</option>`).join("")}</select></label><label>标签<select name="tag"><option value="">全部</option>${tagOptions.map(([value, label]) => `<option value="${esc(value)}" ${state.params.get("tag") === value ? "selected" : ""}>${esc(label)}</option>`).join("")}</select></label><label>开始<input type="date" name="date_from" value="${esc(state.params.get("date_from") || "")}"></label><label>结束<input type="date" name="date_to" value="${esc(state.params.get("date_to") || "")}"></label><button>筛选</button><button type="button" data-action="clear-ledger">清除</button></form>${rows.length ? table(["ID", "时间", "流水", "现金流", "入/出账户", "标签", ""], rows) : '<div class="empty-state">没有符合条件的最终流水</div>'}${pager(result)}</section>`;
+  const selectedTags = new Map(state.params.getAll("tag").map((selector) => selector.split(":", 2)));
+  const tagFilters = views.map((view) => `<label class="ledger-tag-view"><span>${esc(view.name)}</span><select name="tag" aria-label="${esc(view.name)}"><option value="">全部</option>${view.tags.map((tag) => {
+    const value = `${view.system_name}:${tag.system_name}`;
+    return `<option value="${esc(value)}" ${selectedTags.get(view.system_name) === tag.system_name ? "selected" : ""}>${esc(tag.name)}</option>`;
+  }).join("")}</select></label>`).join("");
+  const cards = result.items.map((entry) => `<article class="ledger-card" data-ledger-card="${entry.id}">
+    <button type="button" class="ledger-card-summary" data-action="ledger-toggle" data-id="${entry.id}" aria-expanded="false">
+      <span class="ledger-card-time"><strong>${date(entry.start_time).slice(0, 10)}</strong><small>${date(entry.start_time).slice(11) || "00:00"} · #${entry.id}</small></span>
+      <span class="ledger-card-copy"><span class="ledger-card-title"><strong>${esc(entry.title || "未命名流水")}</strong><span class="ledger-business-type">${esc(typeNames[entry.ledger_type] || entry.ledger_type)}</span></span><small>${esc(statusNames[entry.allocation_status] || entry.allocation_status)} · 投影 v${entry.projection_version}</small></span>
+      <span class="ledger-account-path">${ledgerAccountPath(entry)}</span>
+      <span class="ledger-card-tags">${tags(entry)}</span>
+      <span class="ledger-card-amounts">${ledgerAmounts(entry)}</span>
+      <span class="ledger-chevron" aria-hidden="true">⌄</span>
+    </button>
+    <div class="ledger-inline-detail" data-ledger-detail hidden></div>
+  </article>`).join("");
+  return `<section class="panel ledger-filter-panel"><form data-form="ledger-filter">
+    <div class="ledger-filter-main">
+      <label class="ledger-type-filter"><span>业务类型</span><select name="ledger_type"><option value="">全部业务类型</option>${Object.entries(typeNames).map(([value, label]) => `<option value="${value}" ${state.params.get("ledger_type") === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>
+      <label class="ledger-search-filter"><span>补充搜索</span><input name="q" value="${esc(state.params.get("q") || "")}" placeholder="标题、交易方或摘要"></label>
+      <div class="ledger-date-field"><span>发生时间</span>${ledgerDatePicker()}</div>
+      <div class="ledger-filter-actions"><button type="button" class="quiet" data-action="clear-ledger">重置</button><button class="primary">应用筛选</button></div>
+    </div>
+    <div class="ledger-tag-filter"><div class="ledger-tag-filter-copy"><strong>标签筛选</strong><small>每个视图可选一个标签</small></div><div class="ledger-tag-views">${tagFilters || '<span class="muted">还没有有效标签视图</span>'}</div></div>
+  </form></section>
+  <div class="ledger-list-head"><span><strong>${result.total}</strong> 条实际流水</span><div class="ledger-money-legend"><span class="plus">● 红色 ＋ 收入</span><span class="minus">● 绿色 − 支出</span><span class="zero">● 灰色 0</span></div></div>
+  ${cards ? `<section class="ledger-card-list">${cards}</section>` : '<section class="panel empty-state">没有符合条件的最终流水</section>'}
+  ${pager(result)}`;
+}
+
+function ledgerDetailMarkup(detail) {
+  const entry = detail.entry;
+  const effectiveAccounts = new Map();
+  detail.reviews.filter((item) => item.review_type === "ACCOUNT" && item.status === "CONFIRMED").forEach((item) => {
+    item.lines.forEach((line) => effectiveAccounts.set(line.bill_id, item.result.account_name));
+  });
+  const facts = detail.facts.map((fact) => {
+    const effective = effectiveAccounts.get(fact.id) || fact.account_code;
+    const direction = fact.cash_direction === "IN" ? "IN" : "OUT";
+    return `<div class="ledger-fact-row"><span class="direction">${direction === "IN" ? "收入事实" : "支出事实"}</span><span><strong>${esc(fact.counterparty || "未知交易方")}</strong><small>${date(fact.occurred_time)} · ${esc(effective)}</small></span><span class="ledger-fact-money ${direction === "IN" ? "plus" : "minus"}">${signedMoney(fact.amount, direction)}</span><button type="button" class="quiet" data-action="account" data-fact="${fact.id}" data-ledger="${entry.id}" data-version="${entry.projection_version}" data-account="${esc(effective)}">修正账户</button></div>`;
+  }).join("");
+  const tagRows = entry.tags.map((tag) => `<div class="ledger-detail-tag"><span>${esc(tag.view_name)}</span><strong>${esc(tag.tag_name)}</strong></div>`).join("");
+  const financialReview = detail.reviews.find((item) => item.is_projection_source && !["TAG", "ACCOUNT"].includes(item.review_type));
+  const reviewBasis = financialReview
+    ? `${typeNames[financialReview.review_type] || financialReview.review_type} #${financialReview.id} · ${statusNames[financialReview.status] || financialReview.status}`
+    : "默认事实投影";
+  const rawEvidence = detail.raw_evidence.map((raw) => `<details class="ledger-raw"><summary>Raw #${raw.id} · 原始行 ${raw.source_row_number}</summary><pre class="raw-json">${esc(JSON.stringify(raw.raw_payload, null, 2))}</pre></details>`).join("");
+  return `<div class="ledger-detail-grid">
+    <div class="ledger-detail-main"><h3>构成事实</h3><div class="ledger-facts">${facts || '<span class="muted">没有关联事实</span>'}</div><p class="ledger-projection-note">收入与支出由事实方向及已确认 Review 聚合得出；“${esc(typeNames[entry.ledger_type] || entry.ledger_type)}”是业务类型，不替代收支结果。</p>${rawEvidence ? `<div class="ledger-raw-list">${rawEvidence}</div>` : ""}</div>
+    <aside class="ledger-detail-side"><h3>按视图分配的标签</h3><div class="ledger-detail-tags">${tagRows || '<span class="muted">暂无标签</span>'}</div><dl class="ledger-review-basis"><div><dt>归集依据</dt><dd>${esc(reviewBasis)}</dd></div><div><dt>分配状态</dt><dd>${esc(statusNames[entry.allocation_status] || entry.allocation_status)}</dd></div><div><dt>发生区间</dt><dd>${date(entry.start_time)}<br>${date(entry.end_time)}</dd></div></dl><div class="actions"><button type="button" data-action="edit-tags" data-id="${entry.id}" data-version="${entry.projection_version}">编辑标签</button><button type="button" data-action="detail" data-id="${entry.id}">完整详情</button></div></aside>
+  </div>`;
+}
+
+async function toggleLedgerCard(button) {
+  const card = button.closest("[data-ledger-card]");
+  const detail = $("[data-ledger-detail]", card);
+  const willOpen = detail.hidden;
+  $$("[data-ledger-card]").forEach((item) => {
+    const otherDetail = $("[data-ledger-detail]", item);
+    const otherButton = $('[data-action="ledger-toggle"]', item);
+    if (item !== card) {
+      otherDetail.hidden = true;
+      item.classList.remove("open");
+      otherButton.setAttribute("aria-expanded", "false");
+    }
+  });
+  detail.hidden = !willOpen;
+  card.classList.toggle("open", willOpen);
+  button.setAttribute("aria-expanded", String(willOpen));
+  if (!willOpen || detail.dataset.loaded === "true") return;
+  detail.innerHTML = '<div class="busy">正在加载流水证据…</div>';
+  button.setAttribute("aria-busy", "true");
+  try {
+    const payload = await request(`/paam/ledger/v1/entry/detail/${button.dataset.id}`);
+    if (!card.isConnected) return;
+    detail.innerHTML = ledgerDetailMarkup(payload);
+    detail.dataset.loaded = "true";
+    bindPage(detail);
+  } catch (error) {
+    detail.innerHTML = `<div class="error">${esc(error.message)}</div>`;
+  } finally {
+    button.removeAttribute("aria-busy");
+  }
 }
 
 async function showDetail(id) {
@@ -378,6 +560,70 @@ function bindCommandForm(form) {
   });
 }
 
+function refreshLedgerDatePicker(picker) {
+  const start = $('input[name="date_from"]', picker).value;
+  const end = $('input[name="date_to"]', picker).value;
+  $(".ledger-calendar-month", picker).textContent = `${state.ledgerCalendar.year} 年 ${state.ledgerCalendar.month + 1} 月`;
+  $(".ledger-calendar-grid", picker).innerHTML = calendarGrid(start, end);
+  const hint = $(".ledger-date-hint", picker);
+  hint.textContent = calendarHint(start, end);
+  hint.classList.toggle("error", Boolean(state.ledgerCalendar.error));
+  $(".ledger-date-caption", picker).textContent = dateRangeLabel(start, end);
+  $(".ledger-date-trigger", picker).classList.toggle("is-empty", !start);
+}
+
+function bindLedgerDatePicker(picker) {
+  if (!picker) return;
+  picker.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-action]");
+    if (!button || !picker.contains(button)) return;
+    const action = button.dataset.action;
+    const popover = $(".ledger-date-popover", picker);
+    const trigger = $(".ledger-date-trigger", picker);
+    if (action === "ledger-date-toggle") {
+      popover.hidden = !popover.hidden;
+      trigger.setAttribute("aria-expanded", String(!popover.hidden));
+      return;
+    }
+    if (action === "ledger-date-month") {
+      const target = new Date(state.ledgerCalendar.year, state.ledgerCalendar.month + Number(button.dataset.value), 1);
+      state.ledgerCalendar.year = target.getFullYear();
+      state.ledgerCalendar.month = target.getMonth();
+      refreshLedgerDatePicker(picker);
+      return;
+    }
+    const startInput = $('input[name="date_from"]', picker);
+    const endInput = $('input[name="date_to"]', picker);
+    if (action === "ledger-date-clear") {
+      startInput.value = "";
+      endInput.value = "";
+      state.ledgerCalendar.next = "start";
+      state.ledgerCalendar.error = "";
+      refreshLedgerDatePicker(picker);
+      return;
+    }
+    if (action !== "ledger-date-day") return;
+    state.ledgerCalendar.error = "";
+    if (state.ledgerCalendar.next === "start" || !startInput.value) {
+      startInput.value = button.dataset.value;
+      endInput.value = "";
+      state.ledgerCalendar.next = "end";
+    } else if (button.dataset.value < startInput.value) {
+      state.ledgerCalendar.error = `结束时间不能早于开始时间 ${startInput.value}，请重新选择。`;
+    } else {
+      endInput.value = button.dataset.value;
+      state.ledgerCalendar.next = "start";
+    }
+    refreshLedgerDatePicker(picker);
+  });
+  $(".ledger-date-trigger", picker)?.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      $(".ledger-date-popover", picker).hidden = true;
+      event.currentTarget.setAttribute("aria-expanded", "false");
+    }
+  });
+}
+
 function bindPage(root) {
   $$('[data-page]', root).forEach((button) => button.onclick = () => route(button.dataset.page));
   $('[data-action="reload"]', root)?.addEventListener("click", render);
@@ -386,10 +632,17 @@ function bindPage(root) {
   $$('[data-action="page"]', root).forEach((button) => button.onclick = () => {
     const params = new URLSearchParams(state.params); params.set("page", button.dataset.value); route("ledger", params);
   });
+  $('[data-action="ledger-page-size"]', root)?.addEventListener("change", (event) => {
+    const params = new URLSearchParams(state.params);
+    params.set("page", "1");
+    params.set("page_size", event.currentTarget.value);
+    route("ledger", params);
+  });
   $$('[data-action="review-page"]', root).forEach((button) => button.onclick = () => {
     const params = new URLSearchParams(state.params); params.set("page", button.dataset.value); route("reviews", params);
   });
   $$('[data-action="detail"]', root).forEach((button) => button.onclick = () => showDetail(button.dataset.id).catch((error) => toast(error.message, true)));
+  $$('[data-action="ledger-toggle"]', root).forEach((button) => button.onclick = () => toggleLedgerCard(button));
   $$('[data-action="review-detail"]', root).forEach((button) => button.onclick = () => showReview(button.dataset.id).catch((error) => toast(error.message, true)));
   $$('[data-action="edit-review"]', root).forEach((button) => button.onclick = () => editReview(button.dataset.id).catch((error) => toast(error.message, true)));
   $$('[data-action="edit-tags"]', root).forEach((button) => button.onclick = () => editTags(button.dataset.id, Number(button.dataset.version)).catch((error) => toast(error.message, true)));
@@ -419,6 +672,7 @@ function bindPage(root) {
   $('[data-form="edit-review"]', root)?.addEventListener("submit", submitReviewUpdate);
   $('[data-form="conflict"]', root)?.addEventListener("submit", submitConflict);
   $$('form[data-form]', root).forEach(bindCommandForm);
+  bindLedgerDatePicker($(".ledger-date-picker", root));
 }
 
 async function submitTags(event) {
