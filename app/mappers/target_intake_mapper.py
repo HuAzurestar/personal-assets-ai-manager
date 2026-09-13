@@ -6,7 +6,7 @@ from collections import defaultdict
 from datetime import datetime, time, timedelta
 from decimal import Decimal
 
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import case, func, or_, select, text
 from sqlalchemy.orm import Session
 
 from app.models.target import BillFact, BillRaw, ImportFile, ReviewCase, ReviewHistory
@@ -370,7 +370,56 @@ class TargetIntakeMapper:
             "affected_fact_ids": affected_fact_ids,
         }
 
-    def history(self, limit: int = 30) -> list[dict[str, object]]:
+    def history(
+        self,
+        page: int = 1,
+        page_size: int = 10,
+        q: str = "",
+        account: str = "",
+    ) -> dict[str, object]:
+        clauses = []
+        if q:
+            pattern = f"%{q}%"
+            search = [
+                ImportFile.filename.ilike(pattern),
+                ImportFile.source_type.ilike(pattern),
+                ImportFile.institution_code.ilike(pattern),
+            ]
+            source_labels = {
+                "支付宝": "alipay",
+                "微信支付": "wechat",
+                "建设银行": "ccb",
+                "农业银行": "abc",
+                "招商银行": "cmb",
+            }
+            search.extend(
+                ImportFile.source_type == source_type
+                for label, source_type in source_labels.items()
+                if q.casefold() in label.casefold()
+            )
+            numeric_query = q.removeprefix("#")
+            if numeric_query.isdigit():
+                search.append(ImportFile.id == int(numeric_query))
+            clauses.append(or_(*search))
+        if account:
+            matching_files = select(BillRaw.import_file_id).join(
+                BillFact,
+                BillRaw.bill_id == BillFact.id,
+            ).where(
+                BillFact.account_code == account,
+            ).distinct()
+            clauses.append(ImportFile.id.in_(matching_files))
+
+        summary = self.db.execute(select(
+            func.count(ImportFile.id).label("batch_count"),
+            func.coalesce(func.sum(case(
+                (ImportFile.status == "IMPORTED", 1), else_=0
+            )), 0).label("complete_count"),
+            func.coalesce(func.sum(ImportFile.success_count), 0).label(
+                "imported_count"
+            ),
+        ).where(*clauses)).mappings().one()
+        total = int(summary["batch_count"])
         rows = self.db.execute(select(
             ImportFile.id,
             ImportFile.filename,
@@ -379,18 +428,69 @@ class TargetIntakeMapper:
             ImportFile.success_count,
             ImportFile.status,
             ImportFile.created_time,
-        ).order_by(ImportFile.id.desc()).limit(limit)).mappings().all()
-        return [{
+        ).where(*clauses).order_by(ImportFile.id.desc()).offset(
+            (page - 1) * page_size
+        ).limit(page_size)).mappings().all()
+        file_ids = [row["id"] for row in rows]
+        account_codes: dict[int, list[str]] = defaultdict(list)
+        if file_ids:
+            links = self.db.execute(select(
+                BillRaw.import_file_id,
+                BillFact.account_code,
+            ).join(
+                BillFact,
+                BillRaw.bill_id == BillFact.id,
+            ).where(
+                BillRaw.import_file_id.in_(file_ids),
+            ).distinct().order_by(
+                BillRaw.import_file_id,
+                BillFact.account_code,
+            )).mappings().all()
+            for link in links:
+                account_codes[link["import_file_id"]].append(link["account_code"])
+        items = [{
             "id": row["id"],
             "filename": row["filename"],
             "source_type": row["source_type"],
+            "account_codes": account_codes[row["id"]],
             "row_count": row["total_count"],
             "imported_count": row["success_count"],
             "status": row["status"],
             "imported_at": row["created_time"].isoformat(),
         } for row in rows]
+        return {
+            "items": items,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "summary": {
+                "batch_count": total,
+                "complete_count": int(summary["complete_count"]),
+                "imported_count": int(summary["imported_count"]),
+            },
+            "filters": {"q": q, "account": account},
+        }
 
-    def rows(self, import_file_id: int) -> list[dict[str, object]]:
+    def rows(
+        self,
+        import_file_id: int,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> dict[str, object]:
+        batch = self.db.execute(select(
+            ImportFile.total_count,
+            ImportFile.success_count,
+            ImportFile.skip_count,
+            ImportFile.issue_count,
+        ).where(ImportFile.id == import_file_id)).mappings().one_or_none()
+        if batch is None:
+            return {
+                "items": [],
+                "total": 0,
+                "page": page,
+                "page_size": page_size,
+                "summary": {"success": 0, "skipped": 0, "invalid": 0},
+            }
         rows = self.db.execute(select(
             BillRaw.id,
             BillRaw.bill_id,
@@ -398,13 +498,26 @@ class TargetIntakeMapper:
             BillRaw.raw_payload,
         ).where(BillRaw.import_file_id == import_file_id).order_by(
             BillRaw.source_row_number,
-        )).mappings().all()
-        return [{
+        ).offset(
+            (page - 1) * page_size
+        ).limit(page_size)).mappings().all()
+        items = [{
             "id": row["id"],
             "bill_id": row["bill_id"],
             "disposition": row["parse_status"],
             "record": json.loads(row["raw_payload"]),
         } for row in rows]
+        return {
+            "items": items,
+            "total": int(batch["total_count"]),
+            "page": page,
+            "page_size": page_size,
+            "summary": {
+                "success": int(batch["success_count"]),
+                "skipped": int(batch["skip_count"]),
+                "invalid": int(batch["issue_count"]),
+            },
+        }
 
     def accounts(self) -> list[dict[str, object]]:
         return list(self._known_accounts().values())
