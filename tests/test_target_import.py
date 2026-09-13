@@ -145,6 +145,89 @@ def test_target_import_writes_fact_evidence_and_hot_projection(target_import_api
         assert db.query(BillFact).count() == 1
 
 
+def test_import_history_supports_search_pagination_and_account_filter(
+    target_import_api,
+):
+    client, _, _ = target_import_api
+    cash_rows = _rows(prefix="cash")
+    card_rows = _rows(prefix="card")
+    card_rows[0][6] = "建设银行储蓄卡(1234)"
+    for filename, rows in [
+        ("cash-august.csv", cash_rows),
+        ("card-september.csv", card_rows),
+    ]:
+        preview = _preview(client, filename, _csv(rows))
+        assert _confirm(client, preview).status_code == 200
+
+    first_page = client.get(
+        "/paam/import/v1/batch/list?page=1&page_size=1"
+    ).json()["body"]
+    assert (first_page["total"], len(first_page["items"])) == (2, 1)
+    assert first_page["items"][0]["filename"] == "card-september.csv"
+    assert first_page["summary"] == {
+        "batch_count": 2,
+        "complete_count": 2,
+        "imported_count": 2,
+    }
+
+    second_page = client.get(
+        "/paam/import/v1/batch/list?page=2&page_size=1"
+    ).json()["body"]
+    assert second_page["items"][0]["filename"] == "cash-august.csv"
+
+    search = client.get(
+        "/paam/import/v1/batch/list", params={"q": "september"}
+    ).json()["body"]
+    assert [item["filename"] for item in search["items"]] == [
+        "card-september.csv"
+    ]
+    source_search = client.get(
+        "/paam/import/v1/batch/list", params={"q": "微信"}
+    ).json()["body"]
+    assert source_search["total"] == 2
+
+    accounts = client.get("/paam/import/v1/account/list").json()["body"]
+    card_account = next(
+        item for item in accounts if "尾号 1234" in item["display_name"]
+    )
+    filtered = client.get(
+        "/paam/import/v1/batch/list",
+        params={"account": card_account["identity"]},
+    ).json()["body"]
+    assert [item["filename"] for item in filtered["items"]] == [
+        "card-september.csv"
+    ]
+    assert filtered["items"][0]["account_codes"] == [
+        card_account["identity"]
+    ]
+
+
+def test_import_history_rows_are_loaded_by_page(target_import_api):
+    client, _, _ = target_import_api
+    preview = _preview(
+        client,
+        "history-detail.csv",
+        _csv(_rows(26, prefix="history-detail")),
+    )
+    confirmed = _confirm(client, preview)
+    assert confirmed.status_code == 200, confirmed.text
+    batch_id = confirmed.json()["body"]["import_file_ids"][0]
+
+    first = client.get(
+        "/paam/import/v1/batch/row/list",
+        params={"batch_id": batch_id, "page": 1, "page_size": 20},
+    ).json()["body"]
+    assert (first["total"], len(first["items"])) == (26, 20)
+    assert first["summary"] == {"success": 26, "skipped": 0, "invalid": 0}
+
+    second = client.get(
+        "/paam/import/v1/batch/row/list",
+        params={"batch_id": batch_id, "page": 2, "page_size": 20},
+    ).json()["body"]
+    assert (second["page"], len(second["items"])) == (2, 6)
+    assert second["items"][0]["id"] > first["items"][-1]["id"]
+
+
 def test_target_confirm_select_count_is_independent_of_row_count(target_import_api):
     client, _, engine = target_import_api
 

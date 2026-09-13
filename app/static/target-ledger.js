@@ -15,10 +15,20 @@ const statusNames = {
   REJECTED: "已忽略", DEFAULT: "默认", COMPLETE: "完整",
   PARTIAL: "部分", CONFLICT: "冲突",
 };
-const state = { page: "summary", params: new URLSearchParams(), importPlan: null, renderVersion: 0 };
+const state = {
+  page: "summary",
+  params: new URLSearchParams(),
+  importPlan: null,
+  renderVersion: 0,
+  historyFilterTimer: null,
+  historyRequestController: null,
+  historyRequestVersion: 0,
+  historyAccountNames: new Map(),
+};
 
 async function request(url, options = {}) {
-  const response = await fetch(url, options).catch(() => {
+  const response = await fetch(url, options).catch((error) => {
+    if (error.name === "AbortError") throw error;
     throw new Error("无法连接本地服务");
   });
   const payload = response.status === 204 ? null : await response.json().catch(() => null);
@@ -90,7 +100,8 @@ function modal(title, body, wide = true) {
 const nav = [
   ["summary", "概览", "收支与业务活动"],
   ["ledger", "流水", "最终账本"],
-  ["import", "导入", "事实与原始证据"],
+  ["import", "数据导入", "上传并预览账单"],
+  ["import-history", "导入历史", "查看历史导入批次"],
   ["tags", "标签", "标签维度"],
   ["reviews", "审查", "统一 Review"],
 ];
@@ -99,7 +110,8 @@ $("#app").innerHTML = `<div class="workspace target-shell"><aside class="sidebar
 const pageInfo = {
   summary: ["收支概览", "只读取热投影；不加载原始文本和历史。"],
   ledger: ["实际流水", "事实与已确认 Review 合成的最终账本。"],
-  import: ["导入事实", "原始记录保留，确认后生成不可变 Fact。"],
+  import: ["数据导入", "选择账单来源，上传文件并在写入前逐项预览。"],
+  "import-history": ["导入历史", "查看已经写入的文件、处理结果和原始行记录。"],
   tags: ["标签管理", "每个有效维度在最终流水上只有一个值。"],
   reviews: ["统一审查", "财务、标签、账户与事实冲突共用一套历史模型。"],
 };
@@ -109,7 +121,12 @@ function route(page, params = new URLSearchParams()) {
 }
 function readRoute() {
   const [page, query = ""] = location.hash.slice(1).split("?");
-  state.page = pageInfo[page] ? page : "summary";
+  const nextPage = pageInfo[page] ? page : "summary";
+  if (nextPage !== "import-history") {
+    clearTimeout(state.historyFilterTimer);
+    state.historyRequestController?.abort();
+  }
+  state.page = nextPage;
   state.params = new URLSearchParams(query);
   render();
 }
@@ -129,6 +146,7 @@ async function render() {
       summary: summaryPage,
       ledger: ledgerPage,
       import: importPage,
+      "import-history": importHistoryPage,
       tags: tagsPage,
       reviews: reviewsPage,
     })[page]();
@@ -208,10 +226,226 @@ async function editAccount(button) {
   bindPage(dialog);
 }
 
-async function importPage() {
-  const history = await request("/paam/import/v1/batch/list");
-  const rows = history.map((item) => `<tr><td>${item.id}</td><td>${esc(item.filename)}</td><td>${esc(item.source_type)}</td><td>${item.imported_count}/${item.row_count}</td><td>${esc(item.status)}</td><td>${date(item.imported_at)}</td><td><button data-action="batch-rows" data-id="${item.id}">查看行</button></td></tr>`);
-  return `<section class="panel"><h2>导入新账单</h2><form data-form="import-preview" class="stack"><label>账单文件<input type="file" name="files" multiple required accept=".csv,.xls,.xlsx,.zip,.pdf"></label><label>指定来源（可留空自动识别）<select name="source_type"><option value="">自动识别</option><option value="alipay">支付宝</option><option value="wechat">微信</option><option value="ccb">建设银行</option><option value="abc">农业银行</option><option value="cmb">招商银行</option></select></label><label>ZIP/PDF 密码（仅本次请求）<input type="password" name="password"></label><div class="actions"><button class="primary">预览导入</button></div></form><div id="import-preview"></div></section><section class="panel"><h2>导入历史</h2>${rows.length ? table(["ID", "文件", "来源", "成功/总数", "状态", "时间", ""], rows) : '<div class="empty-state">还没有导入记录</div>'}</section>`;
+function importPage() {
+  const sources = [
+    ["", "自动识别", "推荐", "✦", "auto"],
+    ["alipay", "支付宝", "支付宝账单", "支", "blue"],
+    ["wechat", "微信支付", "微信账单", "微", "green"],
+    ["ccb", "建设银行", "银行卡流水", "建", "indigo"],
+    ["abc", "农业银行", "银行卡流水", "农", "olive"],
+    ["cmb", "招商银行", "银行卡流水", "招", "red"],
+  ];
+  const sourceCards = sources.map(([value, label, note, icon, tone], index) => `<button type="button" class="source-card${index === 0 ? " selected" : ""}" data-action="import-source" data-value="${value}" data-tone="${tone}" aria-pressed="${index === 0}"><span class="source-icon" aria-hidden="true">${icon}</span><span><strong>${label}</strong><small>${note}</small></span><span class="source-check" aria-hidden="true">✓</span></button>`).join("");
+  return `<div class="import-workflow" data-import-workflow data-step="1"><nav class="import-stepper" aria-label="数据导入步骤"><button type="button" class="import-step active" data-action="import-step" data-step="1" aria-current="step"><span>1</span><strong>选择来源</strong><small>确认账单平台</small></button><button type="button" class="import-step" data-action="import-step" data-step="2"><span>2</span><strong>添加文件</strong><small>上传待导入账单</small></button><button type="button" class="import-step" data-action="import-step" data-step="3" disabled><span>3</span><strong>预览确认</strong><small>核对后写入</small></button></nav><form data-form="import-preview"><section class="panel import-source-panel" data-import-step-panel="1"><div class="section-head"><div><span class="step-kicker">步骤 1 / 3</span><h2 tabindex="-1">选择数据来源</h2></div><button type="button" class="quiet" data-page="import-history">查看导入历史 →</button></div><p class="import-section-help">不确定时选择自动识别，系统会从文件表头与内容判断来源。</p><div class="source-card-grid" role="group" aria-label="数据来源">${sourceCards}</div><label class="visually-hidden">数据来源<select name="source_type"><option value="">自动识别</option><option value="alipay">支付宝</option><option value="wechat">微信</option><option value="ccb">建设银行</option><option value="abc">农业银行</option><option value="cmb">招商银行</option></select></label><div class="step-nav-actions"><span>已选择：<strong data-selected-source>自动识别</strong></span><button type="button" class="primary" data-action="import-step" data-step="2">下一步：添加文件 →</button></div></section><section class="panel import-upload-panel" data-import-step-panel="2" hidden><div class="section-head"><div><span class="step-kicker">步骤 2 / 3</span><h2 tabindex="-1">添加账单文件</h2></div><span class="format-note">CSV · XLS · XLSX · PDF · ZIP</span></div><label class="import-dropzone" data-import-dropzone><input class="visually-hidden" type="file" name="files" multiple required accept=".csv,.xls,.xlsx,.zip,.pdf"><span class="dropzone-icon" aria-hidden="true">↥</span><strong>拖放账单到这里，或点击选择文件</strong><small>单个文件不超过 25 MB，最多同时处理 100 个文件</small><span class="dropzone-button">选择文件</span></label><div id="selected-files" class="selected-files"><div class="selected-files-empty">选择文件后，将在这里显示待预览清单。</div></div><details class="import-options"><summary>加密文件与高级选项</summary><div class="import-option-body"><label>ZIP / PDF 密码<input type="password" name="password" autocomplete="off" placeholder="仅用于本次解析，不会保存"><small>密码只随本次预览请求使用。</small></label></div></details><div class="import-submit-row"><button type="button" class="quiet" data-action="import-step" data-step="1">← 返回选择来源</button><div class="import-submit-copy"><strong>先预览，再写入</strong><small>确认前不会修改任何账本数据。</small></div><button class="primary" data-action="preview-import">生成导入预览</button></div></section></form><section id="import-preview" data-import-step-panel="3" hidden></section></div>`;
+}
+
+const sourceLabels = {
+  alipay: "支付宝", wechat: "微信支付", ccb: "建设银行", abc: "农业银行", cmb: "招商银行",
+};
+const actionLabels = {
+  new: "新增", supplement: "补充证据", duplicate_file: "重复文件", record: "仅保留记录", ambiguous: "待确认", error: "有错误",
+};
+const statusLabels = { IMPORTED: "已导入", PARTIAL: "部分导入", FAILED: "失败" };
+
+function fileExtension(filename) {
+  return String(filename || "FILE").split(".").pop().slice(0, 4).toUpperCase();
+}
+function formatFileSize(size) {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+function updateSelectedFiles(form) {
+  const root = $("#selected-files", form);
+  const files = [...form.elements.files.files];
+  if (!root) return;
+  root.innerHTML = files.length ? files.map((file, index) => `<div class="selected-file-card"><span class="file-type-icon">${esc(fileExtension(file.name))}</span><span class="selected-file-copy"><strong>${esc(file.name)}</strong><small>${formatFileSize(file.size)} · 等待生成预览</small></span><button type="button" class="quiet file-remove" data-action="remove-import-file" data-index="${index}" aria-label="移除 ${esc(file.name)}">移除</button></div>`).join("") : '<div class="selected-files-empty">选择文件后，将在这里显示待预览清单。</div>';
+}
+function clearImportPlan() {
+  state.importPlan = null;
+  const preview = $("#import-preview");
+  if (preview) preview.innerHTML = "";
+  syncImportSteps();
+}
+function syncImportSteps(activeStep = Number($("[data-import-workflow]")?.dataset.step || 1)) {
+  const workflow = $("[data-import-workflow]");
+  if (!workflow) return;
+  $$(".import-step", workflow).forEach((button) => {
+    const step = Number(button.dataset.step);
+    const active = step === activeStep;
+    button.disabled = step === 3 && !state.importPlan;
+    button.classList.toggle("active", active);
+    button.classList.toggle("complete", step < activeStep);
+    if (active) button.setAttribute("aria-current", "step");
+    else button.removeAttribute("aria-current");
+  });
+}
+function showImportStep(step, focusHeading = true) {
+  const workflow = $("[data-import-workflow]");
+  const target = Number(step);
+  if (!workflow || ![1, 2, 3].includes(target) || (target === 3 && !state.importPlan)) return;
+  workflow.dataset.step = String(target);
+  $$('[data-import-step-panel]', workflow).forEach((panel) => {
+    panel.hidden = Number(panel.dataset.importStepPanel) !== target;
+  });
+  syncImportSteps(target);
+  if (focusHeading) $(`[data-import-step-panel="${target}"] h2`, workflow)?.focus({ preventScroll: true });
+}
+
+function historySummaryMarkup(result) {
+  return `<div class="history-metric"><span>匹配批次</span><strong>${result.summary.batch_count}</strong><small>当前筛选结果</small></div><div class="history-metric"><span>完整导入</span><strong>${result.summary.complete_count}</strong><small>无异常完成</small></div><div class="history-metric"><span>已写入记录</span><strong>${result.summary.imported_count}</strong><small>当前结果合计</small></div>`;
+}
+function historyResultsMarkup(result) {
+  const batchCards = result.items.map((item) => {
+    const accountLabels = (item.account_codes || []).map((identity) => state.historyAccountNames.get(identity) || identity);
+    return `<button type="button" class="batch-card" data-action="batch-rows" data-id="${item.id}" data-filename="${esc(item.filename)}" aria-label="查看批次 ${item.id}：${esc(item.filename)}"><span class="file-type-icon">${esc(fileExtension(item.filename))}</span><span class="batch-file"><span class="history-id">批次 #${item.id}</span><strong>${esc(item.filename)}</strong><small>${esc(sourceLabels[item.source_type] || item.source_type)}</small></span><span class="batch-field batch-account"><small>来源账户</small><span>${accountLabels.length ? accountLabels.map((label) => `<span class="account-chip">${esc(label)}</span>`).join("") : '<span class="muted">未识别</span>'}</span></span><span class="batch-field"><small>成功 / 总数</small><span class="progress-count"><strong>${item.imported_count}</strong> / ${item.row_count}</span></span><span class="batch-field"><small>状态</small><span><span class="badge ${item.status === "IMPORTED" ? "" : "warn"}">${esc(statusLabels[item.status] || item.status)}</span></span></span><span class="batch-field batch-time"><small>导入时间</small><span>${date(item.imported_at)}</span></span><span class="batch-chevron" aria-hidden="true">›</span></button>`;
+  });
+  const pages = Math.max(1, Math.ceil(result.total / result.page_size));
+  const start = result.total ? (result.page - 1) * result.page_size + 1 : 0;
+  const end = Math.min(result.page * result.page_size, result.total);
+  const historyPager = `<div class="pagination"><span class="range">显示 ${start}–${end}，共 ${result.total} 个批次</span><button data-action="history-page" data-value="${result.page - 1}" ${result.page <= 1 ? "disabled" : ""}>上一页</button><span>${result.page} / ${pages}</span><button data-action="history-page" data-value="${result.page + 1}" ${result.page >= pages ? "disabled" : ""}>下一页</button></div>`;
+  return batchCards.length
+    ? `<div class="batch-card-list">${batchCards.join("")}</div>${historyPager}`
+    : '<div class="empty-state"><span class="empty-state-icon">⌁</span><strong>没有匹配的导入记录</strong><p>调整上方关键词或来源账户，下方结果会自动更新。</p><button class="primary" data-page="import">导入新账单</button></div>';
+}
+
+async function importHistoryPage() {
+  const [result, accounts] = await Promise.all([
+    request("/paam/import/v1/batch/list?page=1&page_size=10"),
+    request("/paam/import/v1/account/list"),
+  ]);
+  state.historyAccountNames = new Map(accounts.map((account) => [account.identity, account.display_name || account.identity]));
+  const accountOptions = accounts.map((account) => `<option value="${esc(account.identity)}">${esc(account.display_name || account.identity)}</option>`).join("");
+  return `<div class="history-summary" data-history-summary>${historySummaryMarkup(result)}</div><section class="panel history-panel"><div class="section-head"><div><h2>导入批次</h2><p class="import-section-help">搜索和账户筛选只更新下方结果，不会刷新页面或打断输入。</p></div><button class="primary" data-page="import">＋ 导入新数据</button></div><form class="toolbar history-toolbar" data-form="history-filter"><label class="grow">搜索<input name="q" placeholder="文件名、来源或批次编号" autocomplete="off"></label><label>来源账户<select name="account"><option value="">全部账户</option>${accountOptions}</select></label><span class="history-updating" data-history-updating aria-live="polite"></span></form><div data-history-results>${historyResultsMarkup(result)}</div></section>`;
+}
+
+async function refreshHistoryResults(form, page = 1) {
+  clearTimeout(state.historyFilterTimer);
+  state.historyRequestController?.abort();
+  const controller = new AbortController();
+  const requestVersion = ++state.historyRequestVersion;
+  state.historyRequestController = controller;
+  const params = new URLSearchParams({ page: String(page), page_size: "10" });
+  const query = form.elements.q.value.trim();
+  const account = form.elements.account.value;
+  if (query) params.set("q", query);
+  if (account) params.set("account", account);
+  const resultsRoot = $("[data-history-results]");
+  const summaryRoot = $("[data-history-summary]");
+  const updating = $("[data-history-updating]", form);
+  resultsRoot?.setAttribute("aria-busy", "true");
+  form.classList.add("updating");
+  if (updating) updating.textContent = "正在更新…";
+  try {
+    const result = await request(`/paam/import/v1/batch/list?${params}`, { signal: controller.signal });
+    if (requestVersion !== state.historyRequestVersion || state.page !== "import-history") return;
+    if (summaryRoot) summaryRoot.innerHTML = historySummaryMarkup(result);
+    if (resultsRoot) {
+      resultsRoot.innerHTML = historyResultsMarkup(result);
+      bindPage(resultsRoot);
+    }
+  } catch (error) {
+    if (error.name !== "AbortError") toast(error.message, true);
+  } finally {
+    if (requestVersion === state.historyRequestVersion) {
+      resultsRoot?.removeAttribute("aria-busy");
+      form.classList.remove("updating");
+      if (updating) updating.textContent = "";
+    }
+  }
+}
+
+function scheduleHistoryRefresh(form) {
+  clearTimeout(state.historyFilterTimer);
+  state.historyFilterTimer = setTimeout(() => refreshHistoryResults(form, 1), 200);
+}
+
+function importRowMoney(row) {
+  const amount = Number(row.amount_minor);
+  if (!Number.isFinite(amount)) return "—";
+  return new Intl.NumberFormat("zh-CN", {
+    style: "currency", currency: row.currency || "CNY",
+  }).format(amount / 100);
+}
+
+function importBatchRow(item) {
+  const status = { SUCCESS: "已写入", SKIPPED: "已跳过", INVALID: "异常" };
+  const normalized = item.record?.normalized || {};
+  const account = normalized.account?.display_name || normalized.account?.identity || "未识别";
+  const summary = normalized.merchant || normalized.counterparty || normalized.note || "未命名交易";
+  return `<tr><td>${item.id}</td><td>${date(normalized.occurred_at)}</td><td><strong>${esc(summary)}</strong>${normalized.note && normalized.note !== summary ? `<small>${esc(normalized.note)}</small>` : ""}</td><td>${esc(account)}</td><td class="money ${Number(normalized.amount_minor) > 0 ? "income" : "expense"}">${esc(importRowMoney(normalized))}</td><td><span class="badge ${item.disposition === "INVALID" ? "warn" : "neutral"}">${esc(status[item.disposition] || item.disposition)}</span>${item.bill_id ? `<small>Fact #${item.bill_id}</small>` : ""}</td></tr>`;
+}
+
+async function renderImportBatchDrawer(dialog) {
+  dialog.requestController?.abort();
+  const controller = new AbortController();
+  dialog.requestController = controller;
+  const page = Number(dialog.dataset.page || 1);
+  const pageSize = Number(dialog.dataset.pageSize || 20);
+  const body = $('[data-batch-drawer-body]', dialog);
+  const range = $('[data-batch-range]', dialog);
+  body.innerHTML = '<div class="preview-drawer-loading">正在读取当前页…</div>';
+  range.textContent = "正在读取当前页…";
+  try {
+    const result = await request(`/paam/import/v1/batch/row/list?batch_id=${dialog.dataset.batchId}&page=${page}&page_size=${pageSize}`, {
+      signal: controller.signal,
+    });
+    if (!dialog.open || dialog.requestController !== controller) return;
+    const pages = Math.max(1, Math.ceil(result.total / result.page_size));
+    const currentPage = Math.min(Math.max(1, result.page), pages);
+    const start = result.total ? (currentPage - 1) * result.page_size + 1 : 0;
+    const end = Math.min(currentPage * result.page_size, result.total);
+    const summary = result.summary || {};
+    dialog.dataset.page = String(currentPage);
+    range.textContent = result.total ? `显示 ${start}–${end}，共 ${result.total} 行` : "没有原始行记录";
+    $('[data-batch-page]', dialog).textContent = `${currentPage} / ${pages}`;
+    $('[data-action="batch-page-prev"]', dialog).disabled = currentPage <= 1;
+    $('[data-action="batch-page-next"]', dialog).disabled = currentPage >= pages;
+    const summaryCards = `<div class="batch-detail-summary"><span>总行数 <strong>${result.total}</strong></span><span>已写入 <strong>${summary.success || 0}</strong></span><span>已跳过 <strong>${summary.skipped || 0}</strong></span><span>异常 <strong>${summary.invalid || 0}</strong></span></div>`;
+    body.innerHTML = `${summaryCards}${result.items.length ? table(["Raw", "交易时间", "摘要 / 备注", "账户", "金额", "处理结果"], result.items.map(importBatchRow)) : '<div class="empty-state">这个批次没有原始行记录。</div>'}`;
+  } catch (error) {
+    if (error.name !== "AbortError" && dialog.open) {
+      body.innerHTML = `<div class="error">${esc(error.message)}</div>`;
+      range.textContent = "读取失败";
+    }
+  }
+}
+
+function showImportBatch(button) {
+  const dialog = document.createElement("dialog");
+  dialog.className = "preview-drawer batch-detail-drawer";
+  dialog.dataset.batchId = button.dataset.id;
+  dialog.dataset.page = "1";
+  dialog.dataset.pageSize = "20";
+  dialog.innerHTML = `<div class="preview-drawer-shell"><div class="preview-drawer-head"><div><span class="step-kicker">导入批次 #${esc(button.dataset.id)}</span><h2>${esc(button.dataset.filename || "未命名文件")}</h2><p>按页读取原始记录与处理结果</p></div><button type="button" class="drawer-close" data-close aria-label="关闭批次明细">×</button></div><div class="preview-drawer-toolbar"><span data-batch-range>正在读取当前页…</span><label>每页显示<select data-batch-page-size aria-label="批次明细每页行数"><option value="20">20 行</option><option value="30">30 行</option><option value="50">50 行</option><option value="100">100 行</option></select></label></div><div class="preview-drawer-body" data-batch-drawer-body><div class="preview-drawer-loading">正在读取当前页…</div></div><div class="preview-drawer-footer"><button type="button" data-action="batch-page-prev" disabled>← 上一页</button><span data-batch-page>—</span><button type="button" data-action="batch-page-next" disabled>下一页 →</button></div></div>`;
+  dialog.addEventListener("close", () => {
+    dialog.requestController?.abort();
+    dialog.remove();
+  });
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog || event.target.closest("[data-close]")) {
+      dialog.close();
+      return;
+    }
+    if (event.target.closest('[data-action="batch-page-prev"]')) {
+      dialog.dataset.page = String(Number(dialog.dataset.page) - 1);
+      renderImportBatchDrawer(dialog);
+    }
+    if (event.target.closest('[data-action="batch-page-next"]')) {
+      dialog.dataset.page = String(Number(dialog.dataset.page) + 1);
+      renderImportBatchDrawer(dialog);
+    }
+  });
+  $('[data-batch-page-size]', dialog).addEventListener("change", (event) => {
+    dialog.dataset.pageSize = event.currentTarget.value;
+    dialog.dataset.page = "1";
+    renderImportBatchDrawer(dialog);
+  });
+  document.body.append(dialog);
+  dialog.showModal();
+  requestAnimationFrame(() => {
+    if (dialog.open) renderImportBatchDrawer(dialog);
+  });
 }
 const fileBase64 = (file) => new Promise((resolve, reject) => {
   const reader = new FileReader();
@@ -234,6 +468,69 @@ async function previewImport(form) {
   } finally {
     endSubmit(form);
   }
+}
+function previewImportRow(row) {
+  const amount = Number(row.amount_minor);
+  const hasAmount = Number.isFinite(amount);
+  const amountText = hasAmount
+    ? new Intl.NumberFormat("zh-CN", { style: "currency", currency: row.currency || "CNY" }).format(amount / 100)
+    : "—";
+  const summary = row.merchant || row.counterparty || row.note || row.summary || "未命名交易";
+  return `<tr><td>${date(row.occurred_at)}</td><td><strong>${esc(summary)}</strong>${row.note && row.note !== summary ? `<small>${esc(row.note)}</small>` : ""}</td><td class="money ${hasAmount && amount > 0 ? "income" : "expense"}">${esc(amountText)}</td><td><span class="badge ${["ambiguous", "error"].includes(row.action) ? "warn" : "neutral"}">${esc(actionLabels[row.action] || row.action || "待处理")}</span></td></tr>`;
+}
+function renderPreviewDrawer(dialog) {
+  const documentIndex = Number(dialog.dataset.documentIndex);
+  const document = state.importPlan?.documents?.[documentIndex];
+  if (!document) return dialog.close();
+  const rows = document.rows || [];
+  const pageSize = Number(dialog.dataset.pageSize || 20);
+  const pages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const page = Math.min(Math.max(1, Number(dialog.dataset.page || 1)), pages);
+  const start = rows.length ? (page - 1) * pageSize : 0;
+  const end = Math.min(start + pageSize, rows.length);
+  dialog.dataset.page = String(page);
+  $('[data-preview-range]', dialog).textContent = rows.length
+    ? `显示 ${start + 1}–${end}，共 ${rows.length} 行`
+    : "没有可预览的交易";
+  $('[data-preview-page]', dialog).textContent = `${page} / ${pages}`;
+  $('[data-action="preview-page-prev"]', dialog).disabled = page <= 1;
+  $('[data-action="preview-page-next"]', dialog).disabled = page >= pages;
+  $('[data-preview-drawer-body]', dialog).innerHTML = rows.length
+    ? table(["交易时间", "摘要 / 备注", "金额", "处理结果"], rows.slice(start, end).map(previewImportRow))
+    : '<div class="empty-state">文件中没有可预览的交易。</div>';
+}
+function openPreviewDrawer(documentIndex) {
+  const previewDocument = state.importPlan?.documents?.[Number(documentIndex)];
+  if (!previewDocument) return;
+  const source = sourceLabels[previewDocument.source_type] || previewDocument.source_type || "未识别来源";
+  const dialog = document.createElement("dialog");
+  dialog.className = "preview-drawer";
+  dialog.dataset.documentIndex = String(documentIndex);
+  dialog.dataset.page = "1";
+  dialog.dataset.pageSize = "20";
+  dialog.innerHTML = `<div class="preview-drawer-shell"><div class="preview-drawer-head"><div><span class="step-kicker">仔细预览</span><h2>${esc(previewDocument.filename || "未命名文件")}</h2><p>${esc(source)} · 逐页检查解析结果</p></div><button type="button" class="drawer-close" data-close aria-label="关闭仔细预览">×</button></div><div class="preview-drawer-toolbar"><span data-preview-range>正在准备当前页…</span><label>每页<select data-preview-page-size><option value="20">20 行</option><option value="30">30 行</option><option value="50">50 行</option><option value="100">100 行</option></select></label></div><div class="preview-drawer-body" data-preview-drawer-body><div class="preview-drawer-loading">正在准备当前页…</div></div><div class="preview-drawer-footer"><button type="button" data-action="preview-page-prev" disabled>← 上一页</button><span data-preview-page>—</span><button type="button" data-action="preview-page-next" disabled>下一页 →</button></div></div>`;
+  dialog.addEventListener("close", () => dialog.remove());
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog || event.target.closest("[data-close]")) dialog.close();
+    if (event.target.closest('[data-action="preview-page-prev"]')) {
+      dialog.dataset.page = String(Number(dialog.dataset.page) - 1);
+      renderPreviewDrawer(dialog);
+    }
+    if (event.target.closest('[data-action="preview-page-next"]')) {
+      dialog.dataset.page = String(Number(dialog.dataset.page) + 1);
+      renderPreviewDrawer(dialog);
+    }
+  });
+  $('[data-preview-page-size]', dialog).addEventListener("change", (event) => {
+    dialog.dataset.pageSize = event.currentTarget.value;
+    dialog.dataset.page = "1";
+    renderPreviewDrawer(dialog);
+  });
+  document.body.append(dialog);
+  dialog.showModal();
+  requestAnimationFrame(() => {
+    if (dialog.open) renderPreviewDrawer(dialog);
+  });
 }
 function renderImportPlan() {
   const plan = state.importPlan;
@@ -259,8 +556,23 @@ function renderImportPlan() {
     return `<label>第 ${esc(row.row_id)} 行：${esc(row.counterparty || row.summary || "未命名交易")}<select name="decision:${esc(row.row_id)}"><option value="">请选择</option><option value="new">保留为新 Fact</option>${options}</select><small>${esc(row.error || "需要人工确定")}</small></label>`;
   }).join("");
   const errors = rows.filter((row) => row.action === "error").map((row) => `<li>第 ${esc(row.row_id || "?")} 行：${esc(row.error || "无法导入")}</li>`).join("");
-  root.innerHTML = `<div class="review-card"><h3>预览结果</h3><div class="status-line">${Object.entries(plan.counts || {}).map(([name, value]) => `<span class="badge neutral">${esc(name)} ${value}</span>`).join("")}</div>${plan.can_confirm ? '<p class="success">预览已通过，可以原子写入事实层。</p>' : '<p class="error">请先处理账号匹配或交易歧义；不可修复的错误需重新导出文件。</p>'}${errors ? `<ul class="error-list">${errors}</ul>` : ""}<form data-form="import-revise" class="stack">${accountFields ? `<details><summary>核对或调整账号匹配</summary><div class="stack inset">${accountFields}</div></details>` : ""}${decisions ? `<fieldset><legend>交易匹配决策</legend><div class="stack">${decisions}</div></fieldset>` : ""}<div class="actions"><button type="submit">重新计算预览</button><button type="button" class="primary" data-action="confirm-import" ${plan.can_confirm ? "" : "disabled"}>确认写入事实层</button></div></form><details><summary>查看详细计划</summary><pre class="raw-json">${esc(JSON.stringify(plan.documents || plan, null, 2))}</pre></details></div>`;
+  const counts = plan.counts || {};
+  const issueCount = Number(counts.error || 0) + Number(counts.errors || 0) + Number(counts.ambiguous || 0);
+  const metric = (label, value, tone, note) => `<div class="preview-metric" data-tone="${tone}"><span>${label}</span><strong>${value}</strong><small>${note}</small></div>`;
+  const documentCards = (plan.documents || []).map((document, index) => {
+    const documentRows = document.rows || [];
+    const previewRows = documentRows.slice(0, 5).map(previewImportRow);
+    const source = sourceLabels[document.source_type] || document.source_type || "未识别来源";
+    const documentIssue = document.error || documentRows.some((row) => ["ambiguous", "error"].includes(row.action));
+    const status = document.error ? "解析失败" : document.duplicate ? "重复文件" : documentIssue ? "需要核对" : "可以导入";
+    const body = document.error
+      ? `<div class="error">${esc(document.error)}</div>`
+      : `<div class="preview-file-meta"><span>来源 <strong>${esc(source)}</strong></span>${document.account?.display_name ? `<span>账户 <strong>${esc(document.account.display_name)}</strong></span>` : ""}<span>共 <strong>${documentRows.length}</strong> 行</span></div>${previewRows.length ? `${table(["交易时间", "摘要 / 备注", "金额", "处理结果"], previewRows)}<div class="preview-detail-row"><span>默认展示前 5 行，确认时仍会处理全部 ${documentRows.length} 行。</span><button type="button" class="quiet" data-action="detail-preview" data-document="${index}">仔细预览全部 ${documentRows.length} 行 →</button></div>` : '<div class="empty-state">文件中没有可预览的交易。</div>'}`;
+    return `<details class="preview-file-card" ${index === 0 ? "open" : ""}><summary><span class="file-type-icon">${esc(fileExtension(document.filename || document.format))}</span><span class="preview-file-title"><strong>${esc(document.filename || "未命名文件")}</strong><small>${esc(source)} · ${documentRows.length} 行</small></span><span class="preview-status ${documentIssue ? "issue" : "ready"}">${status}</span><span class="preview-chevron" aria-hidden="true">⌄</span></summary><div class="preview-file-body">${body}</div></details>`;
+  }).join("");
+  root.innerHTML = `<div class="preview-section" aria-labelledby="preview-title"><div class="preview-heading"><div><span class="step-kicker">步骤 3 / 3</span><h2 id="preview-title" tabindex="-1">预览结果</h2><p>文件卡片默认快速展示前 5 行；需要逐条核对时可打开右侧仔细预览。</p></div><span class="preview-verdict ${plan.can_confirm ? "ready" : "issue"}">${plan.can_confirm ? "✓ 可以写入" : "! 需要处理"}</span></div><div class="preview-metrics">${metric("新增事实", Number(counts.new || 0), "green", "将生成新流水")}${metric("补充证据", Number(counts.supplement || 0), "blue", "关联已有事实")}${metric("跳过 / 留档", Number(counts.duplicate_file || 0) + Number(counts.record || 0), "gray", "不重复写入")}${metric("需处理", issueCount, issueCount ? "orange" : "green", issueCount ? "请检查下方项目" : "未发现阻塞项")}</div><div class="preview-file-list">${documentCards}</div>${errors ? `<div class="error"><strong>无法直接导入的记录</strong><ul class="error-list">${errors}</ul></div>` : ""}<form data-form="import-revise" class="preview-confirm-card"><div><h3>${plan.can_confirm ? "核对完成，准备写入" : "完成核对后再写入"}</h3><p>${plan.can_confirm ? "写入采用原子事务，原始文件和证据会一并保留。" : "请处理账号匹配或交易歧义；文件解析错误需重新导出后上传。"}</p></div>${accountFields ? `<details class="review-fields"><summary>核对或调整账号匹配</summary><div class="stack inset">${accountFields}</div></details>` : ""}${decisions ? `<fieldset><legend>交易匹配决策</legend><div class="stack">${decisions}</div></fieldset>` : ""}<details class="raw-plan" data-raw-plan><summary>查看技术明细</summary><div class="raw-plan-placeholder" data-raw-plan-content>展开后加载技术明细</div></details><div class="confirm-actions"><button type="button" class="quiet back-to-files" data-action="import-step" data-step="2">← 返回文件步骤</button><button type="submit">重新计算预览</button><button type="button" class="primary" data-action="confirm-import" ${plan.can_confirm ? "" : "disabled"}>确认并写入事实层</button></div></form></div>`;
   bindPage(root);
+  showImportStep(3);
 }
 async function reviseImport(event) {
   event.preventDefault();
@@ -379,7 +691,13 @@ function bindCommandForm(form) {
 }
 
 function bindPage(root) {
-  $$('[data-page]', root).forEach((button) => button.onclick = () => route(button.dataset.page));
+  $$('button[data-page], a[data-page]', root).forEach((button) => button.onclick = () => route(button.dataset.page));
+  $$('[data-action="import-step"]', root).forEach((button) => button.onclick = () => {
+    showImportStep(Number(button.dataset.step));
+  });
+  $$('[data-action="detail-preview"]', root).forEach((button) => button.onclick = () => {
+    openPreviewDrawer(Number(button.dataset.document));
+  });
   $('[data-action="reload"]', root)?.addEventListener("click", render);
   $('[data-action="clear-summary"]', root)?.addEventListener("click", () => route("summary"));
   $('[data-action="clear-ledger"]', root)?.addEventListener("click", () => route("ledger"));
@@ -388,6 +706,10 @@ function bindPage(root) {
   });
   $$('[data-action="review-page"]', root).forEach((button) => button.onclick = () => {
     const params = new URLSearchParams(state.params); params.set("page", button.dataset.value); route("reviews", params);
+  });
+  $$('[data-action="history-page"]', root).forEach((button) => button.onclick = () => {
+    const form = $('[data-form="history-filter"]');
+    if (form) refreshHistoryResults(form, Number(button.dataset.value));
   });
   $$('[data-action="detail"]', root).forEach((button) => button.onclick = () => showDetail(button.dataset.id).catch((error) => toast(error.message, true)));
   $$('[data-action="review-detail"]', root).forEach((button) => button.onclick = () => showReview(button.dataset.id).catch((error) => toast(error.message, true)));
@@ -403,14 +725,83 @@ function bindPage(root) {
   $$('[data-action="account-transition"]', root).forEach((button) => button.onclick = () => transitionAccount(button).catch((error) => toast(error.message, true)));
   $$('[data-action="conflict-transition"]', root).forEach((button) => button.onclick = () => transitionConflict(button).catch((error) => toast(error.message, true)));
   $$('[data-action="conflict-resolve"]', root).forEach((button) => button.onclick = () => conflictDialog(button));
-  $$('[data-action="batch-rows"]', root).forEach((button) => button.onclick = async () => {
-    try { const rows = await request(`/paam/import/v1/batch/row/list?batch_id=${button.dataset.id}`); modal(`导入批次 #${button.dataset.id}`, `<pre class="raw-json">${esc(JSON.stringify(rows, null, 2))}</pre>`); } catch (error) { toast(error.message, true); }
+  $$('[data-action="batch-rows"]', root).forEach((button) => button.onclick = () => showImportBatch(button));
+  const importForm = $('[data-form="import-preview"]', root);
+  if (importForm) {
+    $$('[data-action="import-source"]', importForm).forEach((button) => button.addEventListener("click", () => {
+      clearImportPlan();
+      importForm.elements.source_type.value = button.dataset.value;
+      const selectedSource = $('[data-selected-source]', importForm);
+      if (selectedSource) selectedSource.textContent = $("strong", button).textContent;
+      $$('[data-action="import-source"]', importForm).forEach((card) => {
+        const selected = card === button;
+        card.classList.toggle("selected", selected);
+        card.setAttribute("aria-pressed", String(selected));
+      });
+    }));
+    importForm.elements.files.addEventListener("change", () => {
+      clearImportPlan();
+      updateSelectedFiles(importForm);
+    });
+    importForm.addEventListener("click", (event) => {
+      const remove = event.target.closest('[data-action="remove-import-file"]');
+      if (!remove) return;
+      const transfer = new DataTransfer();
+      [...importForm.elements.files.files].forEach((file, index) => {
+        if (index !== Number(remove.dataset.index)) transfer.items.add(file);
+      });
+      importForm.elements.files.files = transfer.files;
+      clearImportPlan();
+      updateSelectedFiles(importForm);
+    });
+    const dropzone = $('[data-import-dropzone]', importForm);
+    ["dragenter", "dragover"].forEach((name) => dropzone.addEventListener(name, (event) => {
+      event.preventDefault();
+      dropzone.classList.add("dragging");
+    }));
+    ["dragleave", "drop"].forEach((name) => dropzone.addEventListener(name, (event) => {
+      event.preventDefault();
+      dropzone.classList.remove("dragging");
+    }));
+    dropzone.addEventListener("drop", (event) => {
+      if (!event.dataTransfer?.files.length) return;
+      importForm.elements.files.files = event.dataTransfer.files;
+      clearImportPlan();
+      updateSelectedFiles(importForm);
+    });
+  }
+  $('[data-raw-plan]', root)?.addEventListener("toggle", (event) => {
+    const details = event.currentTarget;
+    if (!details.open || details.dataset.loaded === "true") return;
+    details.dataset.loaded = "true";
+    requestAnimationFrame(() => {
+      if (!details.open) {
+        delete details.dataset.loaded;
+        return;
+      }
+      const content = $('[data-raw-plan-content]', details);
+      if (!content) return;
+      const pre = document.createElement("pre");
+      pre.className = "raw-json";
+      pre.textContent = JSON.stringify(state.importPlan?.documents || state.importPlan || {}, null, 2);
+      content.replaceWith(pre);
+    });
   });
   $('[data-action="confirm-import"]', root)?.addEventListener("click", confirmImport);
   $('[data-form="summary-filter"]', root)?.addEventListener("submit", (event) => { event.preventDefault(); const data = new FormData(event.currentTarget); route("summary", new URLSearchParams([...data].filter(([, value]) => value))); });
   $('[data-form="ledger-filter"]', root)?.addEventListener("submit", (event) => { event.preventDefault(); const data = new FormData(event.currentTarget); const params = new URLSearchParams([...data].filter(([, value]) => value)); params.set("page", "1"); route("ledger", params); });
   $('[data-form="review-filter"]', root)?.addEventListener("submit", (event) => { event.preventDefault(); const data = new FormData(event.currentTarget); const params = new URLSearchParams([...data].filter(([, value]) => value)); params.set("page", "1"); route("reviews", params); });
-  $('[data-form="import-preview"]', root)?.addEventListener("submit", async (event) => { event.preventDefault(); try { await previewImport(event.currentTarget); } catch (error) { showFormError(event.currentTarget, error); } });
+  const historyFilter = $('[data-form="history-filter"]', root);
+  historyFilter?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    refreshHistoryResults(event.currentTarget, 1);
+  });
+  historyFilter?.elements.q.addEventListener("input", (event) => {
+    if (!event.isComposing) scheduleHistoryRefresh(historyFilter);
+  });
+  historyFilter?.elements.q.addEventListener("compositionend", () => scheduleHistoryRefresh(historyFilter));
+  historyFilter?.elements.account.addEventListener("change", () => scheduleHistoryRefresh(historyFilter));
+  importForm?.addEventListener("submit", async (event) => { event.preventDefault(); try { await previewImport(event.currentTarget); } catch (error) { showFormError(event.currentTarget, error); } });
   $('[data-form="import-revise"]', root)?.addEventListener("submit", reviseImport);
   $('[data-form="tag-assignment"]', root)?.addEventListener("submit", submitTags);
   $('[data-form="account"]', root)?.addEventListener("submit", submitAccount);
@@ -443,7 +834,7 @@ async function confirmImport() {
   state.confirmingImport = true;
   const button = $('[data-action="confirm-import"]');
   if (button) button.disabled = true;
-  try { const result = await jsonRequest(`/paam/import/v1/preview/confirm/${state.importPlan.token}`, "POST", { version: state.importPlan.version }); state.importPlan = null; toast(`导入完成：${result.bill_fact_ids?.length || 0} 条新事实`); await render(); } catch (error) { if (button) button.disabled = false; const form = button?.closest("form"); if (form) showFormError(form, error); else toast(error.message, true); }
+  try { const result = await jsonRequest(`/paam/import/v1/preview/confirm/${state.importPlan.token}`, "POST", { version: state.importPlan.version }); state.importPlan = null; toast(`导入完成：${result.bill_fact_ids?.length || 0} 条新事实`); route("import-history"); } catch (error) { if (button) button.disabled = false; const form = button?.closest("form"); if (form) showFormError(form, error); else toast(error.message, true); }
   finally { state.confirmingImport = false; }
 }
 function simpleDictionaryDialog(kind, viewId = "") {

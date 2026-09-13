@@ -124,11 +124,22 @@ class TargetIntakeService:
                 self.mapper.rollback()
                 raise
 
-    def history(self) -> list[dict[str, object]]:
-        return self.mapper.history()
+    def history(
+        self,
+        page: int = 1,
+        page_size: int = 10,
+        q: str = "",
+        account: str = "",
+    ) -> dict[str, object]:
+        return self.mapper.history(page, page_size, q, account)
 
     def accounts(self) -> list[dict[str, object]]:
         return self.mapper.accounts()
 
-    def rows(self, import_file_id: int) -> list[dict[str, object]]:
-        return self.mapper.rows(import_file_id)
+    def rows(
+        self,
+        import_file_id: int,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> dict[str, object]:
+        return self.mapper.rows(import_file_id, page, page_size)

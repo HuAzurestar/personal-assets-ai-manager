@@ -54,11 +54,16 @@ def run() -> None:
             else:
                 raise RuntimeError("target test service did not start")
 
-            statement = (
-                "微信支付账单明细列表\n"
-                "交易时间,交易类型,交易对手,商品,收/支,金额(元),支付方式,当前状态,交易单号,商户单号,备注\n"
-                "2026-09-12 10:00:00,商户消费,浏览器测试商户,午餐,支出,12.34,零钱,支付成功,target-ui-1,mch-1,验收\n"
-            ).encode()
+            statement_rows = [
+                "微信支付账单明细列表",
+                "交易时间,交易类型,交易对手,商品,收/支,金额(元),支付方式,当前状态,交易单号,商户单号,备注",
+                *[
+                    f"2026-09-12 10:{index:02d}:00,商户消费,浏览器测试商户 {index},午餐,支出,"
+                    f"{12 + index / 100:.2f},零钱,支付成功,target-ui-{index},mch-{index},验收"
+                    for index in range(1, 27)
+                ],
+            ]
+            statement = ("\n".join(statement_rows) + "\n").encode()
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(
                     channel="msedge" if os.name == "nt" else None,
@@ -74,22 +79,103 @@ def run() -> None:
                 expect(page.get_by_role("heading", name="收支概览")).to_be_visible()
 
                 page.locator('nav [data-page="import"]').click()
-                expect(page.get_by_role("heading", name="导入事实")).to_be_visible()
+                expect(page.get_by_role("heading", name="数据导入")).to_be_visible()
+                expect(page.locator('[data-action="import-source"]')).to_have_count(6)
+                expect(page.get_by_role("heading", name="选择数据来源")).to_be_visible()
+                expect(page.get_by_role("heading", name="添加账单文件")).to_be_hidden()
+                page.locator('[data-action="import-step"][data-step="2"]').last.click()
+                expect(page.get_by_role("heading", name="添加账单文件")).to_be_visible()
                 page.locator('input[name="files"]').set_input_files({
                     "name": "target-ui.csv",
                     "mimeType": "text/csv",
                     "buffer": statement,
                 })
-                page.locator('[data-form="import-preview"] button.primary').click()
+                expect(page.locator("#selected-files")).to_contain_text("target-ui.csv")
+                page.locator('[data-action="import-step"][data-step="1"]').first.click()
+                expect(page.get_by_role("heading", name="选择数据来源")).to_be_visible()
+                page.locator('[data-action="import-step"][data-step="2"]').first.click()
+                expect(page.locator("#selected-files")).to_contain_text("target-ui.csv")
+                page.locator('[data-action="preview-import"]').click()
                 expect(page.get_by_role("heading", name="预览结果")).to_be_visible()
+                expect(page.locator(".preview-file-card")).to_contain_text("浏览器测试商户")
+                expect(page.locator(".preview-file-card tbody tr")).to_have_count(5)
+                page.locator(".back-to-files").click()
+                expect(page.get_by_role("heading", name="添加账单文件")).to_be_visible()
+                expect(page.locator("#selected-files")).to_contain_text("target-ui.csv")
+                page.locator('.import-step[data-step="3"]').click()
+                expect(page.get_by_role("heading", name="预览结果")).to_be_visible()
+                page.locator('[data-action="detail-preview"]').click()
+                drawer = page.locator("dialog.preview-drawer[open]")
+                expect(drawer).to_be_visible()
+                drawer_box = drawer.bounding_box()
+                assert drawer_box is not None
+                assert drawer_box["x"] > 500, drawer_box
+                assert drawer_box["y"] <= 1, drawer_box
+                assert drawer_box["height"] >= 998, drawer_box
+                expect(drawer.locator("[data-preview-page-size]")).to_be_visible()
+                expect(drawer.locator("[data-preview-page-size] option")).to_have_count(4)
+                expect(drawer.locator("tbody tr")).to_have_count(20)
+                expect(drawer.locator('[data-action="preview-page-next"]')).to_be_enabled()
+                drawer.locator('[data-action="preview-page-next"]').click()
+                expect(drawer.locator("tbody tr")).to_have_count(6)
+                expect(drawer.locator("[data-preview-range]")).to_have_text(
+                    "显示 21–26，共 26 行"
+                )
+                drawer.locator("[data-preview-page-size]").select_option("30")
+                expect(drawer.locator("tbody tr")).to_have_count(26)
+                expect(drawer.locator("[data-preview-page-size] option")).to_have_count(4)
+                drawer.locator("[data-close]").click()
                 expect(page.locator('[data-action="confirm-import"]')).to_be_enabled()
                 page.locator('[data-action="confirm-import"]').click()
+                expect(page.get_by_role("heading", name="导入历史")).to_be_visible()
                 expect(page.get_by_text("target-ui.csv")).to_be_visible()
+                expect(page.locator('[data-form="history-filter"]')).to_be_visible()
+                page.locator('[data-action="batch-rows"]').click()
+                history_drawer = page.locator("dialog.batch-detail-drawer[open]")
+                expect(history_drawer).to_be_visible()
+                history_drawer_box = history_drawer.bounding_box()
+                assert history_drawer_box is not None
+                assert history_drawer_box["x"] > 500, history_drawer_box
+                expect(history_drawer.locator("[data-batch-page-size]")).to_be_visible()
+                expect(
+                    history_drawer.locator("[data-batch-page-size] option")
+                ).to_have_count(4)
+                expect(history_drawer.locator("tbody tr")).to_have_count(20)
+                expect(history_drawer).to_contain_text("浏览器测试商户")
+                expect(
+                    history_drawer.locator("th", has_text="摘要 / 备注")
+                ).to_be_visible()
+                history_drawer.locator('[data-action="batch-page-next"]').click()
+                expect(history_drawer.locator("tbody tr")).to_have_count(6)
+                history_drawer.locator("[data-batch-page-size]").select_option("30")
+                expect(history_drawer.locator("tbody tr")).to_have_count(26)
+                history_drawer.locator("[data-close]").click()
+                history_hash = page.evaluate("location.hash")
+                search = page.locator(
+                    '[data-form="history-filter"] input[name="q"]'
+                )
+                search.click()
+                assert page.evaluate("location.hash") == history_hash
+                expect(page.get_by_role("heading", name="导入历史")).to_be_visible()
+                search.fill("not-present")
+                expect(page.get_by_text("没有匹配的导入记录")).to_be_visible()
+                assert page.evaluate("location.hash") == history_hash
+                assert search.evaluate("node => node === document.activeElement")
+                search.fill("target-ui")
+                expect(page.get_by_text("target-ui.csv")).to_be_visible()
+                assert page.evaluate("location.hash") == history_hash
+                account_filter = page.locator(
+                    '[data-form="history-filter"] select[name="account"]'
+                )
+                account_label = page.locator(".account-chip").first.inner_text()
+                account_filter.select_option(label=account_label)
+                expect(page.get_by_text("target-ui.csv")).to_be_visible()
+                assert page.evaluate("location.hash") == history_hash
 
                 page.locator('nav [data-page="ledger"]').click()
                 expect(page.get_by_role("heading", name="实际流水")).to_be_visible()
-                expect(page.get_by_text("浏览器测试商户")).to_be_visible()
-                page.locator('[data-action="detail"]').click()
+                expect(page.get_by_text("浏览器测试商户").first).to_be_visible()
+                page.locator('[data-action="detail"]').first.click()
                 expect(page.locator("dialog[open]")).to_contain_text("原始证据")
                 expect(page.locator("dialog[open]")).to_contain_text("浏览器测试商户")
                 if errors:
