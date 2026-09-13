@@ -157,27 +157,30 @@ def test_account_editor_prefills_effective_account(live, page):
 
 def test_import_preview_survives_navigation(page):
     page.locator('nav [data-page="import"]').click()
+    page.locator('[data-action="import-step"][data-step="2"]').first.click()
     page.locator('input[name="files"]').set_input_files({
         'name': 'probe.csv', 'mimeType': 'text/csv', 'buffer': (
             '微信支付账单明细列表\n'
             '交易时间,交易类型,交易对手,商品,收/支,金额(元),支付方式,当前状态,交易单号,商户单号,备注\n'
             '2026-09-12 10:00:00,商户消费,测试商户,午餐,支出,12.34,零钱,支付成功,probe-1,m-1,验证\n'
         ).encode()})
-    page.locator('[data-form="import-preview"] button').click()
+    page.locator('[data-action="preview-import"]').click()
     expect(page.locator('[data-action="confirm-import"]')).to_be_enabled()
     page.locator('nav [data-page="tags"]').click()
     expect(page.locator('[data-action="new-view"]')).to_be_visible()
     page.locator('nav [data-page="import"]').click()
-    expect(page.locator('[data-form="import-preview"]')).to_be_visible()
+    expect(page.locator('[data-action="confirm-import"]')).to_be_visible()
     assert page.locator('[data-action="confirm-import"]').count() == 1, 'Preview remains in state but cannot be confirmed after returning'
 
 
 def test_double_submit_creates_one_review(live, page):
     ids = facts(live, [('OUT', 1000)])
-    page.locator('nav [data-page="reviews"]').click()
-    page.locator('[data-action="new-review"]').click()
-    page.locator('[name="lines"]').fill(f'{ids[0]}:AA_PAID')
-    page.locator('[data-form="new-review"]').evaluate('(form) => {form.requestSubmit(); form.requestSubmit();}')
+    page.locator('nav [data-page="ledger"]').click()
+    page.locator('[data-action="ledger-select"]').check()
+    page.locator('[data-action="review-selected"]').click()
+    wizard = page.locator('[data-form="review-wizard"]')
+    wizard.locator('[name="review_type"]').select_option('AA')
+    wizard.evaluate('(form) => {form.requestSubmit(); form.requestSubmit();}')
     page.wait_for_timeout(500)
     cases = body(live[0].get('/paam/review/v1/case/list'))
     assert len(cases) == 1, f'Double submit created {len(cases)} distinct review cases'
@@ -232,14 +235,17 @@ def test_older_pending_review_is_reachable(live, page):
 
 def test_financial_review_ui_lifecycle_updates_ledger(live, page):
     ids = facts(live, [('OUT', 1000)])
-    page.locator('nav [data-page="reviews"]').click()
-    page.locator('[data-action="new-review"]').click()
-    page.locator('[name="lines"]').fill(f'{ids[0]}:AA_PAID')
-    page.locator('[data-form="new-review"] button.primary').click()
-    expect(page.locator('[data-action="review-detail"]')).to_have_count(1)
+    page.locator('nav [data-page="ledger"]').click()
+    page.locator('[data-action="ledger-select"]').check()
+    page.locator('[data-action="review-selected"]').click()
+    wizard = page.locator('[data-form="review-wizard"]')
+    wizard.locator('[name="review_type"]').select_option('AA')
+    wizard.locator('button.primary').click()
+    expect(page.locator('[data-action="review-transition"][data-kind="confirm"]')).to_be_visible()
     assert entries(live)[0]['ledger_type'] == 'EXPENSE'
-    for action, expected_type in [('confirm', 'AA'), ('revoke', 'EXPENSE'), ('restore', 'AA')]:
-        page.locator('[data-action="review-detail"]').click()
+    for index, (action, expected_type) in enumerate([('confirm', 'AA'), ('revoke', 'EXPENSE'), ('restore', 'AA')]):
+        if index:
+            page.locator('[data-action="review-detail"]').click()
         page.locator(f'[data-action="review-transition"][data-kind="{action}"]').click()
         expect(page.locator('dialog')).to_have_count(0)
         expect(page.locator('[data-action="review-detail"]')).to_have_count(1)
