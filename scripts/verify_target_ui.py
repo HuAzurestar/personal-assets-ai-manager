@@ -85,6 +85,12 @@ def run() -> None:
                 expect(page.get_by_role("heading", name="添加账单文件")).to_be_hidden()
                 page.locator('[data-action="import-step"][data-step="2"]').last.click()
                 expect(page.get_by_role("heading", name="添加账单文件")).to_be_visible()
+                if not page.locator('input[name="files"]').count():
+                    raise AssertionError(
+                        "import page did not render: "
+                        f"{page.locator('#page-content').inner_text()}; "
+                        f"browser errors: {errors}"
+                    )
                 page.locator('input[name="files"]').set_input_files({
                     "name": "target-ui.csv",
                     "mimeType": "text/csv",
@@ -174,8 +180,22 @@ def run() -> None:
 
                 page.locator('nav [data-page="ledger"]').click()
                 expect(page.get_by_role("heading", name="实际流水")).to_be_visible()
-                expect(page.get_by_text("浏览器测试商户").first).to_be_visible()
-                page.locator('[data-action="detail"]').first.click()
+                expect(page.get_by_text("浏览器测试商户")).to_be_visible()
+                page.locator('[data-action="ledger-date-toggle"]').click()
+                page.locator('[data-action="ledger-date-day"][data-value="2026-09-12"]').click()
+                page.locator('[data-action="ledger-date-day"][data-value="2026-09-11"]').click()
+                expect(page.locator(".ledger-date-hint")).to_contain_text(
+                    "结束时间不能早于开始时间"
+                )
+                page.locator('[data-action="ledger-date-clear"]').click()
+                page.locator('[data-action="ledger-toggle"]').click()
+                expect(page.locator("[data-ledger-detail]:not([hidden])")).to_contain_text(
+                    "构成事实"
+                )
+                expect(page.locator("[data-ledger-detail]:not([hidden])")).to_contain_text(
+                    "浏览器测试商户"
+                )
+                page.locator('[data-ledger-detail] [data-action="detail"]').click()
                 expect(page.locator("dialog[open]")).to_contain_text("原始证据")
                 expect(page.locator("dialog[open]")).to_contain_text("浏览器测试商户")
                 if errors:
