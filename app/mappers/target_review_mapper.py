@@ -268,8 +268,13 @@ class TargetReviewMapper:
         page: int,
         page_size: int,
         status: str = "",
+        review_type: str = "",
     ) -> tuple[list[TargetReviewCaseRead], int]:
-        clauses = [ReviewCase.status == status] if status else []
+        clauses = []
+        if status:
+            clauses.append(ReviewCase.status == status)
+        if review_type:
+            clauses.append(ReviewCase.review_type == review_type)
         total = self.db.scalar(select(func.count(ReviewCase.id)).where(*clauses)) or 0
         cases = self.db.execute(select(
             ReviewCase.id,

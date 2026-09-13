@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 FINANCIAL_REVIEW_TYPES = (
+    "CLASSIFICATION",
     "AA",
     "LOAN_BORROW",
     "LOAN_LEND",
@@ -64,6 +65,7 @@ class TargetReviewCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     review_type: Literal[
+        "CLASSIFICATION",
         "AA",
         "LOAN_BORROW",
         "LOAN_LEND",
@@ -180,6 +182,7 @@ class TargetReviewCasePageRead(BaseModel):
     page: int
     page_size: int
     status: str
+    review_type: str
 
 
 class TargetReviewCasePageResponse(BaseModel):

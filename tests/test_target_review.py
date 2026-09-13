@@ -127,6 +127,95 @@ def test_financial_review_types_publish_one_reversible_projection(
     assert client.get("/paam/ledger/v1/entry/list").json()["total"] == 2
 
 
+@pytest.mark.parametrize(
+    ("direction", "role", "expected_type"),
+    [
+        ("IN", "CLASSIFIED_INCOME", "INCOME"),
+        ("OUT", "CLASSIFIED_EXPENSE", "EXPENSE"),
+    ],
+)
+def test_classification_review_confirms_one_full_fact_and_is_reversible(
+    target_review_api,
+    direction,
+    role,
+    expected_type,
+):
+    client, sessions, _engine = target_review_api
+    fact_id = _facts(sessions, [(direction, 1234, "CNY")])[0]
+    case = _create(client, "CLASSIFICATION", [{
+        "bill_id": fact_id,
+        "role": role,
+    }], key=f"classification-{direction}").json()["body"]
+    assert case["allocation_status"] == "COMPLETE"
+    confirmed = client.post(
+        f"/paam/review/v1/case/confirm/{case['id']}",
+        json={
+            "expected_version": 1,
+            "reason": "人工确认普通收支",
+            "idempotency_key": f"classification-confirm-{direction}",
+        },
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    entry = client.get("/paam/ledger/v1/entry/list").json()["items"][0]
+    assert entry["ledger_type"] == expected_type
+    assert entry["allocation_status"] == "COMPLETE"
+    revoked = client.post(
+        f"/paam/review/v1/case/revoke/{case['id']}",
+        json={
+            "expected_version": 2,
+            "idempotency_key": f"classification-revoke-{direction}",
+        },
+    )
+    assert revoked.status_code == 200, revoked.text
+
+
+def test_classification_policy_and_pending_dismiss_reopen(target_review_api):
+    client, sessions, _engine = target_review_api
+    out_id, other_id = _facts(
+        sessions,
+        [("OUT", 1000, "CNY"), ("OUT", 500, "CNY")],
+    )
+    assert _create(client, "CLASSIFICATION", [{
+        "bill_id": out_id,
+        "role": "CLASSIFIED_INCOME",
+    }], key="classification-wrong-direction").status_code == 422
+    assert _create(client, "CLASSIFICATION", [{
+        "bill_id": out_id,
+        "role": "CLASSIFIED_EXPENSE",
+        "amount_value": 500,
+    }], key="classification-partial").status_code == 422
+    assert _create(client, "CLASSIFICATION", [
+        {"bill_id": out_id, "role": "CLASSIFIED_EXPENSE"},
+        {"bill_id": other_id, "role": "CLASSIFIED_EXPENSE"},
+    ], key="classification-multiple").status_code == 422
+
+    case = _create(client, "CLASSIFICATION", [{
+        "bill_id": out_id,
+        "role": "CLASSIFIED_EXPENSE",
+    }], key="classification-dismiss").json()["body"]
+    dismissed = client.post(
+        f"/paam/review/v1/case/dismiss/{case['id']}",
+        json={"expected_version": 1, "idempotency_key": "classification-dismiss-command"},
+    )
+    assert dismissed.status_code == 200, dismissed.text
+    assert dismissed.json()["body"]["status"] == "REJECTED"
+    reopened = client.post(
+        f"/paam/review/v1/case/reopen/{case['id']}",
+        json={"expected_version": 2, "idempotency_key": "classification-reopen-command"},
+    )
+    assert reopened.status_code == 200, reopened.text
+    assert reopened.json()["body"]["status"] == "PENDING"
+    assert [item["operation"] for item in reopened.json()["body"]["history"]] == [
+        "CREATE", "DISMISS", "REOPEN",
+    ]
+    page = client.get(
+        "/paam/review/v1/case/page",
+        params={"review_type": "CLASSIFICATION"},
+    ).json()["body"]
+    assert page["review_type"] == "CLASSIFICATION"
+    assert page["total"] == 1
+
+
 def test_review_policy_rejects_invalid_direction_overallocation_and_overlap(
     target_review_api,
 ):

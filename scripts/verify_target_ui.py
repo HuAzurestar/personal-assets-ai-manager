@@ -213,6 +213,34 @@ def run() -> None:
                 page.locator('[data-ledger-detail] [data-action="detail"]').click()
                 expect(page.locator("dialog[open]")).to_contain_text("原始证据")
                 expect(page.locator("dialog[open]")).to_contain_text("浏览器测试商户")
+                page.locator("dialog[open] [data-close]").click()
+
+                page.locator('[data-action="ledger-select"]').first.check()
+                expect(page.get_by_text("已选择 1 条流水")).to_be_visible()
+                page.locator('[data-action="review-selected"]').click()
+                wizard = page.locator('dialog[open] [data-form="review-wizard"]')
+                expect(wizard).to_be_visible()
+                expect(wizard.locator('[name="review_type"]')).to_have_value(
+                    "CLASSIFICATION"
+                )
+                expect(wizard.locator('[name^="role-"]')).to_have_count(1)
+                wizard.locator('button[type="submit"]').click()
+                review_dialog = page.locator("dialog[open]")
+                expect(review_dialog).to_contain_text("待确认")
+                expect(
+                    review_dialog.locator(
+                        '[data-action="review-transition"][data-kind="confirm"]'
+                    )
+                ).to_be_visible()
+                review_dialog.locator(
+                    '[data-action="review-transition"][data-kind="confirm"]'
+                ).click()
+                expect(page.locator("dialog[open]")).to_have_count(0)
+
+                page.locator('nav [data-page="reviews"]').click()
+                expect(page.get_by_role("heading", name="统一审查")).to_be_visible()
+                expect(page.get_by_text("确认普通收支").first).to_be_visible()
+                expect(page.get_by_role("heading", name="待处理流水")).to_be_visible()
                 if errors:
                     raise AssertionError(f"browser errors: {errors}")
                 browser.close()

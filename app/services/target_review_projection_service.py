@@ -63,7 +63,13 @@ class TargetReviewProjectionService:
             for fact in contributing if fact.cash_direction == "OUT"
         }
         ledger_type = case.review_type
-        if case.review_type == "DUPLICATE":
+        if case.review_type == "CLASSIFICATION":
+            ledger_type = (
+                "INCOME"
+                if projection_lines[0].role == "CLASSIFIED_INCOME"
+                else "EXPENSE"
+            )
+        elif case.review_type == "DUPLICATE":
             ledger_type = "INCOME" if contributing[0].cash_direction == "IN" else "EXPENSE"
         payload = {
             "case": case.model_dump(mode="json", exclude={"history"}),

@@ -85,6 +85,28 @@ def restore_case(
     ))
 
 
+@router.post("/case/dismiss/{case_id}", response_model=TargetReviewCaseResponse)
+def dismiss_case(
+    case_id: int,
+    payload: TargetReviewTransitionRequest,
+    db: Session = Depends(get_target_db),
+):
+    return TargetReviewCaseResponse(body=_run(
+        lambda: TargetReviewService(db).dismiss(case_id, payload)
+    ))
+
+
+@router.post("/case/reopen/{case_id}", response_model=TargetReviewCaseResponse)
+def reopen_case(
+    case_id: int,
+    payload: TargetReviewTransitionRequest,
+    db: Session = Depends(get_target_db),
+):
+    return TargetReviewCaseResponse(body=_run(
+        lambda: TargetReviewService(db).dismiss(case_id, payload, reopen=True)
+    ))
+
+
 @router.get("/case/detail/{case_id}", response_model=TargetReviewCaseResponse)
 def case_detail(case_id: int, db: Session = Depends(get_target_db)):
     return TargetReviewCaseResponse(body=_run(
@@ -107,10 +129,14 @@ def case_page(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=100),
     status: str = Query(default="", pattern="^(|PENDING|CONFIRMED|REJECTED|REVOKED)$"),
+    review_type: str = Query(
+        default="",
+        pattern="^(|CLASSIFICATION|AA|LOAN_BORROW|LOAN_LEND|REFUND|TRANSFER|FX_EXCHANGE|DUPLICATE|TAG|ACCOUNT|FACT_CONFLICT)$",
+    ),
     db: Session = Depends(get_target_db),
 ):
     return TargetReviewCasePageResponse(body=_run(
-        lambda: TargetReviewService(db).page(page, page_size, status)
+        lambda: TargetReviewService(db).page(page, page_size, status, review_type)
     ))
 
 

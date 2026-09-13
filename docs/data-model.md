@@ -80,7 +80,7 @@ Fact 只放跨来源稳定、计算必须的核心字段。客户详情、完整
 
 | 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `review_type` | VARCHAR(40) | `UNKNOWN` | AA/LOAN_BORROW/LOAN_LEND/REFUND/TRANSFER/FX_EXCHANGE/DUPLICATE/TAG/ACCOUNT/FACT_CONFLICT |
+| `review_type` | VARCHAR(40) | `UNKNOWN` | CLASSIFICATION/AA/LOAN_BORROW/LOAN_LEND/REFUND/TRANSFER/FX_EXCHANGE/DUPLICATE/TAG/ACCOUNT/FACT_CONFLICT |
 | `status` | VARCHAR(20) | `PENDING` | PENDING/CONFIRMED/REJECTED/REVOKED |
 | `allocation_status` | VARCHAR(20) | `PARTIAL` | PARTIAL/COMPLETE/CONFLICT |
 | `version` | INTEGER | `1` | 乐观并发版本 |
@@ -101,7 +101,7 @@ Fact 只放跨来源稳定、计算必须的核心字段。客户详情、完整
 | `amount_scale` | SMALLINT | `2` | 分配金额精度 |
 | `currency_code` | VARCHAR(12) | `CNY` | 分配币种，必须与 Fact 一致 |
 
-常见角色包括 `AA_PAID`、`AA_RECEIVED`、`LOAN_RECEIVED`、`LOAN_REPAID`、`LOAN_LENT`、`LOAN_RECOVERED`、`REFUND_EXPENSE`、`REFUND_RECEIVED`、`TRANSFER_OUT`、`TRANSFER_IN`、`TRANSFER_FEE`、`DUPLICATE_RETAINED`、`DUPLICATE_EXCLUDED`。省略金额时，后端可以按剩余全额计算，但入库时金额必须明确。排序使用 `(case_id, id)`，不设 `position` 字段。
+常见角色包括 `CLASSIFIED_INCOME`、`CLASSIFIED_EXPENSE`、`AA_PAID`、`AA_RECEIVED`、`LOAN_RECEIVED`、`LOAN_REPAID`、`LOAN_LENT`、`LOAN_RECOVERED`、`REFUND_EXPENSE`、`REFUND_RECEIVED`、`TRANSFER_OUT`、`TRANSFER_IN`、`TRANSFER_FEE`、`DUPLICATE_RETAINED`、`DUPLICATE_EXCLUDED`。省略金额时，后端可以按剩余全额计算，但入库时金额必须明确。排序使用 `(case_id, id)`，不设 `position` 字段。
 
 ### 6. `review_history`：只追加的确定性审计
 
@@ -146,7 +146,7 @@ Fact 只放跨来源稳定、计算必须的核心字段。客户详情、完整
 | `input_hash` | VARCHAR(64) | `''` | 排序后的 Fact/Review 输入指纹 |
 | `projection_version` | INTEGER | `1` | 投影规则版本及并发依据 |
 
-普通 Fact 是一条 INCOME 或 EXPENSE。特殊 Review 把数个 Fact 投影成一条 AA、借贷、退款、转账或换汇记录，并分别保留 in/out，避免把代收、退款和账户间转账误当收入。跨币种两侧分别展示，在未来明确汇率政策前不计算净额。
+普通 Fact 是一条 INCOME 或 EXPENSE；来源将其标记为中性时，可由已确认的 CLASSIFICATION Review 明确为普通收入或支出。特殊 Review 把数个 Fact 投影成一条 AA、借贷、退款、转账或换汇记录，并分别保留 in/out，避免把代收、退款和账户间转账误当收入。跨币种两侧分别展示，在未来明确汇率政策前不计算净额。
 
 ### 8. `ledger_entry_source`：投影反向追溯
 

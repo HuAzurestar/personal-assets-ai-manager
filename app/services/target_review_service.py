@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.mappers.target_review_mapper import TargetReviewMapper
 from app.schemas.target_review import (
+    FINANCIAL_REVIEW_TYPES,
     TargetReviewCaseRead,
     TargetReviewCasePageRead,
     TargetReviewCreateRequest,
@@ -23,6 +24,10 @@ from app.services.target_review_projection_service import TargetReviewProjection
 
 
 ROLE_DIRECTIONS = {
+    "CLASSIFICATION": {
+        "CLASSIFIED_INCOME": "IN",
+        "CLASSIFIED_EXPENSE": "OUT",
+    },
     "AA": {"AA_PAID": "OUT", "AA_RECEIVED": "IN"},
     "LOAN_BORROW": {"LOAN_RECEIVED": "IN", "LOAN_REPAID": "OUT"},
     "LOAN_LEND": {"LOAN_LENT": "OUT", "LOAN_RECOVERED": "IN"},
@@ -313,20 +318,95 @@ class TargetReviewService:
             self.mapper.rollback()
             raise
 
+    def dismiss(
+        self,
+        case_id: int,
+        payload: TargetReviewTransitionRequest,
+        *,
+        reopen: bool = False,
+    ) -> TargetReviewCaseRead:
+        operation = "REOPEN" if reopen else "DISMISS"
+        expected_status = "REJECTED" if reopen else "PENDING"
+        next_status = "PENDING" if reopen else "REJECTED"
+        request_json = self._canonical({
+            "operation": operation,
+            "case_id": case_id,
+            **payload.model_dump(mode="json"),
+        })
+        try:
+            self.mapper.begin_write()
+            replay = self._replay(payload.idempotency_key, operation, request_json)
+            if replay is not None:
+                self.mapper.commit()
+                return replay
+            before = self._required(case_id)
+            if before.review_type not in FINANCIAL_REVIEW_TYPES:
+                raise TargetReviewError(409, "only financial reviews can use this transition")
+            if before.status != expected_status:
+                raise TargetReviewError(
+                    409,
+                    f"case status is {before.status}; expected {expected_status}",
+                )
+            if before.version != payload.expected_version:
+                raise TargetReviewError(409, "review version changed; reload before updating")
+            now = datetime.now()
+            version = self.mapper.transition(
+                case_id,
+                status=next_status,
+                expected_version=payload.expected_version,
+                now=now,
+            )
+            if version is None:
+                raise TargetReviewError(409, "review version changed; reload before updating")
+            after = self._required(case_id)
+            after_json = self._snapshot(after)
+            self.mapper.add_history(
+                case_id=case_id,
+                version=version,
+                operation=operation,
+                request_json=request_json,
+                before_json=self._snapshot(before),
+                after_json=after_json,
+                snapshot_hash=self._hash(after_json),
+                reverses_history_id=0,
+                actor=payload.actor,
+                reason=payload.reason,
+                idempotency_key=payload.idempotency_key,
+                now=now,
+            )
+            self.mapper.commit()
+            return self._required(case_id)
+        except TargetReviewError:
+            self.mapper.rollback()
+            raise
+        except (IntegrityError, OperationalError) as error:
+            self.mapper.rollback()
+            raise TargetReviewError(409, "review write conflict; retry from the latest version") from error
+        except Exception:
+            self.mapper.rollback()
+            raise
+
     def detail(self, case_id: int) -> TargetReviewCaseRead:
         return self._required(case_id)
 
     def list(self, limit: int = 100) -> list[TargetReviewCaseRead]:
         return self.mapper.list(limit)
 
-    def page(self, page: int, page_size: int, status: str = "") -> TargetReviewCasePageRead:
-        items, total = self.mapper.page(page, page_size, status)
+    def page(
+        self,
+        page: int,
+        page_size: int,
+        status: str = "",
+        review_type: str = "",
+    ) -> TargetReviewCasePageRead:
+        items, total = self.mapper.page(page, page_size, status, review_type)
         return TargetReviewCasePageRead(
             items=items,
             total=total,
             page=page,
             page_size=page_size,
             status=status,
+            review_type=review_type,
         )
 
     def _validated_lines(
@@ -384,7 +464,13 @@ class TargetReviewService:
                 allocation_complete = False
 
         roles = [line.role for line in writes]
-        if review_type == "DUPLICATE":
+        if review_type == "CLASSIFICATION":
+            if len(writes) != 1 or len(bill_ids) != 1:
+                raise ValueError("CLASSIFICATION review requires exactly one fact")
+            fact = fact_by_id[bill_ids[0]]
+            if writes[0].amount_value != fact.amount_value:
+                raise ValueError("CLASSIFICATION review must classify the full fact amount")
+        elif review_type == "DUPLICATE":
             if len(bill_ids) < 2:
                 raise ValueError("DUPLICATE review requires at least two facts")
             if roles.count("DUPLICATE_RETAINED") != 1:
