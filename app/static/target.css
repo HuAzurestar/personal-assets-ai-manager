@@ -26,10 +26,61 @@
 .target-shell .inline-form { display:flex; flex-wrap:wrap; gap:10px; align-items:end; }
 .target-shell .inline-form > label { min-width:150px; flex:1; }
 .target-shell .empty-state { text-align:center; padding:44px 20px; color:var(--muted); }
+.target-shell .tag-manager-head { display:flex; align-items:center; justify-content:space-between; gap:18px; margin-bottom:18px; }
+.target-shell .tag-manager-head h2 { margin-bottom:5px; }
+.target-shell .tag-manager-head p { margin:0; color:var(--muted); font-size:13px; }
+.target-shell .tag-view-list { display:grid; gap:16px; }
+.target-shell .tag-view-card { overflow:hidden; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); transition:border-color .18s ease, box-shadow .18s ease, transform .18s ease; }
+.target-shell .tag-view-card:hover { border-color:var(--hover-line); box-shadow:0 12px 30px #00000014; transform:translateY(-1px); }
+.target-shell .tag-view-card.archived { opacity:.72; }
+.target-shell .tag-view-head { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; padding:18px 20px 15px; border-bottom:1px solid var(--line); }
+.target-shell .tag-view-meta { min-width:0; }
+.target-shell .tag-view-title { display:flex; align-items:center; flex-wrap:wrap; gap:9px; margin-bottom:7px; }
+.target-shell .tag-view-title h3 { margin:0; font-size:16px; overflow-wrap:anywhere; }
+.target-shell .tag-view-meta > code { display:inline-block; max-width:100%; overflow-wrap:anywhere; padding:3px 7px; border:1px solid var(--line); border-radius:5px; background:var(--code-bg); color:var(--muted); font-size:11px; }
+.target-shell .tag-view-status { display:inline-flex; align-items:center; gap:5px; padding:3px 8px; border-radius:999px; font-size:11px; font-weight:700; }
+.target-shell .tag-view-status span { font-size:7px; }
+.target-shell .tag-view-status.active { color:var(--accent); background:var(--soft); }
+.target-shell .tag-view-status.archived { color:var(--muted); background:var(--subtle); }
+.target-shell .tag-view-actions { display:flex; justify-content:flex-end; align-items:center; flex-wrap:wrap; gap:6px; }
+.target-shell .tag-view-actions button { min-height:34px; padding:6px 10px; font-size:12px; }
+.target-shell .tag-pill-list { display:flex; align-items:center; flex-wrap:wrap; gap:9px; min-height:68px; padding:16px 20px 19px; }
+.target-shell .tag-pill { display:inline-flex; align-items:center; gap:6px; min-height:34px; padding:6px 10px 6px 12px; border:1px solid var(--line); border-radius:999px; background:var(--subtle); color:var(--text); font-size:13px; transition:border-color .16s ease, background .16s ease; }
+.target-shell .tag-pill:hover { border-color:var(--hover-line); background:var(--soft); }
+.target-shell .tag-pill.system { border-style:dashed; color:var(--muted); background:transparent; }
+.target-shell .tag-pill.archived { border-style:dashed; color:var(--muted); opacity:.72; }
+.target-shell .tag-pill-lock { color:var(--muted); font-size:8px; }
+.target-shell .tag-pill code { color:var(--muted); font-size:10px; }
+.target-shell .tag-pill-action { min-width:22px; min-height:22px; padding:0 5px; border:0; border-radius:999px; background:transparent; color:var(--muted); font-size:12px; line-height:1; }
+.target-shell .tag-pill-action:hover { background:var(--error-bg); color:var(--danger); }
+.target-shell .tag-inline-creator { display:inline-flex; min-width:0; }
+.target-shell .tag-inline-launch { min-height:34px; padding:6px 12px; border-style:dashed; border-radius:999px; background:transparent; color:var(--muted); font-size:12px; }
+.target-shell .tag-inline-launch:hover { border-color:var(--accent); background:var(--soft); color:var(--accent); }
+.target-shell .tag-inline-form { display:inline-flex; align-items:center; flex-wrap:wrap; gap:0; max-width:100%; padding:3px 5px 3px 11px; border:1px solid var(--accent); border-radius:999px; background:var(--surface); box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent); }
+.target-shell .tag-inline-form[hidden] { display:none; }
+.target-shell .tag-inline-form input { width:130px; min-height:28px; padding:3px 7px; border:0; border-radius:0; background:transparent; font-size:12px; outline:0; }
+.target-shell .tag-inline-form input[name="name"] { width:120px; }
+.target-shell .tag-inline-form input:focus { box-shadow:none; }
+.target-shell .tag-inline-divider { width:1px; height:18px; background:var(--line); }
+.target-shell .tag-inline-submit,
+.target-shell .tag-inline-cancel { min-width:27px; min-height:27px; padding:0; border:0; border-radius:999px; background:transparent; font-size:13px; }
+.target-shell .tag-inline-submit { color:var(--accent); }
+.target-shell .tag-inline-submit:hover { background:var(--soft); }
+.target-shell .tag-inline-cancel { color:var(--muted); }
+.target-shell .tag-inline-form .form-error { order:-1; flex-basis:100%; margin:5px 5px 8px 0; border-radius:9px; }
 @media (max-width:760px) {
   .target-shell .cards { grid-template-columns:1fr 1fr; }
   .target-shell .page-header { align-items:flex-start; }
+  .target-shell .tag-view-head { align-items:stretch; flex-direction:column; }
+  .target-shell .tag-view-actions { justify-content:flex-start; }
 }
 @media (max-width:480px) {
   .target-shell .cards { grid-template-columns:1fr; }
+  .target-shell .tag-manager-head { align-items:flex-start; }
+  .target-shell .tag-manager-head .primary { min-height:38px; padding:7px 10px; }
+  .target-shell .tag-view-head,
+  .target-shell .tag-pill-list { padding-inline:15px; }
+  .target-shell .tag-inline-creator { width:100%; }
+  .target-shell .tag-inline-form { width:100%; border-radius:12px; }
+  .target-shell .tag-inline-form input { flex:1; width:0; }
 }
