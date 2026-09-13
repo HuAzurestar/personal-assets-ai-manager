@@ -163,6 +163,7 @@ class TargetLedgerDetailVO:
 
 @dataclass(frozen=True, slots=True)
 class TargetLedgerAggregateVO:
+    ledger_id: int
     day: str
     ledger_type: str
     allocation_status: str

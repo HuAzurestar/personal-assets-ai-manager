@@ -350,6 +350,7 @@ class TargetLedgerMapper:
         ).where(*clauses)).mappings().one()
 
         common = (
+            LedgerEntry.id.label("ledger_id"),
             func.date(LedgerEntry.start_time).label("day"),
             LedgerEntry.ledger_type.label("ledger_type"),
             LedgerEntry.allocation_status.label("allocation_status"),
@@ -362,34 +363,24 @@ class TargetLedgerMapper:
             literal("IN").label("direction"),
             LedgerEntry.in_currency_code.label("currency_code"),
             LedgerEntry.in_amount_scale.label("amount_scale"),
-            func.sum(LedgerEntry.in_amount_value).label("amount_value"),
-            func.count(LedgerEntry.id).label("entry_count"),
+            LedgerEntry.in_amount_value.label("amount_value"),
+            literal(1).label("entry_count"),
             nettable,
         ).where(
             *clauses,
             LedgerEntry.in_amount_value != 0,
-        ).group_by(
-            *common,
-            LedgerEntry.in_currency_code,
-            LedgerEntry.in_amount_scale,
-            nettable,
         )
         outgoing = select(
             *common,
             literal("OUT").label("direction"),
             LedgerEntry.out_currency_code.label("currency_code"),
             LedgerEntry.out_amount_scale.label("amount_scale"),
-            func.sum(LedgerEntry.out_amount_value).label("amount_value"),
-            func.count(LedgerEntry.id).label("entry_count"),
+            LedgerEntry.out_amount_value.label("amount_value"),
+            literal(1).label("entry_count"),
             nettable,
         ).where(
             *clauses,
             LedgerEntry.out_amount_value != 0,
-        ).group_by(
-            *common,
-            LedgerEntry.out_currency_code,
-            LedgerEntry.out_amount_scale,
-            nettable,
         )
         rows = self.db.execute(union_all(incoming, outgoing)).mappings().all()
         return (

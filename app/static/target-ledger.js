@@ -15,7 +15,7 @@ const statusNames = {
   REJECTED: "已忽略", DEFAULT: "默认", COMPLETE: "完整",
   PARTIAL: "部分", CONFLICT: "冲突",
 };
-const state = { page: "summary", params: new URLSearchParams(), importPlan: null };
+const state = { page: "summary", params: new URLSearchParams(), importPlan: null, renderVersion: 0 };
 
 async function request(url, options = {}) {
   const response = await fetch(url, options).catch(() => {
@@ -55,7 +55,8 @@ function toast(text, error = false) {
   const node = document.createElement("div");
   node.className = `toast${error ? " error" : ""}`;
   node.textContent = text;
-  document.body.append(node);
+  const openDialogs = $$('dialog[open]');
+  (openDialogs.at(-1) || document.body).append(node);
   setTimeout(() => node.remove(), 4500);
 }
 function closeDialogs() {
@@ -115,22 +116,28 @@ function readRoute() {
 window.addEventListener("hashchange", readRoute);
 
 async function render() {
+  const renderVersion = ++state.renderVersion;
+  const page = state.page;
   const root = $("#page-content");
-  const [title, help] = pageInfo[state.page];
+  const [title, help] = pageInfo[page];
   $("#title").textContent = title;
   $("#help").textContent = help;
   $$('[data-page]').forEach((button) => button.classList.toggle("active", button.dataset.page === state.page));
   root.innerHTML = '<div class="busy">正在加载…</div>';
   try {
-    root.innerHTML = await ({
+    const content = await ({
       summary: summaryPage,
       ledger: ledgerPage,
       import: importPage,
       tags: tagsPage,
       reviews: reviewsPage,
-    })[state.page]();
+    })[page]();
+    if (renderVersion !== state.renderVersion || page !== state.page) return;
+    root.innerHTML = content;
     bindPage(root);
+    if (page === "import") renderImportPlan();
   } catch (error) {
+    if (renderVersion !== state.renderVersion || page !== state.page) return;
     root.innerHTML = `<section class="panel"><div class="error">${esc(error.message)}</div><div class="actions"><button data-action="reload">重新加载</button></div></section>`;
     bindPage(root);
   }
@@ -165,9 +172,18 @@ async function ledgerPage() {
 }
 
 async function showDetail(id) {
+  const renderVersion = state.renderVersion;
   const detail = await request(`/paam/ledger/v1/entry/detail/${id}`);
+  if (renderVersion !== state.renderVersion) return;
   const entry = detail.entry;
-  const factRows = detail.facts.map((fact) => `<tr><td>${fact.id}</td><td>${date(fact.occurred_time)}</td><td>${esc(fact.cash_direction)}</td><td>${money(fact.amount)}</td><td>${esc(fact.account_code)}</td><td>${esc(fact.counterparty)}</td><td><button data-action="account" data-fact="${fact.id}" data-ledger="${entry.id}" data-version="${entry.projection_version}" data-account="${esc(fact.account_code)}">修正账户</button></td></tr>`);
+  const effectiveAccounts = new Map();
+  detail.reviews.filter((item) => item.review_type === "ACCOUNT" && item.status === "CONFIRMED").forEach((item) => {
+    item.lines.forEach((line) => effectiveAccounts.set(line.bill_id, item.result.account_name));
+  });
+  const factRows = detail.facts.map((fact) => {
+    const effective = effectiveAccounts.get(fact.id) || fact.account_code;
+    return `<tr><td>${fact.id}</td><td>${date(fact.occurred_time)}</td><td>${esc(fact.cash_direction)}</td><td>${money(fact.amount)}</td><td><span title="原始账户：${esc(fact.account_code)}">${esc(effective)}</span></td><td>${esc(fact.counterparty)}</td><td><button data-action="account" data-fact="${fact.id}" data-ledger="${entry.id}" data-version="${entry.projection_version}" data-account="${esc(effective)}">修正账户</button></td></tr>`;
+  });
   const reviews = detail.reviews.map((item) => `<div class="review-card"><div class="section-head"><div><h3>${esc(item.review_type)} · ${esc(item.title)}</h3><small>版本 ${item.version} · ${esc(statusNames[item.status] || item.status)}${item.is_projection_source ? " · 当前有效" : ""}</small></div><button data-action="review-detail" data-id="${item.id}">查看历史</button></div></div>`).join("");
   const raws = detail.raw_evidence.map((raw) => `<details><summary>Raw #${raw.id} · 行 ${raw.source_row_number} · ${esc(raw.parse_status)}</summary><pre class="raw-json">${esc(JSON.stringify(raw.raw_payload, null, 2))}</pre></details>`).join("");
   const dialog = modal(`流水 #${entry.id}`, `<div class="cards"><div class="metric"><span>类型</span><strong>${esc(typeNames[entry.ledger_type] || entry.ledger_type)}</strong></div><div class="metric"><span>流入</span><strong>${money(entry.incoming)}</strong></div><div class="metric"><span>流出</span><strong>${money(entry.outgoing)}</strong></div><div class="metric"><span>投影版本</span><strong>${entry.projection_version}</strong></div></div><div class="actions"><button data-action="edit-tags" data-id="${entry.id}" data-version="${entry.projection_version}">编辑标签</button></div><section><h3>事实账单</h3>${table(["Fact", "时间", "方向", "金额", "原始账户", "交易方", ""], factRows)}</section><section><h3>相关审查</h3>${reviews || '<p class="muted">没有人工审查。</p>'}</section><section><h3>原始证据</h3>${raws || '<p class="muted">没有原始明细。</p>'}</section>`);
@@ -175,10 +191,12 @@ async function showDetail(id) {
 }
 
 async function editTags(ledgerId, version) {
+  const renderVersion = state.renderVersion;
   const [views, detail] = await Promise.all([
     request("/paam/tag/v1/view/list"),
     request(`/paam/ledger/v1/entry/detail/${ledgerId}`),
   ]);
+  if (renderVersion !== state.renderVersion) return;
   if (!views.length) return toast("请先创建标签维度", true);
   const current = Object.fromEntries(detail.entry.tags.map((item) => [item.view_system_name, item.tag_system_name]));
   const dialog = modal("编辑最终流水标签", `<form data-form="tag-assignment" data-ledger="${ledgerId}" data-version="${version}" class="stack">${views.map((view) => `<label>${esc(view.name)}<select name="${esc(view.system_name)}">${view.tags.map((tag) => `<option value="${esc(tag.system_name)}" ${(current[view.system_name] || "unclassified") === tag.system_name ? "selected" : ""}>${esc(tag.name)}</option>`).join("")}</select></label>`).join("")}<label>修改原因<input name="reason" value="用户修订标签"></label><div class="actions"><button class="primary">保存标签</button></div></form>`);
@@ -202,15 +220,20 @@ const fileBase64 = (file) => new Promise((resolve, reject) => {
   reader.readAsDataURL(file);
 });
 async function previewImport(form) {
+  if (!beginSubmit(form)) return;
   const files = [...form.elements.files.files];
-  if (!files.length) throw new Error("请选择至少一个账单文件");
+  if (!files.length) { endSubmit(form); throw new Error("请选择至少一个账单文件"); }
   const source = form.elements.source_type.value || null;
   const password = form.elements.password.value || null;
   const payload = { files: await Promise.all(files.map(async (file) => ({
     filename: file.name, content_base64: await fileBase64(file), source_type: source, password,
   }))) };
-  state.importPlan = await jsonRequest("/paam/import/v1/preview", "POST", payload);
-  renderImportPlan();
+  try {
+    state.importPlan = await jsonRequest("/paam/import/v1/preview", "POST", payload);
+    renderImportPlan();
+  } finally {
+    endSubmit(form);
+  }
 }
 function renderImportPlan() {
   const plan = state.importPlan;
@@ -242,9 +265,11 @@ function renderImportPlan() {
 async function reviseImport(event) {
   event.preventDefault();
   if (!state.importPlan) return;
+  const form = event.currentTarget;
+  if (!beginSubmit(form)) return;
   const accounts = {};
   const decisions = {};
-  for (const [name, value] of new FormData(event.currentTarget)) {
+  for (const [name, value] of new FormData(form)) {
     if (name.startsWith("account:") && value) accounts[name.slice(8)] = value;
     if (name.startsWith("decision:") && value) decisions[name.slice(9)] = value;
   }
@@ -253,6 +278,7 @@ async function reviseImport(event) {
     renderImportPlan();
     toast("导入预览已重新计算");
   } catch (error) { toast(error.message, true); }
+  finally { endSubmit(form); }
 }
 
 async function tagsPage() {
@@ -261,20 +287,29 @@ async function tagsPage() {
 }
 
 async function reviewsPage() {
-  const cases = await request("/paam/review/v1/case/list?limit=200");
-  const rows = cases.map((item) => `<tr><td>${item.id}</td><td><strong>${esc(item.review_type)}</strong><br><small>${esc(item.title)}</small></td><td>${esc(statusNames[item.status] || item.status)}</td><td>${esc(statusNames[item.allocation_status] || item.allocation_status)}</td><td>${item.lines.length}</td><td>${item.version}</td><td><button data-action="review-detail" data-id="${item.id}">详情</button></td></tr>`);
-  return `<section class="panel"><div class="section-head"><h2>审查事项</h2><button class="primary" data-action="new-review">新建财务审查</button></div>${rows.length ? table(["ID", "类型", "状态", "分配", "Fact 数", "版本", ""], rows) : '<div class="empty-state">没有 Review；导入冲突会自动出现在这里。</div>'}</section>`;
+  const query = new URLSearchParams({
+    page: state.params.get("page") || "1",
+    page_size: "50",
+  });
+  if (state.params.get("status")) query.set("status", state.params.get("status"));
+  const result = await request(`/paam/review/v1/case/page?${query}`);
+  const rows = result.items.map((item) => `<tr><td>${item.id}</td><td><strong>${esc(item.review_type)}</strong><br><small>${esc(item.title)}</small></td><td>${esc(statusNames[item.status] || item.status)}</td><td>${esc(statusNames[item.allocation_status] || item.allocation_status)}</td><td>${item.lines.length}</td><td>${item.version}</td><td><button data-action="review-detail" data-id="${item.id}">详情</button></td></tr>`);
+  const pages = Math.max(1, Math.ceil(result.total / result.page_size));
+  const paging = `<div class="pagination"><span>共 ${result.total} 条 · 第 ${result.page}/${pages} 页</span><button data-action="review-page" data-value="${result.page - 1}" ${result.page <= 1 ? "disabled" : ""}>上一页</button><button data-action="review-page" data-value="${result.page + 1}" ${result.page >= pages ? "disabled" : ""}>下一页</button></div>`;
+  return `<section class="panel"><div class="section-head"><h2>审查事项</h2><button class="primary" data-action="new-review">新建财务审查</button></div><form class="toolbar" data-form="review-filter"><label>状态<select name="status"><option value="">全部</option>${["PENDING","CONFIRMED","REJECTED","REVOKED"].map((value) => `<option value="${value}" ${result.status === value ? "selected" : ""}>${esc(statusNames[value] || value)}</option>`).join("")}</select></label><button>筛选</button></form>${rows.length ? table(["ID", "类型", "状态", "分配", "Fact 数", "版本", ""], rows) : '<div class="empty-state">没有符合条件的 Review。</div>'}${paging}</section>`;
 }
 
 async function showReview(id) {
+  const renderVersion = state.renderVersion;
   const item = await request(`/paam/review/v1/case/detail/${id}`);
+  if (renderVersion !== state.renderVersion) return;
   const lines = item.lines.map((line) => `<tr><td>${line.bill_id}</td><td>${esc(line.role)}</td><td>${money({amount_value:line.amount_value,amount_scale:line.amount_scale,currency_code:line.currency_code})}</td><td>${esc(line.party)}</td></tr>`);
   const history = item.history.map((event) => `<details><summary>v${event.version} · ${esc(event.operation)} · ${date(event.created_time)}</summary><p>${esc(event.reason || "无说明")}</p><pre>${esc(JSON.stringify({request:event.request,before:event.before,after:event.after}, null, 2))}</pre></details>`).join("");
   let actions = "";
   if (["AA","LOAN_BORROW","LOAN_LEND","REFUND","TRANSFER","FX_EXCHANGE","DUPLICATE"].includes(item.review_type)) {
     if (item.status === "PENDING") actions = `<button data-action="edit-review" data-id="${item.id}">编辑</button><button class="primary" data-action="review-transition" data-kind="confirm" data-id="${item.id}" data-version="${item.version}">确认</button>`;
     if (item.status === "CONFIRMED") actions = `<button data-action="review-transition" data-kind="revoke" data-id="${item.id}" data-version="${item.version}">撤销</button>`;
-    if (item.status === "REVOKED") actions = `<button class="primary" data-action="review-transition" data-kind="restore" data-id="${item.id}" data-version="${item.version}">恢复</button>`;
+    if (item.status === "REVOKED") actions = `<button data-action="edit-review" data-id="${item.id}">编辑</button><button class="primary" data-action="review-transition" data-kind="restore" data-id="${item.id}" data-version="${item.version}">恢复</button>`;
   } else if (item.review_type === "ACCOUNT") {
     if (item.status === "CONFIRMED") actions = `<button data-action="account-transition" data-kind="revoke" data-id="${item.id}" data-version="${item.version}">撤销账户修正</button>`;
     if (item.status === "REVOKED") actions = `<button data-action="account-transition" data-kind="restore" data-id="${item.id}" data-version="${item.version}">恢复账户修正</button>`;
@@ -294,7 +329,7 @@ function newReview() {
 
 async function editReview(id) {
   const item = await request(`/paam/review/v1/case/detail/${id}`);
-  if (item.status !== "PENDING") throw new Error("只有待确认 Review 可以编辑");
+  if (!["PENDING", "REVOKED"].includes(item.status)) throw new Error("只有待确认或已撤销 Review 可以编辑");
   const lines = item.lines.map((line) => [
     line.bill_id,
     line.role,
@@ -314,6 +349,35 @@ function parseReviewLines(value) {
   });
 }
 
+function beginSubmit(form) {
+  if (form.dataset.submitting === "true") return null;
+  form.dataset.submitting = "true";
+  form.dataset.idempotencyKey ||= key();
+  $$('button, input[type="submit"]', form).forEach((control) => control.disabled = true);
+  return form.dataset.idempotencyKey;
+}
+function endSubmit(form) {
+  delete form.dataset.submitting;
+  $$('button, input[type="submit"]', form).forEach((control) => control.disabled = false);
+}
+function showFormError(form, error) {
+  $(".form-error", form)?.remove();
+  const node = document.createElement("div");
+  node.className = "form-error error";
+  node.setAttribute("role", "alert");
+  node.innerHTML = `<span>${esc(error.message)}</span>${/changed|reload|version|conflict|变化|冲突/.test(error.message) ? '<button type="button" data-action="reload-current">重新载入</button>' : ""}`;
+  node.querySelector('[data-action="reload-current"]')?.addEventListener("click", () => {
+    closeDialogs(); render();
+  });
+  form.prepend(node);
+  toast(error.message, true);
+}
+function bindCommandForm(form) {
+  form?.addEventListener("input", () => {
+    if (form.dataset.submitting !== "true") delete form.dataset.idempotencyKey;
+  });
+}
+
 function bindPage(root) {
   $$('[data-page]', root).forEach((button) => button.onclick = () => route(button.dataset.page));
   $('[data-action="reload"]', root)?.addEventListener("click", render);
@@ -321,6 +385,9 @@ function bindPage(root) {
   $('[data-action="clear-ledger"]', root)?.addEventListener("click", () => route("ledger"));
   $$('[data-action="page"]', root).forEach((button) => button.onclick = () => {
     const params = new URLSearchParams(state.params); params.set("page", button.dataset.value); route("ledger", params);
+  });
+  $$('[data-action="review-page"]', root).forEach((button) => button.onclick = () => {
+    const params = new URLSearchParams(state.params); params.set("page", button.dataset.value); route("reviews", params);
   });
   $$('[data-action="detail"]', root).forEach((button) => button.onclick = () => showDetail(button.dataset.id).catch((error) => toast(error.message, true)));
   $$('[data-action="review-detail"]', root).forEach((button) => button.onclick = () => showReview(button.dataset.id).catch((error) => toast(error.message, true)));
@@ -342,7 +409,8 @@ function bindPage(root) {
   $('[data-action="confirm-import"]', root)?.addEventListener("click", confirmImport);
   $('[data-form="summary-filter"]', root)?.addEventListener("submit", (event) => { event.preventDefault(); const data = new FormData(event.currentTarget); route("summary", new URLSearchParams([...data].filter(([, value]) => value))); });
   $('[data-form="ledger-filter"]', root)?.addEventListener("submit", (event) => { event.preventDefault(); const data = new FormData(event.currentTarget); const params = new URLSearchParams([...data].filter(([, value]) => value)); params.set("page", "1"); route("ledger", params); });
-  $('[data-form="import-preview"]', root)?.addEventListener("submit", async (event) => { event.preventDefault(); try { await previewImport(event.currentTarget); } catch (error) { toast(error.message, true); } });
+  $('[data-form="review-filter"]', root)?.addEventListener("submit", (event) => { event.preventDefault(); const data = new FormData(event.currentTarget); const params = new URLSearchParams([...data].filter(([, value]) => value)); params.set("page", "1"); route("reviews", params); });
+  $('[data-form="import-preview"]', root)?.addEventListener("submit", async (event) => { event.preventDefault(); try { await previewImport(event.currentTarget); } catch (error) { showFormError(event.currentTarget, error); } });
   $('[data-form="import-revise"]', root)?.addEventListener("submit", reviseImport);
   $('[data-form="tag-assignment"]', root)?.addEventListener("submit", submitTags);
   $('[data-form="account"]', root)?.addEventListener("submit", submitAccount);
@@ -350,74 +418,100 @@ function bindPage(root) {
   $('[data-form="new-review"]', root)?.addEventListener("submit", submitReview);
   $('[data-form="edit-review"]', root)?.addEventListener("submit", submitReviewUpdate);
   $('[data-form="conflict"]', root)?.addEventListener("submit", submitConflict);
+  $$('form[data-form]', root).forEach(bindCommandForm);
 }
 
 async function submitTags(event) {
   event.preventDefault(); const form = event.currentTarget; const data = new FormData(form);
+  const idempotencyKey = beginSubmit(form); if (!idempotencyKey) return;
   const reason = data.get("reason"); data.delete("reason");
   try {
-    await jsonRequest(`/paam/tag/v1/assignment/set/${form.dataset.ledger}`, "PUT", { tag_state: Object.fromEntries(data), expected_projection_version: Number(form.dataset.version), reason, idempotency_key: key() });
+    await jsonRequest(`/paam/tag/v1/assignment/set/${form.dataset.ledger}`, "PUT", { tag_state: Object.fromEntries(data), expected_projection_version: Number(form.dataset.version), reason, idempotency_key: idempotencyKey });
     closeDialogs(); toast("标签已保存"); await render();
-  } catch (error) { toast(error.message, true); }
+  } catch (error) { endSubmit(form); showFormError(form, error); }
 }
 async function submitAccount(event) {
   event.preventDefault(); const form = event.currentTarget; const data = Object.fromEntries(new FormData(form));
+  const idempotencyKey = beginSubmit(form); if (!idempotencyKey) return;
   try {
-    await jsonRequest(`/paam/review/v1/account/set/${form.dataset.fact}`, "PUT", { ...data, expected_projection_version: Number(form.dataset.version), idempotency_key: key() });
+    await jsonRequest(`/paam/review/v1/account/set/${form.dataset.fact}`, "PUT", { ...data, expected_projection_version: Number(form.dataset.version), idempotency_key: idempotencyKey });
     closeDialogs(); toast("账户修正已保存"); await render();
-  } catch (error) { toast(error.message, true); }
+  } catch (error) { endSubmit(form); showFormError(form, error); }
 }
 async function confirmImport() {
-  if (!state.importPlan) return;
-  try { const result = await jsonRequest(`/paam/import/v1/preview/confirm/${state.importPlan.token}`, "POST", { version: state.importPlan.version }); state.importPlan = null; toast(`导入完成：${result.bill_fact_ids?.length || 0} 条新事实`); await render(); } catch (error) { toast(error.message, true); }
+  if (!state.importPlan || state.confirmingImport) return;
+  state.confirmingImport = true;
+  const button = $('[data-action="confirm-import"]');
+  if (button) button.disabled = true;
+  try { const result = await jsonRequest(`/paam/import/v1/preview/confirm/${state.importPlan.token}`, "POST", { version: state.importPlan.version }); state.importPlan = null; toast(`导入完成：${result.bill_fact_ids?.length || 0} 条新事实`); await render(); } catch (error) { if (button) button.disabled = false; const form = button?.closest("form"); if (form) showFormError(form, error); else toast(error.message, true); }
+  finally { state.confirmingImport = false; }
 }
 function simpleDictionaryDialog(kind, viewId = "") {
   const dialog = modal(kind === "view" ? "新建标签维度" : "新增标签", `<form data-form="dictionary" data-kind="${kind}" data-view="${viewId}" class="stack"><label>显示名称<input name="name" required maxlength="120"></label><label>系统名称<input name="system_name" required pattern="[a-z][a-z0-9_]{0,63}" placeholder="lower_case_name"></label><div class="actions"><button class="primary">保存</button></div></form>`, false); bindPage(dialog);
 }
 async function submitDictionary(event) {
   event.preventDefault(); const form = event.currentTarget; const payload = Object.fromEntries(new FormData(form));
+  if (!beginSubmit(form)) return;
   const url = form.dataset.kind === "view" ? "/paam/tag/v1/view/create" : `/paam/tag/v1/tag/create/${form.dataset.view}`;
-  try { await jsonRequest(url, "POST", payload); form.closest("dialog").close(); toast("标签定义已保存"); await render(); } catch (error) { toast(error.message, true); }
+  try { await jsonRequest(url, "POST", payload); form.closest("dialog").close(); toast("标签定义已保存"); await render(); } catch (error) { endSubmit(form); showFormError(form, error); }
 }
 async function dictionaryStatus(kind, button) {
+  if (button.disabled) return;
+  button.disabled = true;
   const url = kind === "view" ? `/paam/tag/v1/view/status/${button.dataset.id}` : `/paam/tag/v1/tag/status/${button.dataset.view}/${button.dataset.id}`;
-  await jsonRequest(url, "PUT", { status: button.dataset.status }); toast("状态已更新"); await render();
+  try { await jsonRequest(url, "PUT", { status: button.dataset.status }); toast("状态已更新"); await render(); }
+  catch (error) { button.disabled = false; throw error; }
 }
 async function submitReview(event) {
   event.preventDefault(); const form = event.currentTarget; const data = new FormData(form);
+  const idempotencyKey = beginSubmit(form); if (!idempotencyKey) return;
   try {
     const lines = parseReviewLines(data.get("lines"));
-    await jsonRequest("/paam/review/v1/case/create", "POST", { review_type: data.get("review_type"), title: data.get("title"), result: {}, lines, reason: data.get("reason"), idempotency_key: key() });
+    await jsonRequest("/paam/review/v1/case/create", "POST", { review_type: data.get("review_type"), title: data.get("title"), result: {}, lines, reason: data.get("reason"), idempotency_key: idempotencyKey });
     closeDialogs(); toast("待确认 Review 已创建"); await render();
-  } catch (error) { toast(error.message, true); }
+  } catch (error) { endSubmit(form); showFormError(form, error); }
 }
 async function submitReviewUpdate(event) {
   event.preventDefault(); const form = event.currentTarget; const data = new FormData(form);
+  const idempotencyKey = beginSubmit(form); if (!idempotencyKey) return;
   try {
     const result = JSON.parse(String(data.get("result") || "{}"));
-    await jsonRequest(`/paam/review/v1/case/update/${form.dataset.id}`, "PUT", { expected_version: Number(form.dataset.version), title: data.get("title"), result, lines: parseReviewLines(data.get("lines")), reason: data.get("reason"), idempotency_key: key() });
+    await jsonRequest(`/paam/review/v1/case/update/${form.dataset.id}`, "PUT", { expected_version: Number(form.dataset.version), title: data.get("title"), result, lines: parseReviewLines(data.get("lines")), reason: data.get("reason"), idempotency_key: idempotencyKey });
     closeDialogs(); toast("待确认 Review 已修订"); await render();
-  } catch (error) { toast(error.message, true); }
+  } catch (error) { endSubmit(form); showFormError(form, error); }
 }
 async function transitionReview(button) {
-  await jsonRequest(`/paam/review/v1/case/${button.dataset.kind}/${button.dataset.id}`, "POST", { expected_version: Number(button.dataset.version), reason: `用户${button.dataset.kind}审查`, idempotency_key: key() });
-  button.closest("dialog").close(); toast("Review 状态已更新"); await render();
+  if (button.disabled) return;
+  button.disabled = true;
+  try {
+    await jsonRequest(`/paam/review/v1/case/${button.dataset.kind}/${button.dataset.id}`, "POST", { expected_version: Number(button.dataset.version), reason: `用户${button.dataset.kind}审查`, idempotency_key: key() });
+    closeDialogs(); toast("Review 状态已更新"); await render();
+  } catch (error) { button.disabled = false; throw error; }
 }
 async function transitionAccount(button) {
-  await jsonRequest(`/paam/review/v1/account/${button.dataset.kind}/${button.dataset.id}`, "POST", { expected_version: Number(button.dataset.version), reason: "用户更新账户修正", idempotency_key: key() });
-  button.closest("dialog").close(); toast("账户 Review 已更新"); await render();
+  if (button.disabled) return;
+  button.disabled = true;
+  try {
+    await jsonRequest(`/paam/review/v1/account/${button.dataset.kind}/${button.dataset.id}`, "POST", { expected_version: Number(button.dataset.version), reason: "用户更新账户修正", idempotency_key: key() });
+    closeDialogs(); toast("账户 Review 已更新"); await render();
+  } catch (error) { button.disabled = false; throw error; }
 }
 async function transitionConflict(button) {
-  await jsonRequest(`/paam/review/v1/fact-conflict/${button.dataset.kind}/${button.dataset.id}`, "POST", { expected_version: Number(button.dataset.version), reason: "用户处理事实冲突", idempotency_key: key() });
-  button.closest("dialog").close(); toast("冲突状态已更新"); await render();
+  if (button.disabled) return;
+  button.disabled = true;
+  try {
+    await jsonRequest(`/paam/review/v1/fact-conflict/${button.dataset.kind}/${button.dataset.id}`, "POST", { expected_version: Number(button.dataset.version), reason: "用户处理事实冲突", idempotency_key: key() });
+    closeDialogs(); toast("冲突状态已更新"); await render();
+  } catch (error) { button.disabled = false; throw error; }
 }
 function conflictDialog(button) {
   const dialog = modal("解决事实冲突", `<form data-form="conflict" data-id="${button.dataset.id}" data-version="${button.dataset.version}" class="stack"><label>处理方式<select name="resolution_type"><option value="LINK_EXISTING">关联已有 Fact</option><option value="CREATE_NEW">确认为新 Fact</option></select></label><label>已有 Fact ID（创建新 Fact 时留空）<input type="number" min="1" name="existing_bill_id"></label><label>说明<input name="reason" value="人工核对事实冲突"></label><div class="actions"><button class="primary">确认解决</button></div></form>`, false); bindPage(dialog);
 }
 async function submitConflict(event) {
   event.preventDefault(); const form = event.currentTarget; const data = Object.fromEntries(new FormData(form));
+  const idempotencyKey = beginSubmit(form); if (!idempotencyKey) return;
   data.existing_bill_id = data.existing_bill_id ? Number(data.existing_bill_id) : 0;
-  try { await jsonRequest(`/paam/review/v1/fact-conflict/resolve/${form.dataset.id}`, "POST", { ...data, expected_version: Number(form.dataset.version), idempotency_key: key() }); form.closest("dialog").close(); toast("事实冲突已解决"); await render(); } catch (error) { toast(error.message, true); }
+  try { await jsonRequest(`/paam/review/v1/fact-conflict/resolve/${form.dataset.id}`, "POST", { ...data, expected_version: Number(form.dataset.version), idempotency_key: idempotencyKey }); closeDialogs(); toast("事实冲突已解决"); await render(); } catch (error) { endSubmit(form); showFormError(form, error); }
 }
 
 $$('[data-page]').forEach((button) => button.onclick = () => route(button.dataset.page));

@@ -30,18 +30,21 @@ class TargetLedgerSummaryService:
             )
 
         activities = defaultdict(lambda: {"in": 0, "out": 0})
-        daily_activities = defaultdict(lambda: {"in": 0, "out": 0})
+        entry_activities = defaultdict(lambda: {"in": 0, "out": 0})
+        daily_entry_activities = defaultdict(lambda: {"in": 0, "out": 0})
         for row in rows:
             scale = currency_scales[row.currency_code]
             value = row.amount_value * (10 ** (scale - row.amount_scale))
             direction = row.direction.lower()
             activity_key = (row.ledger_type, row.currency_code, row.nettable)
-            day_key = (row.day, row.ledger_type, row.currency_code, row.nettable)
+            entry_key = (row.ledger_id, row.ledger_type, row.currency_code, row.nettable)
+            day_key = (row.day, row.ledger_id, row.ledger_type, row.currency_code, row.nettable)
             activities[activity_key][direction] += value
-            daily_activities[day_key][direction] += value
+            entry_activities[entry_key][direction] += value
+            daily_entry_activities[day_key][direction] += value
 
-        totals = self._business_totals(activities, currency_scales)
-        daily_totals = self._business_totals(daily_activities, currency_scales, daily=True)
+        totals = self._business_totals(entry_activities, currency_scales)
+        daily_totals = self._business_totals(daily_entry_activities, currency_scales, daily=True)
         return TargetLedgerSummaryRead(
             entry_count=entry_count,
             provisional_count=provisional_count,
@@ -76,10 +79,10 @@ class TargetLedgerSummaryService:
         })
         for key, legs in activities.items():
             if daily:
-                day, ledger_type, currency, nettable = key
+                day, _ledger_id, ledger_type, currency, nettable = key
                 total_key = (day, currency)
             else:
-                ledger_type, currency, nettable = key
+                _ledger_id, ledger_type, currency, nettable = key
                 total_key = currency
             income = expense = refund = 0
             incoming, outgoing = legs["in"], legs["out"]

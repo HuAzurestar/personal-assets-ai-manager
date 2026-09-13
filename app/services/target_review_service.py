@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.mappers.target_review_mapper import TargetReviewMapper
 from app.schemas.target_review import (
     TargetReviewCaseRead,
+    TargetReviewCasePageRead,
     TargetReviewCreateRequest,
     TargetReviewFactVO,
     TargetReviewLineRequest,
@@ -317,6 +318,16 @@ class TargetReviewService:
 
     def list(self, limit: int = 100) -> list[TargetReviewCaseRead]:
         return self.mapper.list(limit)
+
+    def page(self, page: int, page_size: int, status: str = "") -> TargetReviewCasePageRead:
+        items, total = self.mapper.page(page, page_size, status)
+        return TargetReviewCasePageRead(
+            items=items,
+            total=total,
+            page=page,
+            page_size=page_size,
+            status=status,
+        )
 
     def _validated_lines(
         self,

@@ -65,11 +65,20 @@ class TargetTagService:
         view_id: int,
         payload: TargetTagStatusRequest,
     ) -> TargetTagViewRead:
-        if not self.mapper.set_view_status(view_id, payload.status, datetime.now()):
-            raise TargetTagError(404, "tag view not found")
-        self.projection.sync_all()
-        self.mapper.commit()
-        return self._required(view_id)
+        try:
+            if not self.mapper.set_view_status(view_id, payload.status, datetime.now()):
+                raise TargetTagError(404, "tag view not found")
+            self.projection.sync_all()
+            self.mapper.commit()
+            return self._required(view_id)
+        except TargetTagError:
+            self.mapper.rollback()
+            raise
+        except ValueError as error:
+            self.mapper.rollback()
+            raise TargetTagError(
+                409, f"tag view status conflicts with current ledger tags: {error}"
+            ) from error
 
     def set_tag_status(
         self,
@@ -77,17 +86,26 @@ class TargetTagService:
         tag_id: int,
         payload: TargetTagStatusRequest,
     ) -> TargetTagViewRead:
-        view = self._required(view_id)
-        tag = next((item for item in view.tags if item.id == tag_id), None)
-        if tag is None:
-            raise TargetTagError(404, "tag not found in this view")
-        if tag.system_name == "unclassified" and payload.status != "ACTIVE":
-            raise TargetTagError(422, "unclassified tag cannot be archived")
-        if not self.mapper.set_tag_status(view_id, tag_id, payload.status, datetime.now()):
-            raise TargetTagError(404, "tag not found in this view")
-        self.projection.sync_all()
-        self.mapper.commit()
-        return self._required(view_id)
+        try:
+            view = self._required(view_id)
+            tag = next((item for item in view.tags if item.id == tag_id), None)
+            if tag is None:
+                raise TargetTagError(404, "tag not found in this view")
+            if tag.system_name == "unclassified" and payload.status != "ACTIVE":
+                raise TargetTagError(422, "unclassified tag cannot be archived")
+            if not self.mapper.set_tag_status(view_id, tag_id, payload.status, datetime.now()):
+                raise TargetTagError(404, "tag not found in this view")
+            self.projection.sync_all()
+            self.mapper.commit()
+            return self._required(view_id)
+        except TargetTagError:
+            self.mapper.rollback()
+            raise
+        except ValueError as error:
+            self.mapper.rollback()
+            raise TargetTagError(
+                409, f"tag status conflicts with current ledger tags: {error}"
+            ) from error
 
     def _required(self, view_id: int) -> TargetTagViewRead:
         view = self.mapper.view(view_id)

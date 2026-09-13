@@ -172,3 +172,17 @@ class TargetReviewCaseListResponse(BaseModel):
     status: Literal["success"] = "success"
     message: str = "ok"
     body: list[TargetReviewCaseRead]
+
+
+class TargetReviewCasePageRead(BaseModel):
+    items: list[TargetReviewCaseRead]
+    total: int
+    page: int
+    page_size: int
+    status: str
+
+
+class TargetReviewCasePageResponse(BaseModel):
+    status: Literal["success"] = "success"
+    message: str = "ok"
+    body: TargetReviewCasePageRead

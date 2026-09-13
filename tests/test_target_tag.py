@@ -345,3 +345,43 @@ def test_tag_assignment_select_count_is_independent_of_source_fact_count(
     many_count = assign_and_count(many_ledger, 2, "many-tag")
     assert one_count == 6
     assert many_count == one_count
+
+
+def test_tag_view_restore_reports_merge_conflict_and_rolls_back(target_tag_api):
+    client, sessions, _engine = target_tag_api
+    fact_ids = _add_facts(sessions, 2, directions=["OUT", "IN"])
+    view = client.post("/paam/tag/v1/view/create", json={
+        "name": "Category", "system_name": "category",
+    }).json()["body"]
+    view = client.post(f"/paam/tag/v1/tag/create/{view['id']}", json={
+        "name": "Food", "system_name": "food",
+    }).json()["body"]
+    entries = client.get("/paam/ledger/v1/entry/list").json()["items"]
+    assigned = client.put(f"/paam/tag/v1/assignment/set/{entries[0]['id']}", json={
+        "tag_state": {"category": "food"},
+        "expected_projection_version": entries[0]["projection_version"],
+        "idempotency_key": "restore-conflict-tag",
+    })
+    assert assigned.status_code == 200, assigned.text
+    assert client.put(f"/paam/tag/v1/view/status/{view['id']}", json={
+        "status": "ARCHIVED",
+    }).status_code == 200
+    case = client.post("/paam/review/v1/case/create", json={
+        "review_type": "TRANSFER",
+        "lines": [
+            {"bill_id": fact_ids[0], "role": "TRANSFER_OUT"},
+            {"bill_id": fact_ids[1], "role": "TRANSFER_IN"},
+        ],
+        "idempotency_key": "restore-conflict-create",
+    }).json()["body"]
+    assert client.post(f"/paam/review/v1/case/confirm/{case['id']}", json={
+        "expected_version": 1,
+        "idempotency_key": "restore-conflict-confirm",
+    }).status_code == 200
+    restored = client.put(f"/paam/tag/v1/view/status/{view['id']}", json={
+        "status": "ACTIVE",
+    })
+    assert restored.status_code == 409
+    assert "different category tags" in restored.json()["detail"]
+    archived = client.get("/paam/tag/v1/view/list?include_archived=true").json()["body"]
+    assert archived[0]["status"] == "ARCHIVED"

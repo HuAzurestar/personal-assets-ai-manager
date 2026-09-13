@@ -11,7 +11,7 @@ from app.api.controllers.target_ledger import v1_router as target_ledger_router
 from app.api.controllers.target_review import router as target_review_router
 from app.api.target_deps import get_target_db
 from app.target_database import init_target_db
-from app.models.target import BillFact, LedgerEntry, ReviewHistory
+from app.models.target import BillFact, LedgerEntry, ReviewCase, ReviewHistory
 from app.services.target_projection_service import TargetProjectionService
 
 
@@ -288,3 +288,46 @@ def test_confirm_select_count_is_independent_of_case_size(target_review_api):
     one = confirmed_selects(1, "one")
     twenty = confirmed_selects(20, "twenty")
     assert twenty == one
+
+
+def test_partial_refund_projection_uses_confirmed_line_allocations(target_review_api):
+    client, sessions, _engine = target_review_api
+    refund_id, expense_id = _facts(sessions, [("IN", 10000, "CNY"), ("OUT", 30000, "CNY")])
+    case = _create(client, "REFUND", [
+        {"bill_id": refund_id, "role": "REFUND_RECEIVED", "amount_value": 6000},
+        {"bill_id": expense_id, "role": "REFUND_EXPENSE", "amount_value": 6000},
+    ], key="partial-refund").json()["body"]
+    confirmed = client.post(f"/paam/review/v1/case/confirm/{case['id']}", json={
+        "expected_version": case["version"],
+        "idempotency_key": "partial-refund-confirm",
+    })
+    assert confirmed.status_code == 200, confirmed.text
+    entry = client.get("/paam/ledger/v1/entry/list").json()["items"][0]
+    assert entry["allocation_status"] == "PARTIAL"
+    assert entry["incoming"]["amount_value"] == 6000
+    assert entry["outgoing"]["amount_value"] == 6000
+    total = client.get("/paam/ledger/v1/summary").json()["totals"][0]
+    assert total["refund_offset_value"] == 6000
+
+
+def test_review_page_filters_old_pending_cases(target_review_api):
+    client, sessions, _engine = target_review_api
+    now = datetime(2026, 9, 12, 10)
+    with sessions() as db:
+        oldest = ReviewCase(
+            review_type="FACT_CONFLICT", status="PENDING", allocation_status="CONFLICT",
+            version=1, title="old pending", result_json="{}", created_time=now, updated_time=now,
+        )
+        db.add(oldest)
+        db.flush()
+        oldest_id = oldest.id
+        db.add_all([ReviewCase(
+            review_type="TAG", status="CONFIRMED", allocation_status="COMPLETE",
+            version=1, title=f"new-{index}", result_json="{}", created_time=now, updated_time=now,
+        ) for index in range(205)])
+        db.commit()
+    response = client.get("/paam/review/v1/case/page?status=PENDING&page_size=50")
+    assert response.status_code == 200, response.text
+    page = response.json()["body"]
+    assert page["total"] == 1
+    assert [item["id"] for item in page["items"]] == [oldest_id]

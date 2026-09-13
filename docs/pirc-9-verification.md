@@ -7,7 +7,7 @@
 - 正式入口：`app.target_main:app`。
 - SQLite：准确 11 张目标表，没有旧表、兼容表或显式外键。
 - 代码：旧 ORM/API/Service/Mapper/迁移器/页面已物理删除。
-- 自动测试：50 项通过。
+- 自动测试：54 项通过（新增部分金额投影、逐事项净额、标签恢复冲突和 Review 分页回归）。
 - JavaScript：`node --check` 通过。
 - 浏览器：导入、流水、详情和 11 表隔离通过。
 
@@ -40,6 +40,15 @@
 - 投影：普通收支与 AA、借贷、退款、转账、换汇、重复等多态结果。
 - 标签：字典、默认值、审查历史、热投影关联。
 - 详情：由一个 `ledger_entry` 确定其全部 Fact、Raw、Import 和相关 Review。
+
+## 重构后 Docker 回归
+
+- 镜像：`paam:pirc9-final`，从当前 `requirements.txt` 与 `app/` 独立构建。
+- 容器：`paam-pirc9-final2-fd82f6ef`，仅监听 `127.0.0.1:18770`，使用独立空数据卷。
+- HTTP/无头 Edge 验收：15 项全部通过，覆盖快速切页、预览保留、部分金额、AA 汇总、嵌套弹窗、撤销后编辑、账户有效值、双击提交、标签恢复冲突、导入幂等、分页筛选、事实冲突和弹窗错误可见性。
+- JUnit 结果：`reports/docker-evidence/final-accepted-results.xml`；场景截图位于 `reports/docker-evidence/`。
+
+本轮修复调整了热投影计算规则。现有环境若曾由旧实现确认过部分金额 Review，应在升级前备份后重新生成开发库并重新导入/确认；全新 PIRC-9 数据库不需要结构迁移。
 
 ## 可重复命令
 

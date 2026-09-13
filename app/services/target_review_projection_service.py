@@ -33,14 +33,18 @@ class TargetReviewProjectionService:
         accounts = self.accounts.effective(facts)
         fact_ids = tuple(sorted(fact_by_id))
         contributing = list(facts)
+        projection_lines = list(case.lines)
         if case.review_type == "DUPLICATE":
             retained = {
                 line.bill_id for line in case.lines
                 if line.role == "DUPLICATE_RETAINED"
             }
             contributing = [fact_by_id[next(iter(retained))]]
-        incoming = self._leg(contributing, "IN")
-        outgoing = self._leg(contributing, "OUT")
+            projection_lines = [
+                line for line in case.lines if line.bill_id in retained
+            ]
+        incoming = self._allocated_leg(projection_lines, fact_by_id, "IN")
+        outgoing = self._allocated_leg(projection_lines, fact_by_id, "OUT")
         if incoming is None or outgoing is None:
             raise ValueError("one cash direction cannot contain multiple currencies")
         fallback = contributing[0]
@@ -111,17 +115,20 @@ class TargetReviewProjectionService:
         self.defaults.rebuild_defaults(fact_ids)
 
     @staticmethod
-    def _leg(facts: list[TargetReviewFactVO], direction: str):
-        selected = [fact for fact in facts if fact.cash_direction == direction]
+    def _allocated_leg(lines, facts: dict[int, TargetReviewFactVO], direction: str):
+        selected = [
+            line for line in lines
+            if facts[line.bill_id].cash_direction == direction
+        ]
         if not selected:
             return ()
-        currencies = {fact.currency_code for fact in selected}
+        currencies = {line.currency_code for line in selected}
         if len(currencies) != 1:
             return None
-        scale = max(fact.amount_scale for fact in selected)
+        scale = max(line.amount_scale for line in selected)
         value = sum(
-            fact.amount_value * 10 ** (scale - fact.amount_scale)
-            for fact in selected
+            line.amount_value * 10 ** (scale - line.amount_scale)
+            for line in selected
         )
         return value, scale, selected[0].currency_code
 

@@ -150,3 +150,16 @@ def _summary_select_count(tmp_path, count: int) -> int:
 
 def test_target_summary_select_count_does_not_grow_with_entries(tmp_path):
     assert _summary_select_count(tmp_path, 10) == _summary_select_count(tmp_path, 100) == 2
+
+
+def test_target_summary_nets_each_aa_entry_before_accumulating(tmp_path):
+    _, sessions = _database(tmp_path, "separate-aa")
+    started = datetime(2026, 9, 14, 9)
+    with sessions() as db:
+        db.add_all([
+            _entry(entry_id=1, occurred=started, ledger_type="AA", incoming=6000, outgoing=10000),
+            _entry(entry_id=2, occurred=started, ledger_type="AA", incoming=10000, outgoing=5000),
+        ])
+        db.commit()
+        total = TargetLedgerSummaryService(db).summary(TargetLedgerSummaryQuery()).totals[0]
+        assert (total.income_value, total.expense_value, total.net_value) == (5000, 4000, 1000)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
 from app.models.target import BillFact, ReviewCase, ReviewCaseBill, ReviewHistory
@@ -262,6 +262,34 @@ class TargetReviewMapper:
             self._case_read(row, lines.get(row["id"], []), history.get(row["id"], []))
             for row in cases
         ]
+
+    def page(
+        self,
+        page: int,
+        page_size: int,
+        status: str = "",
+    ) -> tuple[list[TargetReviewCaseRead], int]:
+        clauses = [ReviewCase.status == status] if status else []
+        total = self.db.scalar(select(func.count(ReviewCase.id)).where(*clauses)) or 0
+        cases = self.db.execute(select(
+            ReviewCase.id,
+            ReviewCase.review_type,
+            ReviewCase.status,
+            ReviewCase.allocation_status,
+            ReviewCase.version,
+            ReviewCase.title,
+            ReviewCase.result_json,
+            ReviewCase.created_time,
+            ReviewCase.updated_time,
+        ).where(*clauses).order_by(ReviewCase.id.desc()).offset(
+            (page - 1) * page_size
+        ).limit(page_size)).mappings().all()
+        case_ids = [row["id"] for row in cases]
+        lines = self._lines(case_ids)
+        return ([
+            self._case_read(row, lines.get(row["id"], []), [])
+            for row in cases
+        ], total)
 
     def _lines(self, case_ids: list[int]) -> dict[int, list[TargetReviewLineRead]]:
         if not case_ids:

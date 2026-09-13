@@ -10,6 +10,7 @@ from app.schemas.target_review import (
     TargetAccountSetRequest,
     TargetFactConflictResolveRequest,
     TargetReviewCaseListResponse,
+    TargetReviewCasePageResponse,
     TargetReviewCaseResponse,
     TargetReviewCreateRequest,
     TargetReviewTransitionRequest,
@@ -98,6 +99,18 @@ def case_list(
 ):
     return TargetReviewCaseListResponse(body=_run(
         lambda: TargetReviewService(db).list(limit)
+    ))
+
+
+@router.get("/case/page", response_model=TargetReviewCasePageResponse)
+def case_page(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
+    status: str = Query(default="", pattern="^(|PENDING|CONFIRMED|REJECTED|REVOKED)$"),
+    db: Session = Depends(get_target_db),
+):
+    return TargetReviewCasePageResponse(body=_run(
+        lambda: TargetReviewService(db).page(page, page_size, status)
     ))
 
 
