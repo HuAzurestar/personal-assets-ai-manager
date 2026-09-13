@@ -863,10 +863,10 @@
 .target-shell .review-work-item .ledger-selector { position:relative; top:auto; left:auto; margin:0; }
 .target-shell .review-work-item > div strong,
 .target-shell .review-work-item > div small { display:block; }
-.target-shell .review-work-item > div small { margin-top:4px; color:var(--muted); font-size:10px; }
+.target-shell .review-work-item > div small { display:block; max-width:min(66vw,720px); margin-top:4px; overflow:hidden; color:var(--muted); font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
 .target-shell .review-work-item > span { display:flex; justify-content:flex-end; }
 .target-shell .review-work-item button { min-height:34px; padding:6px 9px; font-size:11px; }
-.target-shell .review-workbench .pagination { position:static; bottom:auto; }
+.target-shell .review-dashboard .pagination { position:static; bottom:auto; background:transparent; padding-bottom:0; }
 .target-shell .review-toolbar { justify-content:flex-start; }
 .target-shell .review-toolbar label { min-width:190px; }
 .review-wizard .review-wizard-intro { padding:13px 15px; border-radius:9px; background:var(--soft); }

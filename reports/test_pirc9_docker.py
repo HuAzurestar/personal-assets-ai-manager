@@ -98,6 +98,15 @@ def open_review(page, case):
     page.locator(f'[data-action="review-detail"][data-id="{case["id"]}"]').click()
 
 
+def open_review_wizard(page, name, review_type='AA'):
+    page.goto(f'{URL}/#ledger?q={name}')
+    page.locator('[data-action="ledger-select"]').first.check()
+    page.locator('[data-action="review-selected"]').click()
+    wizard = page.locator('[data-form="review-wizard"]')
+    wizard.locator('[name="review_type"]').select_option(review_type)
+    return wizard
+
+
 def test_partial_refund_uses_allocated_amount(client):
     _, ids = imported(client, [('IN', 10000), ('OUT', 30000)], '2026-08-02')
     change(client, create(client, 'REFUND', ids, ['REFUND_RECEIVED', 'REFUND_EXPENSE'], [6000, 6000]), 'confirm')
@@ -149,12 +158,10 @@ def test_account_edit_reopens_with_effective_value(client, page):
 
 
 def test_double_submit_is_one_command(client, page):
-    _, ids = imported(client, [('OUT', 1000)])
-    page.locator('nav [data-page="reviews"]').click()
-    page.locator('[data-action="new-review"]').click()
-    page.locator('[name="lines"]').fill(f'{ids[0]}:AA_PAID')
-    page.locator('[data-form="new-review"]').evaluate('(form) => {form.requestSubmit(); form.requestSubmit();}')
-    expect(page.locator('dialog')).to_have_count(0)
+    name, ids = imported(client, [('OUT', 1000)])
+    wizard = open_review_wizard(page, name)
+    wizard.evaluate('(form) => {form.requestSubmit(); form.requestSubmit();}')
+    expect(page.locator('[data-action="review-transition"][data-kind="confirm"]')).to_be_visible()
     page.wait_for_timeout(300)
     cases = body(client.get('/paam/review/v1/case/list?limit=200'))
     matching = [case for case in cases if case['review_type'] == 'AA' and any(line['bill_id'] == ids[0] for line in case['lines'])]
@@ -236,16 +243,16 @@ def test_ui_import_tag_account_review_and_duplicate_import(client, page):
         page.locator(f'[data-action="account-transition"][data-kind="{action}"]').click()
         expect(page.locator('dialog')).to_have_count(0)
         assert ledger(client, name)[0]['out_account_code'] == account
-    page.locator('nav [data-page="reviews"]').click()
-    page.locator('[data-action="new-review"]').click()
-    page.locator('[name="lines"]').fill(f'{fid}:AA_PAID')
-    page.locator('[data-form="new-review"] button.primary').click()
-    expect(page.locator('dialog')).to_have_count(0)
-    case = body(client.get('/paam/review/v1/case/list'))[0]
-    for action, expected_type in [('confirm', 'AA'), ('revoke', 'EXPENSE'), ('restore', 'AA')]:
-        open_review(page, case)
+    wizard = open_review_wizard(page, name)
+    wizard.locator('button.primary').click()
+    case = next(c for c in body(client.get('/paam/review/v1/case/list?limit=200'))
+                if c['review_type'] == 'AA' and c['lines'][0]['bill_id'] == fid)
+    for index, (action, expected_type) in enumerate([('confirm', 'AA'), ('revoke', 'EXPENSE'), ('restore', 'AA')]):
+        if index:
+            open_review(page, case)
         page.locator(f'[data-action="review-transition"][data-kind="{action}"]').click()
         expect(page.locator('dialog')).to_have_count(0)
+        case = body(client.get(f'/paam/review/v1/case/detail/{case["id"]}'))
         assert ledger(client, name)[0]['ledger_type'] == expected_type
         assert ledger(client, name)[0]['out_account_code'] == 'docker-ui-wallet'
     plan = body(client.post('/paam/import/v1/preview', json={'files': [{
@@ -332,11 +339,11 @@ def test_old_pending_case_remains_accessible_after_200_new_cases(client, page):
 
 
 def test_dialog_error_is_visible_above_modal_backdrop(client, page):
-    page.locator('nav [data-page="reviews"]').click()
-    page.locator('[data-action="new-review"]').click()
-    page.locator('[name="lines"]').fill('0:AA_PAID')
+    name, _ = imported(client, [('OUT', 1000)])
+    wizard = open_review_wizard(page, name)
+    wizard.evaluate('(form) => form.closest("dialog").reviewFacts[0].id = 0')
     with page.expect_response('**/paam/review/v1/case/create') as response:
-        page.locator('[data-form="new-review"] button.primary').click()
+        wizard.locator('button.primary').click()
     assert response.value.status == 422
     expect(page.locator('.toast.error')).to_have_count(1)
     unobscured = page.locator('.toast.error').evaluate('''node => {

@@ -900,14 +900,24 @@ function reviewTypeOptions(factCount) {
   return types.map((value) => `<option value="${value}" ${value === "CLASSIFICATION" && factCount !== 1 ? "disabled" : ""}>${esc(reviewTypeNames[value])}</option>`).join("");
 }
 
-function reviewRoleOptions(type, direction, index) {
+function reviewRoleOptions(type, direction, index, selectedRole = "") {
   const values = reviewRoles[type]?.[direction] || [];
   return values.map((value, optionIndex) => {
-    const selected = type === "DUPLICATE"
-      ? (index === 0 ? value === "DUPLICATE_RETAINED" : value === "DUPLICATE_EXCLUDED")
-      : optionIndex === 0;
+    const selected = selectedRole
+      ? value === selectedRole
+      : type === "DUPLICATE"
+        ? (index === 0 ? value === "DUPLICATE_RETAINED" : value === "DUPLICATE_EXCLUDED")
+        : optionIndex === 0;
     return `<option value="${value}" ${selected ? "selected" : ""}>${esc(roleNames[value] || value)}</option>`;
   }).join("");
+}
+
+function reviewRoleDirection(type, role) {
+  return Object.entries(reviewRoles[type] || {}).find(([, roles]) => roles.includes(role))?.[0] || "";
+}
+
+function decimalText(value, scale) {
+  return (Number(value) / (10 ** Number(scale))).toFixed(Number(scale));
 }
 
 function reviewWizardNotice(type, facts) {
@@ -998,23 +1008,14 @@ async function submitReviewWizard(event) {
 async function editReview(id) {
   const item = await request(`/paam/review/v1/case/detail/${id}`);
   if (!["PENDING", "REVOKED"].includes(item.status)) throw new Error("只有待确认或已撤销 Review 可以编辑");
-  const lines = item.lines.map((line) => [
-    line.bill_id,
-    line.role,
-    line.amount_value || "",
-    line.party || "",
-  ].join(":").replace(/:+$/, "")).join("\n");
-  const dialog = modal(`编辑 Review #${item.id}`, `<form data-form="edit-review" data-id="${item.id}" data-version="${item.version}" class="stack"><label>标题<input name="title" value="${esc(item.title)}" maxlength="160"></label><label>Fact 与角色<textarea name="lines" required>${esc(lines)}</textarea><small>每行格式：FactID:ROLE[:金额原子值[:对象]]</small></label><label>类型结果（JSON）<textarea name="result">${esc(JSON.stringify(item.result, null, 2))}</textarea></label><label>修改说明<input name="reason" value="人工修订待确认审查"></label><div class="actions"><button class="primary">保存修订</button></div></form>`);
+  const lines = item.lines.map((line, index) => {
+    const direction = reviewRoleDirection(item.review_type, line.role);
+    return `<article class="review-fact-choice review-edit-line" data-fact="${line.bill_id}" data-direction="${direction}" data-scale="${line.amount_scale}"><div class="review-fact-main"><span class="badge neutral">${direction === "IN" ? "流入" : "流出"}</span><div><strong>Fact #${line.bill_id}</strong><small>${esc(line.currency_code)} · 当前分配 ${esc(decimalText(line.amount_value, line.amount_scale))}</small></div></div><label>在本次审查中的角色<select name="role-${line.bill_id}" required>${reviewRoleOptions(item.review_type, direction, index, line.role)}</select></label><label>分配金额<input name="amount-${line.bill_id}" inputmode="decimal" value="${esc(decimalText(line.amount_value, line.amount_scale))}" required></label><label>相关对象（可选）<input name="party-${line.bill_id}" value="${esc(line.party)}" maxlength="120"></label></article>`;
+  }).join("");
+  const dialog = modal(`编辑 Review #${item.id}`, `<form data-form="edit-review" data-id="${item.id}" data-version="${item.version}" class="review-wizard stack"><div class="review-wizard-intro"><strong>${esc(reviewTypeNames[item.review_type] || item.review_type)} · ${item.lines.length} 条事实</strong><span>修改角色、分配金额或相关对象；审查类型保持不变。</span></div><label>标题<input name="title" value="${esc(item.title)}" maxlength="160"></label><div class="review-fact-choices">${lines}</div><label>修改说明<input name="reason" maxlength="2000" value="人工修订待确认审查"></label><div class="review-submit-note">保存只更新待确认内容；确认后才会改变实际流水。</div><div class="actions"><button type="button" data-close>取消</button><button class="primary">保存修订</button></div></form>`);
+  const form = $('[data-form="edit-review"]', dialog);
+  form.reviewResult = item.result;
   bindPage(dialog);
-}
-
-function parseReviewLines(value) {
-  return String(value).split(/\r?\n/).filter(Boolean).map((row) => {
-    const [billId, role, amount, party = ""] = row.split(":");
-    const item = { bill_id: Number(billId), role: role?.trim(), party: party.trim() };
-    if (amount?.trim()) item.amount_value = Number(amount);
-    return item;
-  });
 }
 
 function beginSubmit(form) {
@@ -1296,7 +1297,6 @@ function bindPage(root) {
   });
   $('[data-form="account"]', root)?.addEventListener("submit", submitAccount);
   $('[data-form="dictionary"]', root)?.addEventListener("submit", submitDictionary);
-  $('[data-form="new-review"]', root)?.addEventListener("submit", submitReview);
   $('[data-form="edit-review"]', root)?.addEventListener("submit", submitReviewUpdate);
   $('[data-form="conflict"]', root)?.addEventListener("submit", submitConflict);
   $$('form[data-form]', root).forEach(bindCommandForm);
@@ -1358,21 +1358,17 @@ async function dictionaryStatus(kind, button) {
   try { await jsonRequest(url, "PUT", { status: button.dataset.status }); toast("状态已更新"); await render(); }
   catch (error) { button.disabled = false; throw error; }
 }
-async function submitReview(event) {
-  event.preventDefault(); const form = event.currentTarget; const data = new FormData(form);
-  const idempotencyKey = beginSubmit(form); if (!idempotencyKey) return;
-  try {
-    const lines = parseReviewLines(data.get("lines"));
-    await jsonRequest("/paam/review/v1/case/create", "POST", { review_type: data.get("review_type"), title: data.get("title"), result: {}, lines, reason: data.get("reason"), idempotency_key: idempotencyKey });
-    closeDialogs(); toast("待确认 Review 已创建"); await render();
-  } catch (error) { endSubmit(form); showFormError(form, error); }
-}
 async function submitReviewUpdate(event) {
   event.preventDefault(); const form = event.currentTarget; const data = new FormData(form);
   const idempotencyKey = beginSubmit(form); if (!idempotencyKey) return;
   try {
-    const result = JSON.parse(String(data.get("result") || "{}"));
-    await jsonRequest(`/paam/review/v1/case/update/${form.dataset.id}`, "PUT", { expected_version: Number(form.dataset.version), title: data.get("title"), result, lines: parseReviewLines(data.get("lines")), reason: data.get("reason"), idempotency_key: idempotencyKey });
+    const lines = $$(".review-edit-line", form).map((row) => ({
+      bill_id: Number(row.dataset.fact),
+      role: data.get(`role-${row.dataset.fact}`),
+      amount_value: decimalAmount(data.get(`amount-${row.dataset.fact}`), Number(row.dataset.scale)),
+      party: data.get(`party-${row.dataset.fact}`) || "",
+    }));
+    await jsonRequest(`/paam/review/v1/case/update/${form.dataset.id}`, "PUT", { expected_version: Number(form.dataset.version), title: data.get("title"), result: form.reviewResult || {}, lines, reason: data.get("reason"), idempotency_key: idempotencyKey });
     closeDialogs(); toast("待确认 Review 已修订"); await render();
   } catch (error) { endSubmit(form); showFormError(form, error); }
 }

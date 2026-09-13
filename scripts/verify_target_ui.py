@@ -227,6 +227,21 @@ def run() -> None:
                 wizard.locator('button[type="submit"]').click()
                 review_dialog = page.locator("dialog[open]")
                 expect(review_dialog).to_contain_text("待确认")
+                review_dialog.locator('[data-action="edit-review"]').click()
+                edit_dialog = page.locator('dialog[open]').last
+                edit_form = edit_dialog.locator('[data-form="edit-review"]')
+                expect(edit_form).to_be_visible()
+                expect(edit_form.locator('textarea')).to_have_count(0)
+                expect(edit_form.locator('[name^="role-"]')).to_have_count(1)
+                edit_form.locator('[name="title"]').fill("浏览器验收普通支出")
+                edit_form.locator('button.primary').click()
+                expect(page.locator("dialog[open]")).to_have_count(0)
+
+                page.locator('nav [data-page="reviews"]').click()
+                review_row = page.locator("tr", has_text="浏览器验收普通支出")
+                expect(review_row).to_be_visible()
+                review_row.locator('[data-action="review-detail"]').click()
+                review_dialog = page.locator("dialog[open]")
                 expect(
                     review_dialog.locator(
                         '[data-action="review-transition"][data-kind="confirm"]'
@@ -237,7 +252,6 @@ def run() -> None:
                 ).click()
                 expect(page.locator("dialog[open]")).to_have_count(0)
 
-                page.locator('nav [data-page="reviews"]').click()
                 expect(page.get_by_role("heading", name="统一审查")).to_be_visible()
                 expect(page.get_by_text("确认普通收支").first).to_be_visible()
                 expect(page.get_by_role("heading", name="待处理流水")).to_be_visible()
