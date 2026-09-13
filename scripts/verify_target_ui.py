@@ -180,7 +180,7 @@ def run() -> None:
 
                 page.locator('nav [data-page="ledger"]').click()
                 expect(page.get_by_role("heading", name="实际流水")).to_be_visible()
-                expect(page.get_by_text("浏览器测试商户")).to_be_visible()
+                expect(page.get_by_text("浏览器测试商户").first).to_be_visible()
                 page.locator('[data-action="ledger-date-toggle"]').click()
                 page.locator('[data-action="ledger-date-day"][data-value="2026-09-12"]').click()
                 page.locator('[data-action="ledger-date-day"][data-value="2026-09-11"]').click()
@@ -188,7 +188,7 @@ def run() -> None:
                     "结束时间不能早于开始时间"
                 )
                 page.locator('[data-action="ledger-date-clear"]').click()
-                page.locator('[data-action="ledger-toggle"]').click()
+                page.locator('[data-action="ledger-toggle"]').first.click()
                 expect(page.locator("[data-ledger-detail]:not([hidden])")).to_contain_text(
                     "构成事实"
                 )
