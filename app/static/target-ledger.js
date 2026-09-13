@@ -13,7 +13,7 @@ const typeNames = {
 const statusNames = {
   PENDING: "待确认", CONFIRMED: "已确认", REVOKED: "已撤销",
   REJECTED: "已忽略", DEFAULT: "默认", COMPLETE: "完整",
-  PARTIAL: "部分", CONFLICT: "冲突",
+  PARTIAL: "部分", CONFLICT: "冲突", ACTIVE: "启用中", ARCHIVED: "已归档",
 };
 const state = {
   page: "summary",
@@ -112,7 +112,7 @@ const pageInfo = {
   ledger: ["实际流水", "事实与已确认 Review 合成的最终账本。"],
   import: ["数据导入", "选择账单来源，上传文件并在写入前逐项预览。"],
   "import-history": ["导入历史", "查看已经写入的文件、处理结果和原始行记录。"],
-  tags: ["标签管理", "每个有效维度在最终流水上只有一个值。"],
+  tags: ["标签管理", "按维度管理标签；在卡片内即可快速添加。"],
   reviews: ["统一审查", "财务、标签、账户与事实冲突共用一套历史模型。"],
 };
 
@@ -595,7 +595,19 @@ async function reviseImport(event) {
 
 async function tagsPage() {
   const views = await request("/paam/tag/v1/view/list?include_archived=true");
-  return `<section class="panel"><div class="section-head"><h2>标签维度</h2><button class="primary" data-action="new-view">新建维度</button></div><div class="stack">${views.length ? views.map((view) => `<div class="review-card"><div class="section-head"><div><h3>${esc(view.name)}</h3><small>${esc(view.system_name)} · ${esc(statusNames[view.status] || view.status)}</small></div><div><button data-action="new-tag" data-id="${view.id}">新增标签</button><button data-action="view-status" data-id="${view.id}" data-status="${view.status === "ACTIVE" ? "ARCHIVED" : "ACTIVE"}">${view.status === "ACTIVE" ? "归档维度" : "恢复维度"}</button></div></div><div class="tag-list">${view.tags.map((tag) => `<span class="tag">${esc(tag.name)} <small>${esc(tag.system_name)}</small>${tag.system_name !== "unclassified" ? ` <button class="quiet" data-action="tag-status" data-view="${view.id}" data-id="${tag.id}" data-status="${tag.status === "ACTIVE" ? "ARCHIVED" : "ACTIVE"}">${tag.status === "ACTIVE" ? "归档" : "恢复"}</button>` : ""}</span>`).join("")}</div></div>`).join("") : '<div class="empty-state">尚未创建标签维度</div>'}</div></section>`;
+  const activeCount = views.filter((view) => view.status === "ACTIVE").length;
+  const cards = views.map((view) => {
+    const isActive = view.status === "ACTIVE";
+    const tagsMarkup = view.tags.map((tag) => {
+      const isSystem = tag.system_name === "unclassified";
+      const isTagActive = tag.status === "ACTIVE";
+      const action = isSystem ? "" : `<button class="tag-pill-action" type="button" data-action="tag-status" data-view="${view.id}" data-id="${tag.id}" data-status="${isTagActive ? "ARCHIVED" : "ACTIVE"}" aria-label="${isTagActive ? "归档" : "恢复"}标签 ${esc(tag.name)}" title="${isTagActive ? "归档标签" : "恢复标签"}">${isTagActive ? "×" : "恢复"}</button>`;
+      return `<span class="tag-pill${isSystem ? " system" : ""}${isTagActive ? "" : " archived"}" title="系统名称：${esc(tag.system_name)}">${isSystem ? '<span class="tag-pill-lock" aria-hidden="true">◆</span>' : ""}<span>${esc(tag.name)}</span>${isSystem ? `<code>${esc(tag.system_name)}</code>` : ""}${action}</span>`;
+    }).join("");
+    const creator = isActive ? `<div class="tag-inline-creator"><button class="tag-inline-launch" type="button" data-action="new-tag-inline" data-id="${view.id}" aria-controls="tag-create-${view.id}" aria-expanded="false"><span aria-hidden="true">＋</span> 新标签</button><form id="tag-create-${view.id}" class="tag-inline-form" data-form="inline-tag" data-view="${view.id}" hidden><label class="sr-only" for="tag-name-${view.id}">标签名称</label><input id="tag-name-${view.id}" name="name" maxlength="120" placeholder="标签名称" autocomplete="off" required><span class="tag-inline-divider" aria-hidden="true"></span><label class="sr-only" for="tag-system-${view.id}">系统名称</label><input id="tag-system-${view.id}" name="system_name" maxlength="64" pattern="[a-z][a-z0-9_]{0,63}" placeholder="system_name" autocomplete="off" required><button class="tag-inline-submit" type="submit" aria-label="保存标签" title="保存">✓</button><button class="tag-inline-cancel" type="button" data-action="cancel-tag" aria-label="取消添加标签" title="取消">×</button></form></div>` : "";
+    return `<article class="tag-view-card${isActive ? "" : " archived"}" aria-labelledby="tag-view-${view.id}"><header class="tag-view-head"><div class="tag-view-meta"><div class="tag-view-title"><h3 id="tag-view-${view.id}">${esc(view.name)}</h3><span class="tag-view-status ${isActive ? "active" : "archived"}"><span aria-hidden="true">●</span>${esc(statusNames[view.status] || view.status)}</span></div><code>${esc(view.system_name)}</code></div><div class="tag-view-actions">${isActive ? `<button type="button" data-action="new-tag" data-id="${view.id}" aria-controls="tag-create-${view.id}" aria-expanded="false">＋ 添加标签</button>` : ""}<button class="quiet" type="button" data-action="view-status" data-id="${view.id}" data-status="${isActive ? "ARCHIVED" : "ACTIVE"}">${isActive ? "归档维度" : "恢复维度"}</button></div></header><div class="tag-pill-list">${tagsMarkup}${creator}</div></article>`;
+  }).join("");
+  return `<section class="tag-manager" aria-labelledby="tag-manager-title"><div class="tag-manager-head"><div><h2 id="tag-manager-title">标签维度</h2><p>${views.length ? `共 ${views.length} 个维度，${activeCount} 个启用中` : "用维度组织同一类标签"}</p></div><button class="primary" data-action="new-view">＋ 新建维度</button></div><div class="tag-view-list">${cards || '<div class="panel empty-state">尚未创建标签维度</div>'}</div></section>`;
 }
 
 async function reviewsPage() {
@@ -690,6 +702,41 @@ function bindCommandForm(form) {
   });
 }
 
+function tagSystemName(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[’']/g, "")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .replace(/^[^a-z]+/, "")
+    .slice(0, 64);
+}
+
+function openInlineTag(button) {
+  const card = button.closest(".tag-view-card");
+  const form = $("[data-form=\"inline-tag\"]", card);
+  if (!form) return;
+  $$('[data-action="new-tag"], [data-action="new-tag-inline"]', card).forEach((trigger) => {
+    trigger.hidden = true;
+    trigger.setAttribute("aria-expanded", "true");
+  });
+  form.hidden = false;
+  $('[name="name"]', form)?.focus();
+}
+
+function closeInlineTag(form) {
+  const card = form.closest(".tag-view-card");
+  form.reset();
+  delete $('[name="system_name"]', form)?.dataset.manual;
+  $(".form-error", form)?.remove();
+  form.hidden = true;
+  $$('[data-action="new-tag"], [data-action="new-tag-inline"]', card).forEach((trigger) => {
+    trigger.hidden = false;
+    trigger.setAttribute("aria-expanded", "false");
+  });
+}
+
 function bindPage(root) {
   $$('button[data-page], a[data-page]', root).forEach((button) => button.onclick = () => route(button.dataset.page));
   $$('[data-action="import-step"]', root).forEach((button) => button.onclick = () => {
@@ -718,7 +765,9 @@ function bindPage(root) {
   $$('[data-action="account"]', root).forEach((button) => button.onclick = () => editAccount(button));
   $('[data-action="new-review"]', root)?.addEventListener("click", newReview);
   $('[data-action="new-view"]', root)?.addEventListener("click", () => simpleDictionaryDialog("view"));
-  $$('[data-action="new-tag"]', root).forEach((button) => button.onclick = () => simpleDictionaryDialog("tag", button.dataset.id));
+  $$('[data-action="new-tag"]', root).forEach((button) => button.onclick = () => openInlineTag(button));
+  $$('[data-action="new-tag-inline"]', root).forEach((button) => button.onclick = () => openInlineTag(button));
+  $$('[data-action="cancel-tag"]', root).forEach((button) => button.onclick = () => closeInlineTag(button.closest("form")));
   $$('[data-action="view-status"]', root).forEach((button) => button.onclick = () => dictionaryStatus("view", button).catch((error) => toast(error.message, true)));
   $$('[data-action="tag-status"]', root).forEach((button) => button.onclick = () => dictionaryStatus("tag", button).catch((error) => toast(error.message, true)));
   $$('[data-action="review-transition"]', root).forEach((button) => button.onclick = () => transitionReview(button).catch((error) => toast(error.message, true)));
@@ -804,6 +853,21 @@ function bindPage(root) {
   importForm?.addEventListener("submit", async (event) => { event.preventDefault(); try { await previewImport(event.currentTarget); } catch (error) { showFormError(event.currentTarget, error); } });
   $('[data-form="import-revise"]', root)?.addEventListener("submit", reviseImport);
   $('[data-form="tag-assignment"]', root)?.addEventListener("submit", submitTags);
+  $$('[data-form="inline-tag"]', root).forEach((form) => {
+    const nameInput = $('[name="name"]', form);
+    const systemInput = $('[name="system_name"]', form);
+    nameInput?.addEventListener("input", () => {
+      if (!systemInput.dataset.manual) systemInput.value = tagSystemName(nameInput.value);
+    });
+    systemInput?.addEventListener("input", () => { systemInput.dataset.manual = "true"; });
+    form.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeInlineTag(form);
+      }
+    });
+    form.addEventListener("submit", submitInlineTag);
+  });
   $('[data-form="account"]', root)?.addEventListener("submit", submitAccount);
   $('[data-form="dictionary"]', root)?.addEventListener("submit", submitDictionary);
   $('[data-form="new-review"]', root)?.addEventListener("submit", submitReview);
@@ -839,6 +903,20 @@ async function confirmImport() {
 }
 function simpleDictionaryDialog(kind, viewId = "") {
   const dialog = modal(kind === "view" ? "新建标签维度" : "新增标签", `<form data-form="dictionary" data-kind="${kind}" data-view="${viewId}" class="stack"><label>显示名称<input name="name" required maxlength="120"></label><label>系统名称<input name="system_name" required pattern="[a-z][a-z0-9_]{0,63}" placeholder="lower_case_name"></label><div class="actions"><button class="primary">保存</button></div></form>`, false); bindPage(dialog);
+}
+async function submitInlineTag(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const payload = Object.fromEntries(new FormData(form));
+  if (!beginSubmit(form)) return;
+  try {
+    await jsonRequest(`/paam/tag/v1/tag/create/${form.dataset.view}`, "POST", payload);
+    toast(`标签“${payload.name}”已添加`);
+    await render();
+  } catch (error) {
+    endSubmit(form);
+    showFormError(form, error);
+  }
 }
 async function submitDictionary(event) {
   event.preventDefault(); const form = event.currentTarget; const payload = Object.fromEntries(new FormData(form));
