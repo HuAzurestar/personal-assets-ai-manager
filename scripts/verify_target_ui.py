@@ -178,9 +178,24 @@ def run() -> None:
                 expect(page.get_by_text("target-ui.csv")).to_be_visible()
                 assert page.evaluate("location.hash") == history_hash
 
+                page.locator('nav [data-page="tags"]').click()
+                expect(page.get_by_role("heading", name="标签管理")).to_be_visible()
+                assert page.locator(".tag-manager-head").evaluate(
+                    "node => getComputedStyle(node).display"
+                ) == "flex"
+                assert page.locator(".tag-view-list").evaluate(
+                    "node => getComputedStyle(node).display"
+                ) == "grid"
+
                 page.locator('nav [data-page="ledger"]').click()
                 expect(page.get_by_role("heading", name="实际流水")).to_be_visible()
                 expect(page.get_by_text("浏览器测试商户").first).to_be_visible()
+                assert page.locator(".ledger-filter-main").evaluate(
+                    "node => getComputedStyle(node).display"
+                ) == "grid"
+                assert page.locator(".ledger-card-summary").first.evaluate(
+                    "node => getComputedStyle(node).display"
+                ) == "grid"
                 page.locator('[data-action="ledger-date-toggle"]').click()
                 page.locator('[data-action="ledger-date-day"][data-value="2026-09-12"]').click()
                 page.locator('[data-action="ledger-date-day"][data-value="2026-09-11"]').click()

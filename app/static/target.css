@@ -396,6 +396,8 @@
   .target-shell .history-toolbar { display:grid; }
   .target-shell .history-toolbar label,
   .target-shell .history-toolbar button { width:100%; }
+}
+
 .target-shell .tag-manager-head { display:flex; align-items:center; justify-content:space-between; gap:18px; margin-bottom:18px; }
 .target-shell .tag-manager-head h2 { margin-bottom:5px; }
 .target-shell .tag-manager-head p { margin:0; color:var(--muted); font-size:13px; }
