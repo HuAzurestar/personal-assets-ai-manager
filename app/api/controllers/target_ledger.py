@@ -32,6 +32,7 @@ def list_target_ledger_entries(
     allocation_status: list[str] = Query(default=[]),
     currency_code: list[str] = Query(default=[]),
     q: str = Query(default="", max_length=200),
+    account_code: str = Query(default="", max_length=120),
     tag: list[str] = Query(default=[]),
     db: Session = Depends(get_target_db),
 ):
@@ -50,6 +51,7 @@ def list_target_ledger_entries(
             allocation_status=tuple(allocation_status),
             currency_code=tuple(code.upper() for code in currency_code),
             q=q.strip(),
+            account_code=account_code.strip(),
             tag=selectors,
         ))
     except MultipleTagsForView as error:
@@ -73,6 +75,7 @@ def get_target_ledger_detail(
 def get_target_ledger_summary(
     date_from: date | None = None,
     date_to: date | None = None,
+    account_code: str = Query(default="", max_length=120),
     db: Session = Depends(get_target_db),
 ):
     if date_from and date_to and date_from > date_to:
@@ -80,4 +83,5 @@ def get_target_ledger_summary(
     return TargetLedgerSummaryService(db).summary(TargetLedgerSummaryQuery(
         date_from=date_from,
         date_to=date_to,
+        account_code=account_code.strip(),
     ))

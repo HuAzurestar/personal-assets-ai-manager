@@ -80,6 +80,7 @@ class TargetLedgerMapper:
                 "allocation_status": list(query.allocation_status),
                 "currency_code": list(query.currency_code),
                 "q": query.q,
+                "account_code": query.account_code,
                 "tag": [f"{view}:{tag}" for view, tag in query.tag],
             },
         )
@@ -178,6 +179,11 @@ class TargetLedgerMapper:
             ))
         if query.q:
             clauses.append(LedgerEntry.title.ilike(f"%{query.q.strip()}%"))
+        if query.account_code:
+            clauses.append(or_(
+                LedgerEntry.in_account_code == query.account_code,
+                LedgerEntry.out_account_code == query.account_code,
+            ))
         for view_system_name, tag_system_name in query.tag:
             clauses.append(exists(select(LedgerEntryTag.id).join(
                 TargetTag, TargetTag.id == LedgerEntryTag.tag_id,
@@ -353,13 +359,20 @@ class TargetLedgerMapper:
         if query.date_to:
             clauses.append(LedgerEntry.start_time <= datetime.combine(query.date_to, time.max))
 
+        entry_clauses = list(clauses)
+        if query.account_code:
+            entry_clauses.append(or_(
+                LedgerEntry.in_account_code == query.account_code,
+                LedgerEntry.out_account_code == query.account_code,
+            ))
+
         counts = self.db.execute(select(
             func.count(LedgerEntry.id).label("entry_count"),
             func.coalesce(func.sum(case(
                 (LedgerEntry.allocation_status.in_(("PARTIAL", "CONFLICT")), 1),
                 else_=0,
             )), 0).label("provisional_count"),
-        ).where(*clauses)).mappings().one()
+        ).where(*entry_clauses)).mappings().one()
 
         common = (
             LedgerEntry.id.label("ledger_id"),
@@ -370,6 +383,12 @@ class TargetLedgerMapper:
         nettable = (
             LedgerEntry.in_currency_code == LedgerEntry.out_currency_code
         ).label("nettable")
+        incoming_clauses = [*clauses, LedgerEntry.in_amount_value != 0]
+        outgoing_clauses = [*clauses, LedgerEntry.out_amount_value != 0]
+        if query.account_code:
+            incoming_clauses.append(LedgerEntry.in_account_code == query.account_code)
+            outgoing_clauses.append(LedgerEntry.out_account_code == query.account_code)
+
         incoming = select(
             *common,
             literal("IN").label("direction"),
@@ -378,10 +397,7 @@ class TargetLedgerMapper:
             LedgerEntry.in_amount_value.label("amount_value"),
             literal(1).label("entry_count"),
             nettable,
-        ).where(
-            *clauses,
-            LedgerEntry.in_amount_value != 0,
-        )
+        ).where(*incoming_clauses)
         outgoing = select(
             *common,
             literal("OUT").label("direction"),
@@ -390,10 +406,7 @@ class TargetLedgerMapper:
             LedgerEntry.out_amount_value.label("amount_value"),
             literal(1).label("entry_count"),
             nettable,
-        ).where(
-            *clauses,
-            LedgerEntry.out_amount_value != 0,
-        )
+        ).where(*outgoing_clauses)
         rows = self.db.execute(union_all(incoming, outgoing)).mappings().all()
         return (
             counts["entry_count"],

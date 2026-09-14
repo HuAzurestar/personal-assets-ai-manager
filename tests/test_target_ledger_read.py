@@ -100,13 +100,22 @@ def test_target_ledger_page_batches_tags_and_has_fixed_select_count(tmp_path):
     small, small_sql = _selects(engine, lambda: load(10))
     full, full_sql = _selects(engine, lambda: load(100))
     tagged, tagged_sql = _selects(engine, lambda: load(100, tag=(("category", "food"),)))
+    incoming, incoming_sql = _selects(
+        engine,
+        lambda: load(100, account_code="income-account"),
+    )
 
     assert len(small.items) == 10
     assert len(full.items) == full.total == 100
     assert len(tagged.items) == tagged.total == 50
+    assert len(incoming.items) == incoming.total == 50
+    assert all(item.in_account_code == "income-account" for item in incoming.items)
     assert all(item.tags[0].view_system_name == "category" for item in full.items)
-    assert len(small_sql) == len(full_sql) == len(tagged_sql) == 3
-    assert all("SELECT *" not in statement.upper() for statement in full_sql + tagged_sql)
+    assert len(small_sql) == len(full_sql) == len(tagged_sql) == len(incoming_sql) == 3
+    assert all(
+        "SELECT *" not in statement.upper()
+        for statement in full_sql + tagged_sql + incoming_sql
+    )
 
 
 def test_target_ledger_detail_loads_fact_raw_and_review_in_bounded_queries(tmp_path):
@@ -272,6 +281,15 @@ def test_target_ledger_controller_keeps_native_integer_contract(tmp_path):
         assert item["out_account_code"] == "expense-account"
         assert client.get("/paam/ledger/v1/entry/detail/404").status_code == 404
         assert client.get("/paam/ledger/v1/summary").json()["entry_count"] == 1
+        assert client.get(
+            "/paam/ledger/v1/entry/list?account_code=expense-account"
+        ).json()["total"] == 1
+        assert client.get(
+            "/paam/ledger/v1/entry/list?account_code=income-account"
+        ).json()["total"] == 0
+        assert client.get(
+            "/paam/ledger/v1/summary?account_code=expense-account"
+        ).json()["entry_count"] == 1
         assert client.get(
             "/paam/ledger/v1/entry/list?tag=category"
         ).status_code == 422

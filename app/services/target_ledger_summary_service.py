@@ -43,8 +43,18 @@ class TargetLedgerSummaryService:
             entry_activities[entry_key][direction] += value
             daily_entry_activities[day_key][direction] += value
 
-        totals = self._business_totals(entry_activities, currency_scales)
-        daily_totals = self._business_totals(daily_entry_activities, currency_scales, daily=True)
+        account_scoped = bool(query.account_code)
+        totals = self._business_totals(
+            entry_activities,
+            currency_scales,
+            account_scoped=account_scoped,
+        )
+        daily_totals = self._business_totals(
+            daily_entry_activities,
+            currency_scales,
+            daily=True,
+            account_scoped=account_scoped,
+        )
         return TargetLedgerSummaryRead(
             entry_count=entry_count,
             provisional_count=provisional_count,
@@ -70,7 +80,14 @@ class TargetLedgerSummaryService:
         )
 
     @classmethod
-    def _business_totals(cls, activities, currency_scales, *, daily=False):
+    def _business_totals(
+        cls,
+        activities,
+        currency_scales,
+        *,
+        daily=False,
+        account_scoped=False,
+    ):
         totals = defaultdict(lambda: {
             "income_value": 0,
             "expense_value": 0,
@@ -93,7 +110,11 @@ class TargetLedgerSummaryService:
             elif ledger_type == "REFUND":
                 expense = outgoing
                 refund = incoming
-            elif ledger_type in {"AA", "TRANSFER"} and nettable:
+            elif (
+                ledger_type in {"AA", "TRANSFER"}
+                and nettable
+                and not account_scoped
+            ):
                 income = max(incoming - outgoing, 0)
                 expense = max(outgoing - incoming, 0)
             totals[total_key]["income_value"] += income

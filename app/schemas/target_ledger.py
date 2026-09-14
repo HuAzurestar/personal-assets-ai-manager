@@ -12,6 +12,7 @@ from pydantic import BaseModel
 class TargetLedgerSummaryQuery:
     date_from: date | None = None
     date_to: date | None = None
+    account_code: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +26,7 @@ class TargetLedgerPageQuery:
     allocation_status: tuple[str, ...] = ()
     currency_code: tuple[str, ...] = ()
     q: str = ""
+    account_code: str = ""
     tag: tuple[tuple[str, str], ...] = ()
 
 

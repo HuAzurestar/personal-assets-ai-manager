@@ -26,6 +26,8 @@ def _entry(
     outgoing=0,
     in_currency="CNY",
     out_currency="CNY",
+    in_account="UNKNOWN",
+    out_account="UNKNOWN",
     allocation_status="COMPLETE",
 ):
     return LedgerEntry(
@@ -43,6 +45,8 @@ def _entry(
         out_amount_value=outgoing,
         out_amount_scale=2,
         out_currency_code=out_currency,
+        in_account_code=in_account,
+        out_account_code=out_account,
         input_hash=str(entry_id).zfill(64),
         projection_version=1,
     )
@@ -163,3 +167,54 @@ def test_target_summary_nets_each_aa_entry_before_accumulating(tmp_path):
         db.commit()
         total = TargetLedgerSummaryService(db).summary(TargetLedgerSummaryQuery()).totals[0]
         assert (total.income_value, total.expense_value, total.net_value) == (5000, 4000, 1000)
+
+
+def test_target_summary_filters_each_account_leg_without_cross_account_leakage(tmp_path):
+    _, sessions = _database(tmp_path, "account")
+    started = datetime(2026, 9, 14, 9)
+    with sessions() as db:
+        db.add_all([
+            _entry(
+                entry_id=1,
+                occurred=started,
+                ledger_type="INCOME",
+                incoming=1000,
+                in_account="wallet-a",
+            ),
+            _entry(
+                entry_id=2,
+                occurred=started,
+                ledger_type="EXPENSE",
+                outgoing=400,
+                out_account="wallet-a",
+            ),
+            _entry(
+                entry_id=3,
+                occurred=started,
+                ledger_type="TRANSFER",
+                incoming=900,
+                outgoing=900,
+                in_account="wallet-a",
+                out_account="wallet-b",
+            ),
+            _entry(
+                entry_id=4,
+                occurred=started,
+                ledger_type="EXPENSE",
+                outgoing=700,
+                out_account="wallet-b",
+            ),
+        ])
+        db.commit()
+
+        summary = TargetLedgerSummaryService(db).summary(TargetLedgerSummaryQuery(
+            account_code="wallet-a",
+        ))
+
+    assert summary.entry_count == 3
+    total = summary.totals[0]
+    # Moving money between the user's own accounts remains visible as activity,
+    # but must not become income merely because only one account leg is selected.
+    assert (total.income_value, total.expense_value, total.net_value) == (1000, 400, 600)
+    transfer = next(item for item in summary.activities if item.ledger_type == "TRANSFER")
+    assert (transfer.in_amount_value, transfer.out_amount_value) == (900, 0)
