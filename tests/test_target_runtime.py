@@ -77,10 +77,18 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
             assert home.status_code == 200
             assert "/static/target-ledger.js" in home.text
             assert "/static/ledger.js" not in home.text
+            assert client.get("/demo").status_code == 404
+            assert client.get("/static/layered-demo.js").status_code == 404
+            assert client.get("/static/layered-demo.css").status_code == 404
             script = client.get("/static/target-ledger.js")
             assert script.status_code == 200
             assert "/paam/ledger/v1/" in script.text
             assert "/paam/import/v1/preview/" in script.text
+            assert "/paam/review/v2" in script.text
+            assert "/paam/economy/v1" in script.text
+            assert client.get("/static/target/core.js").status_code == 200
+            assert client.get("/static/target/navigation.js").status_code == 200
+            assert client.get("/static/target/accounts.js").status_code == 200
             for legacy_path in (
                 "/api/transactions",
                 "/api/dashboard",
