@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import re
 import socket
 import sys
 import tempfile
@@ -76,10 +77,12 @@ def run() -> None:
                 errors: list[str] = []
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 page.goto(base_url)
-                expect(page.get_by_role("heading", name="经济概览")).to_be_visible()
+                expect(page.get_by_role("heading", name="明细")).to_be_visible()
+                expect(page.locator(".module-nav [data-module]")).to_have_count(3)
+                assert page.evaluate("location.hash").startswith("#details")
 
-                page.locator('nav [data-page="import"]').click()
-                expect(page.get_by_role("heading", name="数据导入")).to_be_visible()
+                page.locator('.topbar-actions [data-page="import"]').click()
+                expect(page.get_by_role("heading", name="导入账单")).to_be_visible()
                 expect(page.locator('[data-action="import-source"]')).to_have_count(6)
                 expect(page.get_by_role("heading", name="选择数据来源")).to_be_visible()
                 expect(page.get_by_role("heading", name="添加账单文件")).to_be_hidden()
@@ -133,7 +136,7 @@ def run() -> None:
                 drawer.locator("[data-close]").click()
                 expect(page.locator('[data-action="confirm-import"]')).to_be_enabled()
                 page.locator('[data-action="confirm-import"]').click()
-                expect(page.get_by_role("heading", name="导入历史")).to_be_visible()
+                expect(page.get_by_role("heading", name="导入记录")).to_be_visible()
                 expect(page.get_by_text("target-ui.csv")).to_be_visible()
                 expect(page.locator('[data-form="history-filter"]')).to_be_visible()
                 page.locator('[data-action="batch-rows"]').click()
@@ -162,7 +165,7 @@ def run() -> None:
                 )
                 search.click()
                 assert page.evaluate("location.hash") == history_hash
-                expect(page.get_by_role("heading", name="导入历史")).to_be_visible()
+                expect(page.get_by_role("heading", name="导入记录")).to_be_visible()
                 search.fill("not-present")
                 expect(page.get_by_text("没有匹配的导入记录")).to_be_visible()
                 assert page.evaluate("location.hash") == history_hash
@@ -178,104 +181,93 @@ def run() -> None:
                 expect(page.get_by_text("target-ui.csv")).to_be_visible()
                 assert page.evaluate("location.hash") == history_hash
 
-                page.locator('nav [data-page="economy"]').click()
-                expect(page.get_by_role("heading", name="经济流水", exact=True)).to_be_visible()
-                expect(page.get_by_text("事实交易").first).to_be_visible()
-                if not page.locator('[data-action="economic-detail"]').count():
-                    raise AssertionError(
-                        "economic page did not render active flows: "
-                        f"{page.locator('#page-content').inner_text()}; "
-                        f"browser errors: {errors}"
-                    )
+                page.locator('nav [data-page="summary"]').click()
+                expect(page.get_by_role("heading", name="本月概览")).to_be_visible()
+                expect(page.locator(".month-metrics")).to_be_visible()
+                expect(page.locator(".calendar-grid")).to_be_visible()
+                account_overview = page.locator(
+                    '[data-form="account-filter"] select[name="account_code"]'
+                )
+                expect(account_overview.locator("option")).to_have_count(1)
+                page.locator('[data-action="account-drilldown"]').click()
+                expect(page.get_by_role("heading", name="明细")).to_be_visible()
                 expect(page.locator('[data-action="economic-detail"]').first).to_be_visible()
-
-                page.locator('nav [data-page="economic-reviews"]').click()
-                expect(page.get_by_role("heading", name="经济审查", exact=True).first).to_be_visible()
-                page.locator('[data-action="new-economic-review"]').click()
-                economic_wizard = page.locator('dialog[open] [data-form="economic-review-create"]')
-                expect(economic_wizard).to_be_visible()
-                expect(economic_wizard.get_by_role("heading", name="1. 选择事实流水")).to_be_visible()
-                expect(economic_wizard.get_by_role("heading", name="2. 定义经济流水")).to_be_visible()
-                expect(economic_wizard.get_by_role("heading", name="3. 分配金额")).to_be_visible()
-                economic_wizard.locator('[data-close]').click()
-
-                page.locator('nav [data-page="tags"]').click()
-                expect(page.get_by_role("heading", name="标签管理")).to_be_visible()
-                assert page.locator(".tag-manager-head").evaluate(
-                    "node => getComputedStyle(node).display"
-                ) == "flex"
-                assert page.locator(".tag-view-list").evaluate(
-                    "node => getComputedStyle(node).display"
-                ) == "grid"
-
-                page.locator('nav [data-page="ledger"]').click()
-                expect(page.get_by_role("heading", name="兼容流水")).to_be_visible()
-                expect(page.get_by_text("浏览器测试商户").first).to_be_visible()
-                assert page.locator(".ledger-filter-main").evaluate(
-                    "node => getComputedStyle(node).display"
-                ) == "grid"
-                assert page.locator(".ledger-card-summary").first.evaluate(
-                    "node => getComputedStyle(node).display"
-                ) == "grid"
-                page.locator('[data-action="ledger-date-toggle"]').click()
-                page.locator('[data-action="ledger-date-day"][data-value="2026-09-12"]').click()
-                page.locator('[data-action="ledger-date-day"][data-value="2026-09-11"]').click()
-                expect(page.locator(".ledger-date-hint")).to_contain_text(
-                    "结束时间不能早于开始时间"
+                expect(page.locator('[data-module="details"]')).to_have_class(
+                    re.compile(r"active")
                 )
-                page.locator('[data-action="ledger-date-clear"]').click()
-                page.locator('[data-action="ledger-toggle"]').first.click()
-                expect(page.locator("[data-ledger-detail]:not([hidden])")).to_contain_text(
-                    "构成事实"
+                page.locator('[data-action="economic-detail"]').first.click()
+                expect(page.locator("dialog.detail-view-drawer[open]")).to_contain_text(
+                    "来源事实"
                 )
-                expect(page.locator("[data-ledger-detail]:not([hidden])")).to_contain_text(
+                page.locator("dialog[open] [data-close]").first.click()
+
+                page.locator('.detail-tabs [data-page="ledger-imports"]').click()
+                expect(page.locator('[data-action="batch-rows"]')).to_be_visible()
+                page.locator('[data-action="batch-rows"]').first.click()
+                expect(page.locator("dialog.batch-detail-drawer[open]")).to_be_visible()
+                expect(page.locator("dialog.batch-detail-drawer[open]")).to_contain_text(
                     "浏览器测试商户"
                 )
-                page.locator('[data-ledger-detail] [data-action="detail"]').click()
-                expect(page.locator("dialog[open]")).to_contain_text("原始证据")
-                expect(page.locator("dialog[open]")).to_contain_text("浏览器测试商户")
-                page.locator("dialog[open] [data-close]").click()
+                page.locator("dialog[open] [data-close]").first.click()
 
-                page.locator('[data-action="ledger-select"]').first.check()
-                expect(page.get_by_text("已选择 1 条流水")).to_be_visible()
-                page.locator('[data-action="review-selected"]').click()
-                wizard = page.locator('dialog[open] [data-form="review-wizard"]')
-                expect(wizard).to_be_visible()
-                expect(wizard.locator('[name="review_type"]')).to_have_value(
-                    "CLASSIFICATION"
+                tag_view_response = page.request.post(
+                    f"{base_url}/paam/tag/v1/view/create",
+                    data={"name": "验收分类", "system_name": "acceptance"},
                 )
-                expect(wizard.locator('[name^="role-"]')).to_have_count(1)
-                wizard.locator('button[type="submit"]').click()
-                review_dialog = page.locator("dialog[open]")
-                expect(review_dialog).to_contain_text("待确认")
-                review_dialog.locator('[data-action="edit-review"]').click()
-                edit_dialog = page.locator('dialog[open]').last
-                edit_form = edit_dialog.locator('[data-form="edit-review"]')
-                expect(edit_form).to_be_visible()
-                expect(edit_form.locator('textarea')).to_have_count(0)
-                expect(edit_form.locator('[name^="role-"]')).to_have_count(1)
-                edit_form.locator('[name="title"]').fill("浏览器验收普通支出")
-                edit_form.locator('button.primary').click()
-                expect(page.locator("dialog[open]")).to_have_count(0)
+                assert tag_view_response.ok, tag_view_response.text()
+                page.locator('.detail-tabs [data-page="ledger-tags"]').click()
+                expect(page.get_by_role("heading", name="明细")).to_be_visible()
+                expect(page.locator(".detail-data-table")).to_be_visible()
+                expect(page.locator('[data-action="tag-view-detail"]')).to_be_visible()
+                page.locator('[data-action="tag-view-detail"]').first.click()
+                expect(page.locator("dialog.detail-view-drawer[open]")).to_be_visible()
+                page.locator("dialog[open] [data-page='tags']").click()
+                expect(page.get_by_role("heading", name="分类标签")).to_be_visible()
+                expect(page.locator(".tag-manager-head")).to_be_visible()
 
-                page.locator('nav [data-page="reviews"]').click()
-                review_row = page.locator("tr", has_text="浏览器验收普通支出")
-                expect(review_row).to_be_visible()
-                review_row.locator('[data-action="review-detail"]').click()
-                review_dialog = page.locator("dialog[open]")
-                expect(
-                    review_dialog.locator(
-                        '[data-action="review-transition"][data-kind="confirm"]'
-                    )
-                ).to_be_visible()
-                review_dialog.locator(
-                    '[data-action="review-transition"][data-kind="confirm"]'
-                ).click()
-                expect(page.locator("dialog[open]")).to_have_count(0)
+                page.locator('nav [data-page="ledger"]').click()
+                expect(page.get_by_role("heading", name="明细")).to_be_visible()
+                expect(page.get_by_text("浏览器测试商户").first).to_be_visible()
+                expect(page.locator('[data-form="fact-filter"]')).to_be_visible()
+                page.locator('[data-action="fact-detail"]').first.click()
+                expect(page.locator("dialog.detail-view-drawer[open]")).to_contain_text(
+                    "规范事实"
+                )
+                page.locator("dialog[open] [data-close]").first.click()
 
-                expect(page.get_by_role("heading", name="其他审查")).to_be_visible()
-                expect(page.get_by_text("确认普通收支").first).to_be_visible()
-                expect(page.get_by_role("heading", name="待处理流水")).to_be_visible()
+                page.locator('.detail-tabs [data-page="ledger-reviews"]').click()
+                page.locator('[data-action="new-economic-review"]').first.click()
+                wizard = page.locator('dialog[open] [data-form="economic-review-create"]')
+                expect(wizard).to_be_visible()
+                expect(wizard.get_by_role("heading", name="1. 选择事实流水")).to_be_visible()
+                expect(wizard.get_by_role("heading", name="2. 定义经济流水")).to_be_visible()
+                expect(wizard.get_by_role("heading", name="3. 分配金额")).to_be_visible()
+                wizard.locator('[data-close]').click()
+
+                page.goto(f"{base_url}/#summary")
+                expect(page.get_by_role("heading", name="本月概览")).to_be_visible()
+                assert page.evaluate("location.hash").startswith("#accounts")
+
+                for width, height in (
+                    (390, 844),
+                    (768, 900),
+                    (1440, 900),
+                    (1920, 600),
+                    (3440, 1440),
+                ):
+                    page.set_viewport_size({"width": width, "height": height})
+                    for route_name, heading in (
+                        ("details", "明细"),
+                        ("accounts", "本月概览"),
+                        ("workbench?task=reviews", "工作台"),
+                    ):
+                        page.goto(f"{base_url}/#{route_name}")
+                        expect(page.get_by_role("heading", name=heading)).to_be_visible()
+                        overflow = page.evaluate(
+                            "document.documentElement.scrollWidth - document.documentElement.clientWidth"
+                        )
+                        assert overflow <= 1, (width, height, route_name, overflow)
+                    expect(page.locator(".module-nav")).to_be_visible()
                 if errors:
                     raise AssertionError(f"browser errors: {errors}")
                 browser.close()
@@ -289,7 +281,7 @@ def run() -> None:
                 assert actual == set(TARGET_TABLE_NAMES), actual
             finally:
                 engine.dispose()
-            print("PASS target UI import, economic flow/review, legacy detail, and 11-table isolation")
+            print("PASS target UI fact, review, economic flow, and 11-table isolation")
         finally:
             server.should_exit = True
             thread.join(timeout=10)

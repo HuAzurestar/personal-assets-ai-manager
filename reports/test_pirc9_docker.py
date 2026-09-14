@@ -41,7 +41,7 @@ def page(client, request):
         page = browser.new_page(viewport={'width': 1440, 'height': 1000}, locale='zh-CN')
         page.set_default_timeout(5000)
         page.goto(URL)
-        expect(page.locator('[data-form="summary-filter"]')).to_be_visible()
+        expect(page.locator('[data-form="ledger-filter"]')).to_be_visible()
         yield page
         directory = Path(__file__).parent / 'docker-evidence'
         directory.mkdir(exist_ok=True)
@@ -90,21 +90,23 @@ def ledger(client, name):
 
 def open_detail(page, name):
     page.goto(f'{URL}/#ledger?q={name}&date_from=2026-08-01&date_to=2026-09-30')
-    page.locator('[data-action="ledger-toggle"]').first.click()
-    page.locator('[data-ledger-detail]:not([hidden]) [data-action="detail"]').click()
+    page.locator('.ledger-table-primary[data-action="detail"]').first.click()
 
 
 def open_review(page, case):
-    page.goto(f'{URL}/#reviews')
+    page.goto(f'{URL}/#workbench?task=reviews&view=queue')
     page.locator(f'[data-action="review-detail"][data-id="{case["id"]}"]').click()
 
 
 def open_review_wizard(page, name, review_type='AA'):
     page.goto(f'{URL}/#ledger?q={name}&date_from=2026-08-01&date_to=2026-09-30')
     page.locator('[data-action="ledger-select"]').first.check()
-    page.locator('[data-action="review-selected"]').click()
+    page.locator('.review-selection-bar [data-action="review-selected"]').click()
     wizard = page.locator('[data-form="review-wizard"]')
+    wizard.locator('[data-review-next]').click()
     wizard.locator('[name="review_type"]').select_option(review_type)
+    wizard.locator('[data-review-next]').click()
+    wizard.locator('[data-review-next]').click()
     return wizard
 
 
@@ -192,13 +194,13 @@ def test_ui_import_tag_account_review_and_duplicate_import(client, page):
     before_totals = body(client.get('/paam/ledger/v1/summary?date_from=2026-08-04&date_to=2026-08-04'))['totals']
     before_expense = sum(item['expense_value'] for item in before_totals if item['currency_code'] == 'CNY')
     name, content = statement([('OUT', 1234)], '2026-08-04')
-    page.locator('nav [data-page="import"]').click()
+    page.locator('[data-page="import"]').first.click()
     page.locator('[data-action="import-step"][data-step="2"]').first.click()
     page.locator('input[name="files"]').set_input_files({'name': f'{name}.csv', 'mimeType': 'text/csv', 'buffer': content})
     page.locator('[data-action="preview-import"]').click()
     expect(page.locator('[data-action="confirm-import"]')).to_be_enabled()
     page.locator('[data-action="confirm-import"]').click()
-    expect(page.get_by_role('heading', name='导入历史')).to_be_visible()
+    expect(page.locator('[data-form="history-filter"]')).to_be_visible()
     expect(page.get_by_text(f'{name}.csv', exact=True)).to_be_visible()
     entry = ledger(client, name)[0]
     detail = body(client.get(f'/paam/ledger/v1/entry/detail/{entry["id"]}'))
@@ -249,7 +251,7 @@ def test_ui_import_tag_account_review_and_duplicate_import(client, page):
         expect(page.locator('dialog')).to_have_count(0)
         assert ledger(client, name)[0]['out_account_code'] == account
     wizard = open_review_wizard(page, name)
-    wizard.locator('button.primary').click()
+    wizard.locator('[data-review-submit]').click()
     case = next(c for c in body(client.get('/paam/review/v1/case/list?limit=200'))
                 if c['review_type'] == 'AA' and c['lines'][0]['bill_id'] == fid)
     for index, (action, expected_type) in enumerate([('confirm', 'AA'), ('revoke', 'EXPENSE'), ('restore', 'AA')]):
@@ -267,20 +269,20 @@ def test_ui_import_tag_account_review_and_duplicate_import(client, page):
     totals = body(client.get('/paam/ledger/v1/summary?date_from=2026-08-04&date_to=2026-08-04'))['totals']
     assert sum(item['expense_value'] for item in totals if item['currency_code'] == 'CNY') == before_expense + 1234
     page.goto(f'{URL}/#ledger?q={name}&date_from=2026-08-01&date_to=2026-09-30')
-    expect(page.locator('[data-action="ledger-toggle"]')).to_have_count(1)
+    expect(page.locator('.ledger-table-primary[data-action="detail"]')).to_have_count(1)
 
 
 def test_ledger_filter_and_pagination(client, page):
     name, _ = imported(client, [('OUT', 100 + i) for i in range(30)], '2026-08-05')
     page.goto(f'{URL}/#ledger?q={name}&date_from=2026-08-01&date_to=2026-09-30')
-    expect(page.locator('[data-action="ledger-toggle"]')).to_have_count(25)
+    expect(page.locator('.ledger-table-primary[data-action="detail"]')).to_have_count(25)
     page.locator('[data-action="page"][aria-label="下一页"]').click()
-    expect(page.locator('[data-action="ledger-toggle"]')).to_have_count(5)
+    expect(page.locator('.ledger-table-primary[data-action="detail"]')).to_have_count(5)
     page.locator('[data-action="page"][aria-label="上一页"]').click()
-    expect(page.locator('[data-action="ledger-toggle"]')).to_have_count(25)
+    expect(page.locator('.ledger-table-primary[data-action="detail"]')).to_have_count(25)
     page.locator('[data-form="ledger-filter"] [name="q"]').fill(f'{name}-absent')
     page.locator('[data-form="ledger-filter"]').evaluate('(form) => form.requestSubmit()')
-    expect(page.locator('[data-action="ledger-toggle"]')).to_have_count(0)
+    expect(page.locator('.ledger-table-primary[data-action="detail"]')).to_have_count(0)
     result = body(client.get('/paam/ledger/v1/entry/list', params={'q': name, 'page_size': 100}))
     assert result['total'] == 30
 
@@ -329,7 +331,8 @@ def test_old_pending_case_remains_accessible_after_200_new_cases(client, page):
     oldest = create(client, 'AA', ids, ['AA_PAID'])
     for _ in range(200):
         create(client, 'AA', ids, ['AA_PAID'])
-    page.locator('nav [data-page="reviews"]').click()
+    page.locator('[data-module="workbench"]').click()
+    page.locator('[data-action="review-queue"]').click()
     page.locator('[data-form="review-filter"] [name="status"]').select_option('PENDING')
     page.locator('[data-form="review-filter"]').evaluate('(form) => form.requestSubmit()')
     target = page.locator(f'[data-action="review-detail"][data-id="{oldest["id"]}"]')
@@ -348,7 +351,7 @@ def test_dialog_error_is_visible_above_modal_backdrop(client, page):
     wizard = open_review_wizard(page, name)
     wizard.evaluate('(form) => form.closest("dialog").reviewFacts[0].id = 0')
     with page.expect_response('**/paam/review/v1/case/create') as response:
-        wizard.locator('button.primary').click()
+        wizard.locator('[data-review-submit]').click()
     assert response.value.status == 422
     expect(page.locator('.toast.error')).to_have_count(1)
     unobscured = page.locator('.toast.error').evaluate('''node => {

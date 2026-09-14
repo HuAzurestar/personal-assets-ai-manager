@@ -60,7 +60,7 @@ def page(live):
         page = context.new_page()
         page.set_default_timeout(3000)
         page.goto(live[2])
-        expect(page.locator('[data-form="summary-filter"]')).to_be_visible()
+        expect(page.locator('[data-form="fact-filter"]')).to_be_visible()
         yield page
         context.close()
         browser.close()
@@ -107,12 +107,14 @@ def entries(live):
 
 
 def test_navigation_ignores_late_previous_page_response(page):
+    page.locator('[data-module="accounts"]').click()
+    expect(page.locator('.account-dashboard')).to_be_visible()
     held = []
     page.route('**/paam/ledger/v1/entry/list?*', lambda route: held.append(route))
-    page.locator('nav [data-page="ledger"]').click()
+    page.evaluate("location.hash = '#workbench?task=legacy-ledger'")
     page.wait_for_timeout(150)
     assert held
-    page.locator('nav [data-page="tags"]').click()
+    page.evaluate("location.hash = '#workbench?task=tags'")
     expect(page.locator('[data-action="new-view"]')).to_be_visible()
     held[0].continue_()
     page.wait_for_timeout(300)
@@ -123,7 +125,8 @@ def test_revoked_review_has_edit_action(live, page):
     ids = facts(live, [('OUT', 1000)])
     case = create(live, 'AA', ids, ['AA_PAID'])
     case = transition(live, transition(live, case, 'confirm'), 'revoke')
-    page.locator('nav [data-page="reviews"]').click()
+    page.locator('[data-module="workbench"]').click()
+    page.locator('[data-action="review-queue"]').click()
     page.locator(f'[data-action="review-detail"][data-id="{case["id"]}"]').click()
     expect(page.locator('dialog [data-action="edit-review"]')).to_be_visible()
 
@@ -131,14 +134,16 @@ def test_revoked_review_has_edit_action(live, page):
 def test_nested_review_transition_refreshes_parent_detail(live, page):
     ids = facts(live, [('OUT', 1000)])
     case = transition(live, create(live, 'AA', ids, ['AA_PAID']), 'confirm')
-    page.locator('nav [data-page="ledger"]').click()
-    page.locator('[data-action="detail"]').click()
-    page.locator('[data-action="review-detail"]').click()
+    page.reload()
+    page.evaluate("location.hash = '#workbench?task=legacy-ledger'")
+    expect(page.locator('[data-form="ledger-filter"]')).to_be_visible()
+    page.locator('[data-action="detail"]').first.click()
+    page.locator('dialog.detail-view-drawer [data-action="review-detail"]').click()
     page.locator('[data-action="review-transition"][data-kind="revoke"]').click()
     expect(page.locator('dialog')).to_have_count(0)
     current = entries(live)[0]['projection_version']
     page.locator('[data-action="detail"]').first.click()
-    shown = int(page.locator('[data-action="edit-tags"]').get_attribute('data-version'))
+    shown = int(page.locator('dialog [data-action="edit-tags"]').get_attribute('data-version'))
     assert shown == current, f'Reopened detail retains version {shown}; actual version is {current}'
 
 
@@ -149,14 +154,16 @@ def test_account_editor_prefills_effective_account(live, page):
         'account_code': 'corrected-wallet', 'expected_projection_version': entry['projection_version'],
         'idempotency_key': uuid4().hex}))
     assert entries(live)[0]['out_account_code'] == 'corrected-wallet'
-    page.locator('nav [data-page="ledger"]').click()
-    page.locator('[data-action="detail"]').click()
-    page.locator('[data-action="account"]').click()
+    page.reload()
+    page.evaluate("location.hash = '#workbench?task=legacy-ledger'")
+    expect(page.locator('[data-form="ledger-filter"]')).to_be_visible()
+    page.locator('[data-action="detail"]').first.click()
+    page.locator('dialog.detail-view-drawer [data-action="account"]').click()
     assert page.locator('[name="account_code"]').input_value() == 'corrected-wallet'
 
 
 def test_import_preview_survives_navigation(page):
-    page.locator('nav [data-page="import"]').click()
+    page.locator('[data-page="import"]').first.click()
     page.locator('[data-action="import-step"][data-step="2"]').first.click()
     page.locator('input[name="files"]').set_input_files({
         'name': 'probe.csv', 'mimeType': 'text/csv', 'buffer': (
@@ -175,11 +182,16 @@ def test_import_preview_survives_navigation(page):
 
 def test_double_submit_creates_one_review(live, page):
     ids = facts(live, [('OUT', 1000)])
-    page.locator('nav [data-page="ledger"]').click()
+    page.reload()
+    page.evaluate("location.hash = '#workbench?task=legacy-ledger'")
+    expect(page.locator('[data-form="ledger-filter"]')).to_be_visible()
     page.locator('[data-action="ledger-select"]').check()
-    page.locator('[data-action="review-selected"]').click()
+    page.locator('.review-selection-bar [data-action="review-selected"]').click()
     wizard = page.locator('[data-form="review-wizard"]')
+    wizard.locator('[data-review-next]').click()
     wizard.locator('[name="review_type"]').select_option('AA')
+    wizard.locator('[data-review-next]').click()
+    wizard.locator('[data-review-next]').click()
     wizard.evaluate('(form) => {form.requestSubmit(); form.requestSubmit();}')
     page.wait_for_timeout(500)
     cases = body(live[0].get('/paam/review/v1/case/list'))
@@ -226,7 +238,8 @@ def test_older_pending_review_is_reachable(live, page):
         pending_id = pending.id
         db.add_all([ReviewCase(review_type='TAG', status='CONFIRMED', title=f'New tag review {i}') for i in range(200)])
         db.commit()
-    page.locator('nav [data-page="reviews"]').click()
+    page.locator('[data-module="workbench"]').click()
+    page.locator('[data-action="review-queue"]').click()
     page.locator('[data-form="review-filter"] [name="status"]').select_option('PENDING')
     page.locator('[data-form="review-filter"]').evaluate('(form) => form.requestSubmit()')
     expect(page.locator('[data-action="review-detail"]')).to_have_count(1)
@@ -235,19 +248,27 @@ def test_older_pending_review_is_reachable(live, page):
 
 def test_financial_review_ui_lifecycle_updates_ledger(live, page):
     ids = facts(live, [('OUT', 1000)])
-    page.locator('nav [data-page="ledger"]').click()
+    page.reload()
+    page.evaluate("location.hash = '#workbench?task=legacy-ledger'")
+    expect(page.locator('[data-form="ledger-filter"]')).to_be_visible()
     page.locator('[data-action="ledger-select"]').check()
-    page.locator('[data-action="review-selected"]').click()
+    page.locator('.review-selection-bar [data-action="review-selected"]').click()
     wizard = page.locator('[data-form="review-wizard"]')
+    wizard.locator('[data-review-next]').click()
     wizard.locator('[name="review_type"]').select_option('AA')
-    wizard.locator('button.primary').click()
+    wizard.locator('[data-review-next]').click()
+    wizard.locator('[data-review-next]').click()
+    wizard.locator('[data-review-submit]').click()
     expect(page.locator('[data-action="review-transition"][data-kind="confirm"]')).to_be_visible()
     assert entries(live)[0]['ledger_type'] == 'EXPENSE'
     for index, (action, expected_type) in enumerate([('confirm', 'AA'), ('revoke', 'EXPENSE'), ('restore', 'AA')]):
         if index:
+            page.locator('[data-module="workbench"]').click()
+            if page.locator('[data-action="review-queue"]').count():
+                page.locator('[data-action="review-queue"]').click()
+            expect(page.locator('[data-action="review-detail"]')).to_have_count(1)
             page.locator('[data-action="review-detail"]').click()
         page.locator(f'[data-action="review-transition"][data-kind="{action}"]').click()
         expect(page.locator('dialog')).to_have_count(0)
-        expect(page.locator('[data-action="review-detail"]')).to_have_count(1)
         assert entries(live)[0]['ledger_type'] == expected_type
         assert body(live[0].get('/paam/ledger/v1/summary'))['totals'][0]['expense_value'] == 1000
