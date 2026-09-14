@@ -8,6 +8,11 @@ from sqlalchemy.orm import Session
 from app.api.target_deps import get_target_db
 from app.schemas.target_review import (
     TargetAccountSetRequest,
+    TargetEconomicReviewCreateRequest,
+    TargetEconomicReviewPageResponse,
+    TargetEconomicReviewResponse,
+    TargetEconomicReviewUpdateRequest,
+    TargetFactAllocationCandidateResponse,
     TargetFactConflictResolveRequest,
     TargetReviewCaseListResponse,
     TargetReviewCasePageResponse,
@@ -18,10 +23,12 @@ from app.schemas.target_review import (
 )
 from app.services.target_account_service import TargetAccountService
 from app.services.target_fact_conflict_service import TargetFactConflictService
+from app.services.target_economic_service import TargetEconomicError, TargetEconomicService
 from app.services.target_review_service import TargetReviewError, TargetReviewService
 
 
 router = APIRouter(prefix="/paam/review/v1", tags=["target-review"])
+v2_router = APIRouter(prefix="/paam/review/v2", tags=["economic-review"])
 
 
 def _run(operation: Callable[[], object]):
@@ -29,6 +36,96 @@ def _run(operation: Callable[[], object]):
         return operation()
     except TargetReviewError as error:
         raise HTTPException(status_code=error.status_code, detail=str(error)) from error
+
+
+def _run_v2(operation: Callable[[], object]):
+    try:
+        return operation()
+    except TargetEconomicError as error:
+        raise HTTPException(status_code=error.status_code, detail=str(error)) from error
+
+
+@v2_router.post("/case/create", response_model=TargetEconomicReviewResponse)
+def create_economic_case(
+    payload: TargetEconomicReviewCreateRequest,
+    db: Session = Depends(get_target_db),
+):
+    return TargetEconomicReviewResponse(body=_run_v2(
+        lambda: TargetEconomicService(db).create(payload)
+    ))
+
+
+@v2_router.post("/case/confirm/{case_id}", response_model=TargetEconomicReviewResponse)
+def confirm_economic_case(
+    case_id: int,
+    payload: TargetReviewTransitionRequest,
+    db: Session = Depends(get_target_db),
+):
+    return TargetEconomicReviewResponse(body=_run_v2(
+        lambda: TargetEconomicService(db).confirm(case_id, payload)
+    ))
+
+
+@v2_router.put("/case/update/{case_id}", response_model=TargetEconomicReviewResponse)
+def update_economic_case(
+    case_id: int,
+    payload: TargetEconomicReviewUpdateRequest,
+    db: Session = Depends(get_target_db),
+):
+    return TargetEconomicReviewResponse(body=_run_v2(
+        lambda: TargetEconomicService(db).update(case_id, payload)
+    ))
+
+
+@v2_router.post("/case/revoke/{case_id}", response_model=TargetEconomicReviewResponse)
+def revoke_economic_case(
+    case_id: int,
+    payload: TargetReviewTransitionRequest,
+    db: Session = Depends(get_target_db),
+):
+    return TargetEconomicReviewResponse(body=_run_v2(
+        lambda: TargetEconomicService(db).revoke(case_id, payload)
+    ))
+
+
+@v2_router.post("/case/restore/{case_id}", response_model=TargetEconomicReviewResponse)
+def restore_economic_case(
+    case_id: int,
+    payload: TargetReviewTransitionRequest,
+    db: Session = Depends(get_target_db),
+):
+    return TargetEconomicReviewResponse(body=_run_v2(
+        lambda: TargetEconomicService(db).confirm(case_id, payload, restore=True)
+    ))
+
+
+@v2_router.get("/case/detail/{case_id}", response_model=TargetEconomicReviewResponse)
+def economic_case_detail(case_id: int, db: Session = Depends(get_target_db)):
+    return TargetEconomicReviewResponse(body=_run_v2(
+        lambda: TargetEconomicService(db).detail(case_id)
+    ))
+
+
+@v2_router.get("/case/page", response_model=TargetEconomicReviewPageResponse)
+def economic_case_page(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+    status: str = Query(default="", pattern="^(|PENDING|CONFIRMED|REVOKED)$"),
+    db: Session = Depends(get_target_db),
+):
+    return TargetEconomicReviewPageResponse(body=_run_v2(
+        lambda: TargetEconomicService(db).page(page, page_size, status)
+    ))
+
+
+@v2_router.get("/fact/candidates", response_model=TargetFactAllocationCandidateResponse)
+def economic_fact_candidates(
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_target_db),
+):
+    return TargetFactAllocationCandidateResponse(body=_run_v2(
+        lambda: TargetEconomicService(db).fact_candidates(limit)
+    ))
 
 
 @router.post("/case/create", response_model=TargetReviewCaseResponse)

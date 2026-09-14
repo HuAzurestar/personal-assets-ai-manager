@@ -16,6 +16,14 @@ class TargetTagProjectionService:
     def sync(self, fact_ledgers: dict[int, int]) -> None:
         if not fact_ledgers:
             return
+        by_ledger: dict[int, list[int]] = defaultdict(list)
+        for fact_id, ledger_id in fact_ledgers.items():
+            by_ledger[ledger_id].append(fact_id)
+        self.sync_economics(by_ledger)
+
+    def sync_economics(self, economic_facts: dict[int, list[int]]) -> None:
+        if not economic_facts:
+            return
         dictionary = self.mapper.active_dictionary()
         defaults: dict[str, str] = {}
         tag_ids: dict[tuple[str, str], int] = {}
@@ -31,13 +39,13 @@ class TargetTagProjectionService:
                 f"active tag views have no active unclassified value: {missing_defaults}"
             )
 
-        reviewed = self.mapper.confirmed_states(list(fact_ledgers))
-        by_ledger: dict[int, list[int]] = defaultdict(list)
-        for fact_id, ledger_id in fact_ledgers.items():
-            by_ledger[ledger_id].append(fact_id)
+        fact_ids = sorted({
+            fact_id for values in economic_facts.values() for fact_id in values
+        })
+        reviewed = self.mapper.confirmed_states(fact_ids)
 
         resolved: dict[int, tuple[int, ...]] = {}
-        for ledger_id, fact_ids in by_ledger.items():
+        for ledger_id, fact_ids in economic_facts.items():
             selected_ids = []
             for view_name in sorted(views):
                 values = set()

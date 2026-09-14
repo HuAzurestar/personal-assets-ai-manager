@@ -64,6 +64,8 @@ TARGET_SQLITE_INDEXES = (
     "ON review_case_bill (bill_id, case_id)",
     "CREATE INDEX IF NOT EXISTS ix_review_case_bill_case_id "
     "ON review_case_bill (case_id, id)",
+    "CREATE INDEX IF NOT EXISTS ix_review_case_bill_economic_id "
+    "ON review_case_bill (economic_id, id)",
     "CREATE INDEX IF NOT EXISTS ix_ledger_entry_source_ledger_kind_id "
     "ON ledger_entry_source (ledger_id, source_kind, source_id)",
 )
@@ -81,13 +83,28 @@ def ensure_target_schema(bind=None) -> None:
     if target_bind.dialect.name != "sqlite":
         return
     additions = {
-        "review_case_bill": {"party": "VARCHAR(120) NOT NULL DEFAULT ''"},
+        "review_case": {
+            "behavior_code": "VARCHAR(40) NOT NULL DEFAULT 'UNKNOWN'",
+        },
+        "review_case_bill": {
+            "party": "VARCHAR(120) NOT NULL DEFAULT ''",
+            "economic_id": "INTEGER NOT NULL DEFAULT 0",
+        },
         "bill_fact": {
             "account_code": "VARCHAR(120) NOT NULL DEFAULT 'UNKNOWN'",
         },
         "ledger_entry": {
             "in_account_code": "VARCHAR(120) NOT NULL DEFAULT 'UNKNOWN'",
             "out_account_code": "VARCHAR(120) NOT NULL DEFAULT 'UNKNOWN'",
+            "economic_type": "VARCHAR(40) NOT NULL DEFAULT 'TRANSACTION'",
+            "cash_direction": "VARCHAR(8) NOT NULL DEFAULT 'UNKNOWN'",
+            "amount_value": "BIGINT NOT NULL DEFAULT 0",
+            "amount_scale": "SMALLINT NOT NULL DEFAULT 2",
+            "currency_code": "VARCHAR(12) NOT NULL DEFAULT 'CNY'",
+            "claim_key": "VARCHAR(160) NOT NULL DEFAULT ''",
+            "claim_side": "VARCHAR(20) NOT NULL DEFAULT 'UNKNOWN'",
+            "reversal_of_id": "INTEGER NOT NULL DEFAULT 0",
+            "status": "VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'",
         },
     }
     with target_bind.begin() as connection:

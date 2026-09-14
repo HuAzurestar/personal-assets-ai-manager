@@ -315,6 +315,7 @@ class TargetIntakeMapper:
             })
             case = ReviewCase(
                 review_type="FACT_CONFLICT",
+                behavior_code="FACT_CONFLICT",
                 status="PENDING",
                 allocation_status="CONFLICT",
                 version=1,

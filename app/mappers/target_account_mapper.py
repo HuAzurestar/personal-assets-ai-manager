@@ -87,6 +87,7 @@ class TargetAccountMapper:
     ) -> int:
         case = ReviewCase(
             review_type="ACCOUNT",
+            behavior_code="ACCOUNT",
             status="CONFIRMED",
             allocation_status="COMPLETE",
             version=1,

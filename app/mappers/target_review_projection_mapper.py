@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
-from app.models.target import LedgerEntry, LedgerEntrySource, LedgerEntryTag
+from app.models.target import LedgerEntry, LedgerEntrySource, LedgerEntryTag, ReviewCaseBill
 from app.schemas.target_projection import FinancialProjectionWriteVO
 
 
@@ -90,11 +90,21 @@ class TargetReviewProjectionMapper:
             updated_time=value.updated_time,
         ))
         obsolete = ledger_ids[1:]
-        if obsolete:
+        allocated = set(self.db.scalars(select(
+            ReviewCaseBill.economic_id,
+        ).where(
+            ReviewCaseBill.economic_id.in_(obsolete),
+        ).distinct()).all())
+        if allocated:
+            self.db.execute(update(LedgerEntry).where(
+                LedgerEntry.id.in_(allocated),
+            ).values(allocation_status="V2_ONLY"))
+        removable = [ledger_id for ledger_id in obsolete if ledger_id not in allocated]
+        if removable:
             self.db.execute(delete(LedgerEntryTag).where(
-                LedgerEntryTag.ledger_id.in_(obsolete)
+                LedgerEntryTag.ledger_id.in_(removable)
             ))
-            self.db.execute(delete(LedgerEntry).where(LedgerEntry.id.in_(obsolete)))
+            self.db.execute(delete(LedgerEntry).where(LedgerEntry.id.in_(removable)))
         return chosen_id
 
     def detach(self, case_id: int) -> None:

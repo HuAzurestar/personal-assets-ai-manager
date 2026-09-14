@@ -50,6 +50,25 @@ def test_target_schema_upgrade_adds_columns_and_hot_indexes(tmp_path):
     assert "party" in {
         item["name"] for item in schema.get_columns("review_case_bill")
     }
+    assert "economic_id" in {
+        item["name"] for item in schema.get_columns("review_case_bill")
+    }
+    assert "behavior_code" in {
+        item["name"] for item in schema.get_columns("review_case")
+    }
+    assert {
+        "economic_type",
+        "cash_direction",
+        "amount_value",
+        "amount_scale",
+        "currency_code",
+        "claim_key",
+        "claim_side",
+        "reversal_of_id",
+        "status",
+    }.issubset({
+        item["name"] for item in schema.get_columns("ledger_entry")
+    })
     expected = {
         "bill_raw": {
             "ix_bill_raw_bill_id_id",
@@ -59,6 +78,7 @@ def test_target_schema_upgrade_adds_columns_and_hot_indexes(tmp_path):
         "review_case_bill": {
             "ix_review_case_bill_bill_case",
             "ix_review_case_bill_case_id",
+            "ix_review_case_bill_economic_id",
         },
         "ledger_entry_source": {
             "ix_ledger_entry_source_ledger_kind_id",

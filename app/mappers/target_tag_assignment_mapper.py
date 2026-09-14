@@ -140,6 +140,7 @@ class TargetTagAssignmentMapper:
     ) -> dict[int, int]:
         cases = [ReviewCase(
             review_type="TAG",
+            behavior_code="TAG",
             status="CONFIRMED",
             allocation_status="COMPLETE",
             version=1,

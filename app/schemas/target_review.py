@@ -189,3 +189,134 @@ class TargetReviewCasePageResponse(BaseModel):
     status: Literal["success"] = "success"
     message: str = "ok"
     body: TargetReviewCasePageRead
+
+
+# V2 flow-review contract.  Scenario names live on Review; Economic has only
+# the three agreed accounting natures.  Direction, currency and amount are
+# derived from the referenced facts and allocation rows by the service.
+class TargetEconomicDefinitionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    client_key: str = Field(min_length=1, max_length=80)
+    economic_type: Literal["TRANSACTION", "ACCOUNT_TRANSFER", "CLAIM"]
+    title: str = Field(default="", max_length=200)
+    claim_key: str = Field(default="", max_length=160)
+    claim_side: Literal["UNKNOWN", "RECEIVABLE", "PAYABLE"] = "UNKNOWN"
+    reversal_of_id: int = Field(default=0, ge=0)
+
+
+class TargetFlowAllocationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    fact_id: int = Field(ge=1)
+    economic_key: str = Field(min_length=1, max_length=80)
+    amount_value: int = Field(ge=1)
+    role: str = Field(default="ALLOCATED", min_length=1, max_length=40)
+
+
+class TargetEconomicReviewCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    behavior_code: str = Field(min_length=1, max_length=40)
+    title: str = Field(default="", max_length=160)
+    result: dict[str, Any] = Field(default_factory=dict)
+    economics: list[TargetEconomicDefinitionRequest] = Field(min_length=1, max_length=200)
+    allocations: list[TargetFlowAllocationRequest] = Field(min_length=1, max_length=500)
+    actor: str = Field(default="local-user", min_length=1, max_length=120)
+    reason: str = Field(default="", max_length=2000)
+    idempotency_key: str = Field(min_length=1, max_length=120)
+
+
+class TargetEconomicReviewUpdateRequest(TargetEconomicReviewCreateRequest):
+    expected_version: int = Field(ge=1)
+
+
+class TargetEconomicFlowRead(BaseModel):
+    id: int
+    economic_type: str
+    cash_direction: str
+    amount_value: int
+    amount_scale: int
+    currency_code: str
+    title: str
+    start_time: datetime
+    end_time: datetime
+    claim_key: str
+    claim_side: str
+    reversal_of_id: int
+    status: str
+    projection_version: int
+
+
+class TargetFlowAllocationRead(BaseModel):
+    id: int
+    fact_id: int
+    economic_id: int
+    amount_value: int
+    amount_scale: int
+    currency_code: str
+    role: str
+
+
+class TargetEconomicReviewRead(BaseModel):
+    id: int
+    behavior_code: str
+    status: str
+    version: int
+    title: str
+    result: dict[str, Any]
+    economics: list[TargetEconomicFlowRead]
+    allocations: list[TargetFlowAllocationRead]
+    history: list[TargetReviewHistoryRead]
+    created_time: datetime
+    updated_time: datetime
+
+
+class TargetEconomicReviewResponse(BaseModel):
+    status: Literal["success"] = "success"
+    message: str = "ok"
+    body: TargetEconomicReviewRead
+
+
+class TargetEconomicReviewListItem(BaseModel):
+    id: int
+    behavior_code: str
+    status: str
+    version: int
+    title: str
+    economic_count: int
+    allocation_count: int
+    created_time: datetime
+    updated_time: datetime
+
+
+class TargetEconomicReviewPageRead(BaseModel):
+    items: list[TargetEconomicReviewListItem]
+    total: int
+    page: int
+    page_size: int
+
+
+class TargetEconomicReviewPageResponse(BaseModel):
+    status: Literal["success"] = "success"
+    message: str = "ok"
+    body: TargetEconomicReviewPageRead
+
+
+class TargetFactAllocationCandidateRead(BaseModel):
+    id: int
+    occurred_time: datetime
+    cash_direction: str
+    amount_value: int
+    amount_scale: int
+    currency_code: str
+    account_code: str
+    counterparty: str
+    summary: str
+    available_value: int
+
+
+class TargetFactAllocationCandidateResponse(BaseModel):
+    status: Literal["success"] = "success"
+    message: str = "ok"
+    body: list[TargetFactAllocationCandidateRead]

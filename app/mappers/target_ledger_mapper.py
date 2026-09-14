@@ -101,7 +101,10 @@ class TargetLedgerMapper:
             LedgerEntry.in_account_code,
             LedgerEntry.out_account_code,
             LedgerEntry.projection_version,
-        ).where(LedgerEntry.id == ledger_id)).mappings().one_or_none()
+        ).where(
+            LedgerEntry.id == ledger_id,
+            LedgerEntry.status == "ACTIVE",
+        )).mappings().one_or_none()
         if row is None:
             return None
         entry = self._entry_vo(row, self._tags([ledger_id]).get(ledger_id, ()))
@@ -118,8 +121,11 @@ class TargetLedgerMapper:
         facts = self._facts(fact_ids)
         raws = self._raw_evidence(fact_ids)
         import_files = self._import_files([item.import_file_id for item in raws])
-        related_case_ids = set(self.db.scalars(select(ReviewCaseBill.case_id).where(
-            ReviewCaseBill.bill_id.in_(fact_ids)
+        related_case_ids = set(self.db.scalars(select(ReviewCaseBill.case_id).join(
+            ReviewCase, ReviewCase.id == ReviewCaseBill.case_id,
+        ).where(
+            ReviewCaseBill.bill_id.in_(fact_ids),
+            ReviewCase.review_type != "DEFAULT",
         ).distinct()).all()) if fact_ids else set()
         case_ids = sorted(projection_case_ids | related_case_ids)
         reviews = self._reviews(case_ids, projection_case_ids)
@@ -153,7 +159,10 @@ class TargetLedgerMapper:
         )
 
     def _page_clauses(self, query: TargetLedgerPageQuery) -> list:
-        clauses = []
+        clauses = [
+            LedgerEntry.status == "ACTIVE",
+            LedgerEntry.allocation_status != "V2_ONLY",
+        ]
         if query.date_from:
             clauses.append(LedgerEntry.start_time >= datetime.combine(query.date_from, time.min))
         if query.date_to:
@@ -335,7 +344,10 @@ class TargetLedgerMapper:
         self,
         query: TargetLedgerSummaryQuery,
     ) -> tuple[int, int, tuple[TargetLedgerAggregateVO, ...]]:
-        clauses = []
+        clauses = [
+            LedgerEntry.status == "ACTIVE",
+            LedgerEntry.allocation_status != "V2_ONLY",
+        ]
         if query.date_from:
             clauses.append(LedgerEntry.start_time >= datetime.combine(query.date_from, time.min))
         if query.date_to:

@@ -15,6 +15,7 @@ from app.schemas.target_review import (
     TargetReviewTransitionRequest,
 )
 from app.services.target_projection_service import TargetProjectionService
+from app.services.target_economic_service import TargetEconomicService
 from app.services.target_review_service import TargetReviewError
 
 
@@ -25,6 +26,7 @@ class TargetFactConflictService:
         self.mapper = TargetFactConflictMapper(db)
         self.review = TargetReviewMapper(db)
         self.projection = TargetProjectionService(db)
+        self.economic = TargetEconomicService(db)
 
     def resolve(
         self,
@@ -149,6 +151,7 @@ class TargetFactConflictService:
             )
             if affected_fact_id:
                 self.projection.rebuild_defaults([affected_fact_id])
+                self.economic.ensure_defaults([affected_fact_id])
             self.review.commit()
             return self._required(case_id)
         except TargetReviewError:

@@ -137,6 +137,11 @@ def test_target_import_writes_fact_evidence_and_hot_projection(target_import_api
     page = client.get("/paam/ledger/v1/entry/list").json()
     assert page["total"] == 1
     assert page["items"][0]["outgoing"]["amount_value"] == 1000
+    economy = client.get("/paam/economy/v1/flow/list")
+    assert economy.status_code == 200, economy.text
+    assert economy.json()["total"] == 1
+    assert economy.json()["items"][0]["economic_type"] == "TRANSACTION"
+    assert economy.json()["items"][0]["amount"]["amount_value"] == 1000
 
     repeated = _preview(client, "renamed.csv", _csv())
     assert repeated["counts"]["duplicate_file"] == 1

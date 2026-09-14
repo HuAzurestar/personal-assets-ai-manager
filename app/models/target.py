@@ -91,6 +91,7 @@ class ReviewCase(TargetTable, TargetBase):
     __tablename__ = "review_case"
 
     review_type: Mapped[str] = mapped_column(String(40), nullable=False, default="UNKNOWN")
+    behavior_code: Mapped[str] = mapped_column(String(40), nullable=False, default="UNKNOWN")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="PENDING")
     allocation_status: Mapped[str] = mapped_column(String(20), nullable=False, default="PARTIAL")
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
@@ -103,10 +104,12 @@ class ReviewCaseBill(TargetTable, TargetBase):
     __table_args__ = (
         Index("ix_review_case_bill_bill_case", "bill_id", "case_id"),
         Index("ix_review_case_bill_case_id", "case_id", "id"),
+        Index("ix_review_case_bill_economic_id", "economic_id", "id"),
     )
 
     case_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     bill_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    economic_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     role: Mapped[str] = mapped_column(String(40), nullable=False, default="UNKNOWN")
     party: Mapped[str] = mapped_column(String(120), nullable=False, default="")
     amount_value: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
@@ -145,6 +148,15 @@ class LedgerEntry(TargetTable, TargetBase):
     __table_args__ = (Index("ix_ledger_entry_time_id", "start_time", "id"),)
 
     ledger_type: Mapped[str] = mapped_column(String(40), nullable=False, default="UNRESOLVED")
+    economic_type: Mapped[str] = mapped_column(String(40), nullable=False, default="TRANSACTION")
+    cash_direction: Mapped[str] = mapped_column(String(8), nullable=False, default="UNKNOWN")
+    amount_value: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    amount_scale: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=2)
+    currency_code: Mapped[str] = mapped_column(String(12), nullable=False, default="CNY")
+    claim_key: Mapped[str] = mapped_column(String(160), nullable=False, default="")
+    claim_side: Mapped[str] = mapped_column(String(20), nullable=False, default="UNKNOWN")
+    reversal_of_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="ACTIVE")
     allocation_status: Mapped[str] = mapped_column(String(20), nullable=False, default="DEFAULT")
     title: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     start_time: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False)
@@ -176,6 +188,12 @@ class LedgerEntrySource(TargetTable, TargetBase):
     ledger_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     source_kind: Mapped[str] = mapped_column(String(20), nullable=False, default="BILL_FACT")
     source_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+# V2 domain names.  The physical names stay stable during the coordinated
+# migration so existing SQLite databases can be advanced in place.
+EconomicFlow = LedgerEntry
+FlowAllocation = ReviewCaseBill
 
 
 class TargetTagView(TargetTable, TargetBase):

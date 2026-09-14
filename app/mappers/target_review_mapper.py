@@ -94,6 +94,7 @@ class TargetReviewMapper:
     ) -> int:
         case = ReviewCase(
             review_type=review_type,
+            behavior_code=review_type,
             status="PENDING",
             allocation_status=allocation_status,
             version=1,
@@ -254,6 +255,8 @@ class TargetReviewMapper:
             ReviewCase.result_json,
             ReviewCase.created_time,
             ReviewCase.updated_time,
+        ).where(
+            ReviewCase.behavior_code != "DEFAULT",
         ).order_by(ReviewCase.id.desc()).limit(limit)).mappings().all()
         case_ids = [row["id"] for row in cases]
         lines = self._lines(case_ids)
@@ -270,7 +273,7 @@ class TargetReviewMapper:
         status: str = "",
         review_type: str = "",
     ) -> tuple[list[TargetReviewCaseRead], int]:
-        clauses = []
+        clauses = [ReviewCase.behavior_code != "DEFAULT"]
         if status:
             clauses.append(ReviewCase.status == status)
         if review_type:
