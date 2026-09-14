@@ -24,6 +24,7 @@ Use `docs/data-model.md` as the target schema contract.
 - Import previews are bounded, expiring application command state rather than a
   ledger table. Never read previews, raw payloads, or verbose account details in
   ledger list/summary paths.
-- Multi-source import writes only `import_file`, `bill_raw`, and `bill_fact` in
-  the Fact layer. New compatibility tables require an explicit model decision.
+- Multi-source import writes `import_file`, `bill_raw`, and `bill_fact` in the
+  Fact layer, then creates exact DEFAULT Review/TRANSACTION/Allocation coverage
+  before the same transaction commits.
 - Missing required accounting fields do not receive fabricated defaults and do not produce a fact until resolved.

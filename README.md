@@ -1,6 +1,6 @@
 # PAAM
 
-PAAM 是一个 SQLite + Python 的分层模块化账本。PIRC-9 已完成从旧多表模型到“事实、审查、热投影”三层模型的切换，当前数据库固定为 11 张表。
+PAAM 是一个 SQLite + Python 的分层模块化账本。当前模型按“事实 → 审查 → 经济”分层，Fact 与 Economic 通过 Review 下的 Allocation 三元关系连接；数据库仍固定为 11 张表。
 
 ## 启动
 
@@ -12,8 +12,10 @@ powershell -ExecutionPolicy Bypass -File scripts/setup.ps1
 入口为 `app.target_main:app`，浏览器访问 `http://127.0.0.1:8765`。正式接口只使用：
 
 - `/paam/import/v1`
+- `/paam/economy/v1`
+- `/paam/review/v2`（经济审查）
 - `/paam/ledger/v1`
-- `/paam/review/v1`
+- `/paam/review/v1`（迁移兼容与辅助审查）
 - `/paam/tag/v1`
 
 ## 架构
@@ -27,7 +29,7 @@ powershell -ExecutionPolicy Bypass -File scripts/setup.ps1
 - Mapper：显式字段 SQL、批量查询和 VO 组装。
 - Model：只定义 11 张目标表。
 
-不存在 Repository 层、显式 SQL 外键、DTO 内 SQL、循环 `get(id)` 或列表 `SELECT *`。Python 当前不是性能瓶颈；热列表固定 3 次 SELECT，汇总固定 2 次 SELECT，导入确认的 SELECT 数不随导入行数线性增长。
+不存在 Repository 层、显式 SQL 外键、DTO 内 SQL、循环 `get(id)` 或列表 `SELECT *`。金额使用整数值、精度与币种；经济层只允许 `TRANSACTION`、`ACCOUNT_TRANSFER`、`CLAIM`，不保存汇率，也不跨币种汇总。
 
 ## 文档
 

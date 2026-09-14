@@ -76,7 +76,7 @@ def run() -> None:
                 errors: list[str] = []
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 page.goto(base_url)
-                expect(page.get_by_role("heading", name="收支概览")).to_be_visible()
+                expect(page.get_by_role("heading", name="经济概览")).to_be_visible()
 
                 page.locator('nav [data-page="import"]').click()
                 expect(page.get_by_role("heading", name="数据导入")).to_be_visible()
@@ -178,6 +178,27 @@ def run() -> None:
                 expect(page.get_by_text("target-ui.csv")).to_be_visible()
                 assert page.evaluate("location.hash") == history_hash
 
+                page.locator('nav [data-page="economy"]').click()
+                expect(page.get_by_role("heading", name="经济流水", exact=True)).to_be_visible()
+                expect(page.get_by_text("事实交易").first).to_be_visible()
+                if not page.locator('[data-action="economic-detail"]').count():
+                    raise AssertionError(
+                        "economic page did not render active flows: "
+                        f"{page.locator('#page-content').inner_text()}; "
+                        f"browser errors: {errors}"
+                    )
+                expect(page.locator('[data-action="economic-detail"]').first).to_be_visible()
+
+                page.locator('nav [data-page="economic-reviews"]').click()
+                expect(page.get_by_role("heading", name="经济审查", exact=True).first).to_be_visible()
+                page.locator('[data-action="new-economic-review"]').click()
+                economic_wizard = page.locator('dialog[open] [data-form="economic-review-create"]')
+                expect(economic_wizard).to_be_visible()
+                expect(economic_wizard.get_by_role("heading", name="1. 选择事实流水")).to_be_visible()
+                expect(economic_wizard.get_by_role("heading", name="2. 定义经济流水")).to_be_visible()
+                expect(economic_wizard.get_by_role("heading", name="3. 分配金额")).to_be_visible()
+                economic_wizard.locator('[data-close]').click()
+
                 page.locator('nav [data-page="tags"]').click()
                 expect(page.get_by_role("heading", name="标签管理")).to_be_visible()
                 assert page.locator(".tag-manager-head").evaluate(
@@ -188,7 +209,7 @@ def run() -> None:
                 ) == "grid"
 
                 page.locator('nav [data-page="ledger"]').click()
-                expect(page.get_by_role("heading", name="实际流水")).to_be_visible()
+                expect(page.get_by_role("heading", name="兼容流水")).to_be_visible()
                 expect(page.get_by_text("浏览器测试商户").first).to_be_visible()
                 assert page.locator(".ledger-filter-main").evaluate(
                     "node => getComputedStyle(node).display"
@@ -252,7 +273,7 @@ def run() -> None:
                 ).click()
                 expect(page.locator("dialog[open]")).to_have_count(0)
 
-                expect(page.get_by_role("heading", name="统一审查")).to_be_visible()
+                expect(page.get_by_role("heading", name="其他审查")).to_be_visible()
                 expect(page.get_by_text("确认普通收支").first).to_be_visible()
                 expect(page.get_by_role("heading", name="待处理流水")).to_be_visible()
                 if errors:
@@ -268,7 +289,7 @@ def run() -> None:
                 assert actual == set(TARGET_TABLE_NAMES), actual
             finally:
                 engine.dispose()
-            print("PASS target UI import, ledger, detail, and 11-table isolation")
+            print("PASS target UI import, economic flow/review, legacy detail, and 11-table isolation")
         finally:
             server.should_exit = True
             thread.join(timeout=10)
