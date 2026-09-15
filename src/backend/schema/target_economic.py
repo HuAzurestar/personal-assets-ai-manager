@@ -84,6 +84,7 @@ class EconomicReviewBriefRead(BaseModel):
 
 class EconomicFlowDetailRead(BaseModel):
     entry: EconomicFlowListItem
+    tag_review_version: int
     allocations: list[EconomicAllocationEvidenceRead]
     facts: list[EconomicFactBriefRead]
     reviews: list[EconomicReviewBriefRead]

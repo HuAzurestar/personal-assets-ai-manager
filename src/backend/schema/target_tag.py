@@ -31,7 +31,7 @@ class TargetTagAssignmentRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     tag_state: dict[str, str]
-    expected_projection_version: int = Field(ge=1)
+    expected_version: int = Field(ge=0)
     actor: str = Field(default="local-user", min_length=1, max_length=120)
     reason: str = Field(default="", max_length=2000)
     idempotency_key: str = Field(min_length=1, max_length=120)
@@ -66,7 +66,7 @@ class TargetTagViewListResponse(BaseModel):
 
 class TargetTagAssignmentRead(BaseModel):
     ledger_id: int
-    projection_version: int
+    version: int
     tag_state: dict[str, str]
     review_case_ids: list[int]
 

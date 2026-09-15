@@ -395,7 +395,7 @@ async function showEconomicDetail(id) {
   const facts = detail.facts.map((item) => `<div class="drawer-review-row"><span><strong>Fact #${item.id} · ${esc(item.summary || item.counterparty)}</strong><small>${date(item.occurred_time)} · ${esc(item.account_code)}</small></span><strong>${money(item.amount)}</strong></div>`).join("");
   const reviews = detail.reviews.map((item) => `<button type="button" class="drawer-review-row" data-action="economic-review-detail" data-id="${item.id}"><span><strong>Review #${item.id} · ${esc(item.behavior_code)}</strong><small>${esc(item.description)} · ${esc(statusNames[item.status] || item.status)}</small></span><span>查看审查 →</span></button>`).join("");
   const typeCode = entryTypeCodes[flow.entry_type];
-  detailDrawer({ title: `账本流水 #${flow.id}`, kicker: `${esc(typeNames[typeCode] || typeCode)} · LEDGER #${flow.id}`, subtitle: `${date(flow.occurred_time)} · ${flow.entry_direction === 1 ? "流入" : "流出"}`, body: `<section class="drawer-record-card"><div><span>已确认账本投影</span><h3>${esc(typeNames[typeCode] || typeCode)}</h3><small>${esc(flow.account_code)} · 单方向、单币种</small></div><strong class="ledger-fact-money ${flow.entry_direction === 1 ? "plus" : "minus"}">${signedMoney(flow.amount, entryDirection(flow.entry_direction))}</strong></section><section class="drawer-section"><h3>来源事实</h3>${facts || '<p class="muted">没有关联事实</p>'}</section><section class="drawer-section"><h3>审查与分配</h3>${reviews}${allocations}</section>` });
+  detailDrawer({ title: `账本流水 #${flow.id}`, kicker: `${esc(typeNames[typeCode] || typeCode)} · LEDGER #${flow.id}`, subtitle: `${date(flow.occurred_time)} · ${flow.entry_direction === 1 ? "流入" : "流出"}`, body: `<section class="drawer-record-card"><div><span>已确认账本投影</span><h3>${esc(typeNames[typeCode] || typeCode)}</h3><small>${esc(flow.account_code)} · 单方向、单币种</small></div><strong class="ledger-fact-money ${flow.entry_direction === 1 ? "plus" : "minus"}">${signedMoney(flow.amount, entryDirection(flow.entry_direction))}</strong></section><section class="drawer-section"><h3>来源事实</h3>${facts || '<p class="muted">没有关联事实</p>'}</section><section class="drawer-section"><h3>审查与分配</h3>${reviews}${allocations}</section>`, footer: `<button type="button" class="primary" data-action="edit-tags" data-id="${flow.id}">编辑标签</button>` });
 }
 
 async function legacyLedgerPage() {
@@ -679,16 +679,16 @@ async function showDetail(id) {
   });
 }
 
-async function editTags(ledgerId, version) {
+async function editTags(ledgerId) {
   const renderVersion = state.renderVersion;
   const [views, detail] = await Promise.all([
     request("/paam/tag/v1/view/list"),
-    request(`/paam/ledger/v1/entry/detail/${ledgerId}`),
+    request(`/paam/ledger/v2/entry/detail/${ledgerId}`),
   ]);
   if (renderVersion !== state.renderVersion) return;
   if (!views.length) return toast("请先创建标签维度", true);
   const current = Object.fromEntries(detail.entry.tags.map((item) => [item.view_system_name, item.tag_system_name]));
-  const dialog = modal("编辑最终流水标签", `<form data-form="tag-assignment" data-ledger="${ledgerId}" data-version="${version}" class="stack">${views.map((view) => `<label>${esc(view.name)}<select name="${esc(view.system_name)}">${view.tags.map((tag) => `<option value="${esc(tag.system_name)}" ${(current[view.system_name] || "unclassified") === tag.system_name ? "selected" : ""}>${esc(tag.name)}</option>`).join("")}</select></label>`).join("")}<label>修改原因<input name="reason" value="用户修订标签"></label><div class="actions"><button class="primary">保存标签</button></div></form>`);
+  const dialog = modal("编辑最终流水标签", `<form data-form="tag-assignment" data-ledger="${ledgerId}" data-version="${detail.tag_review_version}" class="stack">${views.map((view) => `<label>${esc(view.name)}<select name="${esc(view.system_name)}">${view.tags.map((tag) => `<option value="${esc(tag.system_name)}" ${(current[view.system_name] || "unclassified") === tag.system_name ? "selected" : ""}>${esc(tag.name)}</option>`).join("")}</select></label>`).join("")}<label>修改原因<input name="reason" value="用户修订标签"></label><div class="actions"><button class="primary">保存标签</button></div></form>`);
   bindPage(dialog);
 }
 
@@ -1616,7 +1616,7 @@ function bindPage(root) {
   $$('[data-action="review-selected"]', root).forEach((button) => button.onclick = () => openReviewWizard().catch((error) => toast(error.message, true)));
   $$('[data-action="review-detail"]', root).forEach((button) => button.onclick = () => showReview(button.dataset.id).catch((error) => toast(error.message, true)));
   $$('[data-action="edit-review"]', root).forEach((button) => button.onclick = () => editReview(button.dataset.id).catch((error) => toast(error.message, true)));
-  $$('[data-action="edit-tags"]', root).forEach((button) => button.onclick = () => editTags(button.dataset.id, Number(button.dataset.version)).catch((error) => toast(error.message, true)));
+  $$('[data-action="edit-tags"]', root).forEach((button) => button.onclick = () => editTags(button.dataset.id).catch((error) => toast(error.message, true)));
   $$('[data-action="account"]', root).forEach((button) => button.onclick = () => editAccount(button));
   $('[data-action="new-review"]', root)?.addEventListener("click", () => newReview().catch((error) => toast(error.message, true)));
   $('[data-action="new-view"]', root)?.addEventListener("click", () => simpleDictionaryDialog("view"));
@@ -1736,7 +1736,7 @@ async function submitTags(event) {
   const idempotencyKey = beginSubmit(form); if (!idempotencyKey) return;
   const reason = data.get("reason"); data.delete("reason");
   try {
-    await jsonRequest(`/paam/tag/v1/assignment/set/${form.dataset.ledger}`, "PUT", { tag_state: Object.fromEntries(data), expected_projection_version: Number(form.dataset.version), reason, idempotency_key: idempotencyKey });
+    await jsonRequest(`/paam/tag/v1/assignment/set/${form.dataset.ledger}`, "PUT", { tag_state: Object.fromEntries(data), expected_version: Number(form.dataset.version), reason, idempotency_key: idempotencyKey });
     closeDialogs(); toast("标签已保存"); await render();
   } catch (error) { endSubmit(form); showFormError(form, error); }
 }

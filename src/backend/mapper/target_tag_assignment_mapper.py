@@ -27,7 +27,6 @@ class TagAssignmentFact:
 @dataclass(frozen=True, slots=True)
 class TagAssignmentTarget:
     ledger_id: int
-    projection_version: int
     facts: tuple[TagAssignmentFact, ...]
 
 
@@ -62,7 +61,8 @@ class TargetTagAssignmentMapper:
         if self.db.bind is not None and self.db.bind.dialect.name == "sqlite":
             self.db.execute(text("BEGIN IMMEDIATE"))
 
-    def target(self, ledger_id: int) -> TagAssignmentTarget | None:
+    @staticmethod
+    def _fact_links():
         allocation_links = select(
             ReviewCaseBill.economic_id.label("ledger_id"),
             ReviewCaseBill.bill_id.label("fact_id"),
@@ -77,10 +77,12 @@ class TargetTagAssignmentMapper:
             LedgerEntrySource.ledger_id.label("ledger_id"),
             LedgerEntrySource.source_id.label("fact_id"),
         ).where(LedgerEntrySource.source_kind == "BILL_FACT")
-        links = union(allocation_links, legacy_links).subquery()
+        return union(allocation_links, legacy_links).subquery()
+
+    def target(self, ledger_id: int) -> TagAssignmentTarget | None:
+        links = self._fact_links()
         rows = self.db.execute(select(
             LedgerEntry.id.label("ledger_id"),
-            LedgerEntry.projection_version,
             BillFact.id,
             BillFact.amount_value,
             BillFact.amount_scale,
@@ -98,7 +100,6 @@ class TargetTagAssignmentMapper:
             return None
         return TagAssignmentTarget(
             ledger_id=rows[0]["ledger_id"],
-            projection_version=rows[0]["projection_version"],
             facts=tuple(TagAssignmentFact(
                 id=row["id"],
                 amount_value=row["amount_value"],
@@ -106,6 +107,22 @@ class TargetTagAssignmentMapper:
                 currency_code=row["currency_code"],
             ) for row in rows),
         )
+
+    def ledger_facts(self, fact_ids: list[int]) -> dict[int, list[int]]:
+        if not fact_ids:
+            return {}
+        links = self._fact_links()
+        rows = self.db.execute(select(
+            links.c.ledger_id,
+            links.c.fact_id,
+        ).where(links.c.fact_id.in_(fact_ids)).order_by(
+            links.c.ledger_id,
+            links.c.fact_id,
+        )).mappings().all()
+        result: dict[int, list[int]] = {}
+        for row in rows:
+            result.setdefault(row["ledger_id"], []).append(row["fact_id"])
+        return result
 
     def cases(self, fact_ids: list[int]) -> dict[int, ExistingTagCase]:
         if not fact_ids:
@@ -150,6 +167,7 @@ class TargetTagAssignmentMapper:
         *,
         title: str,
         result_json: str,
+        version: int,
         now: datetime,
     ) -> dict[int, int]:
         cases = [ReviewCase(
@@ -157,7 +175,7 @@ class TargetTagAssignmentMapper:
             behavior_code="TAG",
             status="CONFIRMED",
             allocation_status="COMPLETE",
-            version=1,
+            version=version,
             title=title,
             result_json=result_json,
             created_time=now,
@@ -173,20 +191,24 @@ class TargetTagAssignmentMapper:
         *,
         title: str,
         result_json: str,
+        expected_version: int,
         now: datetime,
     ) -> None:
-        for case in cases:
-            self.db.execute(update(ReviewCase).where(
-                ReviewCase.id == case.id,
-                ReviewCase.version == case.version,
-            ).values(
-                status="CONFIRMED",
-                allocation_status="COMPLETE",
-                version=case.version + 1,
-                title=title,
-                result_json=result_json,
-                updated_time=now,
-            ))
+        if not cases:
+            return
+        result = self.db.execute(update(ReviewCase).where(
+            ReviewCase.id.in_([case.id for case in cases]),
+            ReviewCase.version == expected_version,
+        ).values(
+            status="CONFIRMED",
+            allocation_status="COMPLETE",
+            version=expected_version + 1,
+            title=title,
+            result_json=result_json,
+            updated_time=now,
+        ))
+        if result.rowcount != len(cases):
+            raise ValueError("tag Review changed; reload before assigning tags")
 
     def replace_lines(
         self,
@@ -214,18 +236,6 @@ class TargetTagAssignmentMapper:
 
     def add_histories(self, histories: list[ReviewHistory]) -> None:
         self.db.add_all(histories)
-
-    def advance_projection(self, ledger_id: int, expected_version: int, now: datetime) -> int:
-        result = self.db.execute(update(LedgerEntry).where(
-            LedgerEntry.id == ledger_id,
-            LedgerEntry.projection_version == expected_version,
-        ).values(
-            projection_version=expected_version + 1,
-            updated_time=now,
-        ))
-        if result.rowcount != 1:
-            raise ValueError("ledger projection changed; reload before assigning tags")
-        return expected_version + 1
 
     def commit(self) -> None:
         self.db.commit()

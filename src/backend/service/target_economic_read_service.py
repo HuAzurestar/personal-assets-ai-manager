@@ -48,9 +48,13 @@ class TargetEconomicReadService:
         data = self.mapper.detail(economic_id)
         if data is None:
             return None
-        flow, allocations, facts, reviews, tags = data
+        flow, allocations, facts, reviews, tags, tag_versions = data
+        versions = {tag_versions.get(row["id"], 0) for row in facts}
+        if len(versions) > 1:
+            raise ValueError("source facts have different tag Review versions")
         return EconomicFlowDetailRead(
             entry=self._flow(flow, tags),
+            tag_review_version=versions.pop() if versions else 0,
             allocations=[EconomicAllocationEvidenceRead(
                 id=row["id"],
                 review_case_id=row["review_case_id"],

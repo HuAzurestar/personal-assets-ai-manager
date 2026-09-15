@@ -49,13 +49,14 @@ class TargetTagAssignmentService:
                 self.mapper.commit()
                 return self._response(
                     target.ledger_id,
-                    target.projection_version,
+                    self._version(target.facts, existing),
                     payload.tag_state,
                     existing,
                 )
-            if target.projection_version != payload.expected_projection_version:
+            current_version = self._version(target.facts, existing)
+            if current_version != payload.expected_version:
                 raise TargetTagError(
-                    409, "ledger projection changed; reload before assigning tags"
+                    409, "tag Review changed; reload before assigning tags"
                 )
             state = self.projection.validate_complete(payload.tag_state)
             now = datetime.now()
@@ -70,12 +71,14 @@ class TargetTagAssignmentService:
                 new_facts,
                 title=title,
                 result_json=result_json,
+                version=current_version + 1,
                 now=now,
             ))
             self.mapper.update_cases(
                 list(existing.values()),
                 title=title,
                 result_json=result_json,
+                expected_version=current_version,
                 now=now,
             )
             self.mapper.replace_lines(case_by_fact, facts, now=now)
@@ -88,15 +91,13 @@ class TargetTagAssignmentService:
                 payload=payload,
                 now=now,
             ))
-            fact_ledgers = {fact.id: ledger_id for fact in facts}
-            self.projection.sync(fact_ledgers)
-            version = self.mapper.advance_projection(
-                ledger_id, target.projection_version, now
+            self.projection.sync_economics(
+                self.mapper.ledger_facts([fact.id for fact in facts])
             )
             self.mapper.commit()
             return TargetTagAssignmentRead(
                 ledger_id=ledger_id,
-                projection_version=version,
+                version=current_version + 1,
                 tag_state=state,
                 review_case_ids=[case_by_fact[fact.id] for fact in facts],
             )
@@ -191,6 +192,18 @@ class TargetTagAssignmentService:
         })
 
     @staticmethod
+    def _version(facts, existing: dict[int, ExistingTagCase]) -> int:
+        versions = {
+            existing[fact.id].version if fact.id in existing else 0
+            for fact in facts
+        }
+        if len(versions) != 1:
+            raise TargetTagError(
+                409, "source facts have different tag Review versions"
+            )
+        return versions.pop()
+
+    @staticmethod
     def _response(
         ledger_id: int,
         version: int,
@@ -199,7 +212,7 @@ class TargetTagAssignmentService:
     ) -> TargetTagAssignmentRead:
         return TargetTagAssignmentRead(
             ledger_id=ledger_id,
-            projection_version=version,
+            version=version,
             tag_state={key: state[key] for key in sorted(state)},
             review_case_ids=[existing[key].id for key in sorted(existing)],
         )

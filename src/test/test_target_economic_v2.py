@@ -376,8 +376,30 @@ def test_tag_sync_uses_allocations_for_every_split_ledger_entry(economic_api):
         "idempotency_key": "split-tag-confirm",
     })
     assert confirmed.status_code == 200, confirmed.text
+    ledger_ids = [row["id"] for row in confirmed.json()["body"]["ledger_entries"]]
     with sessions() as db:
         assert db.query(LedgerEntryTag).count() == 2
+
+    tagged_view = client.post(f"/paam/tag/v1/tag/create/{view['id']}", json={
+        "name": "Food",
+        "system_name": "food",
+    })
+    assert tagged_view.status_code == 200, tagged_view.text
+    detail = client.get(f"/paam/ledger/v2/entry/detail/{ledger_ids[0]}").json()
+    assert detail["tag_review_version"] == 0
+    assigned = client.put(f"/paam/tag/v1/assignment/set/{ledger_ids[0]}", json={
+        "tag_state": {"category": "food"},
+        "expected_version": 0,
+        "idempotency_key": "split-tag-assign",
+    })
+    assert assigned.status_code == 200, assigned.text
+    assert assigned.json()["body"]["version"] == 1
+    details = [
+        client.get(f"/paam/ledger/v2/entry/detail/{ledger_id}").json()
+        for ledger_id in ledger_ids
+    ]
+    assert all(item["tag_review_version"] == 1 for item in details)
+    assert all(item["entry"]["tags"][0]["tag_system_name"] == "food" for item in details)
 
     archived = client.put(f"/paam/tag/v1/view/status/{view['id']}", json={
         "status": "ARCHIVED",

@@ -86,7 +86,31 @@ class TargetEconomicReadMapper:
             ReviewCase.version,
             ReviewCase.title.label("description"),
         ).where(ReviewCase.id.in_(review_ids)).order_by(ReviewCase.id)).mappings().all() if review_ids else []
-        return flow, allocations, facts, reviews, self.tags([economic_id]).get(economic_id, [])
+        tag_version_rows = self.db.execute(select(
+            ReviewCaseBill.bill_id,
+            ReviewCase.version,
+        ).join(
+            ReviewCase,
+            ReviewCase.id == ReviewCaseBill.case_id,
+        ).where(
+            ReviewCaseBill.bill_id.in_(fact_ids),
+            ReviewCase.review_type == "TAG",
+            ReviewCase.status == "CONFIRMED",
+        ).order_by(ReviewCaseBill.bill_id, ReviewCase.id)).mappings().all() if fact_ids else []
+        tag_versions: dict[int, int] = {}
+        for row in tag_version_rows:
+            fact_id = row["bill_id"]
+            if fact_id in tag_versions:
+                raise ValueError(f"fact {fact_id} has multiple confirmed TAG reviews")
+            tag_versions[fact_id] = row["version"]
+        return (
+            flow,
+            allocations,
+            facts,
+            reviews,
+            self.tags([economic_id]).get(economic_id, []),
+            tag_versions,
+        )
 
     def tags(self, economic_ids: list[int]) -> dict[int, list[dict]]:
         if not economic_ids:
