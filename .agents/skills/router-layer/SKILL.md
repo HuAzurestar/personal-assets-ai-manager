@@ -85,6 +85,10 @@ description: Change PAAM FastAPI routers, URL modules or versions, HTTP endpoint
   resource-specific `*_ids` field, such as `review_ids: [1, 2, 3]`. Do not put
   several identifiers in the path or encode them as a comma-separated query
   parameter.
+- Batch identifier lists are non-empty and contain at most 100 unique IDs by
+  default. A specific object may impose a lower limit. Workloads that genuinely
+  need more than 100 IDs require a separately designed chunked, asynchronous,
+  or dedicated batch contract instead of silently raising the shared limit.
 - Path parameters identify resources. Filters, sorting, and pagination use
   query parameters. Write input uses a JSON request body when a body is needed.
 - Canonical paged list requests use `page` with default `1` and `page_size` with
