@@ -13,6 +13,8 @@ description: Change PAAM FastAPI routers, URL modules or versions, HTTP endpoint
   top-level module merely to mirror an internal architecture layer.
 - Ledger is the primary business API module. Review and Account are Ledger
   objects. Fact Conflict is an Import object.
+- Tag Assignment is a Tag-module object keyed by the target Ledger ID. It
+  updates the Ledger's effective tag state directly; it is not a Review action.
 - Keep `src/backend/router` flat. Do not create version subdirectories.
 - Use `module.py` while a module is small. Split a large module into
   `module_object.py` files by cohesive API object, not by individual endpoint.
@@ -88,6 +90,9 @@ description: Change PAAM FastAPI routers, URL modules or versions, HTTP endpoint
   resource-specific `*_ids` field, such as `review_ids: [1, 2, 3]`. Do not put
   several identifiers in the path or encode them as a comma-separated query
   parameter.
+- Replacing one Ledger's complete tag state uses
+  `PUT /paam/tag/v1/assignment/{ledger_id}`. Do not add `set` to the path or
+  address the assignment through a Fact or Review identifier.
 - Batch identifier lists are non-empty and contain at most 100 unique IDs by
   default. A specific object may impose a lower limit. Workloads that genuinely
   need more than 100 IDs require a separately designed chunked, asynchronous,
