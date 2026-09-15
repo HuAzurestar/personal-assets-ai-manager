@@ -5,13 +5,15 @@ export async function request(url, options = {}) {
   });
   const payload = response.status === 204 ? null : await response.json().catch(() => null);
   if (!response.ok) {
-    const detail = payload?.detail;
+    const detail = payload?.message || payload?.detail;
     const text = Array.isArray(detail)
       ? detail.map((item) => item.msg).join("；")
       : detail || `请求失败（${response.status}）`;
     throw new Error(text);
   }
-  return payload && payload.status === "success" && Object.hasOwn(payload, "body")
+  const isEnvelope = payload && Object.hasOwn(payload, "body")
+    && (payload.status === response.status || payload.status === "success");
+  return isEnvelope
     ? payload.body
     : payload;
 }

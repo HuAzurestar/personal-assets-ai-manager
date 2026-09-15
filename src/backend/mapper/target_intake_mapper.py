@@ -47,7 +47,19 @@ class TargetIntakeMapper:
         return plan
 
     def _known_accounts(self) -> dict[int, dict[str, object]]:
-        ranked = select(
+        ranked = self._ranked_accounts()
+        rows = self.db.execute(select(
+            ranked.c.account_code,
+            ranked.c.raw_payload,
+        ).where(
+            ranked.c.position == 1,
+        ).order_by(ranked.c.account_code)).mappings().all()
+        items = self._account_items(rows)
+        return {item["id"]: item for item in items}
+
+    @staticmethod
+    def _ranked_accounts():
+        return select(
             BillFact.account_code.label("account_code"),
             BillRaw.raw_payload.label("raw_payload"),
             func.row_number().over(
@@ -55,12 +67,11 @@ class TargetIntakeMapper:
                 order_by=BillRaw.id.desc(),
             ).label("position"),
         ).outerjoin(BillRaw, BillRaw.bill_id == BillFact.id).subquery()
-        rows = self.db.execute(select(
-            ranked.c.account_code,
-            ranked.c.raw_payload,
-        ).where(ranked.c.position == 1)).mappings().all()
-        accounts: dict[int, dict[str, object]] = {}
-        for position, row in enumerate(rows, 1):
+
+    @staticmethod
+    def _account_items(rows, start_id: int = 1) -> list[dict[str, object]]:
+        accounts: list[dict[str, object]] = []
+        for position, row in enumerate(rows, start_id):
             account = None
             if row["raw_payload"]:
                 try:
@@ -77,7 +88,7 @@ class TargetIntakeMapper:
                     "number": "",
                     "owner": "",
                 }
-            accounts[position] = {"id": position, **account}
+            accounts.append({"id": position, **account})
         return accounts
 
     def _planning_history(
@@ -374,9 +385,9 @@ class TargetIntakeMapper:
     def history(
         self,
         page: int = 1,
-        page_size: int = 10,
+        page_size: int = 20,
         q: str = "",
-        account: str = "",
+        account_code: str = "",
     ) -> dict[str, object]:
         clauses = []
         if q:
@@ -402,12 +413,12 @@ class TargetIntakeMapper:
             if numeric_query.isdigit():
                 search.append(ImportFile.id == int(numeric_query))
             clauses.append(or_(*search))
-        if account:
+        if account_code:
             matching_files = select(BillRaw.import_file_id).join(
                 BillFact,
                 BillRaw.bill_id == BillFact.id,
             ).where(
-                BillFact.account_code == account,
+                BillFact.account_code == account_code,
             ).distinct()
             clauses.append(ImportFile.id.in_(matching_files))
 
@@ -469,7 +480,7 @@ class TargetIntakeMapper:
                 "complete_count": int(summary["complete_count"]),
                 "imported_count": int(summary["imported_count"]),
             },
-            "filters": {"q": q, "account": account},
+            "filters": {"q": q, "account_code": account_code},
         }
 
     def rows(
@@ -520,8 +531,25 @@ class TargetIntakeMapper:
             },
         }
 
-    def accounts(self) -> list[dict[str, object]]:
-        return list(self._known_accounts().values())
+    def accounts(self, page: int, page_size: int) -> dict[str, object]:
+        ranked = self._ranked_accounts()
+        condition = ranked.c.position == 1
+        total = self.db.scalar(select(func.count()).select_from(ranked).where(
+            condition,
+        )) or 0
+        offset = (page - 1) * page_size
+        rows = self.db.execute(select(
+            ranked.c.account_code,
+            ranked.c.raw_payload,
+        ).where(condition).order_by(ranked.c.account_code).offset(
+            offset,
+        ).limit(page_size)).mappings().all()
+        return {
+            "items": self._account_items(rows, offset + 1),
+            "total": int(total),
+            "page": page,
+            "page_size": page_size,
+        }
 
     def commit(self) -> None:
         self.db.commit()

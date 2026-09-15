@@ -105,7 +105,10 @@ def _preview(client, filename: str, content: bytes, password: str | None = None)
         "password": password,
     }]})
     assert response.status_code == 200, response.text
-    return response.json()["body"]
+    payload = response.json()
+    assert payload["status"] == response.status_code
+    assert payload["message"] == "Import preview created"
+    return payload["body"]
 
 
 def _confirm(client, preview):
@@ -121,6 +124,8 @@ def test_target_import_writes_fact_evidence_and_hot_projection(target_import_api
     assert preview["can_confirm"]
     response = _confirm(client, preview)
     assert response.status_code == 200, response.text
+    assert response.json()["status"] == response.status_code
+    assert response.json()["message"] == "Import confirmed"
 
     with sessions() as db:
         fact = db.scalar(select(BillFact))
@@ -192,13 +197,19 @@ def test_import_history_supports_search_pagination_and_account_filter(
     ).json()["body"]
     assert source_search["total"] == 2
 
-    accounts = client.get("/paam/import/v1/account/list").json()["body"]
+    account_page = client.get(
+        "/paam/import/v1/account/list?page=1&page_size=20"
+    ).json()["body"]
+    assert account_page["page"] == 1
+    assert account_page["page_size"] == 20
+    assert account_page["total"] == 2
+    accounts = account_page["items"]
     card_account = next(
         item for item in accounts if "尾号 1234" in item["display_name"]
     )
     filtered = client.get(
         "/paam/import/v1/batch/list",
-        params={"account": card_account["identity"]},
+        params={"account_code": card_account["identity"]},
     ).json()["body"]
     assert [item["filename"] for item in filtered["items"]] == [
         "card-september.csv"
@@ -330,6 +341,8 @@ def test_target_fact_conflict_is_recorded_for_review(target_import_api):
         },
     )
     assert resolved.status_code == 200, resolved.text
+    assert resolved.json()["status"] == resolved.status_code
+    assert resolved.json()["message"] == "Fact conflict resolved"
     with sessions() as db:
         assert [item.amount_value for item in db.scalars(
             select(BillFact).order_by(BillFact.id)

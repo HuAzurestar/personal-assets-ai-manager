@@ -126,14 +126,14 @@ class TargetIntakeService:
     def history(
         self,
         page: int = 1,
-        page_size: int = 10,
+        page_size: int = 20,
         q: str = "",
-        account: str = "",
+        account_code: str = "",
     ) -> dict[str, object]:
-        return self.mapper.history(page, page_size, q, account)
+        return self.mapper.history(page, page_size, q, account_code)
 
-    def accounts(self) -> list[dict[str, object]]:
-        return self.mapper.accounts()
+    def accounts(self, page: int, page_size: int) -> dict[str, object]:
+        return self.mapper.accounts(page, page_size)
 
     def rows(
         self,

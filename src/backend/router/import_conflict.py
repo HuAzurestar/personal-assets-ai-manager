@@ -7,9 +7,9 @@ from sqlalchemy.orm import Session
 
 from backend.router.dependency import get_db
 from backend.router.error import DomainErrorRoute
+from backend.schema.intake import ImportFactConflictResponse
 from backend.schema.target_review import (
     TargetFactConflictResolveRequest,
-    TargetReviewCaseResponse,
     TargetReviewTransitionRequest,
 )
 from backend.service.target_fact_conflict_service import TargetFactConflictService
@@ -24,41 +24,44 @@ router = APIRouter(
 
 @router.post(
     "/fact-conflict/{conflict_id}/resolve",
-    response_model=TargetReviewCaseResponse,
+    response_model=ImportFactConflictResponse,
 )
 def resolve_conflict(
     conflict_id: int,
     payload: TargetFactConflictResolveRequest,
     db: Session = Depends(get_db),
 ):
-    return TargetReviewCaseResponse(
+    return ImportFactConflictResponse(
+        message="Fact conflict resolved",
         body=TargetFactConflictService(db).resolve(conflict_id, payload)
     )
 
 
 @router.post(
     "/fact-conflict/{conflict_id}/dismiss",
-    response_model=TargetReviewCaseResponse,
+    response_model=ImportFactConflictResponse,
 )
 def dismiss_conflict(
     conflict_id: int,
     payload: TargetReviewTransitionRequest,
     db: Session = Depends(get_db),
 ):
-    return TargetReviewCaseResponse(
+    return ImportFactConflictResponse(
+        message="Fact conflict dismissed",
         body=TargetFactConflictService(db).dismiss(conflict_id, payload)
     )
 
 
 @router.post(
     "/fact-conflict/{conflict_id}/reopen",
-    response_model=TargetReviewCaseResponse,
+    response_model=ImportFactConflictResponse,
 )
 def reopen_conflict(
     conflict_id: int,
     payload: TargetReviewTransitionRequest,
     db: Session = Depends(get_db),
 ):
-    return TargetReviewCaseResponse(
+    return ImportFactConflictResponse(
+        message="Fact conflict reopened",
         body=TargetFactConflictService(db).reopen(conflict_id, payload)
     )

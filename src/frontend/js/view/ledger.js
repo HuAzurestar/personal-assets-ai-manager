@@ -434,10 +434,11 @@ async function ledgerSummaryPage() {
   const query = new URLSearchParams({ date_from: dateFrom, date_to: dateTo });
   const accountCode = state.params.get("account_code") || "";
   if (accountCode) query.set("account_code", accountCode);
-  const [summary, accounts] = await Promise.all([
+  const [summary, accountPage] = await Promise.all([
     request(`/paam/ledger/v1/summary?${query}`),
-    request("/paam/import/v1/account/list"),
+    request("/paam/import/v1/account/list?page=1&page_size=100"),
   ]);
+  const accounts = accountPage.items;
   state.detailSummaries = new Map(summary.activities.map((item) => [item.ledger_type, item]));
   const accountOptions = accounts.map((account) => {
     const identity = account.identity || account.account_code;
@@ -600,8 +601,9 @@ async function openEconomicReviewEditor() {
 async function ledgerImportsPage() {
   const query = new URLSearchParams({ page: state.params.get("page") || "1", page_size: "20" });
   if (state.params.get("q")) query.set("q", state.params.get("q"));
-  if (state.params.get("account")) query.set("account", state.params.get("account"));
-  const [result, accounts] = await Promise.all([request(`/paam/import/v1/batch/list?${query}`), request("/paam/import/v1/account/list")]);
+  if (state.params.get("account")) query.set("account_code", state.params.get("account"));
+  const [result, accountPage] = await Promise.all([request(`/paam/import/v1/batch/list?${query}`), request("/paam/import/v1/account/list?page=1&page_size=100")]);
+  const accounts = accountPage.items;
   state.historyAccountNames = new Map(accounts.map((account) => [account.identity, account.display_name || account.identity]));
   const rows = result.items.map((item) => {
     const accountLabels = (item.account_codes || []).map((identity) => state.historyAccountNames.get(identity) || identity).join("、") || "未识别";
@@ -765,10 +767,11 @@ function historyResultsMarkup(result) {
 }
 
 async function importHistoryPage() {
-  const [result, accounts] = await Promise.all([
+  const [result, accountPage] = await Promise.all([
     request("/paam/import/v1/batch/list?page=1&page_size=10"),
-    request("/paam/import/v1/account/list"),
+    request("/paam/import/v1/account/list?page=1&page_size=100"),
   ]);
+  const accounts = accountPage.items;
   state.historyAccountNames = new Map(accounts.map((account) => [account.identity, account.display_name || account.identity]));
   const accountOptions = accounts.map((account) => `<option value="${esc(account.identity)}">${esc(account.display_name || account.identity)}</option>`).join("");
   return `<div class="history-summary" data-history-summary>${historySummaryMarkup(result)}</div><section class="panel history-panel"><div class="section-head"><div><h2>导入批次</h2><p class="import-section-help">搜索和账户筛选只更新下方结果，不会刷新页面或打断输入。</p></div><button class="primary" data-page="import">＋ 导入新数据</button></div><form class="toolbar history-toolbar" data-form="history-filter"><label class="grow">搜索<input name="q" placeholder="文件名、来源或批次编号" autocomplete="off"></label><label>来源账户<select name="account"><option value="">全部账户</option>${accountOptions}</select></label><span class="history-updating" data-history-updating aria-live="polite"></span></form><div data-history-results>${historyResultsMarkup(result)}</div></section>`;
@@ -784,7 +787,7 @@ async function refreshHistoryResults(form, page = 1) {
   const query = form.elements.q.value.trim();
   const account = form.elements.account.value;
   if (query) params.set("q", query);
-  if (account) params.set("account", account);
+  if (account) params.set("account_code", account);
   const resultsRoot = $("[data-history-results]");
   const summaryRoot = $("[data-history-summary]");
   const updating = $("[data-history-updating]", form);
