@@ -452,6 +452,11 @@ def test_account_review_updates_every_split_ledger_and_survives_rebuild(economic
     ]
     assert all(item["entry"]["account_code"] == "checked-bank" for item in details)
     assert all(item["facts"][0]["account_review_version"] == 1 for item in details)
+    assert all(
+        {review["review_type"] for review in item["reviews"]}
+        == {"SPLIT_PURCHASE", "ACCOUNT"}
+        for item in details
+    )
     with sessions() as db:
         assert db.get(BillFact, fact_id).account_code == "account-1"
 

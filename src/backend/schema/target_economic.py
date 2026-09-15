@@ -77,6 +77,7 @@ class EconomicFactBriefRead(BaseModel):
 
 class EconomicReviewBriefRead(BaseModel):
     id: int
+    review_type: str
     behavior_code: str
     status: str
     version: int
