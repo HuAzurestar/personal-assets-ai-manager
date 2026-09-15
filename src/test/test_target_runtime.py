@@ -131,6 +131,8 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
                 "/paam/ledger/v1/summary",
             ):
                 assert client.get(legacy_path).status_code == 404
+            assert client.get("/paam/review/v1/case/list").status_code == 404
+            assert client.post("/paam/review/v1/case/create", json={}).status_code == 404
             assert client.get("/api/intake/history").status_code == 404
             assert client.get("/api/shadow/v1/ledger/status").status_code == 404
 

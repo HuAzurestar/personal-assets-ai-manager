@@ -28,6 +28,7 @@ from backend.service.target_review_service import TargetReviewError, TargetRevie
 
 
 router = APIRouter(prefix="/paam/review/v1", tags=["target-review"])
+legacy_router = APIRouter(prefix="/paam/review/v1", tags=["legacy-target-review"])
 v2_router = APIRouter(prefix="/paam/review/v2", tags=["ledger-review"])
 
 
@@ -128,7 +129,7 @@ def economic_fact_candidates(
     ))
 
 
-@router.post("/case/create", response_model=TargetReviewCaseResponse)
+@legacy_router.post("/case/create", response_model=TargetReviewCaseResponse)
 def create_case(
     payload: TargetReviewCreateRequest,
     db: Session = Depends(get_target_db),
@@ -138,7 +139,7 @@ def create_case(
     ))
 
 
-@router.post("/case/confirm/{case_id}", response_model=TargetReviewCaseResponse)
+@legacy_router.post("/case/confirm/{case_id}", response_model=TargetReviewCaseResponse)
 def confirm_case(
     case_id: int,
     payload: TargetReviewTransitionRequest,
@@ -149,7 +150,7 @@ def confirm_case(
     ))
 
 
-@router.put("/case/update/{case_id}", response_model=TargetReviewCaseResponse)
+@legacy_router.put("/case/update/{case_id}", response_model=TargetReviewCaseResponse)
 def update_case(
     case_id: int,
     payload: TargetReviewUpdateRequest,
@@ -160,7 +161,7 @@ def update_case(
     ))
 
 
-@router.post("/case/revoke/{case_id}", response_model=TargetReviewCaseResponse)
+@legacy_router.post("/case/revoke/{case_id}", response_model=TargetReviewCaseResponse)
 def revoke_case(
     case_id: int,
     payload: TargetReviewTransitionRequest,
@@ -171,7 +172,7 @@ def revoke_case(
     ))
 
 
-@router.post("/case/restore/{case_id}", response_model=TargetReviewCaseResponse)
+@legacy_router.post("/case/restore/{case_id}", response_model=TargetReviewCaseResponse)
 def restore_case(
     case_id: int,
     payload: TargetReviewTransitionRequest,
@@ -182,7 +183,7 @@ def restore_case(
     ))
 
 
-@router.post("/case/dismiss/{case_id}", response_model=TargetReviewCaseResponse)
+@legacy_router.post("/case/dismiss/{case_id}", response_model=TargetReviewCaseResponse)
 def dismiss_case(
     case_id: int,
     payload: TargetReviewTransitionRequest,
@@ -193,7 +194,7 @@ def dismiss_case(
     ))
 
 
-@router.post("/case/reopen/{case_id}", response_model=TargetReviewCaseResponse)
+@legacy_router.post("/case/reopen/{case_id}", response_model=TargetReviewCaseResponse)
 def reopen_case(
     case_id: int,
     payload: TargetReviewTransitionRequest,
@@ -211,7 +212,7 @@ def case_detail(case_id: int, db: Session = Depends(get_target_db)):
     ))
 
 
-@router.get("/case/list", response_model=TargetReviewCaseListResponse)
+@legacy_router.get("/case/list", response_model=TargetReviewCaseListResponse)
 def case_list(
     limit: int = Query(default=100, ge=1, le=200),
     db: Session = Depends(get_target_db),
