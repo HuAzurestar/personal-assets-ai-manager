@@ -372,33 +372,28 @@ class TargetEconomicService:
         for key in keys:
             definition = definitions[key]
             rows = grouped[key]
-            directions = {fact.cash_direction for _, fact in rows}
-            currencies = {fact.currency_code for _, fact in rows}
-            if len(directions) != 1 or len(currencies) != 1:
-                raise ValueError(f"economic {key} cannot mix fact direction or currency")
+            if len(rows) != 1:
+                raise ValueError(
+                    f"economic {key} must allocate exactly one bill_fact; "
+                    "split combined facts into separate ledger entries"
+                )
+            row, fact = rows[0]
             if definition.economic_type == "CLAIM":
                 if not definition.claim_key or definition.claim_side == "UNKNOWN":
                     raise ValueError(f"CLAIM economic {key} requires claim_key and claim_side")
             elif definition.claim_key or definition.claim_side != "UNKNOWN":
                 raise ValueError(f"non-CLAIM economic {key} cannot carry claim state")
-            scale = max(fact.amount_scale for _, fact in rows)
-            amount = sum(
-                row.amount_value * (10 ** (scale - fact.amount_scale))
-                for row, fact in rows
-            )
-            contributing = [fact for _, fact in rows]
-            accounts = {fact.account_code for fact in contributing}
             economics.append({
                 "client_key": key,
                 "economic_type": definition.economic_type,
-                "direction": next(iter(directions)),
-                "amount_value": amount,
-                "amount_scale": scale,
-                "currency_code": next(iter(currencies)),
-                "title": definition.title or payload.title or contributing[0].counterparty or contributing[0].summary,
-                "start_time": min(fact.occurred_time for fact in contributing),
-                "end_time": max(fact.occurred_time for fact in contributing),
-                "account_code": next(iter(accounts)) if len(accounts) == 1 else "MULTIPLE",
+                "direction": fact.cash_direction,
+                "amount_value": row.amount_value,
+                "amount_scale": fact.amount_scale,
+                "currency_code": fact.currency_code,
+                "title": definition.title or payload.title or fact.counterparty or fact.summary,
+                "start_time": fact.occurred_time,
+                "end_time": fact.occurred_time,
+                "account_code": fact.account_code,
                 "claim_key": definition.claim_key,
                 "claim_side": definition.claim_side,
                 "reversal_of_id": definition.reversal_of_id,

@@ -73,14 +73,21 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
         "economics": [
             {"client_key": "own", "economic_type": "TRANSACTION"},
             {"client_key": "advance", "economic_type": "ACCOUNT_TRANSFER"},
-            {"client_key": "returns", "economic_type": "ACCOUNT_TRANSFER"},
+            *[
+                {"client_key": f"return-{index}", "economic_type": "ACCOUNT_TRANSFER"}
+                for index in range(1, 5)
+            ],
         ],
         "allocations": [
             {"fact_id": fact_ids[0], "economic_key": "own", "amount_value": 10000},
             {"fact_id": fact_ids[0], "economic_key": "advance", "amount_value": 40000},
             *[
-                {"fact_id": fact_id, "economic_key": "returns", "amount_value": 10000}
-                for fact_id in fact_ids[1:]
+                {
+                    "fact_id": fact_id,
+                    "economic_key": f"return-{index}",
+                    "amount_value": 10000,
+                }
+                for index, fact_id in enumerate(fact_ids[1:], 1)
             ],
         ],
         "idempotency_key": "advance-create",
@@ -88,7 +95,7 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
     assert response.status_code == 200, response.text
     case = response.json()["body"]
     assert case["status"] == "PENDING"
-    assert len(case["economics"]) == 3
+    assert len(case["economics"]) == 6
     assert len(case["allocations"]) == 6
 
     confirmed = client.post(
@@ -138,7 +145,7 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
     assert summary["account_transfer_out_value"] == 0
 
 
-def test_loan_many_facts_compose_claim_and_balance_to_zero(economic_api):
+def test_loan_uses_one_claim_cashflow_entry_per_fact(economic_api):
     client, sessions = economic_api
     fact_ids = _facts(sessions, [
         ("OUT", 500000, "CNY"),
@@ -148,12 +155,15 @@ def test_loan_many_facts_compose_claim_and_balance_to_zero(economic_api):
         ("IN", 400000, "CNY"),
     ])
     economics = [
-        {
-            "client_key": "principal",
-            "economic_type": "CLAIM",
-            "claim_key": "loan-alice",
-            "claim_side": "RECEIVABLE",
-        },
+        *[
+            {
+                "client_key": f"principal-{index}",
+                "economic_type": "CLAIM",
+                "claim_key": "loan-alice",
+                "claim_side": "RECEIVABLE",
+            }
+            for index in range(1, 3)
+        ],
         *[
             {
                 "client_key": f"repayment-{index}",
@@ -165,8 +175,8 @@ def test_loan_many_facts_compose_claim_and_balance_to_zero(economic_api):
         ],
     ]
     allocations = [
-        {"fact_id": fact_ids[0], "economic_key": "principal", "amount_value": 500000},
-        {"fact_id": fact_ids[1], "economic_key": "principal", "amount_value": 500000},
+        {"fact_id": fact_ids[0], "economic_key": "principal-1", "amount_value": 500000},
+        {"fact_id": fact_ids[1], "economic_key": "principal-2", "amount_value": 500000},
         {"fact_id": fact_ids[2], "economic_key": "repayment-1", "amount_value": 300000},
         {"fact_id": fact_ids[3], "economic_key": "repayment-2", "amount_value": 300000},
         {"fact_id": fact_ids[4], "economic_key": "repayment-3", "amount_value": 400000},
@@ -184,7 +194,7 @@ def test_loan_many_facts_compose_claim_and_balance_to_zero(economic_api):
     assert confirmed.status_code == 200, confirmed.text
     body = confirmed.json()["body"]
     assert sorted(item["amount_value"] for item in body["economics"]) == [
-        300000, 300000, 400000, 1000000,
+        300000, 300000, 400000, 500000, 500000,
     ]
     summary = client.get("/paam/economy/v1/summary").json()["totals"][0]
     assert summary["claim_out_value"] == 1000000
@@ -192,7 +202,7 @@ def test_loan_many_facts_compose_claim_and_balance_to_zero(economic_api):
     assert summary["receivable_balance_value"] == 0
 
 
-def test_one_economic_cannot_mix_direction_or_currency(economic_api):
+def test_one_economic_cannot_allocate_multiple_facts(economic_api):
     client, sessions = economic_api
     out_id, in_id = _facts(sessions, [("OUT", 12000, "CNY"), ("IN", 2000, "USD")])
     response = client.post("/paam/review/v2/case/create", json={
