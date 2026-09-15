@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import delete, select, text, update
+from sqlalchemy import delete, select, text, union, update
 from sqlalchemy.orm import Session
 
 from backend.entity import (
@@ -63,6 +63,21 @@ class TargetTagAssignmentMapper:
             self.db.execute(text("BEGIN IMMEDIATE"))
 
     def target(self, ledger_id: int) -> TagAssignmentTarget | None:
+        allocation_links = select(
+            ReviewCaseBill.economic_id.label("ledger_id"),
+            ReviewCaseBill.bill_id.label("fact_id"),
+        ).join(
+            ReviewCase,
+            ReviewCase.id == ReviewCaseBill.case_id,
+        ).where(
+            ReviewCase.status == "CONFIRMED",
+            ReviewCaseBill.economic_id > 0,
+        )
+        legacy_links = select(
+            LedgerEntrySource.ledger_id.label("ledger_id"),
+            LedgerEntrySource.source_id.label("fact_id"),
+        ).where(LedgerEntrySource.source_kind == "BILL_FACT")
+        links = union(allocation_links, legacy_links).subquery()
         rows = self.db.execute(select(
             LedgerEntry.id.label("ledger_id"),
             LedgerEntry.projection_version,
@@ -71,14 +86,13 @@ class TargetTagAssignmentMapper:
             BillFact.amount_scale,
             BillFact.currency_code,
         ).join(
-            LedgerEntrySource,
-            LedgerEntrySource.ledger_id == LedgerEntry.id,
+            links,
+            links.c.ledger_id == LedgerEntry.id,
         ).join(
             BillFact,
-            BillFact.id == LedgerEntrySource.source_id,
+            BillFact.id == links.c.fact_id,
         ).where(
             LedgerEntry.id == ledger_id,
-            LedgerEntrySource.source_kind == "BILL_FACT",
         ).order_by(BillFact.id)).mappings().all()
         if not rows:
             return None

@@ -9,8 +9,16 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.router.target_economic import router as economic_router
 from backend.router.target_review import v3_router as review_v3_router
+from backend.router.target_tag import router as tag_router
 from backend.router.target_dep import get_target_db
-from backend.entity import BillFact, LedgerEntry, LedgerEntrySource, ReviewCase, ReviewCaseBill
+from backend.entity import (
+    BillFact,
+    LedgerEntry,
+    LedgerEntrySource,
+    LedgerEntryTag,
+    ReviewCase,
+    ReviewCaseBill,
+)
 from backend.service.target_economic_service import TargetEconomicService
 from backend.core.target_database import init_target_db
 
@@ -26,6 +34,7 @@ def economic_api(tmp_path):
     api = FastAPI()
     api.include_router(review_v3_router)
     api.include_router(economic_router)
+    api.include_router(tag_router)
 
     def override_db():
         with sessions() as db:
@@ -341,6 +350,50 @@ def test_review_v3_rejects_removed_v2_fields_and_v2_routes(economic_api):
     assert rejected.status_code == 422
     assert client.get("/paam/review/v2/case/page").status_code == 404
     assert client.get("/paam/review/v2/fact/candidates").status_code == 404
+
+
+def test_tag_sync_uses_allocations_for_every_split_ledger_entry(economic_api):
+    client, sessions = economic_api
+    fact_id = _facts(sessions, [("OUT", 10000, "CNY")])[0]
+    with sessions() as db:
+        TargetEconomicService(db).ensure_defaults([fact_id], commit=True)
+    view = client.post("/paam/tag/v1/view/create", json={
+        "name": "Category",
+        "system_name": "category",
+    }).json()["body"]
+    case = client.post("/paam/review/v3/case/create", json={
+        "behavior_code": "SPLIT_PURCHASE",
+        "entries": [
+            {"client_key": "goods", "entry_type": 0},
+            {"client_key": "service", "entry_type": 0},
+        ],
+        "allocations": [
+            {"transaction_fact_id": fact_id, "entry_key": "goods", "amount_value": 6000},
+            {"transaction_fact_id": fact_id, "entry_key": "service", "amount_value": 4000},
+        ],
+        "idempotency_key": "split-tag-create",
+    }).json()["body"]
+    confirmed = client.post(f"/paam/review/v3/case/confirm/{case['id']}", json={
+        "expected_version": 1,
+        "idempotency_key": "split-tag-confirm",
+    })
+    assert confirmed.status_code == 200, confirmed.text
+    with sessions() as db:
+        assert db.query(LedgerEntryTag).count() == 2
+
+    archived = client.put(f"/paam/tag/v1/view/status/{view['id']}", json={
+        "status": "ARCHIVED",
+    })
+    assert archived.status_code == 200, archived.text
+    with sessions() as db:
+        assert db.query(LedgerEntryTag).count() == 0
+
+    restored = client.put(f"/paam/tag/v1/view/status/{view['id']}", json={
+        "status": "ACTIVE",
+    })
+    assert restored.status_code == 200, restored.text
+    with sessions() as db:
+        assert db.query(LedgerEntryTag).count() == 2
 
 
 def test_backfill_does_not_reuse_a_legacy_aggregate_for_multiple_facts(economic_api):

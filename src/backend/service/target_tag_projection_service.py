@@ -67,7 +67,7 @@ class TargetTagProjectionService:
         self.mapper.replace(resolved)
 
     def sync_all(self) -> None:
-        self.sync(self.mapper.all_fact_ledgers())
+        self.sync_economics(self.mapper.all_ledger_facts())
 
     def validate_complete(self, state: dict[str, str]) -> dict[str, str]:
         dictionary = self.mapper.active_dictionary()

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, union
 from sqlalchemy.orm import Session
 
 from backend.entity import (
@@ -83,14 +83,30 @@ class TargetTagProjectionMapper:
             owners[fact_id] = row["case_id"]
         return states
 
-    def all_fact_ledgers(self) -> dict[int, int]:
-        rows = self.db.execute(select(
-            LedgerEntrySource.source_id,
-            LedgerEntrySource.ledger_id,
+    def all_ledger_facts(self) -> dict[int, list[int]]:
+        allocation_links = select(
+            ReviewCaseBill.economic_id.label("ledger_id"),
+            ReviewCaseBill.bill_id.label("fact_id"),
+        ).join(
+            ReviewCase,
+            ReviewCase.id == ReviewCaseBill.case_id,
         ).where(
-            LedgerEntrySource.source_kind == "BILL_FACT",
-        )).mappings().all()
-        return {row["source_id"]: row["ledger_id"] for row in rows}
+            ReviewCase.status == "CONFIRMED",
+            ReviewCaseBill.economic_id > 0,
+        )
+        legacy_links = select(
+            LedgerEntrySource.ledger_id.label("ledger_id"),
+            LedgerEntrySource.source_id.label("fact_id"),
+        ).where(LedgerEntrySource.source_kind == "BILL_FACT")
+        links = union(allocation_links, legacy_links).subquery()
+        rows = self.db.execute(select(
+            links.c.ledger_id,
+            links.c.fact_id,
+        ).order_by(links.c.ledger_id, links.c.fact_id)).mappings().all()
+        result: dict[int, list[int]] = {}
+        for row in rows:
+            result.setdefault(row["ledger_id"], []).append(row["fact_id"])
+        return result
 
     def replace(self, ledger_tags: dict[int, tuple[int, ...]]) -> None:
         ledger_ids = list(ledger_tags)
