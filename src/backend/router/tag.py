@@ -17,7 +17,7 @@ from backend.service.target_tag_service import TargetTagService
 
 router = APIRouter(
     prefix="/paam/tag/v1",
-    tags=["target-tags"],
+    tags=["tag"],
     route_class=DomainErrorRoute,
 )
 
@@ -27,12 +27,12 @@ def list_views(include_archived: bool = False, db: Session = Depends(get_db)):
     return TargetTagViewListResponse(body=TargetTagService(db).list(include_archived))
 
 
-@router.post("/view/create", response_model=TargetTagViewResponse)
+@router.post("/view", response_model=TargetTagViewResponse)
 def create_view(payload: TargetTagViewCreateRequest, db: Session = Depends(get_db)):
     return TargetTagViewResponse(body=TargetTagService(db).create_view(payload))
 
 
-@router.put("/view/status/{view_id}", response_model=TargetTagViewResponse)
+@router.put("/view/{view_id}", response_model=TargetTagViewResponse)
 def set_view_status(
     view_id: int,
     payload: TargetTagStatusRequest,
@@ -41,7 +41,7 @@ def set_view_status(
     return TargetTagViewResponse(body=TargetTagService(db).set_view_status(view_id, payload))
 
 
-@router.post("/tag/create/{view_id}", response_model=TargetTagViewResponse)
+@router.post("/view/{view_id}/tag", response_model=TargetTagViewResponse)
 def create_tag(
     view_id: int,
     payload: TargetTagCreateRequest,
@@ -50,7 +50,7 @@ def create_tag(
     return TargetTagViewResponse(body=TargetTagService(db).create_tag(view_id, payload))
 
 
-@router.put("/tag/status/{view_id}/{tag_id}", response_model=TargetTagViewResponse)
+@router.put("/view/{view_id}/tag/{tag_id}", response_model=TargetTagViewResponse)
 def set_tag_status(
     view_id: int,
     tag_id: int,

@@ -14,7 +14,7 @@ from backend.service.target_tag_assignment_service import TargetTagAssignmentSer
 
 router = APIRouter(
     prefix="/paam/tag/v1",
-    tags=["target-tags"],
+    tags=["tag"],
     route_class=DomainErrorRoute,
 )
 

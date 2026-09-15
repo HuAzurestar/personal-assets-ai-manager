@@ -79,7 +79,7 @@ def _add_facts(sessions, count, directions=None):
 def test_target_tag_dictionary_assigns_one_default_per_active_view(target_tag_api):
     client, sessions, _engine = target_tag_api
     _add_facts(sessions, 2)
-    created = client.post("/paam/tag/v1/view/create", json={
+    created = client.post("/paam/tag/v1/view", json={
         "name": "消费类别",
         "system_name": "category",
     })
@@ -95,29 +95,29 @@ def test_target_tag_dictionary_assigns_one_default_per_active_view(target_tag_ap
     with sessions() as db:
         assert db.query(LedgerEntryTag).count() == 3
 
-    tagged = client.post(f"/paam/tag/v1/tag/create/{view['id']}", json={
+    tagged = client.post(f"/paam/tag/v1/view/{view['id']}/tag", json={
         "name": "餐饮",
         "system_name": "food",
     })
     assert tagged.status_code == 200
     food = next(item for item in tagged.json()["body"]["tags"] if item["system_name"] == "food")
     protected = client.put(
-        f"/paam/tag/v1/tag/status/{view['id']}/{view['tags'][0]['id']}",
+        f"/paam/tag/v1/view/{view['id']}/tag/{view['tags'][0]['id']}",
         json={"status": "ARCHIVED"},
     )
     assert protected.status_code == 422
     assert client.put(
-        f"/paam/tag/v1/tag/status/{view['id']}/{food['id']}",
+        f"/paam/tag/v1/view/{view['id']}/tag/{food['id']}",
         json={"status": "ARCHIVED"},
     ).status_code == 200
 
     assert client.put(
-        f"/paam/tag/v1/view/status/{view['id']}",
+        f"/paam/tag/v1/view/{view['id']}",
         json={"status": "ARCHIVED"},
     ).status_code == 200
     assert client.get("/paam/tag/v1/view/list").json()["body"] == []
     assert client.put(
-        f"/paam/tag/v1/view/status/{view['id']}",
+        f"/paam/tag/v1/view/{view['id']}",
         json={"status": "ACTIVE"},
     ).status_code == 200
     with sessions() as db:
@@ -129,7 +129,7 @@ def test_target_tag_dictionary_assigns_one_default_per_active_view(target_tag_ap
 def test_target_tag_list_query_count_is_fixed(target_tag_api):
     client, _sessions, engine = target_tag_api
     for index in range(20):
-        response = client.post("/paam/tag/v1/view/create", json={
+        response = client.post("/paam/tag/v1/view", json={
             "name": f"View {index}",
             "system_name": f"view_{index}",
         })
@@ -152,11 +152,11 @@ def test_target_tag_list_query_count_is_fixed(target_tag_api):
 
 
 def _create_tag_dictionary(client):
-    view = client.post("/paam/tag/v1/view/create", json={
+    view = client.post("/paam/tag/v1/view", json={
         "name": "Category",
         "system_name": "category",
     }).json()["body"]
-    response = client.post(f"/paam/tag/v1/tag/create/{view['id']}", json={
+    response = client.post(f"/paam/tag/v1/view/{view['id']}/tag", json={
         "name": "Food",
         "system_name": "food",
     })
@@ -352,10 +352,10 @@ def test_tag_assignment_select_count_is_independent_of_source_fact_count(
 def test_tag_view_restore_reports_merge_conflict_and_rolls_back(target_tag_api):
     client, sessions, _engine = target_tag_api
     fact_ids = _add_facts(sessions, 2, directions=["OUT", "IN"])
-    view = client.post("/paam/tag/v1/view/create", json={
+    view = client.post("/paam/tag/v1/view", json={
         "name": "Category", "system_name": "category",
     }).json()["body"]
-    view = client.post(f"/paam/tag/v1/tag/create/{view['id']}", json={
+    view = client.post(f"/paam/tag/v1/view/{view['id']}/tag", json={
         "name": "Food", "system_name": "food",
     }).json()["body"]
     entries = client.get("/paam/ledger/v1/entry/list").json()["items"]
@@ -365,7 +365,7 @@ def test_tag_view_restore_reports_merge_conflict_and_rolls_back(target_tag_api):
         "idempotency_key": "restore-conflict-tag",
     })
     assert assigned.status_code == 200, assigned.text
-    assert client.put(f"/paam/tag/v1/view/status/{view['id']}", json={
+    assert client.put(f"/paam/tag/v1/view/{view['id']}", json={
         "status": "ARCHIVED",
     }).status_code == 200
     case = client.post("/paam/review/v1/case/create", json={
@@ -380,7 +380,7 @@ def test_tag_view_restore_reports_merge_conflict_and_rolls_back(target_tag_api):
         "expected_version": 1,
         "idempotency_key": "restore-conflict-confirm",
     }).status_code == 200
-    restored = client.put(f"/paam/tag/v1/view/status/{view['id']}", json={
+    restored = client.put(f"/paam/tag/v1/view/{view['id']}", json={
         "status": "ACTIVE",
     })
     assert restored.status_code == 409

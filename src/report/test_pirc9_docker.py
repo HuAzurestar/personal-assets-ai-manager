@@ -174,18 +174,18 @@ def test_double_submit_is_one_command(client, page):
 def test_tag_restore_after_merge_returns_actionable_result(client, page):
     name, ids = imported(client, [('OUT', 1000), ('IN', 1000)])
     system = f'category_{uuid4().hex[:8]}'
-    view = body(client.post('/paam/tag/v1/view/create', json={'name': 'Docker archive conflict', 'system_name': system}))
-    body(client.post(f'/paam/tag/v1/tag/create/{view["id"]}', json={'name': 'Food', 'system_name': 'food'}))
+    view = body(client.post('/paam/tag/v1/view', json={'name': 'Docker archive conflict', 'system_name': system}))
+    body(client.post(f'/paam/tag/v1/view/{view["id"]}/tag', json={'name': 'Food', 'system_name': 'food'}))
     entry = ledger(client, name)[0]
     views = body(client.get('/paam/tag/v1/view/list'))
     state = {view['system_name']: 'unclassified' for view in views}
     state[system] = 'food'
     body(client.put(f'/paam/tag/v1/assignment/set/{entry["id"]}', json={
         'tag_state': state, 'expected_projection_version': entry['projection_version'], 'idempotency_key': uuid4().hex}))
-    body(client.put(f'/paam/tag/v1/view/status/{view["id"]}', json={'status': 'ARCHIVED'}))
+    body(client.put(f'/paam/tag/v1/view/{view["id"]}', json={'status': 'ARCHIVED'}))
     change(client, create(client, 'TRANSFER', ids, ['TRANSFER_OUT', 'TRANSFER_IN']), 'confirm')
     page.locator('nav [data-page="tags"]').click()
-    with page.expect_response(f'**/paam/tag/v1/view/status/{view["id"]}') as response:
+    with page.expect_response(f'**/paam/tag/v1/view/{view["id"]}') as response:
         page.locator(f'[data-action="view-status"][data-id="{view["id"]}"]').click()
     assert response.value.status in (200, 409, 422), response.value.text()
 

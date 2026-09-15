@@ -1752,7 +1752,7 @@ async function submitInlineTag(event) {
   const payload = Object.fromEntries(new FormData(form));
   if (!beginSubmit(form)) return;
   try {
-    await jsonRequest(`/paam/tag/v1/tag/create/${form.dataset.view}`, "POST", payload);
+    await jsonRequest(`/paam/tag/v1/view/${form.dataset.view}/tag`, "POST", payload);
     toast(`标签“${payload.name}”已添加`);
     await render();
   } catch (error) {
@@ -1763,13 +1763,13 @@ async function submitInlineTag(event) {
 async function submitDictionary(event) {
   event.preventDefault(); const form = event.currentTarget; const payload = Object.fromEntries(new FormData(form));
   if (!beginSubmit(form)) return;
-  const url = form.dataset.kind === "view" ? "/paam/tag/v1/view/create" : `/paam/tag/v1/tag/create/${form.dataset.view}`;
+  const url = form.dataset.kind === "view" ? "/paam/tag/v1/view" : `/paam/tag/v1/view/${form.dataset.view}/tag`;
   try { await jsonRequest(url, "POST", payload); form.closest("dialog").close(); toast("标签定义已保存"); await render(); } catch (error) { endSubmit(form); showFormError(form, error); }
 }
 async function dictionaryStatus(kind, button) {
   if (button.disabled) return;
   button.disabled = true;
-  const url = kind === "view" ? `/paam/tag/v1/view/status/${button.dataset.id}` : `/paam/tag/v1/tag/status/${button.dataset.view}/${button.dataset.id}`;
+  const url = kind === "view" ? `/paam/tag/v1/view/${button.dataset.id}` : `/paam/tag/v1/view/${button.dataset.view}/tag/${button.dataset.id}`;
   try { await jsonRequest(url, "PUT", { status: button.dataset.status }); toast("状态已更新"); await render(); }
   catch (error) { button.disabled = false; throw error; }
 }
