@@ -58,6 +58,9 @@ description: Change PAAM FastAPI routers, URL modules or versions, HTTP endpoint
   files after every caller has migrated.
 - Keep path-only changes separate from behavior changes. Preserve request,
   response, transaction, and error behavior in file-move commits.
+- Define backend domain and application Error classes under `src/backend/error`.
+  Service, Mapper, Core, and Router files do not declare their own public Error
+  classes. Router error code only translates those Errors to HTTP responses.
 - Translate domain errors consistently at the HTTP boundary. Do not duplicate
   route-local wrappers for the same error contract.
 
@@ -92,12 +95,17 @@ description: Change PAAM FastAPI routers, URL modules or versions, HTTP endpoint
 - Path parameters identify resources. Filters, sorting, and pagination use
   query parameters. Write input uses a JSON request body when a body is needed.
 - Every successful business API response uses the common
-  `status/message/body` envelope and HTTP status `200`. `status` reports
-  success, `message` describes the result, and `body` carries the returned
-  object, collection, page, or an empty object when no result data is needed.
+  `status/message/body` envelope and HTTP status `200`. `status` is the integer
+  HTTP status code and must equal the actual response status. `message`
+  describes the result, and `body` carries the returned object, collection,
+  page, or an empty object when no result data is needed.
 - Creation, update, deletion, and domain-action success all use HTTP `200`.
   Failures use an appropriate non-200 status code under the shared error
   contract.
+- Failed business responses use the same envelope. Their integer `status`
+  equals the actual non-200 HTTP status, `message` contains the human-readable
+  error, and `body` carries a stable machine-readable error code plus optional
+  structured details.
 - Canonical paged list requests use `page` with default `1` and `page_size` with
   default `20` and maximum `100`. The response `body` contains `items`, `total`,
   `page`, and `page_size`.
