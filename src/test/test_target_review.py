@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 
 from backend.router.target_ledger import v1_router as target_ledger_router
-from backend.router.target_review import router as target_review_router
+from backend.router.ledger_review_legacy import router as ledger_review_legacy_router
 from backend.router.dependency import get_db
 from backend.core.target_database import init_target_db
 from backend.entity import BillFact, LedgerEntry, ReviewCase, ReviewHistory
@@ -24,7 +24,7 @@ def target_review_api(tmp_path):
     sessions = sessionmaker(bind=engine, autoflush=False)
     init_target_db(bind=engine)
     api = FastAPI()
-    api.include_router(target_review_router)
+    api.include_router(ledger_review_legacy_router)
     api.include_router(target_ledger_router)
 
     def override_db():

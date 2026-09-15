@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 
 from backend.router.target_economic import router as economic_router
-from backend.router.target_review import v2_router as review_v2_router
+from backend.router.ledger_review import router as ledger_review_router
 from backend.router.dependency import get_db
 from backend.entity import BillFact, LedgerEntry, LedgerEntrySource, ReviewCase, ReviewCaseBill
 from backend.service.target_economic_service import TargetEconomicService
@@ -24,7 +24,7 @@ def economic_api(tmp_path):
     sessions = sessionmaker(bind=engine, autoflush=False)
     init_target_db(bind=engine)
     api = FastAPI()
-    api.include_router(review_v2_router)
+    api.include_router(ledger_review_router)
     api.include_router(economic_router)
 
     def override_db():

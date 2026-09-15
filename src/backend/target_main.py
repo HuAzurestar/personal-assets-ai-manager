@@ -8,9 +8,12 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from backend.router.import_router import router as import_router
+from backend.router.import_conflict import router as import_conflict_router
+from backend.router.ledger_account import router as ledger_account_router
+from backend.router.ledger_review import router as ledger_review_router
+from backend.router.ledger_review_legacy import router as ledger_review_legacy_router
 from backend.router.target_ledger import v1_router as target_ledger_router
 from backend.router.target_economic import router as target_economic_router
-from backend.router.target_review import router as target_review_router, v2_router as economic_review_router
 from backend.router.tag import router as tag_router
 from backend.core import target_database
 from backend.core.config import APP_DISPLAY_NAME, RESOURCE_DIR
@@ -36,10 +39,12 @@ app = FastAPI(
 app.mount("/static", StaticFiles(directory=RESOURCE_DIR / "frontend"), name="static")
 app.mount("/asset", StaticFiles(directory=RESOURCE_DIR / "asset"), name="asset")
 app.include_router(import_router)
+app.include_router(import_conflict_router)
 app.include_router(target_ledger_router)
 app.include_router(target_economic_router)
-app.include_router(target_review_router)
-app.include_router(economic_review_router)
+app.include_router(ledger_review_legacy_router)
+app.include_router(ledger_review_router)
+app.include_router(ledger_account_router)
 app.include_router(tag_router)
 
 
