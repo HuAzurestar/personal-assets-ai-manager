@@ -40,8 +40,9 @@ PAAM uses a layered modular monolith. Keep the trusted ledger transactionally co
 - A Review change, its ternary allocations, DEFAULT residuals, and every affected
   economic projection update commit atomically.
 
-Read the relevant module skill before changing that module:
+Read the relevant layer or Router skill before changing that area:
 
+- `.agents/skills/router-layer/SKILL.md`
 - `.agents/skills/fact-layer/SKILL.md`
 - `.agents/skills/review-layer/SKILL.md`
 - `.agents/skills/ledger-api/SKILL.md`

@@ -1,12 +1,14 @@
 ---
 name: ledger-api
-description: Change PAAM ledger projections, summaries, tags, Controllers, DTOs/VOs, Services, or SQL Data Mappers.
+description: Change PAAM ledger projections, summaries, tags, DTOs/VOs, Services, or SQL Data Mappers.
 ---
 
 # Ledger and API layer
 
-- Follow `Router -> Service -> Data Mapper -> Entity / SQLite`.
-- A Mapper owns SQL and returns typed VOs. A Service owns the use case and returns response DTOs. A Controller owns HTTP only.
+- Read `.agents/skills/router-layer/SKILL.md` for HTTP modules, URL versions,
+  Router file names, dependencies, and error translation.
+- A Mapper owns SQL and returns typed VOs. A Service owns the use case and
+  returns response DTOs.
 - Do not add SQL to a DTO/VO, Service, Controller, serializer, or frontend module.
 - The hot Economic projection is the normal list/summary source. During the
   coordinated migration it remains physically stored in `ledger_entry`.
