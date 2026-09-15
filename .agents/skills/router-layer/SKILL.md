@@ -60,3 +60,31 @@ description: Change PAAM FastAPI routers, URL modules or versions, HTTP endpoint
   response, transaction, and error behavior in file-move commits.
 - Translate domain errors consistently at the HTTP boundary. Do not duplicate
   route-local wrappers for the same error contract.
+
+## REST contract
+
+- Canonical paths use
+  `/paam/{module}/{version}/{object}/{resource_id}`. Object names are singular.
+- A nested object uses
+  `/paam/{module}/{version}/{object}/{resource_id}/{subobject}/{subresource_id}`.
+  Omit the trailing identifier when addressing the nested collection.
+- Prefer HTTP CRUD semantics before adding action paths:
+  - `POST /{object}` creates a resource.
+  - `GET /{object}/{resource_id}` reads one resource.
+  - `PUT /{object}/{resource_id}` updates or replaces one resource.
+  - `DELETE /{object}/{resource_id}` deletes one resource when hard deletion is
+    valid for that domain.
+- `GET /{object}/list` is the standard collection query. `list` is the explicit
+  collection endpoint name; do not add `create`, `detail`, `update`, or `set`
+  when the HTTP method and resource path already express the operation.
+- Use `POST /{object}/{resource_id}/{action}` only when a domain command cannot
+  be represented truthfully as CRUD. Review transitions such as `confirm`,
+  `revoke`, and `restore` follow this form.
+- Path parameters identify resources. Filters, sorting, and pagination use
+  query parameters. Write input uses a JSON request body when a body is needed.
+- Canonical paged list requests use `page` with default `1` and `page_size` with
+  default `20` and maximum `100`. Their direct response contains `items`,
+  `total`, `page`, and `page_size`. Do not wrap the page in a generic
+  `status/message/body` envelope.
+- Compatibility routes retain their existing request defaults and response
+  shapes until their callers migrate.
