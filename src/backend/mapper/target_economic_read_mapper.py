@@ -103,6 +103,22 @@ class TargetEconomicReadMapper:
             if fact_id in tag_versions:
                 raise ValueError(f"fact {fact_id} has multiple confirmed TAG reviews")
             tag_versions[fact_id] = row["version"]
+        account_version_rows = self.db.execute(select(
+            ReviewCaseBill.bill_id,
+            ReviewCase.version,
+        ).join(
+            ReviewCase,
+            ReviewCase.id == ReviewCaseBill.case_id,
+        ).where(
+            ReviewCaseBill.bill_id.in_(fact_ids),
+            ReviewCase.review_type == "ACCOUNT",
+        ).order_by(ReviewCaseBill.bill_id, ReviewCase.id)).mappings().all() if fact_ids else []
+        account_versions: dict[int, int] = {}
+        for row in account_version_rows:
+            fact_id = row["bill_id"]
+            if fact_id in account_versions:
+                raise ValueError(f"fact {fact_id} has multiple ACCOUNT reviews")
+            account_versions[fact_id] = row["version"]
         return (
             flow,
             allocations,
@@ -110,6 +126,7 @@ class TargetEconomicReadMapper:
             reviews,
             self.tags([economic_id]).get(economic_id, []),
             tag_versions,
+            account_versions,
         )
 
     def tags(self, economic_ids: list[int]) -> dict[int, list[dict]]:

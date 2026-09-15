@@ -72,10 +72,10 @@ def _ledger_id(sessions, fact_id):
         ))
 
 
-def _set_account(client, fact_id, projection_version, account, key):
+def _set_account(client, fact_id, review_version, account, key):
     return client.put(f"/paam/review/v1/account/set/{fact_id}", json={
         "account_code": account,
-        "expected_projection_version": projection_version,
+        "expected_version": review_version,
         "reason": "account evidence checked",
         "idempotency_key": key,
     })
@@ -87,7 +87,7 @@ def test_account_correction_keeps_fact_immutable_and_rebuilds_default_projection
     client, sessions = target_account_api
     fact_id = _facts(sessions, [("OUT", "imported-wallet")])[0]
     ledger_id = _ledger_id(sessions, fact_id)
-    corrected = _set_account(client, fact_id, 1, "checked-bank", "account-first")
+    corrected = _set_account(client, fact_id, 0, "checked-bank", "account-first")
     assert corrected.status_code == 200, corrected.text
     case = corrected.json()["body"]
     assert case["review_type"] == "ACCOUNT"
@@ -99,11 +99,11 @@ def test_account_correction_keeps_fact_immutable_and_rebuilds_default_projection
     assert detail["entry"]["out_account_code"] == "checked-bank"
     assert detail["reviews"][0]["is_projection_source"] is True
 
-    replay = _set_account(client, fact_id, 1, "checked-bank", "account-first")
+    replay = _set_account(client, fact_id, 0, "checked-bank", "account-first")
     assert replay.status_code == 200
-    assert _set_account(client, fact_id, 1, "other", "account-stale").status_code == 409
+    assert _set_account(client, fact_id, 0, "other", "account-stale").status_code == 409
 
-    updated = _set_account(client, fact_id, 2, "second-bank", "account-second")
+    updated = _set_account(client, fact_id, 1, "second-bank", "account-second")
     assert updated.status_code == 200, updated.text
     assert updated.json()["body"]["version"] == 2
     with sessions() as db:
@@ -165,7 +165,7 @@ def test_account_correction_republishes_connected_financial_entry(
     assert before["projection_version"] == 2
     assert before["out_account_code"] == "wallet-a"
 
-    corrected = _set_account(client, out_id, 2, "checked-wallet", "merged-account")
+    corrected = _set_account(client, out_id, 0, "checked-wallet", "merged-account")
     assert corrected.status_code == 200, corrected.text
     after = client.get(f"/paam/ledger/v1/entry/detail/{ledger_id}").json()
     assert after["entry"]["projection_version"] == 3
@@ -177,7 +177,7 @@ def test_account_correction_republishes_connected_financial_entry(
 def test_account_code_rejects_projection_sentinel(target_account_api):
     client, sessions = target_account_api
     fact_id = _facts(sessions, [("OUT", "wallet")])[0]
-    response = _set_account(client, fact_id, 1, "MULTIPLE", "bad-account")
+    response = _set_account(client, fact_id, 0, "MULTIPLE", "bad-account")
     assert response.status_code == 422
     with sessions() as db:
         assert db.scalar(select(ReviewCase.id)) is None

@@ -166,25 +166,32 @@ class TargetEconomicMapper:
         self,
         fact: TargetReviewFactVO,
         amount_value: int,
+        account_code: str,
         now: datetime,
         *,
         legacy_ledger_id: int = 0,
         operation: str = "AUTO_REVIEW",
     ) -> int:
         return self.create_defaults(
-            [(fact, amount_value, legacy_ledger_id)], now, operation=operation
+            [(fact, amount_value, legacy_ledger_id, account_code)],
+            now,
+            operation=operation,
         )[0]
 
     def create_defaults(
         self,
-        values: list[tuple[TargetReviewFactVO, int, int]],
+        values: list[tuple[TargetReviewFactVO, int, int, str]],
         now: datetime,
         *,
         operation: str = "AUTO_REVIEW",
     ) -> list[int]:
         if not values:
             return []
-        legacy_ids = [legacy_id for _fact, _amount, legacy_id in values if legacy_id]
+        legacy_ids = [
+            legacy_id
+            for _fact, _amount, legacy_id, _account_code in values
+            if legacy_id
+        ]
         existing = {
             entry.id: entry
             for entry in self.db.scalars(select(LedgerEntry).where(
@@ -201,12 +208,12 @@ class TargetEconomicMapper:
             result_json="{}",
             created_time=now,
             updated_time=now,
-        ) for fact, _amount, _legacy_id in values]
+        ) for fact, _amount, _legacy_id, _account_code in values]
         self.db.add_all(cases)
         self.db.flush()
         entries = []
         new_entries = []
-        for case, (fact, amount_value, legacy_id) in zip(cases, values):
+        for case, (fact, amount_value, legacy_id, account_code) in zip(cases, values):
             fields = self._economic_fields(
                 economic_type="TRANSACTION",
                 direction=fact.cash_direction,
@@ -216,7 +223,7 @@ class TargetEconomicMapper:
                 title=case.title,
                 start_time=fact.occurred_time,
                 end_time=fact.occurred_time,
-                account_code=fact.account_code,
+                account_code=account_code,
                 claim_key="",
                 claim_side="UNKNOWN",
                 reversal_of_id=0,
@@ -253,11 +260,11 @@ class TargetEconomicMapper:
             currency_code=fact.currency_code,
             created_time=now,
             updated_time=now,
-        ) for case, entry, (fact, amount_value, _legacy_id) in zip(cases, entries, values)]
+        ) for case, entry, (fact, amount_value, _legacy_id, _account_code) in zip(cases, entries, values)]
         self.db.add_all(allocations)
         self.db.flush()
         histories = []
-        for case, entry, allocation, (fact, amount_value, _legacy_id) in zip(
+        for case, entry, allocation, (fact, amount_value, _legacy_id, _account_code) in zip(
             cases, entries, allocations, values
         ):
             request_json = self._canonical({
@@ -435,7 +442,7 @@ class TargetEconomicMapper:
         case_id: int,
         expected_version: int,
         default_rows: list[dict],
-        residuals: list[tuple[TargetReviewFactVO, int]],
+        residuals: list[tuple[TargetReviewFactVO, int, str]],
         facts_by_id: dict[int, TargetReviewFactVO],
         economics: list[dict],
         allocations: list[dict],
@@ -545,7 +552,7 @@ class TargetEconomicMapper:
             allocation_model.updated_time = now
         self.db.flush()
         self.create_defaults(
-            [(fact, amount, 0) for fact, amount in residuals],
+            [(fact, amount, 0, account_code) for fact, amount, account_code in residuals],
             now,
             operation="AUTO_RESIDUAL",
         )
@@ -570,6 +577,7 @@ class TargetEconomicMapper:
         case_id: int,
         expected_version: int,
         facts_by_id: dict[int, TargetReviewFactVO],
+        account_codes: dict[int, str],
         released: dict[int, int],
         *,
         request_json: str,
@@ -597,7 +605,7 @@ class TargetEconomicMapper:
         self._delete_economics(economic_ids)
         self.db.flush()
         self.create_defaults([
-            (facts_by_id[fact_id], amount, 0)
+            (facts_by_id[fact_id], amount, 0, account_codes[fact_id])
             for fact_id, amount in sorted(released.items())
         ], now, operation="AUTO_RESTORE")
         self.db.flush()

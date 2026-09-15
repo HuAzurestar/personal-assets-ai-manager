@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 
 from backend.router.target_economic import router as economic_router
-from backend.router.target_review import v2_router as review_v2_router
+from backend.router.target_review import router as review_v1_router, v2_router as review_v2_router
 from backend.router.target_tag import router as tag_router
 from backend.router.target_dep import get_target_db
 from backend.entity import (
@@ -32,6 +32,7 @@ def economic_api(tmp_path):
     sessions = sessionmaker(bind=engine, autoflush=False)
     init_target_db(bind=engine)
     api = FastAPI()
+    api.include_router(review_v1_router)
     api.include_router(review_v2_router)
     api.include_router(economic_router)
     api.include_router(tag_router)
@@ -415,6 +416,63 @@ def test_tag_sync_uses_allocations_for_every_split_ledger_entry(economic_api):
     with sessions() as db:
         assert db.query(LedgerEntryTag).count() == 2
 
+
+def test_account_review_updates_every_split_ledger_and_survives_rebuild(economic_api):
+    client, sessions = economic_api
+    fact_id = _facts(sessions, [("OUT", 10000, "CNY")])[0]
+    with sessions() as db:
+        TargetEconomicService(db).ensure_defaults([fact_id], commit=True)
+    case = client.post("/paam/review/v2/case/create", json={
+        "behavior_code": "SPLIT_PURCHASE",
+        "entries": [
+            {"client_key": "goods", "entry_type": 0},
+            {"client_key": "service", "entry_type": 0},
+        ],
+        "allocations": [
+            {"transaction_fact_id": fact_id, "entry_key": "goods", "amount_value": 6000},
+            {"transaction_fact_id": fact_id, "entry_key": "service", "amount_value": 4000},
+        ],
+        "idempotency_key": "split-account-create",
+    }).json()["body"]
+    confirmed = client.post(f"/paam/review/v2/case/confirm/{case['id']}", json={
+        "expected_version": 1,
+        "idempotency_key": "split-account-confirm",
+    })
+    assert confirmed.status_code == 200, confirmed.text
+    ledger_ids = [row["id"] for row in confirmed.json()["body"]["ledger_entries"]]
+    corrected = client.put(f"/paam/review/v1/account/set/{fact_id}", json={
+        "account_code": "checked-bank",
+        "expected_version": 0,
+        "idempotency_key": "split-account-set",
+    })
+    assert corrected.status_code == 200, corrected.text
+    details = [
+        client.get(f"/paam/ledger/v2/entry/detail/{ledger_id}").json()
+        for ledger_id in ledger_ids
+    ]
+    assert all(item["entry"]["account_code"] == "checked-bank" for item in details)
+    assert all(item["facts"][0]["account_review_version"] == 1 for item in details)
+    with sessions() as db:
+        assert db.get(BillFact, fact_id).account_code == "account-1"
+
+    revoked = client.post(f"/paam/review/v2/case/revoke/{case['id']}", json={
+        "expected_version": 2,
+        "idempotency_key": "split-account-review-revoke",
+    })
+    assert revoked.status_code == 200, revoked.text
+    rebuilt = client.get("/paam/ledger/v2/entry/list").json()["items"]
+    assert len(rebuilt) == 1
+    assert rebuilt[0]["account_code"] == "checked-bank"
+
+    restored = client.post(f"/paam/review/v2/case/restore/{case['id']}", json={
+        "expected_version": 3,
+        "idempotency_key": "split-account-review-restore",
+    })
+    assert restored.status_code == 200, restored.text
+    assert {
+        item["account_code"]
+        for item in client.get("/paam/ledger/v2/entry/list").json()["items"]
+    } == {"checked-bank"}
 
 def test_backfill_does_not_reuse_a_legacy_aggregate_for_multiple_facts(economic_api):
     client, sessions = economic_api

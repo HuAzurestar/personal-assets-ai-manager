@@ -392,7 +392,7 @@ async function showEconomicDetail(id) {
   const detail = await request(`/paam/ledger/v2/entry/detail/${id}`);
   const flow = detail.entry;
   const allocations = detail.allocations.map((item) => `<div class="drawer-review-row"><span><strong>Allocation #${item.id}</strong><small>Fact #${item.transaction_fact_id} → Ledger #${item.ledger_entry_id}</small></span><strong>${money(item.amount)}</strong></div>`).join("");
-  const facts = detail.facts.map((item) => `<div class="drawer-review-row"><span><strong>Fact #${item.id} · ${esc(item.summary || item.counterparty)}</strong><small>${date(item.occurred_time)} · ${esc(item.account_code)}</small></span><strong>${money(item.amount)}</strong></div>`).join("");
+  const facts = detail.facts.map((item) => `<div class="drawer-review-row"><span><strong>Fact #${item.id} · ${esc(item.summary || item.counterparty)}</strong><small>${date(item.occurred_time)} · 导入账户 ${esc(item.account_code)}</small></span><strong>${money(item.amount)}</strong><button type="button" class="quiet" data-action="account" data-fact="${item.id}" data-ledger="${flow.id}" data-version="${item.account_review_version}" data-account="${esc(flow.account_code)}">修正账户</button></div>`).join("");
   const reviews = detail.reviews.map((item) => `<button type="button" class="drawer-review-row" data-action="economic-review-detail" data-id="${item.id}"><span><strong>Review #${item.id} · ${esc(item.behavior_code)}</strong><small>${esc(item.description)} · ${esc(statusNames[item.status] || item.status)}</small></span><span>查看审查 →</span></button>`).join("");
   const typeCode = entryTypeCodes[flow.entry_type];
   detailDrawer({ title: `账本流水 #${flow.id}`, kicker: `${esc(typeNames[typeCode] || typeCode)} · LEDGER #${flow.id}`, subtitle: `${date(flow.occurred_time)} · ${flow.entry_direction === 1 ? "流入" : "流出"}`, body: `<section class="drawer-record-card"><div><span>已确认账本投影</span><h3>${esc(typeNames[typeCode] || typeCode)}</h3><small>${esc(flow.account_code)} · 单方向、单币种</small></div><strong class="ledger-fact-money ${flow.entry_direction === 1 ? "plus" : "minus"}">${signedMoney(flow.amount, entryDirection(flow.entry_direction))}</strong></section><section class="drawer-section"><h3>来源事实</h3>${facts || '<p class="muted">没有关联事实</p>'}</section><section class="drawer-section"><h3>审查与分配</h3>${reviews}${allocations}</section>`, footer: `<button type="button" class="primary" data-action="edit-tags" data-id="${flow.id}">编辑标签</button>` });
@@ -646,12 +646,16 @@ function ledgerDetailMarkup(detail) {
   const entry = detail.entry;
   const effectiveAccounts = new Map();
   detail.reviews.filter((item) => item.review_type === "ACCOUNT" && item.status === "CONFIRMED").forEach((item) => {
-    item.lines.forEach((line) => effectiveAccounts.set(line.bill_id, item.result.account_name));
+    item.lines.forEach((line) => effectiveAccounts.set(line.bill_id, {
+      accountCode: item.result.account_name,
+      version: item.version,
+    }));
   });
   const facts = detail.facts.map((fact) => {
-    const effective = effectiveAccounts.get(fact.id) || fact.account_code;
+    const accountReview = effectiveAccounts.get(fact.id);
+    const effective = accountReview?.accountCode || fact.account_code;
     const direction = fact.cash_direction === "IN" ? "IN" : "OUT";
-    return `<div class="ledger-fact-row"><span class="direction">${direction === "IN" ? "收入事实" : "支出事实"}</span><span><strong>${esc(fact.counterparty || "未知交易方")}</strong><small>${date(fact.occurred_time)} · ${esc(effective)}</small></span><span class="ledger-fact-money ${direction === "IN" ? "plus" : "minus"}">${signedMoney(fact.amount, direction)}</span><button type="button" class="quiet" data-action="account" data-fact="${fact.id}" data-ledger="${entry.id}" data-version="${entry.projection_version}" data-account="${esc(effective)}">修正账户</button></div>`;
+    return `<div class="ledger-fact-row"><span class="direction">${direction === "IN" ? "收入事实" : "支出事实"}</span><span><strong>${esc(fact.counterparty || "未知交易方")}</strong><small>${date(fact.occurred_time)} · ${esc(effective)}</small></span><span class="ledger-fact-money ${direction === "IN" ? "plus" : "minus"}">${signedMoney(fact.amount, direction)}</span><button type="button" class="quiet" data-action="account" data-fact="${fact.id}" data-ledger="${entry.id}" data-version="${accountReview?.version || 0}" data-account="${esc(effective)}">修正账户</button></div>`;
   }).join("");
   const tagRows = entry.tags.map((tag) => `<div class="ledger-detail-tag"><span>${esc(tag.view_name)}</span><strong>${esc(tag.tag_name)}</strong></div>`).join("");
   const financialReview = detail.reviews.find((item) => item.is_projection_source && !["TAG", "ACCOUNT"].includes(item.review_type));
@@ -1744,7 +1748,7 @@ async function submitAccount(event) {
   event.preventDefault(); const form = event.currentTarget; const data = Object.fromEntries(new FormData(form));
   const idempotencyKey = beginSubmit(form); if (!idempotencyKey) return;
   try {
-    await jsonRequest(`/paam/review/v1/account/set/${form.dataset.fact}`, "PUT", { ...data, expected_projection_version: Number(form.dataset.version), idempotency_key: idempotencyKey });
+    await jsonRequest(`/paam/review/v1/account/set/${form.dataset.fact}`, "PUT", { ...data, expected_version: Number(form.dataset.version), idempotency_key: idempotencyKey });
     closeDialogs(); toast("账户修正已保存"); await render();
   } catch (error) { endSubmit(form); showFormError(form, error); }
 }

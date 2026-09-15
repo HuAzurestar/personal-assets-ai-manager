@@ -52,15 +52,16 @@ class TargetAccountService:
 
             target = self.account.target(fact_id)
             if target is None:
-                raise TargetReviewError(404, "bill_fact or its ledger projection was not found")
-            if target.projection_version != payload.expected_projection_version:
-                raise TargetReviewError(
-                    409, "ledger projection changed; reload before correcting the account"
-                )
+                raise TargetReviewError(404, "bill_fact was not found")
             case_id = self.account.account_case_id(fact_id)
             before = self._required(case_id) if case_id else None
             if before is not None and before.status != "CONFIRMED":
                 raise TargetReviewError(409, "revoked ACCOUNT Review must be restored before editing")
+            current_version = before.version if before else 0
+            if current_version != payload.expected_version:
+                raise TargetReviewError(
+                    409, "ACCOUNT Review changed; reload before correcting the account"
+                )
             now = datetime.now()
             result_json = self._canonical({"account_name": account_code})
             if before is None:
@@ -90,7 +91,7 @@ class TargetAccountService:
                 idempotency_key=payload.idempotency_key,
                 now=now,
             )
-            self._republish(target, now)
+            self._republish(target, account_code, now)
             self.review.commit()
             return self._required(case_id)
         except TargetReviewError:
@@ -176,7 +177,10 @@ class TargetAccountService:
                 idempotency_key=payload.idempotency_key,
                 now=now,
             )
-            self._republish(target, now)
+            effective_account = (
+                after.result["account_name"] if restore else target.account_code
+            )
+            self._republish(target, effective_account, now)
             self.review.commit()
             return self._required(case_id)
         except TargetReviewError:
@@ -194,8 +198,12 @@ class TargetAccountService:
             self.review.rollback()
             raise
 
-    def _republish(self, target, now: datetime) -> None:
-        financial_case_id = self.account.financial_case_id(target.ledger_id)
+    def _republish(self, target, account_code: str, now: datetime) -> None:
+        self.account.update_confirmed_ledgers(target.fact_id, account_code, now)
+        legacy_ledger_id = self.account.legacy_ledger_id(target.fact_id)
+        if not legacy_ledger_id:
+            return
+        financial_case_id = self.account.financial_case_id(legacy_ledger_id)
         if financial_case_id:
             financial_case = self._required(financial_case_id)
             fact_ids = sorted({line.bill_id for line in financial_case.lines})

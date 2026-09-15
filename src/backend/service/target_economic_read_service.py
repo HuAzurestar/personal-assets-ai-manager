@@ -48,7 +48,7 @@ class TargetEconomicReadService:
         data = self.mapper.detail(economic_id)
         if data is None:
             return None
-        flow, allocations, facts, reviews, tags, tag_versions = data
+        flow, allocations, facts, reviews, tags, tag_versions, account_versions = data
         versions = {tag_versions.get(row["id"], 0) for row in facts}
         if len(versions) > 1:
             raise ValueError("source facts have different tag Review versions")
@@ -76,6 +76,7 @@ class TargetEconomicReadService:
                     currency_code=row["currency_code"],
                 ),
                 account_code=row["account_code"],
+                account_review_version=account_versions.get(row["id"], 0),
                 counterparty=row["counterparty"],
                 summary=row["summary"],
             ) for row in facts],

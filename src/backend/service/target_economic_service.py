@@ -19,6 +19,7 @@ from backend.schema.target_review import (
     TargetReviewTransitionRequest,
 )
 from backend.service.target_tag_projection_service import TargetTagProjectionService
+from backend.service.target_account_projection_service import TargetAccountProjectionService
 
 
 class TargetEconomicError(Exception):
@@ -33,6 +34,7 @@ class TargetEconomicService:
     def __init__(self, db: Session):
         self.mapper = TargetEconomicMapper(db)
         self.tags = TargetTagProjectionService(db)
+        self.accounts = TargetAccountProjectionService(db)
 
     def ensure_defaults(self, fact_ids: list[int], *, commit: bool = False) -> None:
         """Give every accepted fact exact confirmed TRANSACTION coverage."""
@@ -46,6 +48,7 @@ class TargetEconomicService:
             raise TargetEconomicError(409, f"unknown bill_fact IDs: {missing}")
         coverage = self.mapper.fact_coverage(fact_ids)
         legacy = self.mapper.legacy_ledger_ids(fact_ids)
+        accounts = self.accounts.effective(facts)
         now = datetime.now()
         defaults = []
         for fact in facts:
@@ -57,6 +60,7 @@ class TargetEconomicService:
                     fact,
                     fact.amount_value - allocated,
                     legacy.get(fact.id, 0) if allocated == 0 else 0,
+                    accounts[fact.id].account_code,
                 ))
         self.mapper.create_defaults(defaults, now)
         self._assert_exact(facts)
@@ -102,7 +106,7 @@ class TargetEconomicService:
             if replay is not None:
                 self.mapper.commit()
                 return replay
-            facts, economics, allocations = self._prepare(payload)
+            facts, economics, allocations, _accounts = self._prepare(payload)
             self.ensure_defaults([fact.id for fact in facts])
             now = datetime.now()
             case_id = self.mapper.create_draft(
@@ -161,7 +165,7 @@ class TargetEconomicService:
             if plan_payload is None:
                 raise TargetEconomicError(409, "review has no restorable allocation plan")
             plan = TargetEconomicReviewCreateRequest.model_validate(plan_payload)
-            facts, economics, allocations = self._prepare(plan)
+            facts, economics, allocations, accounts = self._prepare(plan)
             fact_ids = sorted({row["fact_id"] for row in allocations})
             fact_by_id = {fact.id: fact for fact in facts}
             defaults = self.mapper.default_allocations(fact_ids)
@@ -179,7 +183,11 @@ class TargetEconomicService:
             if unavailable:
                 raise TargetEconomicError(409, f"allocations are no longer available: {unavailable}")
             residuals = [
-                (fact_by_id[fact_id], default_by_fact[fact_id] - amount)
+                (
+                    fact_by_id[fact_id],
+                    default_by_fact[fact_id] - amount,
+                    accounts[fact_id].account_code,
+                )
                 for fact_id, amount in requested.items()
                 if default_by_fact[fact_id] > amount
             ]
@@ -237,7 +245,7 @@ class TargetEconomicService:
                 raise TargetEconomicError(409, "only a pending economic review can be edited")
             if current.version != payload.expected_version:
                 raise TargetEconomicError(409, "review version changed; reload before editing")
-            facts, economics, allocations = self._prepare(payload)
+            facts, economics, allocations, _accounts = self._prepare(payload)
             self.ensure_defaults([fact.id for fact in facts])
             if not self.mapper.replace_draft(
                 case_id,
@@ -293,10 +301,15 @@ class TargetEconomicService:
                 released[row.transaction_fact_id] += row.amount_value
             facts = self.mapper.facts(sorted(released))
             fact_by_id = {fact.id: fact for fact in facts}
+            accounts = self.accounts.effective(facts)
             if not self.mapper.revoke_case(
                 case_id,
                 payload.expected_version,
                 fact_by_id,
+                {
+                    fact_id: account.account_code
+                    for fact_id, account in accounts.items()
+                },
                 dict(released),
                 request_json=request_json,
                 actor=payload.actor,
@@ -342,6 +355,7 @@ class TargetEconomicService:
         missing = sorted(set(fact_ids) - set(fact_by_id))
         if missing:
             raise ValueError(f"unknown bill_fact IDs: {missing}")
+        accounts = self.accounts.effective(facts)
         fact_totals: dict[int, int] = defaultdict(int)
         grouped = defaultdict(list)
         allocations = []
@@ -389,12 +403,12 @@ class TargetEconomicService:
                 "title": payload.description or fact.counterparty or fact.summary,
                 "start_time": fact.occurred_time,
                 "end_time": fact.occurred_time,
-                "account_code": fact.account_code,
+                "account_code": accounts[fact.id].account_code,
                 "claim_key": "",
                 "claim_side": "UNKNOWN",
                 "reversal_of_id": 0,
             })
-        return facts, economics, allocations
+        return facts, economics, allocations, accounts
 
     def _assert_exact(self, facts: tuple[TargetReviewFactVO, ...]) -> None:
         coverage = self.mapper.fact_coverage([fact.id for fact in facts])

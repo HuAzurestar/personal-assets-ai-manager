@@ -70,6 +70,7 @@ class EconomicFactBriefRead(BaseModel):
     cash_direction: str
     amount: EconomicMoneyRead
     account_code: str
+    account_review_version: int
     counterparty: str
     summary: str
 
