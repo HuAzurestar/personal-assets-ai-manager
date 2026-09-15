@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
-from backend.router.target_ledger import v1_router as target_ledger_router
+from backend.router.ledger_legacy import router as ledger_legacy_router
 from backend.router.dependency import get_db
 from backend.core.target_database import TargetBase
 from backend.entity import (
@@ -262,7 +262,7 @@ def test_target_ledger_controller_keeps_native_integer_contract(tmp_path):
         db.commit()
 
     api = FastAPI()
-    api.include_router(target_ledger_router)
+    api.include_router(ledger_legacy_router)
 
     def override_db():
         with sessions() as db:

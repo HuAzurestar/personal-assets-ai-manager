@@ -18,10 +18,10 @@ from backend.service.target_ledger_service import TargetLedgerService
 from backend.service.target_ledger_summary_service import TargetLedgerSummaryService
 
 
-v1_router = APIRouter(prefix="/paam/ledger/v1", tags=["target-ledger"])
+router = APIRouter(prefix="/paam/ledger/v1", tags=["target-ledger"])
 
 
-@v1_router.get("/entry/list", response_model=TargetLedgerPageRead)
+@router.get("/entry/list", response_model=TargetLedgerPageRead)
 def list_target_ledger_entries(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=100),
@@ -60,7 +60,7 @@ def list_target_ledger_entries(
         raise HTTPException(status_code=422, detail=str(error)) from error
 
 
-@v1_router.get("/entry/detail/{ledger_id}", response_model=TargetLedgerDetailRead)
+@router.get("/entry/detail/{ledger_id}", response_model=TargetLedgerDetailRead)
 def get_target_ledger_detail(
     ledger_id: int,
     db: Session = Depends(get_db),
@@ -71,7 +71,7 @@ def get_target_ledger_detail(
     return detail
 
 
-@v1_router.get("/summary", response_model=TargetLedgerSummaryRead)
+@router.get("/summary", response_model=TargetLedgerSummaryRead)
 def get_target_ledger_summary(
     date_from: date | None = None,
     date_to: date | None = None,
