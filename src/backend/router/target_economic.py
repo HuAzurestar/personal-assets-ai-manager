@@ -5,7 +5,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from backend.router.target_dep import get_target_db
+from backend.router.dependency import get_db
 from backend.schema.target_economic import (
     EconomicFlowDetailRead,
     EconomicFlowPageRead,
@@ -28,7 +28,7 @@ def list_economic_flows(
     economic_type: list[str] = Query(default=[]),
     currency_code: list[str] = Query(default=[]),
     q: str = Query(default="", max_length=200),
-    db: Session = Depends(get_target_db),
+    db: Session = Depends(get_db),
 ):
     if date_from and date_to and date_from > date_to:
         raise HTTPException(status_code=422, detail="date_from must be before date_to")
@@ -47,7 +47,7 @@ def list_economic_flows(
 
 
 @router.get("/flow/detail/{economic_id}", response_model=EconomicFlowDetailRead)
-def economic_flow_detail(economic_id: int, db: Session = Depends(get_target_db)):
+def economic_flow_detail(economic_id: int, db: Session = Depends(get_db)):
     result = TargetEconomicReadService(db).detail(economic_id)
     if result is None:
         raise HTTPException(status_code=404, detail="Economic flow not found")
@@ -58,7 +58,7 @@ def economic_flow_detail(economic_id: int, db: Session = Depends(get_target_db))
 def economic_summary(
     date_from: date | None = None,
     date_to: date | None = None,
-    db: Session = Depends(get_target_db),
+    db: Session = Depends(get_db),
 ):
     if date_from and date_to and date_from > date_to:
         raise HTTPException(status_code=422, detail="date_from must be before date_to")

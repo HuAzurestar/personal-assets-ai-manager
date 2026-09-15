@@ -9,7 +9,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from backend.router.target_ledger import v1_router as target_ledger_router
-from backend.router.target_dep import get_target_db
+from backend.router.dependency import get_db
 from backend.core.target_database import TargetBase
 from backend.entity import (
     BillFact,
@@ -268,7 +268,7 @@ def test_target_ledger_controller_keeps_native_integer_contract(tmp_path):
         with sessions() as db:
             yield db
 
-    api.dependency_overrides[get_target_db] = override_db
+    api.dependency_overrides[get_db] = override_db
     with TestClient(api) as client:
         page = client.get("/paam/ledger/v1/entry/list")
         assert page.status_code == 200

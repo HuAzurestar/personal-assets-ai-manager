@@ -1,4 +1,4 @@
-"""Dependencies owned by the target PIRC-9 runtime."""
+"""Dependencies shared by PAAM HTTP routers."""
 
 from collections.abc import Generator
 
@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from backend.core import target_database
 
 
-def get_target_db() -> Generator[Session, None, None]:
+def get_db() -> Generator[Session, None, None]:
     db = target_database.SessionLocal()
     try:
         yield db

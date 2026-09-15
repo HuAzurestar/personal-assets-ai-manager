@@ -10,7 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from backend.router.target_tag import router as target_tag_router
 from backend.router.target_review import router as target_review_router
 from backend.router.target_ledger import v1_router as target_ledger_router
-from backend.router.target_dep import get_target_db
+from backend.router.dependency import get_db
 from backend.core.target_database import init_target_db
 from backend.entity import (
     BillFact,
@@ -41,7 +41,7 @@ def target_tag_api(tmp_path):
         with sessions() as db:
             yield db
 
-    api.dependency_overrides[get_target_db] = override_db
+    api.dependency_overrides[get_db] = override_db
     with TestClient(api) as client:
         yield client, sessions, engine
     engine.dispose()

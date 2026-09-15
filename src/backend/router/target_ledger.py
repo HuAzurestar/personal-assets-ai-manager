@@ -5,7 +5,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from backend.router.target_dep import get_target_db
+from backend.router.dependency import get_db
 from backend.core.error import MultipleTagsForView, UnknownTagSelector
 from backend.schema.target_ledger import (
     TargetLedgerDetailRead,
@@ -34,7 +34,7 @@ def list_target_ledger_entries(
     q: str = Query(default="", max_length=200),
     account_code: str = Query(default="", max_length=120),
     tag: list[str] = Query(default=[]),
-    db: Session = Depends(get_target_db),
+    db: Session = Depends(get_db),
 ):
     if date_from and date_to and date_from > date_to:
         raise HTTPException(status_code=422, detail="date_from must be before date_to")
@@ -63,7 +63,7 @@ def list_target_ledger_entries(
 @v1_router.get("/entry/detail/{ledger_id}", response_model=TargetLedgerDetailRead)
 def get_target_ledger_detail(
     ledger_id: int,
-    db: Session = Depends(get_target_db),
+    db: Session = Depends(get_db),
 ):
     detail = TargetLedgerService(db).detail(ledger_id)
     if detail is None:
@@ -76,7 +76,7 @@ def get_target_ledger_summary(
     date_from: date | None = None,
     date_to: date | None = None,
     account_code: str = Query(default="", max_length=120),
-    db: Session = Depends(get_target_db),
+    db: Session = Depends(get_db),
 ):
     if date_from and date_to and date_from > date_to:
         raise HTTPException(status_code=422, detail="date_from must be before date_to")

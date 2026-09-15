@@ -9,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.router.target_economic import router as economic_router
 from backend.router.target_review import v2_router as review_v2_router
-from backend.router.target_dep import get_target_db
+from backend.router.dependency import get_db
 from backend.entity import BillFact, LedgerEntry, LedgerEntrySource, ReviewCase, ReviewCaseBill
 from backend.service.target_economic_service import TargetEconomicService
 from backend.core.target_database import init_target_db
@@ -31,7 +31,7 @@ def economic_api(tmp_path):
         with sessions() as db:
             yield db
 
-    api.dependency_overrides[get_target_db] = override_db
+    api.dependency_overrides[get_db] = override_db
     with TestClient(api) as client:
         yield client, sessions
     engine.dispose()
