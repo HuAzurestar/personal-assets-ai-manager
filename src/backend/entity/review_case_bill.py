@@ -20,6 +20,7 @@ class ReviewCaseBill(TargetTable, TargetBase):
     case_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     bill_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     economic_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    entry_type: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     role: Mapped[str] = mapped_column(String(40), nullable=False, default="UNKNOWN")
     party: Mapped[str] = mapped_column(String(120), nullable=False, default="")
     amount_value: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)

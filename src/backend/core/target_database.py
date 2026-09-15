@@ -91,6 +91,7 @@ def ensure_target_schema(bind=None) -> None:
         "review_case_bill": {
             "party": "VARCHAR(120) NOT NULL DEFAULT ''",
             "economic_id": "INTEGER NOT NULL DEFAULT 0",
+            "entry_type": "INTEGER NOT NULL DEFAULT 0",
         },
         "bill_fact": {
             "account_code": "VARCHAR(120) NOT NULL DEFAULT 'UNKNOWN'",

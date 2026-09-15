@@ -97,6 +97,13 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
     assert case["status"] == "PENDING"
     assert len(case["economics"]) == 6
     assert len(case["allocations"]) == 6
+    with sessions() as db:
+        assert db.scalar(select(func.count(LedgerEntry.id)).join(
+            ReviewCaseBill, ReviewCaseBill.economic_id == LedgerEntry.id,
+        ).where(ReviewCaseBill.case_id == case["id"])) == 0
+        assert set(db.scalars(select(ReviewCaseBill.economic_id).where(
+            ReviewCaseBill.case_id == case["id"],
+        )).all()) == {0}
 
     confirmed = client.post(
         f"/paam/review/v2/case/confirm/{case['id']}",
@@ -120,6 +127,7 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
         "payable_balance_value": 0,
     }]
     with sessions() as db:
+        assert db.scalar(select(func.count(LedgerEntry.id))) == 6
         coverage = dict(db.execute(select(
             ReviewCaseBill.bill_id,
             func.sum(ReviewCaseBill.amount_value),
@@ -143,6 +151,11 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
     assert summary["expense_value"] == 50000
     assert summary["account_transfer_in_value"] == 0
     assert summary["account_transfer_out_value"] == 0
+    with sessions() as db:
+        assert db.scalar(select(func.count(LedgerEntry.id))) == 5
+        assert set(db.scalars(select(ReviewCaseBill.economic_id).where(
+            ReviewCaseBill.case_id == case["id"],
+        )).all()) == {0}
 
 
 def test_loan_uses_one_claim_cashflow_entry_per_fact(economic_api):

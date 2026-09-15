@@ -157,20 +157,13 @@ class TargetEconomicService:
                 raise TargetEconomicError(409, f"case status is {case.status}; expected {expected_status}")
             if case.version != payload.expected_version:
                 raise TargetEconomicError(409, "review version changed; reload before confirming")
-            self._validate_reversals([
-                {
-                    "id": item.id,
-                    "economic_type": item.economic_type,
-                    "direction": item.cash_direction,
-                    "amount_value": item.amount_value,
-                    "amount_scale": item.amount_scale,
-                    "currency_code": item.currency_code,
-                    "reversal_of_id": item.reversal_of_id,
-                }
-                for item in case.economics
-            ])
-            fact_ids = sorted({row.fact_id for row in case.allocations})
-            facts = self.mapper.facts(fact_ids)
+            plan_payload = self.mapper.latest_plan_payload(case_id)
+            if plan_payload is None:
+                raise TargetEconomicError(409, "review has no restorable allocation plan")
+            plan = TargetEconomicReviewCreateRequest.model_validate(plan_payload)
+            facts, economics, allocations = self._prepare(plan)
+            self._validate_reversals(economics)
+            fact_ids = sorted({row["fact_id"] for row in allocations})
             fact_by_id = {fact.id: fact for fact in facts}
             defaults = self.mapper.default_allocations(fact_ids)
             default_by_fact: dict[int, int] = defaultdict(int)
@@ -196,6 +189,9 @@ class TargetEconomicService:
                 payload.expected_version,
                 defaults,
                 residuals,
+                fact_by_id,
+                economics,
+                allocations,
                 operation=operation,
                 request_json=request_json,
                 actor=payload.actor,

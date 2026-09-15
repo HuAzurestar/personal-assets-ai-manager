@@ -106,8 +106,8 @@ def test_ledger_entry_is_confirmed_single_fact_cash_projection():
             """
             INSERT INTO review_allocation (
                 review_case_id, transaction_fact_id, ledger_entry_id,
-                amount_value, currency_code
-            ) VALUES (1, 1, 1, 500000, 'CNY')
+                entry_type, amount_value, currency_code
+            ) VALUES (1, 1, 1, 0, 500000, 'CNY')
             """
         )
         try:
@@ -115,8 +115,8 @@ def test_ledger_entry_is_confirmed_single_fact_cash_projection():
                 """
                 INSERT INTO review_allocation (
                     review_case_id, transaction_fact_id, ledger_entry_id,
-                    amount_value, currency_code
-                ) VALUES (1, 2, 1, 500000, 'CNY')
+                    entry_type, amount_value, currency_code
+                ) VALUES (1, 2, 1, 0, 500000, 'CNY')
                 """
             )
         except sqlite3.IntegrityError:

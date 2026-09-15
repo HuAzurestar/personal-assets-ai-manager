@@ -53,6 +53,9 @@ def test_target_schema_upgrade_adds_columns_and_hot_indexes(tmp_path):
     assert "economic_id" in {
         item["name"] for item in schema.get_columns("review_case_bill")
     }
+    assert "entry_type" in {
+        item["name"] for item in schema.get_columns("review_case_bill")
+    }
     assert "behavior_code" in {
         item["name"] for item in schema.get_columns("review_case")
     }
