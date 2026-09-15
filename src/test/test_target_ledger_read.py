@@ -279,7 +279,13 @@ def test_target_ledger_controller_keeps_native_integer_contract(tmp_path):
             "currency_code": "CNY",
         }
         assert item["out_account_code"] == "expense-account"
-        assert client.get("/paam/ledger/v1/entry/detail/404").status_code == 404
+        missing = client.get("/paam/ledger/v1/entry/detail/404")
+        assert missing.status_code == 404
+        assert missing.json() == {
+            "status": 404,
+            "message": "Ledger entry not found",
+            "body": {"code": "HTTP_404"},
+        }
         assert client.get("/paam/ledger/v1/summary").json()["entry_count"] == 1
         assert client.get(
             "/paam/ledger/v1/entry/list?account_code=expense-account"
@@ -290,9 +296,22 @@ def test_target_ledger_controller_keeps_native_integer_contract(tmp_path):
         assert client.get(
             "/paam/ledger/v1/summary?account_code=expense-account"
         ).json()["entry_count"] == 1
-        assert client.get(
+        invalid_selector = client.get(
             "/paam/ledger/v1/entry/list?tag=category"
-        ).status_code == 422
-        assert client.get(
+        )
+        assert invalid_selector.status_code == 422
+        assert invalid_selector.json()["status"] == 422
+        assert invalid_selector.json()["body"]["code"] == "UNKNOWN_TAG_SELECTOR"
+        duplicate_selector = client.get(
             "/paam/ledger/v1/entry/list?tag=category:food&tag=category:travel"
-        ).status_code == 400
+        )
+        assert duplicate_selector.status_code == 400
+        assert duplicate_selector.json()["status"] == 400
+        assert duplicate_selector.json()["body"]["code"] == "MULTIPLE_TAGS_FOR_VIEW"
+
+        invalid_page = client.get("/paam/ledger/v1/entry/list?page_size=101")
+        assert invalid_page.status_code == 422
+        assert invalid_page.json()["status"] == 422
+        assert invalid_page.json()["message"] == "Request validation failed"
+        assert invalid_page.json()["body"]["code"] == "VALIDATION_ERROR"
+        assert invalid_page.json()["body"]["details"]

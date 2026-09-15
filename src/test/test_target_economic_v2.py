@@ -335,7 +335,9 @@ def test_transaction_reversal_is_linked_and_cannot_exceed_original(economic_api)
         "idempotency_key": "refund-create-two",
     })
     assert rejected.status_code == 422
-    assert "exceed" in rejected.json()["detail"]
+    assert rejected.json()["status"] == 422
+    assert "exceed" in rejected.json()["message"]
+    assert rejected.json()["body"]["code"] == "ECONOMIC_ERROR"
 
 
 def test_backfill_does_not_reuse_a_legacy_aggregate_for_multiple_facts(economic_api):

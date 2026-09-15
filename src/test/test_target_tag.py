@@ -382,6 +382,8 @@ def test_tag_view_restore_reports_merge_conflict_and_rolls_back(target_tag_api):
         "status": "ACTIVE",
     })
     assert restored.status_code == 409
-    assert "different category tags" in restored.json()["detail"]
+    assert restored.json()["status"] == 409
+    assert "different category tags" in restored.json()["message"]
+    assert restored.json()["body"]["code"] == "TAG_ERROR"
     archived = client.get("/paam/tag/v1/view/list?include_archived=true").json()["body"]
     assert archived[0]["status"] == "ARCHIVED"

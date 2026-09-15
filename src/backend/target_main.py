@@ -5,17 +5,18 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from backend.router.import_router import router as import_router
+from backend.core import target_database
+from backend.core.config import APP_DISPLAY_NAME, RESOURCE_DIR
+from backend.router.error import register_error_handlers
 from backend.router.import_conflict import router as import_conflict_router
-from backend.router.ledger_account import router as ledger_account_router
+from backend.router.import_router import router as import_router
 from backend.router.ledger import router as ledger_router
+from backend.router.ledger_account import router as ledger_account_router
 from backend.router.ledger_legacy import router as ledger_legacy_router
 from backend.router.ledger_review import router as ledger_review_router
 from backend.router.ledger_review_legacy import router as ledger_review_legacy_router
 from backend.router.system import router as system_router
 from backend.router.tag import router as tag_router
-from backend.core import target_database
-from backend.core.config import APP_DISPLAY_NAME, RESOURCE_DIR
 from backend.service.target_economic_service import TargetEconomicService
 
 
@@ -32,6 +33,7 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+register_error_handlers(app)
 app.mount("/static", StaticFiles(directory=RESOURCE_DIR / "frontend"), name="static")
 app.mount("/asset", StaticFiles(directory=RESOURCE_DIR / "asset"), name="asset")
 app.include_router(import_router)

@@ -1,16 +1,117 @@
 """Domain error translation shared by PAAM HTTP routers."""
 
+import logging
 from collections.abc import Callable, Coroutine
 from typing import Any
 
-from fastapi import HTTPException, Request, Response
+from fastapi import FastAPI, Request, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
+from starlette.exceptions import HTTPException
+from starlette.responses import JSONResponse
 
 from backend.error import DomainError
 
 
+logger = logging.getLogger(__name__)
+
+
+def _error_response(
+    status_code: int,
+    message: str,
+    code: str,
+    *,
+    details: Any = None,
+    headers: dict[str, str] | None = None,
+) -> JSONResponse:
+    body: dict[str, Any] = {"code": code}
+    if details is not None:
+        body["details"] = jsonable_encoder(details)
+    return JSONResponse(
+        status_code=status_code,
+        headers=headers,
+        content={
+            "status": status_code,
+            "message": message,
+            "body": body,
+        },
+    )
+
+
+def _domain_error_response(error: DomainError) -> JSONResponse:
+    return _error_response(
+        error.status_code,
+        str(error),
+        error.code,
+        details=error.details or None,
+    )
+
+
+def _validation_error_response(error: RequestValidationError) -> JSONResponse:
+    return _error_response(
+        422,
+        "Request validation failed",
+        "VALIDATION_ERROR",
+        details=error.errors(),
+    )
+
+
+def _http_error_response(error: HTTPException) -> JSONResponse:
+    message = error.detail if isinstance(error.detail, str) else "Request failed"
+    details = None if isinstance(error.detail, str) else error.detail
+    return _error_response(
+        error.status_code,
+        message,
+        f"HTTP_{error.status_code}",
+        details=details,
+        headers=error.headers,
+    )
+
+
+def _internal_error_response(request: Request, error: Exception) -> JSONResponse:
+    logger.error(
+        "Unhandled error while processing %s",
+        request.url.path,
+        exc_info=error,
+    )
+    return _error_response(
+        500,
+        "Internal server error",
+        "INTERNAL_SERVER_ERROR",
+    )
+
+
+async def _domain_error_handler(_: Request, error: DomainError) -> JSONResponse:
+    return _domain_error_response(error)
+
+
+async def _validation_error_handler(
+    _: Request,
+    error: RequestValidationError,
+) -> JSONResponse:
+    return _validation_error_response(error)
+
+
+async def _http_error_handler(_: Request, error: HTTPException) -> JSONResponse:
+    return _http_error_response(error)
+
+
+async def _internal_error_handler(request: Request, error: Exception) -> JSONResponse:
+    return _internal_error_response(request, error)
+
+
+def register_error_handlers(app: FastAPI) -> None:
+    """Apply the error contract to failures outside a matched business route."""
+
+    app.add_exception_handler(DomainError, _domain_error_handler)
+    app.add_exception_handler(RequestValidationError, _validation_error_handler)
+    app.add_exception_handler(HTTPException, _http_error_handler)
+    app.add_exception_handler(Exception, _internal_error_handler)
+
+
 class DomainErrorRoute(APIRoute):
-    """Keep the domain-error HTTP contract attached to every Router."""
+    """Keep the error-response contract attached to every business Router."""
 
     def get_route_handler(
         self,
@@ -21,9 +122,12 @@ class DomainErrorRoute(APIRoute):
             try:
                 return await original(request)
             except DomainError as error:
-                raise HTTPException(
-                    status_code=error.status_code,
-                    detail=str(error),
-                ) from error
+                return _domain_error_response(error)
+            except RequestValidationError as error:
+                return _validation_error_response(error)
+            except HTTPException as error:
+                return _http_error_response(error)
+            except Exception as error:
+                return _internal_error_response(request, error)
 
         return translated

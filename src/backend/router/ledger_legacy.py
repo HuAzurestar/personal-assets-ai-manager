@@ -5,7 +5,6 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from backend.error import MultipleTagsForView, UnknownTagSelector
 from backend.router.dependency import get_db
 from backend.router.error import DomainErrorRoute
 from backend.schema.target_ledger import (
@@ -44,25 +43,20 @@ def list_target_ledger_entries(
     if date_from and date_to and date_from > date_to:
         raise HTTPException(status_code=422, detail="date_from must be before date_to")
     service = TargetLedgerService(db)
-    try:
-        selectors = service.parse_tag_selectors(tag)
-        return service.page(TargetLedgerPageQuery(
-            page=page,
-            page_size=page_size,
-            sort_order=sort_order,
-            date_from=date_from,
-            date_to=date_to,
-            ledger_type=tuple(ledger_type),
-            allocation_status=tuple(allocation_status),
-            currency_code=tuple(code.upper() for code in currency_code),
-            q=q.strip(),
-            account_code=account_code.strip(),
-            tag=selectors,
-        ))
-    except MultipleTagsForView as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
-    except UnknownTagSelector as error:
-        raise HTTPException(status_code=422, detail=str(error)) from error
+    selectors = service.parse_tag_selectors(tag)
+    return service.page(TargetLedgerPageQuery(
+        page=page,
+        page_size=page_size,
+        sort_order=sort_order,
+        date_from=date_from,
+        date_to=date_to,
+        ledger_type=tuple(ledger_type),
+        allocation_status=tuple(allocation_status),
+        currency_code=tuple(code.upper() for code in currency_code),
+        q=q.strip(),
+        account_code=account_code.strip(),
+        tag=selectors,
+    ))
 
 
 @router.get("/entry/detail/{ledger_id}", response_model=TargetLedgerDetailRead)
