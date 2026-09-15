@@ -821,6 +821,15 @@ class TargetEconomicMapper:
         outgoing = amount_value if direction == "OUT" else 0
         return {
             "ledger_type": legacy_type,
+            "entry_type": {
+                "TRANSACTION": 0,
+                "ACCOUNT_TRANSFER": 1,
+                "CLAIM": 2,
+            }[economic_type],
+            "entry_direction": 1 if direction == "IN" else 2,
+            "account_code": account_code,
+            "counterparty_account_ref": "",
+            "occurred_time": start_time,
             "economic_type": economic_type,
             "cash_direction": direction,
             "amount_value": amount_value,

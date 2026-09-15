@@ -57,6 +57,11 @@ def test_target_schema_upgrade_adds_columns_and_hot_indexes(tmp_path):
         item["name"] for item in schema.get_columns("review_case")
     }
     assert {
+        "entry_type",
+        "entry_direction",
+        "account_code",
+        "counterparty_account_ref",
+        "occurred_time",
         "economic_type",
         "cash_direction",
         "amount_value",

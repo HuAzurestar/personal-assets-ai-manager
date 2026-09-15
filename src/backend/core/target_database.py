@@ -68,6 +68,8 @@ TARGET_SQLITE_INDEXES = (
     "ON review_case_bill (economic_id, id)",
     "CREATE INDEX IF NOT EXISTS ix_ledger_entry_source_ledger_kind_id "
     "ON ledger_entry_source (ledger_id, source_kind, source_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ledger_entry_occurred_time_id "
+    "ON ledger_entry (occurred_time, id)",
 )
 
 
@@ -94,6 +96,13 @@ def ensure_target_schema(bind=None) -> None:
             "account_code": "VARCHAR(120) NOT NULL DEFAULT 'UNKNOWN'",
         },
         "ledger_entry": {
+            # Compatibility defaults exist only for the expand phase. The
+            # contract migration rebuilds the table with strict target DDL.
+            "entry_type": "INTEGER NOT NULL DEFAULT 0",
+            "entry_direction": "INTEGER NOT NULL DEFAULT 0",
+            "account_code": "VARCHAR(120) NOT NULL DEFAULT 'UNKNOWN'",
+            "counterparty_account_ref": "VARCHAR(200) NOT NULL DEFAULT ''",
+            "occurred_time": "DATETIME",
             "in_account_code": "VARCHAR(120) NOT NULL DEFAULT 'UNKNOWN'",
             "out_account_code": "VARCHAR(120) NOT NULL DEFAULT 'UNKNOWN'",
             "economic_type": "VARCHAR(40) NOT NULL DEFAULT 'TRANSACTION'",
@@ -121,6 +130,55 @@ def ensure_target_schema(bind=None) -> None:
                     ))
         for statement in TARGET_SQLITE_INDEXES:
             connection.execute(text(statement))
+        ledger_columns = {
+            item["name"] for item in inspect(connection).get_columns("ledger_entry")
+        }
+        old_projection_columns = {
+            "economic_type",
+            "cash_direction",
+            "in_amount_value",
+            "out_amount_value",
+            "in_currency_code",
+            "out_currency_code",
+            "in_account_code",
+            "out_account_code",
+            "start_time",
+        }
+        if old_projection_columns <= ledger_columns:
+            connection.execute(text(
+                "UPDATE ledger_entry SET "
+                "entry_type = CASE economic_type "
+                "WHEN 'ACCOUNT_TRANSFER' THEN 1 WHEN 'CLAIM' THEN 2 ELSE 0 END, "
+                "entry_direction = CASE "
+                "WHEN cash_direction = 'IN' THEN 1 "
+                "WHEN cash_direction = 'OUT' THEN 2 "
+                "WHEN in_amount_value > 0 AND out_amount_value = 0 THEN 1 "
+                "WHEN out_amount_value > 0 AND in_amount_value = 0 THEN 2 "
+                "ELSE entry_direction END, "
+                "amount_value = CASE "
+                "WHEN amount_value > 0 THEN amount_value "
+                "WHEN in_amount_value > 0 AND out_amount_value = 0 THEN in_amount_value "
+                "WHEN out_amount_value > 0 AND in_amount_value = 0 THEN out_amount_value "
+                "ELSE amount_value END, "
+                "currency_code = CASE "
+                "WHEN cash_direction = 'IN' THEN in_currency_code "
+                "WHEN cash_direction = 'OUT' THEN out_currency_code "
+                "WHEN in_amount_value > 0 AND out_amount_value = 0 THEN in_currency_code "
+                "WHEN out_amount_value > 0 AND in_amount_value = 0 THEN out_currency_code "
+                "ELSE currency_code END, "
+                "account_code = CASE "
+                "WHEN cash_direction = 'IN' THEN in_account_code "
+                "WHEN cash_direction = 'OUT' THEN out_account_code "
+                "WHEN in_amount_value > 0 AND out_amount_value = 0 THEN in_account_code "
+                "WHEN out_amount_value > 0 AND in_amount_value = 0 THEN out_account_code "
+                "ELSE account_code END, "
+                "occurred_time = COALESCE(occurred_time, start_time)"
+            ))
+        elif "start_time" in ledger_columns:
+            connection.execute(text(
+                "UPDATE ledger_entry "
+                "SET occurred_time = COALESCE(occurred_time, start_time)"
+            ))
 
 
 def init_target_db(bind=None) -> None:

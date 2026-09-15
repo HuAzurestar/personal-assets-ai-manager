@@ -15,6 +15,15 @@ class LedgerEntry(TargetTable, TargetBase):
     __table_args__ = (Index("ix_ledger_entry_time_id", "start_time", "id"),)
 
     ledger_type: Mapped[str] = mapped_column(String(40), nullable=False, default="UNRESOLVED")
+    entry_type: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    entry_direction: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    account_code: Mapped[str] = mapped_column(String(120), nullable=False, default="UNKNOWN")
+    counterparty_account_ref: Mapped[str] = mapped_column(
+        String(200), nullable=False, default=""
+    )
+    occurred_time: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=False), nullable=True
+    )
     economic_type: Mapped[str] = mapped_column(String(40), nullable=False, default="TRANSACTION")
     cash_direction: Mapped[str] = mapped_column(String(8), nullable=False, default="UNKNOWN")
     amount_value: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)

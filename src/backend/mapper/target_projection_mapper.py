@@ -125,6 +125,15 @@ class TargetProjectionMapper:
                 entry = None
             fields = {
                 "ledger_type": value.ledger_type,
+                "entry_type": 0,
+                "entry_direction": 1 if value.in_amount_value else 2,
+                "account_code": (
+                    value.in_account_code
+                    if value.in_amount_value
+                    else value.out_account_code
+                ),
+                "counterparty_account_ref": "",
+                "occurred_time": value.start_time,
                 "allocation_status": value.allocation_status,
                 "title": value.title,
                 "start_time": value.start_time,
