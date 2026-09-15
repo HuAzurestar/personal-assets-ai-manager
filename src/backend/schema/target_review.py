@@ -191,36 +191,31 @@ class TargetReviewCasePageResponse(BaseModel):
     body: TargetReviewCasePageRead
 
 
-# V2 flow-review contract.  Scenario names live on Review; Economic has only
-# the three agreed accounting natures.  Direction, currency and amount are
-# derived from the referenced facts and allocation rows by the service.
+# V3 review contract.  Scenario names live on Review; LedgerEntry has only the
+# three agreed cash-flow classifications. Direction, currency, account and
+# occurred_time are derived from the single referenced fact.
 class TargetEconomicDefinitionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     client_key: str = Field(min_length=1, max_length=80)
-    economic_type: Literal["TRANSACTION", "ACCOUNT_TRANSFER", "CLAIM"]
-    title: str = Field(default="", max_length=200)
-    claim_key: str = Field(default="", max_length=160)
-    claim_side: Literal["UNKNOWN", "RECEIVABLE", "PAYABLE"] = "UNKNOWN"
-    reversal_of_id: int = Field(default=0, ge=0)
+    entry_type: Literal[0, 1, 2]
 
 
 class TargetFlowAllocationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    fact_id: int = Field(ge=1)
-    economic_key: str = Field(min_length=1, max_length=80)
+    transaction_fact_id: int = Field(ge=1)
+    entry_key: str = Field(min_length=1, max_length=80)
     amount_value: int = Field(ge=1)
-    role: str = Field(default="ALLOCATED", min_length=1, max_length=40)
 
 
 class TargetEconomicReviewCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     behavior_code: str = Field(min_length=1, max_length=40)
-    title: str = Field(default="", max_length=160)
+    description: str = Field(default="", max_length=2000)
     result: dict[str, Any] = Field(default_factory=dict)
-    economics: list[TargetEconomicDefinitionRequest] = Field(min_length=1, max_length=200)
+    entries: list[TargetEconomicDefinitionRequest] = Field(min_length=1, max_length=200)
     allocations: list[TargetFlowAllocationRequest] = Field(min_length=1, max_length=500)
     actor: str = Field(default="local-user", min_length=1, max_length=120)
     reason: str = Field(default="", max_length=2000)
@@ -233,29 +228,23 @@ class TargetEconomicReviewUpdateRequest(TargetEconomicReviewCreateRequest):
 
 class TargetEconomicFlowRead(BaseModel):
     id: int
-    economic_type: str
-    cash_direction: str
+    entry_type: Literal[0, 1, 2]
+    entry_direction: Literal[1, 2]
     amount_value: int
     amount_scale: int
     currency_code: str
-    title: str
-    start_time: datetime
-    end_time: datetime
-    claim_key: str
-    claim_side: str
-    reversal_of_id: int
-    status: str
-    projection_version: int
+    account_code: str
+    counterparty_account_ref: str
+    occurred_time: datetime
 
 
 class TargetFlowAllocationRead(BaseModel):
     id: int
-    fact_id: int
-    economic_id: int
+    transaction_fact_id: int
+    ledger_entry_id: int
     amount_value: int
     amount_scale: int
     currency_code: str
-    role: str
 
 
 class TargetEconomicReviewRead(BaseModel):
@@ -263,9 +252,9 @@ class TargetEconomicReviewRead(BaseModel):
     behavior_code: str
     status: str
     version: int
-    title: str
+    description: str
     result: dict[str, Any]
-    economics: list[TargetEconomicFlowRead]
+    ledger_entries: list[TargetEconomicFlowRead]
     allocations: list[TargetFlowAllocationRead]
     history: list[TargetReviewHistoryRead]
     created_time: datetime
@@ -283,8 +272,8 @@ class TargetEconomicReviewListItem(BaseModel):
     behavior_code: str
     status: str
     version: int
-    title: str
-    economic_count: int
+    description: str
+    ledger_entry_count: int
     allocation_count: int
     created_time: datetime
     updated_time: datetime

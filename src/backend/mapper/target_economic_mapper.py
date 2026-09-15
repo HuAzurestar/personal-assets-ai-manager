@@ -69,10 +69,10 @@ class TargetEconomicMapper:
             ReviewCase.behavior_code,
             ReviewCase.status,
             ReviewCase.version,
-            ReviewCase.title,
+            ReviewCase.title.label("description"),
             ReviewCase.created_time,
             ReviewCase.updated_time,
-            func.count(ReviewCaseBill.id).label("economic_count"),
+            func.count(ReviewCaseBill.id).label("ledger_entry_count"),
             func.count(ReviewCaseBill.id).label("allocation_count"),
         ).join(
             ReviewCaseBill, ReviewCaseBill.case_id == ReviewCase.id,
@@ -314,7 +314,7 @@ class TargetEconomicMapper:
         self.db.add(case)
         self.db.flush()
         entry_types = {
-            item["client_key"]: self._entry_type(item["economic_type"])
+            item["client_key"]: item["entry_type"]
             for item in economics
         }
         rows = [ReviewCaseBill(
@@ -375,7 +375,7 @@ class TargetEconomicMapper:
         case.version += 1
         case.updated_time = now
         entry_types = {
-            item["client_key"]: self._entry_type(item["economic_type"])
+            item["client_key"]: item["entry_type"]
             for item in economics
         }
         rows = [ReviewCaseBill(
@@ -633,27 +633,6 @@ class TargetEconomicMapper:
         ).group_by(ReviewCaseBill.bill_id)).mappings().all()
         return {row["bill_id"]: int(row["amount_value"] or 0) for row in rows}
 
-    def economic_flows(self, economic_ids: list[int]) -> dict[int, dict]:
-        if not economic_ids:
-            return {}
-        rows = self.db.execute(select(
-            LedgerEntry.id,
-            LedgerEntry.economic_type,
-            LedgerEntry.cash_direction,
-            LedgerEntry.amount_value,
-            LedgerEntry.amount_scale,
-            LedgerEntry.currency_code,
-            LedgerEntry.reversal_of_id,
-        ).join(
-            ReviewCaseBill, ReviewCaseBill.economic_id == LedgerEntry.id,
-        ).join(
-            ReviewCase, ReviewCase.id == ReviewCaseBill.case_id,
-        ).where(
-            LedgerEntry.id.in_(economic_ids),
-            ReviewCase.status == "CONFIRMED",
-        )).mappings().all()
-        return {row["id"]: dict(row) for row in rows}
-
     def active_economic_facts(self, fact_ids: list[int]) -> dict[int, list[int]]:
         if not fact_ids:
             return {}
@@ -675,49 +654,6 @@ class TargetEconomicMapper:
         for row in rows:
             result[row["economic_id"]].append(row["bill_id"])
         return dict(result)
-
-    def reversal_usage(
-        self,
-        economic_ids: list[int],
-        *,
-        exclude_ids: list[int] | None = None,
-    ) -> dict[int, tuple[int, int]]:
-        if not economic_ids:
-            return {}
-        clauses = [LedgerEntry.reversal_of_id.in_(economic_ids)]
-        if exclude_ids:
-            clauses.append(~LedgerEntry.id.in_(exclude_ids))
-        rows = self.db.execute(select(
-            LedgerEntry.reversal_of_id,
-            LedgerEntry.amount_scale,
-            func.sum(LedgerEntry.amount_value).label("amount_value"),
-        ).join(
-            ReviewCaseBill, ReviewCaseBill.economic_id == LedgerEntry.id,
-        ).join(
-            ReviewCase, ReviewCase.id == ReviewCaseBill.case_id,
-        ).where(
-            *clauses,
-            ReviewCase.status == "CONFIRMED",
-        ).group_by(
-            LedgerEntry.reversal_of_id,
-            LedgerEntry.amount_scale,
-        )).mappings().all()
-        result: dict[int, tuple[int, int]] = {}
-        for row in rows:
-            target_id = row["reversal_of_id"]
-            scale = row["amount_scale"]
-            value = int(row["amount_value"] or 0)
-            previous = result.get(target_id)
-            if previous is None:
-                result[target_id] = (value, scale)
-            else:
-                common = max(previous[1], scale)
-                result[target_id] = (
-                    previous[0] * 10 ** (common - previous[1])
-                    + value * 10 ** (common - scale),
-                    common,
-                )
-        return result
 
     def detail(self, case_id: int) -> TargetEconomicReviewRead | None:
         case = self.db.execute(select(
@@ -749,19 +685,14 @@ class TargetEconomicMapper:
         })
         economic_rows = self.db.execute(select(
             LedgerEntry.id,
-            LedgerEntry.economic_type,
-            LedgerEntry.cash_direction,
+            LedgerEntry.entry_type,
+            LedgerEntry.entry_direction,
             LedgerEntry.amount_value,
             LedgerEntry.amount_scale,
             LedgerEntry.currency_code,
-            LedgerEntry.title,
-            LedgerEntry.start_time,
-            LedgerEntry.end_time,
-            LedgerEntry.claim_key,
-            LedgerEntry.claim_side,
-            LedgerEntry.reversal_of_id,
-            LedgerEntry.status,
-            LedgerEntry.projection_version,
+            LedgerEntry.account_code,
+            LedgerEntry.counterparty_account_ref,
+            LedgerEntry.occurred_time,
         ).where(LedgerEntry.id.in_(economic_ids)).order_by(LedgerEntry.id)).mappings().all() if economic_ids else []
         history_rows = self.db.execute(select(
             ReviewHistory.id,
@@ -798,9 +729,7 @@ class TargetEconomicMapper:
             for row in reversed(history_rows)
             if row["operation"] in {"CREATE", "UPDATE"}
         ), {})
-        definitions = {
-            item["client_key"]: item for item in plan.get("economics", [])
-        }
+        definitions = {item["client_key"]: item for item in plan.get("entries", [])}
         planned_allocations = plan.get("allocations", [])
         materialized_economics = []
         for index, allocation in enumerate(allocation_rows):
@@ -815,39 +744,33 @@ class TargetEconomicMapper:
                 if index < len(planned_allocations)
                 else {}
             )
-            definition = definitions.get(planned.get("economic_key", ""), {})
-            economic_type = definition.get(
-                "economic_type",
-                {0: "TRANSACTION", 1: "ACCOUNT_TRANSFER", 2: "CLAIM"}.get(
-                    allocation["entry_type"], "TRANSACTION"
-                ),
-            )
+            definition = definitions.get(planned.get("entry_key", ""), {})
             materialized_economics.append({
                 "id": 0,
-                "economic_type": economic_type,
-                "cash_direction": fact["cash_direction"],
+                "entry_type": definition.get("entry_type", allocation["entry_type"]),
+                "entry_direction": 1 if fact["cash_direction"] == "IN" else 2,
                 "amount_value": allocation["amount_value"],
                 "amount_scale": allocation["amount_scale"],
                 "currency_code": allocation["currency_code"],
-                "title": definition.get("title") or case["title"] or fact["counterparty"] or fact["summary"],
-                "start_time": fact["occurred_time"],
-                "end_time": fact["occurred_time"],
-                "claim_key": definition.get("claim_key", ""),
-                "claim_side": definition.get("claim_side", "UNKNOWN"),
-                "reversal_of_id": definition.get("reversal_of_id", 0),
-                "status": case["status"],
-                "projection_version": 0,
+                "account_code": fact["account_code"],
+                "counterparty_account_ref": "",
+                "occurred_time": fact["occurred_time"],
             })
         return TargetEconomicReviewRead(
             id=case["id"],
             behavior_code=case["behavior_code"],
             status=case["status"],
             version=case["version"],
-            title=case["title"],
+            description=case["title"],
             result=json.loads(case["result_json"]),
-            economics=[TargetEconomicFlowRead(**row) for row in materialized_economics],
+            ledger_entries=[TargetEconomicFlowRead(**row) for row in materialized_economics],
             allocations=[TargetFlowAllocationRead(**{
-                name: value for name, value in row.items() if name != "entry_type"
+                {
+                    "fact_id": "transaction_fact_id",
+                    "economic_id": "ledger_entry_id",
+                }.get(name, name): value
+                for name, value in row.items()
+                if name not in {"entry_type", "role"}
             }) for row in allocation_rows],
             history=[TargetReviewHistoryRead(
                 id=row["id"],
@@ -915,12 +838,16 @@ class TargetEconomicMapper:
         legacy_type: str,
         now: datetime,
         client_key: str = "",
+        entry_type: int | None = None,
     ) -> dict:
         incoming = amount_value if direction == "IN" else 0
         outgoing = amount_value if direction == "OUT" else 0
         return {
             "ledger_type": legacy_type,
-            "entry_type": TargetEconomicMapper._entry_type(economic_type),
+            "entry_type": (
+                TargetEconomicMapper._entry_type(economic_type)
+                if entry_type is None else entry_type
+            ),
             "entry_direction": 1 if direction == "IN" else 2,
             "account_code": account_code,
             "counterparty_account_ref": "",

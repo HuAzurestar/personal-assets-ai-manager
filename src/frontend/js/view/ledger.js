@@ -335,7 +335,7 @@ function detailPager(result, pageId) {
 }
 
 async function ledgerPage() {
-  const facts = await request("/paam/review/v2/fact/candidates?limit=500");
+  const facts = await request("/paam/review/v3/fact/candidates?limit=500");
   const q = (state.params.get("q") || "").trim().toLowerCase();
   const currency = (state.params.get("currency_code") || "").trim().toUpperCase();
   const dateFrom = state.params.get("date_from") || "";
@@ -490,44 +490,47 @@ function showSummaryDetail(type) {
 async function ledgerReviewsPage() {
   const query = new URLSearchParams({ page: state.params.get("page") || "1", page_size: "20" });
   if (state.params.get("status")) query.set("status", state.params.get("status"));
-  const result = await request(`/paam/review/v2/case/page?${query}`);
+  const result = await request(`/paam/review/v3/case/page?${query}`);
   state.detailEconomicReviews = new Map(result.items.map((item) => [item.id, item]));
   const rows = result.items.map((item) => `<tr class="detail-click-row" tabindex="0" data-review-row="${item.id}">
-    <td>${date(item.updated_time)}</td><td><button type="button" class="detail-primary" data-action="economic-review-detail" data-id="${item.id}"><strong>${esc(item.title || item.behavior_code || "未填写标题")}</strong><small>#${item.id} · ${esc(item.behavior_code || "未说明行为")}</small></button></td>
-    <td><span class="badge ${item.status === "PENDING" ? "warn" : "neutral"}">${esc(statusNames[item.status] || item.status)}</span></td><td>${item.economic_count} 条经济流水</td><td>${item.allocation_count} 条分配</td><td>v${item.version}</td><td class="detail-arrow">→</td>
+    <td>${date(item.updated_time)}</td><td><button type="button" class="detail-primary" data-action="economic-review-detail" data-id="${item.id}"><strong>${esc(item.description || item.behavior_code || "未填写说明")}</strong><small>#${item.id} · ${esc(item.behavior_code || "未说明行为")}</small></button></td>
+    <td><span class="badge ${item.status === "PENDING" ? "warn" : "neutral"}">${esc(statusNames[item.status] || item.status)}</span></td><td>${item.ledger_entry_count} 条账本流水</td><td>${item.allocation_count} 条分配</td><td>v${item.version}</td><td class="detail-arrow">→</td>
   </tr>`).join("");
   const toolbar = `<form class="detail-filter" data-form="detail-review-filter"><label>状态<select name="status"><option value="">全部状态</option>${["PENDING", "CONFIRMED", "REVOKED"].map((value) => `<option value="${value}" ${state.params.get("status") === value ? "selected" : ""}>${esc(statusNames[value] || value)}</option>`).join("")}</select></label><button type="button" class="quiet" data-action="detail-clear" data-page-id="ledger-reviews">清空</button><button class="primary">筛选</button><button type="button" class="primary" data-action="new-economic-review">新建经济审查</button></form>`;
   return detailList({ active: "ledger-reviews", toolbar, title: "审查记录", description: "审查连接事实与经济结果；Allocation 保存明确的分配金额。", total: result.total, headers: ["更新时间", "审查", "状态", "经济结果", "分配关系", "版本", ""], rows, footer: detailPager(result, "ledger-reviews") });
 }
 
 async function showEconomicReview(id) {
-  const item = await request(`/paam/review/v2/case/detail/${id}`);
-  const economics = item.economics.map((flow) => `<div class="drawer-review-row"><span><strong>Economic #${flow.id} · ${esc(typeNames[flow.economic_type] || flow.economic_type)}</strong><small>${flow.cash_direction} · ${esc(flow.currency_code)}</small></span><strong>${money({ amount_value: flow.amount_value, amount_scale: flow.amount_scale, currency_code: flow.currency_code })}</strong></div>`).join("");
-  const allocations = item.allocations.map((row) => `<div class="drawer-review-row"><span><strong>Fact #${row.fact_id} → Economic #${row.economic_id}</strong><small>${esc(row.role)}</small></span><strong>${money({ amount_value: row.amount_value, amount_scale: row.amount_scale, currency_code: row.currency_code })}</strong></div>`).join("");
+  const item = await request(`/paam/review/v3/case/detail/${id}`);
+  const economics = item.ledger_entries.map((flow) => {
+    const typeCode = entryTypeCodes[flow.entry_type];
+    return `<div class="drawer-review-row"><span><strong>Ledger #${flow.id} · ${esc(typeNames[typeCode] || typeCode)}</strong><small>${flow.entry_direction === 1 ? "流入" : "流出"} · ${esc(flow.currency_code)}</small></span><strong>${money({ amount_value: flow.amount_value, amount_scale: flow.amount_scale, currency_code: flow.currency_code })}</strong></div>`;
+  }).join("");
+  const allocations = item.allocations.map((row) => `<div class="drawer-review-row"><span><strong>Fact #${row.transaction_fact_id} → Ledger #${row.ledger_entry_id || "待确认"}</strong></span><strong>${money({ amount_value: row.amount_value, amount_scale: row.amount_scale, currency_code: row.currency_code })}</strong></div>`).join("");
   let action = "";
   if (item.status === "PENDING") action = `<button type="button" class="primary" data-action="economic-review-transition" data-kind="confirm" data-id="${item.id}" data-version="${item.version}">确认审查</button>`;
   if (item.status === "CONFIRMED") action = `<button type="button" data-action="economic-review-transition" data-kind="revoke" data-id="${item.id}" data-version="${item.version}">撤销并恢复默认交易</button>`;
   if (item.status === "REVOKED") action = `<button type="button" class="primary" data-action="economic-review-transition" data-kind="restore" data-id="${item.id}" data-version="${item.version}">恢复审查</button>`;
-  detailDrawer({ title: item.title || `审查 #${item.id}`, kicker: `REVIEW #${item.id} · ${item.behavior_code}`, subtitle: `${esc(statusNames[item.status] || item.status)} · 版本 ${item.version}`, body: `<section class="drawer-section"><h3>经济结果</h3>${economics || '<p class="muted">没有经济结果</p>'}</section><section class="drawer-section"><h3>事实—经济分配</h3>${allocations || '<p class="muted">没有分配关系</p>'}</section>`, footer: action });
+  detailDrawer({ title: item.description || `审查 #${item.id}`, kicker: `REVIEW #${item.id} · ${item.behavior_code}`, subtitle: `${esc(statusNames[item.status] || item.status)} · 版本 ${item.version}`, body: `<section class="drawer-section"><h3>账本流水</h3>${economics || '<p class="muted">待确认，尚未生成账本流水</p>'}</section><section class="drawer-section"><h3>事实—账本分配</h3>${allocations || '<p class="muted">没有分配关系</p>'}</section>`, footer: action });
 }
 
 async function transitionEconomicReview(button) {
   const labels = { confirm: "确认", revoke: "撤销", restore: "恢复" };
   if (!confirm(`${labels[button.dataset.kind]}这次经济审查？`)) return;
-  await jsonRequest(`/paam/review/v2/case/${button.dataset.kind}/${button.dataset.id}`, "POST", { expected_version: Number(button.dataset.version), reason: `人工${labels[button.dataset.kind]}经济审查`, idempotency_key: key() });
+  await jsonRequest(`/paam/review/v3/case/${button.dataset.kind}/${button.dataset.id}`, "POST", { expected_version: Number(button.dataset.version), reason: `人工${labels[button.dataset.kind]}经济审查`, idempotency_key: key() });
   closeDialogs();
   toast(`${labels[button.dataset.kind]}完成，经济流水已重新投影`);
   await render();
 }
 
 async function openEconomicReviewEditor() {
-  const facts = await request("/paam/review/v2/fact/candidates?limit=100");
+  const facts = await request("/paam/review/v3/fact/candidates?limit=100");
   if (!facts.length) throw new Error("当前没有可分配的事实流水");
   const selected = new Set();
   const values = new Map();
   let sequence = 1;
   const economics = [{ key: `economic-${sequence}`, type: "TRANSACTION" }];
-  const dialog = modal("新建经济审查", `<form data-form="economic-review-create" class="review-wizard stack"><section><h3>1. 选择事实流水</h3><div data-economic-review-facts class="review-fact-choices"></div></section><section><div class="section-head"><h3>2. 定义经济流水</h3><button type="button" data-action="add-economic">＋ 添加经济流水</button></div><div data-economic-definitions class="stack"></div></section><section><h3>3. 分配金额</h3><p class="muted">矩阵中的每个单元格就是一条 Allocation；空白或 0 表示不建立关系。</p><div data-allocation-matrix></div></section><label>行为说明<input name="behavior_code" maxlength="40" placeholder="例如 ADVANCE、LOAN、FX_EXCHANGE" required></label><label>标题<input name="title" maxlength="160"></label><label>审查说明<input name="reason" maxlength="2000"></label><div class="actions"><button type="button" data-close>取消</button><button class="primary">保存为待确认审查</button></div></form>`);
+  const dialog = modal("新建经济审查", `<form data-form="economic-review-create" class="review-wizard stack"><section><h3>1. 选择事实流水</h3><div data-economic-review-facts class="review-fact-choices"></div></section><section><div class="section-head"><h3>2. 定义账本流水</h3><button type="button" data-action="add-economic">＋ 添加账本流水</button></div><div data-economic-definitions class="stack"></div></section><section><h3>3. 分配金额</h3><p class="muted">每条账本流水只能分配一条事实；一条事实可以拆成多条账本流水。</p><div data-allocation-matrix></div></section><label>行为代码<input name="behavior_code" maxlength="40" placeholder="例如 ADVANCE、LOAN、FX_EXCHANGE" required></label><label>行为解释<textarea name="description" maxlength="2000"></textarea></label><label>操作原因<input name="reason" maxlength="2000"></label><div class="actions"><button type="button" data-close>取消</button><button class="primary">保存为待确认审查</button></div></form>`);
   const form = $('[data-form="economic-review-create"]', dialog);
   const factRoot = $("[data-economic-review-facts]", form);
   const definitionRoot = $("[data-economic-definitions]", form);
@@ -537,7 +540,7 @@ async function openEconomicReviewEditor() {
     $$('[data-allocation-value]', matrixRoot).forEach((input) => values.set(`${input.dataset.fact}:${input.dataset.economic}`, input.value));
   };
   const renderDefinitions = () => {
-    definitionRoot.innerHTML = economics.map((item) => `<article class="review-fact-choice" data-economic-definition="${item.key}"><div><strong>${esc(item.key)}</strong><small>方向、币种和总额由 Allocation 自动推导</small></div><label>类型<select name="type-${item.key}">${["TRANSACTION", "ACCOUNT_TRANSFER", "CLAIM"].map((value) => `<option value="${value}" ${item.type === value ? "selected" : ""}>${typeNames[value]}</option>`).join("")}</select></label><label>标题<input name="title-${item.key}" maxlength="200"></label><label>债权键<input name="claim-${item.key}" maxlength="160" placeholder="仅 CLAIM 必填"></label><label>债权侧<select name="side-${item.key}"><option value="UNKNOWN">非债权</option><option value="RECEIVABLE">应收</option><option value="PAYABLE">应付</option></select></label><label>冲正原流水 ID<input type="number" min="0" name="reversal-${item.key}" value="0"></label>${economics.length > 1 ? `<button type="button" class="quiet" data-action="remove-economic" data-key="${item.key}">移除</button>` : ""}</article>`).join("");
+    definitionRoot.innerHTML = economics.map((item) => `<article class="review-fact-choice" data-economic-definition="${item.key}"><div><strong>${esc(item.key)}</strong><small>方向、币种、账户和发生时间由唯一关联的事实推导</small></div><label>类型<select name="type-${item.key}">${["TRANSACTION", "ACCOUNT_TRANSFER", "CLAIM"].map((value) => `<option value="${value}" ${item.type === value ? "selected" : ""}>${typeNames[value]}</option>`).join("")}</select></label>${economics.length > 1 ? `<button type="button" class="quiet" data-action="remove-economic" data-key="${item.key}">移除</button>` : ""}</article>`).join("");
     $$('[name^="type-"]', definitionRoot).forEach((input) => input.onchange = () => {
       economics.find((item) => `type-${item.key}` === input.name).type = input.value;
     });
@@ -582,22 +585,20 @@ async function openEconomicReviewEditor() {
       $$('[data-allocation-value]', matrixRoot).forEach((input) => {
         const fact = facts.find((item) => item.id === Number(input.dataset.fact));
         const amount = decimalAmount(input.value, fact.amount_scale);
-        if (amount > 0) allocations.push({ fact_id: fact.id, economic_key: input.dataset.economic, amount_value: amount });
+        if (amount > 0) allocations.push({ transaction_fact_id: fact.id, entry_key: input.dataset.economic, amount_value: amount });
       });
       if (!allocations.length) throw new Error("至少填写一条大于 0 的分配关系");
-      const used = new Set(allocations.map((item) => item.economic_key));
+      const allocationCounts = allocations.reduce((counts, item) => counts.set(item.entry_key, (counts.get(item.entry_key) || 0) + 1), new Map());
+      if ([...allocationCounts.values()].some((count) => count !== 1)) throw new Error("每条账本流水必须且只能关联一条事实");
+      const used = new Set(allocations.map((item) => item.entry_key));
       const definitions = economics.filter((item) => used.has(item.key)).map((item) => ({
         client_key: item.key,
-        economic_type: data.get(`type-${item.key}`),
-        title: data.get(`title-${item.key}`) || "",
-        claim_key: data.get(`claim-${item.key}`) || "",
-        claim_side: data.get(`side-${item.key}`),
-        reversal_of_id: Number(data.get(`reversal-${item.key}`) || 0),
+        entry_type: entryTypeValues[data.get(`type-${item.key}`)],
       }));
-      const created = await jsonRequest("/paam/review/v2/case/create", "POST", {
+      const created = await jsonRequest("/paam/review/v3/case/create", "POST", {
         behavior_code: data.get("behavior_code"),
-        title: data.get("title") || "",
-        result: {}, economics: definitions, allocations,
+        description: data.get("description") || "",
+        result: {}, entries: definitions, allocations,
         reason: data.get("reason") || "",
         idempotency_key: idempotencyKey,
       });

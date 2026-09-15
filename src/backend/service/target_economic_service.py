@@ -107,7 +107,7 @@ class TargetEconomicService:
             now = datetime.now()
             case_id = self.mapper.create_draft(
                 behavior_code=payload.behavior_code,
-                title=payload.title,
+                title=payload.description,
                 result_json=self._canonical(payload.result),
                 economics=economics,
                 allocations=allocations,
@@ -162,7 +162,6 @@ class TargetEconomicService:
                 raise TargetEconomicError(409, "review has no restorable allocation plan")
             plan = TargetEconomicReviewCreateRequest.model_validate(plan_payload)
             facts, economics, allocations = self._prepare(plan)
-            self._validate_reversals(economics)
             fact_ids = sorted({row["fact_id"] for row in allocations})
             fact_by_id = {fact.id: fact for fact in facts}
             defaults = self.mapper.default_allocations(fact_ids)
@@ -170,8 +169,8 @@ class TargetEconomicService:
             for row in defaults:
                 default_by_fact[row["bill_id"]] += row["amount_value"]
             requested: dict[int, int] = defaultdict(int)
-            for row in case.allocations:
-                requested[row.fact_id] += row.amount_value
+            for row in allocations:
+                requested[row["fact_id"]] += row["amount_value"]
             unavailable = {
                 fact_id: {"requested": amount, "default_available": default_by_fact.get(fact_id, 0)}
                 for fact_id, amount in requested.items()
@@ -244,7 +243,7 @@ class TargetEconomicService:
                 case_id,
                 expected_version=payload.expected_version,
                 behavior_code=payload.behavior_code,
-                title=payload.title,
+                title=payload.description,
                 result_json=self._canonical(payload.result),
                 economics=economics,
                 allocations=allocations,
@@ -291,7 +290,7 @@ class TargetEconomicService:
                 raise TargetEconomicError(409, "review version changed; reload before revoking")
             released: dict[int, int] = defaultdict(int)
             for row in case.allocations:
-                released[row.fact_id] += row.amount_value
+                released[row.transaction_fact_id] += row.amount_value
             facts = self.mapper.facts(sorted(released))
             fact_by_id = {fact.id: fact for fact in facts}
             if not self.mapper.revoke_case(
@@ -327,17 +326,17 @@ class TargetEconomicService:
         return self._required(case_id)
 
     def _prepare(self, payload: TargetEconomicReviewCreateRequest):
-        keys = [item.client_key for item in payload.economics]
+        keys = [item.client_key for item in payload.entries]
         if len(keys) != len(set(keys)):
             raise ValueError("economic client_key values must be unique")
-        definitions = {item.client_key: item for item in payload.economics}
-        unknown = sorted({row.economic_key for row in payload.allocations} - set(definitions))
+        definitions = {item.client_key: item for item in payload.entries}
+        unknown = sorted({row.entry_key for row in payload.allocations} - set(definitions))
         if unknown:
             raise ValueError(f"unknown economic keys: {unknown}")
-        unused = sorted(set(definitions) - {row.economic_key for row in payload.allocations})
+        unused = sorted(set(definitions) - {row.entry_key for row in payload.allocations})
         if unused:
             raise ValueError(f"economic items require allocations: {unused}")
-        fact_ids = sorted({row.fact_id for row in payload.allocations})
+        fact_ids = sorted({row.transaction_fact_id for row in payload.allocations})
         facts = self.mapper.facts(fact_ids)
         fact_by_id = {fact.id: fact for fact in facts}
         missing = sorted(set(fact_ids) - set(fact_by_id))
@@ -347,16 +346,16 @@ class TargetEconomicService:
         grouped = defaultdict(list)
         allocations = []
         for row in payload.allocations:
-            fact = fact_by_id[row.fact_id]
+            fact = fact_by_id[row.transaction_fact_id]
             fact_totals[fact.id] += row.amount_value
-            grouped[row.economic_key].append((row, fact))
+            grouped[row.entry_key].append((row, fact))
             allocations.append({
                 "fact_id": fact.id,
-                "economic_key": row.economic_key,
+                "economic_key": row.entry_key,
                 "amount_value": row.amount_value,
                 "amount_scale": fact.amount_scale,
                 "currency_code": fact.currency_code,
-                "role": row.role,
+                "role": "ALLOCATED",
             })
         exceeded = {
             fact_id: total for fact_id, total in fact_totals.items()
@@ -374,64 +373,28 @@ class TargetEconomicService:
                     "split combined facts into separate ledger entries"
                 )
             row, fact = rows[0]
-            if definition.economic_type == "CLAIM":
-                if not definition.claim_key or definition.claim_side == "UNKNOWN":
-                    raise ValueError(f"CLAIM economic {key} requires claim_key and claim_side")
-            elif definition.claim_key or definition.claim_side != "UNKNOWN":
-                raise ValueError(f"non-CLAIM economic {key} cannot carry claim state")
+            economic_type = {
+                0: "TRANSACTION",
+                1: "ACCOUNT_TRANSFER",
+                2: "CLAIM",
+            }[definition.entry_type]
             economics.append({
                 "client_key": key,
-                "economic_type": definition.economic_type,
+                "entry_type": definition.entry_type,
+                "economic_type": economic_type,
                 "direction": fact.cash_direction,
                 "amount_value": row.amount_value,
                 "amount_scale": fact.amount_scale,
                 "currency_code": fact.currency_code,
-                "title": definition.title or payload.title or fact.counterparty or fact.summary,
+                "title": payload.description or fact.counterparty or fact.summary,
                 "start_time": fact.occurred_time,
                 "end_time": fact.occurred_time,
                 "account_code": fact.account_code,
-                "claim_key": definition.claim_key,
-                "claim_side": definition.claim_side,
-                "reversal_of_id": definition.reversal_of_id,
+                "claim_key": "",
+                "claim_side": "UNKNOWN",
+                "reversal_of_id": 0,
             })
-        self._validate_reversals(economics)
         return facts, economics, allocations
-
-    def _validate_reversals(self, economics: list[dict]) -> None:
-        reversing = [item for item in economics if item.get("reversal_of_id", 0)]
-        if not reversing:
-            return
-        target_ids = sorted({item["reversal_of_id"] for item in reversing})
-        targets = self.mapper.economic_flows(target_ids)
-        missing = sorted(set(target_ids) - set(targets))
-        if missing:
-            raise ValueError(f"unknown reversal economic IDs: {missing}")
-        usage = self.mapper.reversal_usage(
-            target_ids,
-            exclude_ids=[item["id"] for item in reversing if item.get("id")],
-        )
-        requested = defaultdict(list)
-        for item in reversing:
-            target = targets[item["reversal_of_id"]]
-            if item["economic_type"] != "TRANSACTION" or target["economic_type"] != "TRANSACTION":
-                raise ValueError("only TRANSACTION economics can form a reversal")
-            if target["reversal_of_id"]:
-                raise ValueError("a reversal cannot reverse another reversal")
-            if item["currency_code"] != target["currency_code"]:
-                raise ValueError("reversal currency must equal the original transaction")
-            if item["direction"] == target["cash_direction"]:
-                raise ValueError("reversal direction must oppose the original transaction")
-            requested[target["id"]].append((item["amount_value"], item["amount_scale"]))
-        for target_id, values in requested.items():
-            target = targets[target_id]
-            all_values = list(values)
-            if target_id in usage:
-                all_values.append(usage[target_id])
-            scale = max([target["amount_scale"], *[value[1] for value in all_values]])
-            total = sum(value * 10 ** (scale - item_scale) for value, item_scale in all_values)
-            maximum = target["amount_value"] * 10 ** (scale - target["amount_scale"])
-            if total > maximum:
-                raise ValueError(f"reversals exceed original economic {target_id} amount")
 
     def _assert_exact(self, facts: tuple[TargetReviewFactVO, ...]) -> None:
         coverage = self.mapper.fact_coverage([fact.id for fact in facts])
