@@ -5,7 +5,7 @@ description: Change PAAM ledger projections, summaries, tags, Controllers, DTOs/
 
 # Ledger and API layer
 
-- Follow `Controller -> Service -> Data Mapper -> Model / SQLite`.
+- Follow `Router -> Service -> Data Mapper -> Entity / SQLite`.
 - A Mapper owns SQL and returns typed VOs. A Service owns the use case and returns response DTOs. A Controller owns HTTP only.
 - Do not add SQL to a DTO/VO, Service, Controller, serializer, or frontend module.
 - The hot Economic projection is the normal list/summary source. During the
@@ -18,4 +18,4 @@ description: Change PAAM ledger projections, summaries, tags, Controllers, DTOs/
   rate or convert currencies; summaries remain per currency.
 - List and summary SQL names every selected column. Sparse tags are loaded once with `WHERE ledger_id IN (...)` and assembled by ID.
 - Add query-count tests for list endpoints. Returned row count must not increase SQL statement count.
-- Keep the current hot-path backlog and measured results in `docs/sql-query-refactor.md`.
+- Keep the current hot-path backlog and measured results in `src/doc/sql-query-refactor.md`.

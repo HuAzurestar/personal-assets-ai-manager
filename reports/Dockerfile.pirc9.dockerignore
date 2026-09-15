@@ -1,9 +1,0 @@
-**
-!requirements.txt
-!app/
-!app/**
-!reports/
-!reports/Dockerfile.pirc9
-!reports/Dockerfile.pirc9.dockerignore
-**/__pycache__
-**/*.pyc
