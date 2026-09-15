@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 
-from backend.router.target_tag import router as target_tag_router
+from backend.router.tag import router as tag_router
 from backend.router.target_review import router as target_review_router
 from backend.router.target_ledger import v1_router as target_ledger_router
 from backend.router.dependency import get_db
@@ -33,7 +33,7 @@ def target_tag_api(tmp_path):
     sessions = sessionmaker(bind=engine, autoflush=False)
     init_target_db(bind=engine)
     api = FastAPI()
-    api.include_router(target_tag_router)
+    api.include_router(tag_router)
     api.include_router(target_review_router)
     api.include_router(target_ledger_router)
 
