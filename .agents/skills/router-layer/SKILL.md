@@ -91,9 +91,15 @@ description: Change PAAM FastAPI routers, URL modules or versions, HTTP endpoint
   or dedicated batch contract instead of silently raising the shared limit.
 - Path parameters identify resources. Filters, sorting, and pagination use
   query parameters. Write input uses a JSON request body when a body is needed.
+- Every successful business API response uses the common
+  `status/message/body` envelope and HTTP status `200`. `status` reports
+  success, `message` describes the result, and `body` carries the returned
+  object, collection, page, or an empty object when no result data is needed.
+- Creation, update, deletion, and domain-action success all use HTTP `200`.
+  Failures use an appropriate non-200 status code under the shared error
+  contract.
 - Canonical paged list requests use `page` with default `1` and `page_size` with
-  default `20` and maximum `100`. Their direct response contains `items`,
-  `total`, `page`, and `page_size`. Do not wrap the page in a generic
-  `status/message/body` envelope.
+  default `20` and maximum `100`. The response `body` contains `items`, `total`,
+  `page`, and `page_size`.
 - Compatibility routes retain their existing request defaults and response
   shapes until their callers migrate.
