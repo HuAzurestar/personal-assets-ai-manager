@@ -226,9 +226,9 @@ function renderPageActions(page) {
 async function summaryPage() {
   state.accountMonth = cursorFromParam(state.params.get("month"), state.accountMonth);
   const range = monthBounds(state.accountMonth);
-  const makePath = (page) => `/paam/economy/v1/flow/list?${new URLSearchParams({ page, page_size: "100", date_from: range.from, date_to: range.to })}`;
+  const makePath = (page) => `/paam/ledger/v1/flow/list?${new URLSearchParams({ page, page_size: "100", date_from: range.from, date_to: range.to })}`;
   const [economicSummary, first] = await Promise.all([
-    request(`/paam/economy/v1/summary?${new URLSearchParams({ date_from: range.from, date_to: range.to })}`),
+    request(`/paam/ledger/v1/flow/summary?${new URLSearchParams({ date_from: range.from, date_to: range.to })}`),
     request(makePath(1)),
   ]);
   const pages = Math.ceil(first.total / 100);
@@ -364,7 +364,7 @@ async function economicPage() {
   }
   if (!query.has("page")) query.set("page", "1");
   if (!query.has("page_size")) query.set("page_size", "25");
-  const result = await request(`/paam/economy/v1/flow/list?${query}`);
+  const result = await request(`/paam/ledger/v1/flow/list?${query}`);
   state.detailEconomics = new Map(result.items.map((item) => [item.id, item]));
   const rows = result.items.map((item) => `<tr class="detail-click-row" tabindex="0" data-economic-row="${item.id}">
     <td>${date(item.start_time)}</td><td><button type="button" class="detail-primary" data-action="economic-detail" data-id="${item.id}"><strong>${esc(item.title || `经济流水 #${item.id}`)}</strong><small>#${item.id}</small></button></td><td>${esc(typeNames[item.economic_type] || item.economic_type)}</td><td>${item.cash_direction === "IN" ? "流入" : "流出"}</td><td class="money ${item.cash_direction === "IN" ? "income" : "expense"}">${signedMoney(item.amount, item.cash_direction)}</td><td>${tags(item)}</td><td class="detail-arrow">→</td>
@@ -375,7 +375,7 @@ async function economicPage() {
 }
 
 async function showEconomicDetail(id) {
-  const detail = await request(`/paam/economy/v1/flow/detail/${id}`);
+  const detail = await request(`/paam/ledger/v1/flow/${id}`);
   const flow = detail.flow;
   const allocations = detail.allocations.map((item) => `<div class="drawer-review-row"><span><strong>Allocation #${item.id}</strong><small>Fact #${item.fact_id} → Economic #${item.economic_id} · ${esc(item.role)}</small></span><strong>${money(item.amount)}</strong></div>`).join("");
   const facts = detail.facts.map((item) => `<div class="drawer-review-row"><span><strong>Fact #${item.id} · ${esc(item.summary || item.counterparty)}</strong><small>${date(item.occurred_time)} · ${esc(item.account_code)}</small></span><strong>${money(item.amount)}</strong></div>`).join("");

@@ -18,7 +18,7 @@ from backend.service.target_economic_read_service import TargetEconomicReadServi
 
 
 router = APIRouter(
-    prefix="/paam/economy/v1",
+    prefix="/paam/ledger/v1",
     tags=["economic-flow"],
     route_class=DomainErrorRoute,
 )
@@ -51,15 +51,7 @@ def list_economic_flows(
         raise HTTPException(status_code=422, detail=str(error)) from error
 
 
-@router.get("/flow/detail/{economic_id}", response_model=EconomicFlowDetailRead)
-def economic_flow_detail(economic_id: int, db: Session = Depends(get_db)):
-    result = TargetEconomicReadService(db).detail(economic_id)
-    if result is None:
-        raise HTTPException(status_code=404, detail="Economic flow not found")
-    return result
-
-
-@router.get("/summary", response_model=EconomicSummaryRead)
+@router.get("/flow/summary", response_model=EconomicSummaryRead)
 def economic_summary(
     date_from: date | None = None,
     date_to: date | None = None,
@@ -71,3 +63,11 @@ def economic_summary(
         date_from=date_from,
         date_to=date_to,
     ))
+
+
+@router.get("/flow/{ledger_id}", response_model=EconomicFlowDetailRead)
+def economic_flow_detail(ledger_id: int, db: Session = Depends(get_db)):
+    result = TargetEconomicReadService(db).detail(ledger_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Economic flow not found")
+    return result
