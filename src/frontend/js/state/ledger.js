@@ -13,12 +13,5 @@ export const state = {
   detailEconomicReviews: new Map(),
   detailSummaries: new Map(),
   detailTagViews: new Map(),
-  selectedLedgers: new Map(),
-  ledgerCalendar: {
-    year: now.getFullYear(),
-    month: now.getMonth(),
-    next: "start",
-    error: "",
-  },
   accountMonth: new Date(now.getFullYear(), now.getMonth(), 1),
 };

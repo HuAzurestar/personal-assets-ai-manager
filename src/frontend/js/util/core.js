@@ -41,20 +41,6 @@ export const roleNames = {
   DUPLICATE_RETAINED: "保留", DUPLICATE_EXCLUDED: "排除",
 };
 
-export const reviewRoles = {
-  CLASSIFICATION: { IN: ["CLASSIFIED_INCOME"], OUT: ["CLASSIFIED_EXPENSE"] },
-  AA: { IN: ["AA_RECEIVED"], OUT: ["AA_PAID"] },
-  LOAN_BORROW: { IN: ["LOAN_RECEIVED"], OUT: ["LOAN_REPAID"] },
-  LOAN_LEND: { IN: ["LOAN_RECOVERED"], OUT: ["LOAN_LENT"] },
-  REFUND: { IN: ["REFUND_RECEIVED"], OUT: ["REFUND_EXPENSE"] },
-  TRANSFER: { IN: ["TRANSFER_IN"], OUT: ["TRANSFER_OUT", "TRANSFER_FEE"] },
-  FX_EXCHANGE: { IN: ["FX_IN"], OUT: ["FX_OUT", "FX_FEE"] },
-  DUPLICATE: {
-    IN: ["DUPLICATE_RETAINED", "DUPLICATE_EXCLUDED"],
-    OUT: ["DUPLICATE_RETAINED", "DUPLICATE_EXCLUDED"],
-  },
-};
-
 export const statusNames = {
   PENDING: "待确认", CONFIRMED: "已确认", REVOKED: "已撤销",
   REJECTED: "已忽略", DEFAULT: "默认", COMPLETE: "完整",

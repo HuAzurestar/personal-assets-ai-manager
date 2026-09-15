@@ -86,7 +86,7 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
             assert './js/view/ledger.js' in script.text
             script = client.get("/static/js/view/ledger.js")
             assert script.status_code == 200
-            assert "/paam/ledger/v1/" in script.text
+            assert "/paam/ledger/v1/" not in script.text
             assert "/paam/import/v1/preview/" in script.text
             assert "/paam/review/v2" in script.text
             assert "/paam/ledger/v2" in script.text
