@@ -10,7 +10,7 @@ from fastapi.templating import Jinja2Templates
 from backend.router.target_intake import router as target_intake_router
 from backend.router.target_ledger import v1_router as target_ledger_router
 from backend.router.target_economic import router as target_economic_router
-from backend.router.target_review import router as target_review_router, v3_router as economic_review_router
+from backend.router.target_review import router as target_review_router, v2_router as economic_review_router
 from backend.router.target_tag import router as target_tag_router
 from backend.core import target_database
 from backend.core.config import APP_DISPLAY_NAME, RESOURCE_DIR

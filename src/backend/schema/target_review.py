@@ -191,7 +191,7 @@ class TargetReviewCasePageResponse(BaseModel):
     body: TargetReviewCasePageRead
 
 
-# V3 review contract.  Scenario names live on Review; LedgerEntry has only the
+# V2 review contract.  Scenario names live on Review; LedgerEntry has only the
 # three agreed cash-flow classifications. Direction, currency, account and
 # occurred_time are derived from the single referenced fact.
 class TargetEconomicDefinitionRequest(BaseModel):

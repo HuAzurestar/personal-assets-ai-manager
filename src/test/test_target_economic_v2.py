@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 
 from backend.router.target_economic import router as economic_router
-from backend.router.target_review import v3_router as review_v3_router
+from backend.router.target_review import v2_router as review_v2_router
 from backend.router.target_tag import router as tag_router
 from backend.router.target_dep import get_target_db
 from backend.entity import (
@@ -32,7 +32,7 @@ def economic_api(tmp_path):
     sessions = sessionmaker(bind=engine, autoflush=False)
     init_target_db(bind=engine)
     api = FastAPI()
-    api.include_router(review_v3_router)
+    api.include_router(review_v2_router)
     api.include_router(economic_router)
     api.include_router(tag_router)
 
@@ -104,7 +104,7 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
         ("IN", 10000, "CNY"),
         ("IN", 10000, "CNY"),
     ])
-    response = client.post("/paam/review/v3/case/create", json={
+    response = client.post("/paam/review/v2/case/create", json={
         "behavior_code": "ADVANCE",
         "description": "垫付分摊",
         "entries": [
@@ -143,7 +143,7 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
         )).all()) == {0}
 
     confirmed = client.post(
-        f"/paam/review/v3/case/confirm/{case['id']}",
+        f"/paam/review/v2/case/confirm/{case['id']}",
         json={"expected_version": 1, "idempotency_key": "advance-confirm"},
     )
     assert confirmed.status_code == 200, confirmed.text
@@ -174,7 +174,7 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
         assert coverage == dict(zip(fact_ids, [50000, 10000, 10000, 10000, 10000]))
 
     revoked = client.post(
-        f"/paam/review/v3/case/revoke/{case['id']}",
+        f"/paam/review/v2/case/revoke/{case['id']}",
         json={"expected_version": 2, "idempotency_key": "advance-revoke"},
     )
     assert revoked.status_code == 200, revoked.text
@@ -222,14 +222,14 @@ def test_loan_uses_one_claim_cashflow_entry_per_fact(economic_api):
         {"transaction_fact_id": fact_ids[3], "entry_key": "repayment-2", "amount_value": 300000},
         {"transaction_fact_id": fact_ids[4], "entry_key": "repayment-3", "amount_value": 400000},
     ]
-    case = client.post("/paam/review/v3/case/create", json={
+    case = client.post("/paam/review/v2/case/create", json={
         "behavior_code": "LOAN",
         "entries": entries,
         "allocations": allocations,
         "idempotency_key": "loan-create",
     }).json()["body"]
     confirmed = client.post(
-        f"/paam/review/v3/case/confirm/{case['id']}",
+        f"/paam/review/v2/case/confirm/{case['id']}",
         json={"expected_version": 1, "idempotency_key": "loan-confirm"},
     )
     assert confirmed.status_code == 200, confirmed.text
@@ -245,7 +245,7 @@ def test_loan_uses_one_claim_cashflow_entry_per_fact(economic_api):
 def test_one_economic_cannot_allocate_multiple_facts(economic_api):
     client, sessions = economic_api
     out_id, in_id = _facts(sessions, [("OUT", 12000, "CNY"), ("IN", 2000, "USD")])
-    response = client.post("/paam/review/v3/case/create", json={
+    response = client.post("/paam/review/v2/case/create", json={
         "behavior_code": "FX_EXCHANGE",
         "entries": [{"client_key": "mixed", "entry_type": 1}],
         "allocations": [
@@ -260,7 +260,7 @@ def test_one_economic_cannot_allocate_multiple_facts(economic_api):
 def test_partial_manual_reviews_keep_exact_default_coverage_and_are_idempotent(economic_api):
     client, sessions = economic_api
     fact_id = _facts(sessions, [("OUT", 10000, "CNY")])[0]
-    created = client.post("/paam/review/v3/case/create", json={
+    created = client.post("/paam/review/v2/case/create", json={
         "behavior_code": "SPLIT_PURCHASE",
         "entries": [{"client_key": "part", "entry_type": 0}],
         "allocations": [{
@@ -271,14 +271,14 @@ def test_partial_manual_reviews_keep_exact_default_coverage_and_are_idempotent(e
         "idempotency_key": "partial-create",
     }).json()["body"]
     payload = {"expected_version": 1, "idempotency_key": "partial-confirm"}
-    first = client.post(f"/paam/review/v3/case/confirm/{created['id']}", json=payload)
-    replay = client.post(f"/paam/review/v3/case/confirm/{created['id']}", json=payload)
+    first = client.post(f"/paam/review/v2/case/confirm/{created['id']}", json=payload)
+    replay = client.post(f"/paam/review/v2/case/confirm/{created['id']}", json=payload)
     assert first.status_code == replay.status_code == 200
     assert first.json()["body"] == replay.json()["body"]
 
-    candidates = client.get("/paam/review/v3/fact/candidates").json()["body"]
+    candidates = client.get("/paam/review/v2/fact/candidates").json()["body"]
     assert [(item["id"], item["available_value"]) for item in candidates] == [(fact_id, 6000)]
-    cases = client.get("/paam/review/v3/case/page").json()["body"]
+    cases = client.get("/paam/review/v2/case/page").json()["body"]
     assert cases["total"] == 1
     assert cases["items"][0]["ledger_entry_count"] == 1
     assert cases["items"][0]["allocation_count"] == 1
@@ -299,7 +299,7 @@ def test_partial_manual_reviews_keep_exact_default_coverage_and_are_idempotent(e
 def test_fx_review_uses_two_single_currency_account_transfers(economic_api):
     client, sessions = economic_api
     cny_id, usd_id = _facts(sessions, [("OUT", 12000, "CNY"), ("IN", 2000, "USD")])
-    case = client.post("/paam/review/v3/case/create", json={
+    case = client.post("/paam/review/v2/case/create", json={
         "behavior_code": "FX_EXCHANGE",
         "entries": [
             {"client_key": "cny", "entry_type": 1},
@@ -311,7 +311,7 @@ def test_fx_review_uses_two_single_currency_account_transfers(economic_api):
         ],
         "idempotency_key": "fx-create",
     }).json()["body"]
-    response = client.post(f"/paam/review/v3/case/confirm/{case['id']}", json={
+    response = client.post(f"/paam/review/v2/case/confirm/{case['id']}", json={
         "expected_version": 1,
         "idempotency_key": "fx-confirm",
     })
@@ -328,10 +328,10 @@ def test_fx_review_uses_two_single_currency_account_transfers(economic_api):
     }
 
 
-def test_review_v3_rejects_removed_v2_fields_and_v2_routes(economic_api):
+def test_review_v2_rejects_removed_fields(economic_api):
     client, sessions = economic_api
     fact_id = _facts(sessions, [("IN", 4000, "CNY")])[0]
-    rejected = client.post("/paam/review/v3/case/create", json={
+    rejected = client.post("/paam/review/v2/case/create", json={
         "behavior_code": "REFUND",
         "title": "legacy title",
         "economics": [{
@@ -348,8 +348,6 @@ def test_review_v3_rejects_removed_v2_fields_and_v2_routes(economic_api):
         "idempotency_key": "legacy-contract",
     })
     assert rejected.status_code == 422
-    assert client.get("/paam/review/v2/case/page").status_code == 404
-    assert client.get("/paam/review/v2/fact/candidates").status_code == 404
 
 
 def test_tag_sync_uses_allocations_for_every_split_ledger_entry(economic_api):
@@ -361,7 +359,7 @@ def test_tag_sync_uses_allocations_for_every_split_ledger_entry(economic_api):
         "name": "Category",
         "system_name": "category",
     }).json()["body"]
-    case = client.post("/paam/review/v3/case/create", json={
+    case = client.post("/paam/review/v2/case/create", json={
         "behavior_code": "SPLIT_PURCHASE",
         "entries": [
             {"client_key": "goods", "entry_type": 0},
@@ -373,7 +371,7 @@ def test_tag_sync_uses_allocations_for_every_split_ledger_entry(economic_api):
         ],
         "idempotency_key": "split-tag-create",
     }).json()["body"]
-    confirmed = client.post(f"/paam/review/v3/case/confirm/{case['id']}", json={
+    confirmed = client.post(f"/paam/review/v2/case/confirm/{case['id']}", json={
         "expected_version": 1,
         "idempotency_key": "split-tag-confirm",
     })

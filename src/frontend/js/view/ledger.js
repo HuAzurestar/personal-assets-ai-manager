@@ -335,7 +335,7 @@ function detailPager(result, pageId) {
 }
 
 async function ledgerPage() {
-  const facts = await request("/paam/review/v3/fact/candidates?limit=500");
+  const facts = await request("/paam/review/v2/fact/candidates?limit=500");
   const q = (state.params.get("q") || "").trim().toLowerCase();
   const currency = (state.params.get("currency_code") || "").trim().toUpperCase();
   const dateFrom = state.params.get("date_from") || "";
@@ -490,7 +490,7 @@ function showSummaryDetail(type) {
 async function ledgerReviewsPage() {
   const query = new URLSearchParams({ page: state.params.get("page") || "1", page_size: "20" });
   if (state.params.get("status")) query.set("status", state.params.get("status"));
-  const result = await request(`/paam/review/v3/case/page?${query}`);
+  const result = await request(`/paam/review/v2/case/page?${query}`);
   state.detailEconomicReviews = new Map(result.items.map((item) => [item.id, item]));
   const rows = result.items.map((item) => `<tr class="detail-click-row" tabindex="0" data-review-row="${item.id}">
     <td>${date(item.updated_time)}</td><td><button type="button" class="detail-primary" data-action="economic-review-detail" data-id="${item.id}"><strong>${esc(item.description || item.behavior_code || "未填写说明")}</strong><small>#${item.id} · ${esc(item.behavior_code || "未说明行为")}</small></button></td>
@@ -501,7 +501,7 @@ async function ledgerReviewsPage() {
 }
 
 async function showEconomicReview(id) {
-  const item = await request(`/paam/review/v3/case/detail/${id}`);
+  const item = await request(`/paam/review/v2/case/detail/${id}`);
   const economics = item.ledger_entries.map((flow) => {
     const typeCode = entryTypeCodes[flow.entry_type];
     return `<div class="drawer-review-row"><span><strong>Ledger #${flow.id} · ${esc(typeNames[typeCode] || typeCode)}</strong><small>${flow.entry_direction === 1 ? "流入" : "流出"} · ${esc(flow.currency_code)}</small></span><strong>${money({ amount_value: flow.amount_value, amount_scale: flow.amount_scale, currency_code: flow.currency_code })}</strong></div>`;
@@ -517,14 +517,14 @@ async function showEconomicReview(id) {
 async function transitionEconomicReview(button) {
   const labels = { confirm: "确认", revoke: "撤销", restore: "恢复" };
   if (!confirm(`${labels[button.dataset.kind]}这次经济审查？`)) return;
-  await jsonRequest(`/paam/review/v3/case/${button.dataset.kind}/${button.dataset.id}`, "POST", { expected_version: Number(button.dataset.version), reason: `人工${labels[button.dataset.kind]}经济审查`, idempotency_key: key() });
+  await jsonRequest(`/paam/review/v2/case/${button.dataset.kind}/${button.dataset.id}`, "POST", { expected_version: Number(button.dataset.version), reason: `人工${labels[button.dataset.kind]}经济审查`, idempotency_key: key() });
   closeDialogs();
   toast(`${labels[button.dataset.kind]}完成，经济流水已重新投影`);
   await render();
 }
 
 async function openEconomicReviewEditor() {
-  const facts = await request("/paam/review/v3/fact/candidates?limit=100");
+  const facts = await request("/paam/review/v2/fact/candidates?limit=100");
   if (!facts.length) throw new Error("当前没有可分配的事实流水");
   const selected = new Set();
   const values = new Map();
@@ -595,7 +595,7 @@ async function openEconomicReviewEditor() {
         client_key: item.key,
         entry_type: entryTypeValues[data.get(`type-${item.key}`)],
       }));
-      const created = await jsonRequest("/paam/review/v3/case/create", "POST", {
+      const created = await jsonRequest("/paam/review/v2/case/create", "POST", {
         behavior_code: data.get("behavior_code"),
         description: data.get("description") || "",
         result: {}, entries: definitions, allocations,
