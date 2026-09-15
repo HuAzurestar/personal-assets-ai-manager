@@ -7,7 +7,9 @@ from fastapi.templating import Jinja2Templates
 from backend.core.config import APP_DISPLAY_NAME, RESOURCE_DIR
 
 
-router = APIRouter(tags=["system"])
+router = APIRouter(
+    tags=["system"],
+)
 templates = Jinja2Templates(directory=RESOURCE_DIR / "frontend")
 
 

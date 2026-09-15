@@ -23,13 +23,9 @@ router = APIRouter(
 )
 
 
-def _envelope(body: dict[str, object] | list[dict[str, object]]) -> IntakeResponse:
-    return IntakeResponse(body=body)
-
-
 @router.post("/preview", response_model=IntakeResponse)
 def preview(payload: IntakePreviewRequest, db: Session = Depends(get_db)):
-    return _envelope(TargetIntakeService(db).preview(payload))
+    return IntakeResponse(body=TargetIntakeService(db).preview(payload))
 
 
 @router.put("/preview/{token}", response_model=IntakeResponse)
@@ -38,7 +34,7 @@ def revise(
     payload: IntakeReviseRequest,
     db: Session = Depends(get_db),
 ):
-    return _envelope(TargetIntakeService(db).revise(token, payload))
+    return IntakeResponse(body=TargetIntakeService(db).revise(token, payload))
 
 
 @router.post("/preview/confirm/{token}", response_model=IntakeResponse)
@@ -47,7 +43,7 @@ def confirm(
     payload: IntakeConfirmRequest,
     db: Session = Depends(get_db),
 ):
-    return _envelope(TargetIntakeService(db).confirm(token, payload))
+    return IntakeResponse(body=TargetIntakeService(db).confirm(token, payload))
 
 
 @router.get("/batch/list", response_model=IntakeResponse)
@@ -58,12 +54,14 @@ def history(
     account: str = Query(default="", max_length=120),
     db: Session = Depends(get_db),
 ):
-    return _envelope(TargetIntakeService(db).history(
-        page=page,
-        page_size=page_size,
-        q=q.strip(),
-        account=account.strip(),
-    ))
+    return IntakeResponse(
+        body=TargetIntakeService(db).history(
+            page=page,
+            page_size=page_size,
+            q=q.strip(),
+            account=account.strip(),
+        )
+    )
 
 
 @router.get("/batch/row/list", response_model=IntakeResponse)
@@ -73,13 +71,15 @@ def rows(
     page_size: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
-    return _envelope(TargetIntakeService(db).rows(
-        batch_id,
-        page,
-        page_size,
-    ))
+    return IntakeResponse(
+        body=TargetIntakeService(db).rows(
+            batch_id,
+            page,
+            page_size,
+        )
+    )
 
 
 @router.get("/account/list", response_model=IntakeResponse)
 def accounts(db: Session = Depends(get_db)):
-    return _envelope(TargetIntakeService(db).accounts())
+    return IntakeResponse(body=TargetIntakeService(db).accounts())

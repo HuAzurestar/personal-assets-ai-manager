@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from backend.router.dependency import get_db
+from backend.router.error import DomainErrorRoute
 from backend.schema.target_economic import (
     EconomicFlowDetailRead,
     EconomicFlowPageRead,
@@ -16,7 +17,11 @@ from backend.schema.target_economic import (
 from backend.service.target_economic_read_service import TargetEconomicReadService
 
 
-router = APIRouter(prefix="/paam/economy/v1", tags=["economic-flow"])
+router = APIRouter(
+    prefix="/paam/economy/v1",
+    tags=["economic-flow"],
+    route_class=DomainErrorRoute,
+)
 
 
 @router.get("/flow/list", response_model=EconomicFlowPageRead)

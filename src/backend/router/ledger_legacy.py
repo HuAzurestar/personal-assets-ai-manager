@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from backend.router.dependency import get_db
+from backend.router.error import DomainErrorRoute
 from backend.core.error import MultipleTagsForView, UnknownTagSelector
 from backend.schema.target_ledger import (
     TargetLedgerDetailRead,
@@ -18,7 +19,11 @@ from backend.service.target_ledger_service import TargetLedgerService
 from backend.service.target_ledger_summary_service import TargetLedgerSummaryService
 
 
-router = APIRouter(prefix="/paam/ledger/v1", tags=["target-ledger"])
+router = APIRouter(
+    prefix="/paam/ledger/v1",
+    tags=["target-ledger"],
+    route_class=DomainErrorRoute,
+)
 
 
 @router.get("/entry/list", response_model=TargetLedgerPageRead)
