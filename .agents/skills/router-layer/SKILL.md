@@ -40,9 +40,12 @@ description: Change PAAM FastAPI routers, URL modules or versions, HTTP endpoint
 - Every business Router declares its complete module prefix on `APIRouter`.
   Route decorators contain only object-relative paths. System routes are the
   exception because they do not share one business prefix.
-- Prefer the direct `Request DTO -> Service -> Response DTO` flow. Do not add a
-  route-local response-envelope helper when constructing the declared response
-  DTO directly is equally clear.
+- Request and Response DTOs are optional. Use them when validation, response
+  structure, or contract complexity requires them; simple endpoints may use
+  plain parameters and return values.
+- Do not add a route-local response-envelope helper whose only behavior is
+  constructing a response DTO. When a response DTO is useful, construct it
+  directly at the Router boundary.
 - Use one primary `APIRouter` per file and one primary Service responsibility
   per Router object.
 - Format business `APIRouter` declarations consistently with `prefix`, `tags`,
