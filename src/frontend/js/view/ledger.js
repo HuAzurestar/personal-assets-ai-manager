@@ -187,7 +187,7 @@ async function summaryPage() {
     trendMap.set(trendKey, trend);
     const typeCode = entryTypeCodes[flow.entry_type];
     const activityKey = `${typeCode}:${currency}`;
-    const activity = activityMap.get(activityKey) || { ledger_type: typeCode, currency_code: currency, amount_scale: scale, in_amount_value: 0, out_amount_value: 0, nettable: true };
+    const activity = activityMap.get(activityKey) || { entry_type_code: typeCode, currency_code: currency, amount_scale: scale, in_amount_value: 0, out_amount_value: 0, nettable: true };
     if (flow.entry_direction === 1) activity.in_amount_value += flow.amount.amount_value;
     else activity.out_amount_value += flow.amount.amount_value;
     activityMap.set(activityKey, activity);
@@ -223,7 +223,7 @@ function accountLedgerParams(extra = {}) {
       || state.params.get("currency_code")
       || "CNY",
   });
-  if (extra.ledgerType in entryTypeValues) params.set("entry_type", entryTypeValues[extra.ledgerType]);
+  if (extra.entryTypeCode in entryTypeValues) params.set("entry_type", entryTypeValues[extra.entryTypeCode]);
   return params;
 }
 
@@ -325,11 +325,11 @@ function showSummaryDetail(type) {
   const incoming = money({ amount_value: item.in_amount_value, amount_scale: item.amount_scale, currency_code: item.currency_code });
   const outgoing = money({ amount_value: item.out_amount_value, amount_scale: item.amount_scale, currency_code: item.currency_code });
   detailDrawer({
-    title: typeNames[item.ledger_type] || item.ledger_type,
-    kicker: `LEDGER TYPE · ${item.ledger_type}`,
+    title: typeNames[item.entry_type_code] || item.entry_type_code,
+    kicker: `ENTRY TYPE · ${item.entry_type_code}`,
     subtitle: "查看当前业务类型的收支构成与核算口径。",
     body: `<div class="cards drawer-metrics"><div class="metric"><span>流入</span><strong>${incoming}</strong></div><div class="metric"><span>流出</span><strong>${outgoing}</strong></div></div><section class="drawer-section"><h3>核算说明</h3><p>${item.nettable ? "该业务允许在同一币种内按流入与流出核算。" : "该业务保留资金活动原貌，不进行跨业务净额化。"}</p></section>`,
-    footer: `<button type="button" class="primary" data-action="summary-drilldown" data-type="${esc(item.ledger_type)}">查看对应流水</button>`,
+    footer: `<button type="button" class="primary" data-action="summary-drilldown" data-type="${esc(item.entry_type_code)}">查看对应流水</button>`,
   });
 }
 
@@ -1048,9 +1048,9 @@ function bindPage(root) {
     const params = new URLSearchParams(state.params);
     params.delete("detail");
     params.delete("page");
-    params.set("ledger_type", button.dataset.type);
+    params.set("entry_type", entryTypeValues[button.dataset.type]);
     closeDialogs();
-    route("ledger", params);
+    route("economy", params);
   });
   $$('[data-action="tag-view-detail"]', root).forEach((button) => button.onclick = () => showTagViewDetail(button.dataset.id));
   $$('[data-action="fact-detail"]', root).forEach((button) => button.onclick = () => showFactDetail(button.dataset.id));
@@ -1112,7 +1112,7 @@ function bindPage(root) {
     route("economy", accountLedgerParams());
   });
   $$('[data-action="account-type"]', root).forEach((button) => button.onclick = () => {
-    route("economy", accountLedgerParams({ ledgerType: button.dataset.value }));
+    route("economy", accountLedgerParams({ entryTypeCode: button.dataset.value }));
   });
   $$('[data-action="account-day"]', root).forEach((button) => button.onclick = () => {
     route("economy", accountLedgerParams({ day: button.dataset.value }));
