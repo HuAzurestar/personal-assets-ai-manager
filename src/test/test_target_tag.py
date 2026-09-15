@@ -8,6 +8,7 @@ from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 
 from backend.router.tag import router as tag_router
+from backend.router.tag_assignment import router as tag_assignment_router
 from backend.router.ledger_review_legacy import router as ledger_review_legacy_router
 from backend.router.ledger_legacy import router as ledger_legacy_router
 from backend.router.dependency import get_db
@@ -34,6 +35,7 @@ def target_tag_api(tmp_path):
     init_target_db(bind=engine)
     api = FastAPI()
     api.include_router(tag_router)
+    api.include_router(tag_assignment_router)
     api.include_router(ledger_review_legacy_router)
     api.include_router(ledger_legacy_router)
 
