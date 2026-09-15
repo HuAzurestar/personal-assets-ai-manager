@@ -58,6 +58,34 @@ def _facts(sessions, specifications):
         return [row.id for row in rows]
 
 
+def test_ledger_v2_exposes_only_confirmed_cash_entry_fields(economic_api):
+    client, sessions = economic_api
+    fact_id = _facts(sessions, [("OUT", 12345, "CNY")])[0]
+    with sessions() as db:
+        TargetEconomicService(db).ensure_defaults([fact_id], commit=True)
+
+    page = client.get("/paam/ledger/v2/entry/list")
+    assert page.status_code == 200, page.text
+    item = page.json()["items"][0]
+    assert set(item) == {
+        "id",
+        "entry_type",
+        "entry_direction",
+        "amount",
+        "account_code",
+        "counterparty_account_ref",
+        "occurred_time",
+        "tags",
+    }
+    assert (item["entry_type"], item["entry_direction"]) == (0, 2)
+    detail = client.get(f"/paam/ledger/v2/entry/detail/{item['id']}").json()
+    assert "role" not in detail["allocations"][0]
+    assert detail["entry"] == item
+    assert client.get("/paam/economy/v1/flow/list").status_code == 404
+    assert client.get("/paam/economy/v1/flow/detail/1").status_code == 404
+    assert client.get("/paam/economy/v1/summary").status_code == 404
+
+
 def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_api):
     client, sessions = economic_api
     fact_ids = _facts(sessions, [
@@ -110,21 +138,16 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
         json={"expected_version": 1, "idempotency_key": "advance-confirm"},
     )
     assert confirmed.status_code == 200, confirmed.text
-    summary = client.get("/paam/economy/v1/summary").json()
+    summary = client.get("/paam/ledger/v2/summary").json()
     assert summary["totals"] == [{
         "currency_code": "CNY",
         "amount_scale": 2,
-        "income_value": 0,
-        "expense_value": 10000,
-        "reversal_in_value": 0,
-        "reversal_out_value": 0,
+        "transaction_in_value": 0,
+        "transaction_out_value": 10000,
         "account_transfer_in_value": 40000,
         "account_transfer_out_value": 40000,
-        "account_transfer_net_value": 0,
-        "claim_in_value": 0,
-        "claim_out_value": 0,
-        "receivable_balance_value": 0,
-        "payable_balance_value": 0,
+        "claim_cashflow_in_value": 0,
+        "claim_cashflow_out_value": 0,
     }]
     with sessions() as db:
         assert db.scalar(select(func.count(LedgerEntry.id))) == 6
@@ -146,9 +169,9 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
         json={"expected_version": 2, "idempotency_key": "advance-revoke"},
     )
     assert revoked.status_code == 200, revoked.text
-    summary = client.get("/paam/economy/v1/summary").json()["totals"][0]
-    assert summary["income_value"] == 40000
-    assert summary["expense_value"] == 50000
+    summary = client.get("/paam/ledger/v2/summary").json()["totals"][0]
+    assert summary["transaction_in_value"] == 40000
+    assert summary["transaction_out_value"] == 50000
     assert summary["account_transfer_in_value"] == 0
     assert summary["account_transfer_out_value"] == 0
     with sessions() as db:
@@ -209,10 +232,9 @@ def test_loan_uses_one_claim_cashflow_entry_per_fact(economic_api):
     assert sorted(item["amount_value"] for item in body["economics"]) == [
         300000, 300000, 400000, 500000, 500000,
     ]
-    summary = client.get("/paam/economy/v1/summary").json()["totals"][0]
-    assert summary["claim_out_value"] == 1000000
-    assert summary["claim_in_value"] == 1000000
-    assert summary["receivable_balance_value"] == 0
+    summary = client.get("/paam/ledger/v2/summary").json()["totals"][0]
+    assert summary["claim_cashflow_out_value"] == 1000000
+    assert summary["claim_cashflow_in_value"] == 1000000
 
 
 def test_one_economic_cannot_allocate_multiple_facts(economic_api):
@@ -294,7 +316,7 @@ def test_fx_review_uses_two_single_currency_account_transfers(economic_api):
         ("OUT", 12000, "CNY"),
         ("IN", 2000, "USD"),
     }
-    totals = client.get("/paam/economy/v1/summary").json()["totals"]
+    totals = client.get("/paam/ledger/v2/summary").json()["totals"]
     assert {(item["currency_code"], item["account_transfer_in_value"], item["account_transfer_out_value"]) for item in totals} == {
         ("CNY", 0, 12000),
         ("USD", 2000, 0),
@@ -316,7 +338,7 @@ def test_transaction_reversal_is_linked_and_cannot_exceed_original(economic_api)
     })
     assert seed.status_code == 200
     original_economic_id = client.get(
-        "/paam/economy/v1/flow/list?economic_type=TRANSACTION"
+        "/paam/ledger/v2/entry/list?entry_type=0"
     ).json()["items"][0]["id"]
 
     def reversal(fact_id, amount, suffix):
@@ -387,7 +409,7 @@ def test_backfill_does_not_reuse_a_legacy_aggregate_for_multiple_facts(economic_
 
     with sessions() as db:
         TargetEconomicService(db).backfill_defaults()
-    flows = client.get("/paam/economy/v1/flow/list").json()
+    flows = client.get("/paam/ledger/v2/entry/list").json()
     assert flows["total"] == 2
     assert legacy_id not in {item["id"] for item in flows["items"]}
     assert sorted(item["amount"]["amount_value"] for item in flows["items"]) == [3000, 7000]

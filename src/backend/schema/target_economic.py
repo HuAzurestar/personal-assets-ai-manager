@@ -13,7 +13,7 @@ class EconomicPageQuery:
     page_size: int = 50
     date_from: date | None = None
     date_to: date | None = None
-    economic_type: tuple[str, ...] = ()
+    entry_type: tuple[int, ...] = ()
     currency_code: tuple[str, ...] = ()
     q: str = ""
 
@@ -39,16 +39,12 @@ class EconomicTagRead(BaseModel):
 
 class EconomicFlowListItem(BaseModel):
     id: int
-    economic_type: Literal["TRANSACTION", "ACCOUNT_TRANSFER", "CLAIM"]
-    cash_direction: Literal["IN", "OUT"]
+    entry_type: Literal[0, 1, 2]
+    entry_direction: Literal[1, 2]
     amount: EconomicMoneyRead
-    title: str
-    start_time: datetime
-    end_time: datetime
-    claim_key: str
-    claim_side: str
-    reversal_of_id: int
-    projection_version: int
+    account_code: str
+    counterparty_account_ref: str
+    occurred_time: datetime
     tags: list[EconomicTagRead] = Field(default_factory=list)
 
 
@@ -62,10 +58,9 @@ class EconomicFlowPageRead(BaseModel):
 
 class EconomicAllocationEvidenceRead(BaseModel):
     id: int
-    review_id: int
-    fact_id: int
-    economic_id: int
-    role: str
+    review_case_id: int
+    transaction_fact_id: int
+    ledger_entry_id: int
     amount: EconomicMoneyRead
 
 
@@ -84,11 +79,11 @@ class EconomicReviewBriefRead(BaseModel):
     behavior_code: str
     status: str
     version: int
-    title: str
+    description: str
 
 
 class EconomicFlowDetailRead(BaseModel):
-    flow: EconomicFlowListItem
+    entry: EconomicFlowListItem
     allocations: list[EconomicAllocationEvidenceRead]
     facts: list[EconomicFactBriefRead]
     reviews: list[EconomicReviewBriefRead]
@@ -97,20 +92,15 @@ class EconomicFlowDetailRead(BaseModel):
 class EconomicCurrencySummaryRead(BaseModel):
     currency_code: str
     amount_scale: int
-    income_value: int
-    expense_value: int
-    reversal_in_value: int
-    reversal_out_value: int
+    transaction_in_value: int
+    transaction_out_value: int
     account_transfer_in_value: int
     account_transfer_out_value: int
-    account_transfer_net_value: int
-    claim_in_value: int
-    claim_out_value: int
-    receivable_balance_value: int
-    payable_balance_value: int
+    claim_cashflow_in_value: int
+    claim_cashflow_out_value: int
 
 
 class EconomicSummaryRead(BaseModel):
     entry_count: int
     totals: list[EconomicCurrencySummaryRead]
-    basis_version: str = "economic-flow-v2"
+    basis_version: str = "ledger-entry-v2"

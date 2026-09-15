@@ -13,6 +13,13 @@ import {
   accountsMarkup, cursorFromParam, monthBounds,
 } from "./account.js";
 
+const entryTypeCodes = { 0: "TRANSACTION", 1: "ACCOUNT_TRANSFER", 2: "CLAIM" };
+const entryTypeValues = { TRANSACTION: 0, ACCOUNT_TRANSFER: 1, CLAIM: 2 };
+
+function entryDirection(direction) {
+  return Number(direction) === 1 ? "IN" : "OUT";
+}
+
 function closeDialogs() {
   $$('dialog[open]').forEach((dialog) => dialog.close());
 }
@@ -226,9 +233,9 @@ function renderPageActions(page) {
 async function summaryPage() {
   state.accountMonth = cursorFromParam(state.params.get("month"), state.accountMonth);
   const range = monthBounds(state.accountMonth);
-  const makePath = (page) => `/paam/economy/v1/flow/list?${new URLSearchParams({ page, page_size: "100", date_from: range.from, date_to: range.to })}`;
+  const makePath = (page) => `/paam/ledger/v2/entry/list?${new URLSearchParams({ page, page_size: "100", date_from: range.from, date_to: range.to })}`;
   const [economicSummary, first] = await Promise.all([
-    request(`/paam/economy/v1/summary?${new URLSearchParams({ date_from: range.from, date_to: range.to })}`),
+    request(`/paam/ledger/v2/summary?${new URLSearchParams({ date_from: range.from, date_to: range.to })}`),
     request(makePath(1)),
   ]);
   const pages = Math.ceil(first.total / 100);
@@ -237,27 +244,34 @@ async function summaryPage() {
   const trendMap = new Map();
   const activityMap = new Map();
   for (const flow of flows) {
-    const day = date(flow.start_time).slice(0, 10);
+    const day = date(flow.occurred_time).slice(0, 10);
     const scale = flow.amount.amount_scale;
     const currency = flow.amount.currency_code;
     const trendKey = `${day}:${currency}`;
     const trend = trendMap.get(trendKey) || { day, currency_code: currency, amount_scale: scale, income_value: 0, expense_value: 0, net_value: 0 };
-    if (flow.economic_type === "TRANSACTION") {
-      if (flow.cash_direction === "IN") trend.income_value += flow.amount.amount_value;
+    if (flow.entry_type === 0) {
+      if (flow.entry_direction === 1) trend.income_value += flow.amount.amount_value;
       else trend.expense_value += flow.amount.amount_value;
       trend.net_value = trend.income_value - trend.expense_value;
     }
     trendMap.set(trendKey, trend);
-    const activityKey = `${flow.economic_type}:${currency}`;
-    const activity = activityMap.get(activityKey) || { ledger_type: flow.economic_type, currency_code: currency, amount_scale: scale, in_amount_value: 0, out_amount_value: 0, nettable: true };
-    if (flow.cash_direction === "IN") activity.in_amount_value += flow.amount.amount_value;
+    const typeCode = entryTypeCodes[flow.entry_type];
+    const activityKey = `${typeCode}:${currency}`;
+    const activity = activityMap.get(activityKey) || { ledger_type: typeCode, currency_code: currency, amount_scale: scale, in_amount_value: 0, out_amount_value: 0, nettable: true };
+    if (flow.entry_direction === 1) activity.in_amount_value += flow.amount.amount_value;
     else activity.out_amount_value += flow.amount.amount_value;
     activityMap.set(activityKey, activity);
   }
   const summary = {
     entry_count: economicSummary.entry_count,
     provisional_count: 0,
-    totals: economicSummary.totals.map((item) => ({ ...item, refund_offset_value: item.reversal_in_value - item.reversal_out_value, net_value: item.income_value - item.expense_value })),
+    totals: economicSummary.totals.map((item) => ({
+      ...item,
+      income_value: item.transaction_in_value,
+      expense_value: item.transaction_out_value,
+      refund_offset_value: 0,
+      net_value: item.transaction_in_value - item.transaction_out_value,
+    })),
     trend: [...trendMap.values()],
     activities: [...activityMap.values()],
   };
@@ -279,7 +293,7 @@ function accountLedgerParams(extra = {}) {
       || state.params.get("currency_code")
       || "CNY",
   });
-  if (extra.ledgerType && ["TRANSACTION", "ACCOUNT_TRANSFER", "CLAIM"].includes(extra.ledgerType)) params.set("economic_type", extra.ledgerType);
+  if (extra.ledgerType in entryTypeValues) params.set("entry_type", entryTypeValues[extra.ledgerType]);
   return params;
 }
 
@@ -359,28 +373,29 @@ function showFactDetail(id) {
 
 async function economicPage() {
   const query = new URLSearchParams();
-  for (const name of ["page", "page_size", "q", "currency_code", "date_from", "date_to", "economic_type"]) {
+  for (const name of ["page", "page_size", "q", "currency_code", "date_from", "date_to", "entry_type"]) {
     for (const value of state.params.getAll(name)) if (value) query.append(name, value);
   }
   if (!query.has("page")) query.set("page", "1");
   if (!query.has("page_size")) query.set("page_size", "25");
-  const result = await request(`/paam/economy/v1/flow/list?${query}`);
+  const result = await request(`/paam/ledger/v2/entry/list?${query}`);
   state.detailEconomics = new Map(result.items.map((item) => [item.id, item]));
   const rows = result.items.map((item) => `<tr class="detail-click-row" tabindex="0" data-economic-row="${item.id}">
-    <td>${date(item.start_time)}</td><td><button type="button" class="detail-primary" data-action="economic-detail" data-id="${item.id}"><strong>${esc(item.title || `经济流水 #${item.id}`)}</strong><small>#${item.id}</small></button></td><td>${esc(typeNames[item.economic_type] || item.economic_type)}</td><td>${item.cash_direction === "IN" ? "流入" : "流出"}</td><td class="money ${item.cash_direction === "IN" ? "income" : "expense"}">${signedMoney(item.amount, item.cash_direction)}</td><td>${tags(item)}</td><td class="detail-arrow">→</td>
+    <td>${date(item.occurred_time)}</td><td><button type="button" class="detail-primary" data-action="economic-detail" data-id="${item.id}"><strong>账本流水 #${item.id}</strong><small>${esc(item.account_code)}</small></button></td><td>${esc(typeNames[entryTypeCodes[item.entry_type]] || entryTypeCodes[item.entry_type])}</td><td>${item.entry_direction === 1 ? "流入" : "流出"}</td><td class="money ${item.entry_direction === 1 ? "income" : "expense"}">${signedMoney(item.amount, entryDirection(item.entry_direction))}</td><td>${tags(item)}</td><td class="detail-arrow">→</td>
   </tr>`).join("");
-  const selectedType = state.params.get("economic_type") || "";
-  const toolbar = `<form class="detail-filter" data-form="economic-filter"><label class="grow">搜索<input name="q" value="${esc(state.params.get("q") || "")}" placeholder="经济流水标题"></label><label>经济类型<select name="economic_type"><option value="">全部类型</option>${["TRANSACTION", "ACCOUNT_TRANSFER", "CLAIM"].map((value) => `<option value="${value}" ${selectedType === value ? "selected" : ""}>${esc(typeNames[value])}</option>`).join("")}</select></label><label>币种<input name="currency_code" maxlength="12" value="${esc(state.params.get("currency_code") || "")}" placeholder="全部币种"></label><button type="button" class="quiet" data-action="detail-clear" data-page-id="economy">清空</button><button class="primary">筛选</button></form>`;
+  const selectedType = state.params.get("entry_type") || "";
+  const toolbar = `<form class="detail-filter" data-form="economic-filter"><label class="grow">搜索<input name="q" value="${esc(state.params.get("q") || "")}" placeholder="审查说明、交易方或摘要"></label><label>账本类型<select name="entry_type"><option value="">全部类型</option>${Object.entries(entryTypeCodes).map(([value, code]) => `<option value="${value}" ${selectedType === value ? "selected" : ""}>${esc(typeNames[code] || code)}</option>`).join("")}</select></label><label>币种<input name="currency_code" maxlength="12" value="${esc(state.params.get("currency_code") || "")}" placeholder="全部币种"></label><button type="button" class="quiet" data-action="detail-clear" data-page-id="economy">清空</button><button class="primary">筛选</button></form>`;
   return detailList({ active: "economy", toolbar, title: "经济流水", description: "已生效的最终经济结果；每笔都可追溯到审查、Allocation 与事实。", total: result.total, headers: ["发生时间", "经济结果", "类型", "方向", "金额", "标签", ""], rows, footer: detailPager(result, "economy") });
 }
 
 async function showEconomicDetail(id) {
-  const detail = await request(`/paam/economy/v1/flow/detail/${id}`);
-  const flow = detail.flow;
-  const allocations = detail.allocations.map((item) => `<div class="drawer-review-row"><span><strong>Allocation #${item.id}</strong><small>Fact #${item.fact_id} → Economic #${item.economic_id} · ${esc(item.role)}</small></span><strong>${money(item.amount)}</strong></div>`).join("");
+  const detail = await request(`/paam/ledger/v2/entry/detail/${id}`);
+  const flow = detail.entry;
+  const allocations = detail.allocations.map((item) => `<div class="drawer-review-row"><span><strong>Allocation #${item.id}</strong><small>Fact #${item.transaction_fact_id} → Ledger #${item.ledger_entry_id}</small></span><strong>${money(item.amount)}</strong></div>`).join("");
   const facts = detail.facts.map((item) => `<div class="drawer-review-row"><span><strong>Fact #${item.id} · ${esc(item.summary || item.counterparty)}</strong><small>${date(item.occurred_time)} · ${esc(item.account_code)}</small></span><strong>${money(item.amount)}</strong></div>`).join("");
-  const reviews = detail.reviews.map((item) => `<button type="button" class="drawer-review-row" data-action="economic-review-detail" data-id="${item.id}"><span><strong>Review #${item.id} · ${esc(item.behavior_code)}</strong><small>${esc(item.title)} · ${esc(statusNames[item.status] || item.status)}</small></span><span>查看审查 →</span></button>`).join("");
-  detailDrawer({ title: flow.title || `经济流水 #${flow.id}`, kicker: `${esc(typeNames[flow.economic_type] || flow.economic_type)} · ECONOMIC #${flow.id}`, subtitle: `${date(flow.start_time)} · ${flow.cash_direction === "IN" ? "流入" : "流出"}`, body: `<section class="drawer-record-card"><div><span>最终经济结果</span><h3>${esc(typeNames[flow.economic_type] || flow.economic_type)}</h3><small>${esc(flow.claim_key ? `${flow.claim_side} · ${flow.claim_key}` : "单方向、单币种")}</small></div><strong class="ledger-fact-money ${flow.cash_direction === "IN" ? "plus" : "minus"}">${signedMoney(flow.amount, flow.cash_direction)}</strong></section><section class="drawer-section"><h3>来源事实</h3>${facts || '<p class="muted">没有关联事实</p>'}</section><section class="drawer-section"><h3>审查与分配</h3>${reviews}${allocations}</section>` });
+  const reviews = detail.reviews.map((item) => `<button type="button" class="drawer-review-row" data-action="economic-review-detail" data-id="${item.id}"><span><strong>Review #${item.id} · ${esc(item.behavior_code)}</strong><small>${esc(item.description)} · ${esc(statusNames[item.status] || item.status)}</small></span><span>查看审查 →</span></button>`).join("");
+  const typeCode = entryTypeCodes[flow.entry_type];
+  detailDrawer({ title: `账本流水 #${flow.id}`, kicker: `${esc(typeNames[typeCode] || typeCode)} · LEDGER #${flow.id}`, subtitle: `${date(flow.occurred_time)} · ${flow.entry_direction === 1 ? "流入" : "流出"}`, body: `<section class="drawer-record-card"><div><span>已确认账本投影</span><h3>${esc(typeNames[typeCode] || typeCode)}</h3><small>${esc(flow.account_code)} · 单方向、单币种</small></div><strong class="ledger-fact-money ${flow.entry_direction === 1 ? "plus" : "minus"}">${signedMoney(flow.amount, entryDirection(flow.entry_direction))}</strong></section><section class="drawer-section"><h3>来源事实</h3>${facts || '<p class="muted">没有关联事实</p>'}</section><section class="drawer-section"><h3>审查与分配</h3>${reviews}${allocations}</section>` });
 }
 
 async function legacyLedgerPage() {

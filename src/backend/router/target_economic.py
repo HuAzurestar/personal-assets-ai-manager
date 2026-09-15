@@ -16,16 +16,16 @@ from backend.schema.target_economic import (
 from backend.service.target_economic_read_service import TargetEconomicReadService
 
 
-router = APIRouter(prefix="/paam/economy/v1", tags=["economic-flow"])
+router = APIRouter(prefix="/paam/ledger/v2", tags=["ledger-entry"])
 
 
-@router.get("/flow/list", response_model=EconomicFlowPageRead)
-def list_economic_flows(
+@router.get("/entry/list", response_model=EconomicFlowPageRead)
+def list_ledger_entries(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=100),
     date_from: date | None = None,
     date_to: date | None = None,
-    economic_type: list[str] = Query(default=[]),
+    entry_type: list[int] = Query(default=[]),
     currency_code: list[str] = Query(default=[]),
     q: str = Query(default="", max_length=200),
     db: Session = Depends(get_target_db),
@@ -38,7 +38,7 @@ def list_economic_flows(
             page_size=page_size,
             date_from=date_from,
             date_to=date_to,
-            economic_type=tuple(economic_type),
+            entry_type=tuple(entry_type),
             currency_code=tuple(code.upper() for code in currency_code),
             q=q.strip(),
         ))
@@ -46,11 +46,11 @@ def list_economic_flows(
         raise HTTPException(status_code=422, detail=str(error)) from error
 
 
-@router.get("/flow/detail/{economic_id}", response_model=EconomicFlowDetailRead)
-def economic_flow_detail(economic_id: int, db: Session = Depends(get_target_db)):
-    result = TargetEconomicReadService(db).detail(economic_id)
+@router.get("/entry/detail/{ledger_id}", response_model=EconomicFlowDetailRead)
+def ledger_entry_detail(ledger_id: int, db: Session = Depends(get_target_db)):
+    result = TargetEconomicReadService(db).detail(ledger_id)
     if result is None:
-        raise HTTPException(status_code=404, detail="Economic flow not found")
+        raise HTTPException(status_code=404, detail="Ledger entry not found")
     return result
 
 
