@@ -122,9 +122,15 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
                 json={"version": preview["version"]},
             )
             assert confirmation.status_code == 200, confirmation.text
-            page = client.get("/paam/ledger/v1/entry/list")
+            page = client.get("/paam/ledger/v2/entry/list")
             assert page.status_code == 200, page.text
             assert page.json()["total"] == 1
+            for legacy_path in (
+                "/paam/ledger/v1/entry/list",
+                "/paam/ledger/v1/entry/detail/1",
+                "/paam/ledger/v1/summary",
+            ):
+                assert client.get(legacy_path).status_code == 404
             assert client.get("/api/intake/history").status_code == 404
             assert client.get("/api/shadow/v1/ledger/status").status_code == 404
 
@@ -170,13 +176,25 @@ def test_target_review_confirm_revoke_restore_rebuilds_projection(
             assert len(fact_ids) == 2
 
             created = client.post(
-                "/paam/review/v1/case/create",
+                "/paam/review/v2/case/create",
                 json={
-                    "review_type": "TRANSFER",
-                    "title": "零钱转入招行",
-                    "lines": [
-                        {"bill_id": fact_ids[0], "role": "TRANSFER_OUT"},
-                        {"bill_id": fact_ids[1], "role": "TRANSFER_IN"},
+                    "behavior_code": "TRANSFER",
+                    "description": "零钱转入招行",
+                    "entries": [
+                        {"client_key": "out", "entry_type": 1},
+                        {"client_key": "in", "entry_type": 1},
+                    ],
+                    "allocations": [
+                        {
+                            "transaction_fact_id": fact_ids[0],
+                            "entry_key": "out",
+                            "amount_value": 1000,
+                        },
+                        {
+                            "transaction_fact_id": fact_ids[1],
+                            "entry_key": "in",
+                            "amount_value": 999,
+                        },
                     ],
                     "reason": "识别本人账户转账",
                     "idempotency_key": "create-transfer-1",
@@ -186,11 +204,11 @@ def test_target_review_confirm_revoke_restore_rebuilds_projection(
             case = created.json()["body"]
             assert case["status"] == "PENDING"
             assert case["version"] == 1
-            assert [line["amount_value"] for line in case["lines"]] == [1000, 999]
+            assert [row["amount_value"] for row in case["allocations"]] == [1000, 999]
             assert case["history"][0]["operation"] == "CREATE"
 
             confirmed = client.post(
-                f"/paam/review/v1/case/confirm/{case['id']}",
+                f"/paam/review/v2/case/confirm/{case['id']}",
                 json={
                     "expected_version": 1,
                     "reason": "确认本人转账",
@@ -202,25 +220,25 @@ def test_target_review_confirm_revoke_restore_rebuilds_projection(
             assert case["status"] == "CONFIRMED"
             assert case["version"] == 2
             assert [item["operation"] for item in case["history"]] == ["CREATE", "CONFIRM"]
-            page = client.get("/paam/ledger/v1/entry/list").json()
-            assert page["total"] == 1
-            assert page["items"][0]["ledger_type"] == "TRANSFER"
-            assert page["items"][0]["incoming"]["amount_value"] == 999
-            assert page["items"][0]["outgoing"]["amount_value"] == 1000
+            page = client.get("/paam/ledger/v2/entry/list").json()
+            assert page["total"] == 2
+            assert {
+                (item["entry_type"], item["entry_direction"], item["amount"]["amount_value"])
+                for item in page["items"]
+            } == {(1, 1, 999), (1, 2, 1000)}
             detail = client.get(
-                f"/paam/ledger/v1/entry/detail/{page['items'][0]['id']}"
+                f"/paam/ledger/v2/entry/detail/{page['items'][0]['id']}"
             ).json()
-            assert len(detail["facts"]) == 2
-            assert len(detail["raw_evidence"]) == 2
-            assert detail["reviews"][0]["is_projection_source"] is True
-            assert [
-                item["operation"] for item in detail["reviews"][0]["history"]
-            ] == ["CREATE", "CONFIRM"]
-            summary = client.get("/paam/ledger/v1/summary").json()
-            assert summary["totals"][0]["expense_value"] == 1
+            assert len(detail["facts"]) == 1
+            assert len(detail["allocations"]) == 1
+            assert detail["reviews"][0]["id"] == case["id"]
+            assert detail["reviews"][0]["review_type"] == "TRANSFER"
+            summary = client.get("/paam/ledger/v2/summary").json()
+            assert summary["totals"][0]["account_transfer_in_value"] == 999
+            assert summary["totals"][0]["account_transfer_out_value"] == 1000
 
             replay = client.post(
-                f"/paam/review/v1/case/confirm/{case['id']}",
+                f"/paam/review/v2/case/confirm/{case['id']}",
                 json={
                     "expected_version": 1,
                     "reason": "确认本人转账",
@@ -231,7 +249,7 @@ def test_target_review_confirm_revoke_restore_rebuilds_projection(
             assert replay.json() == confirmed.json()
 
             revoked = client.post(
-                f"/paam/review/v1/case/revoke/{case['id']}",
+                f"/paam/review/v2/case/revoke/{case['id']}",
                 json={
                     "expected_version": 2,
                     "reason": "撤销核查",
@@ -242,13 +260,13 @@ def test_target_review_confirm_revoke_restore_rebuilds_projection(
             case = revoked.json()["body"]
             assert case["status"] == "REVOKED"
             assert case["version"] == 3
-            assert case["history"][-1]["reverses_history_id"] == case["history"][1]["id"]
-            page = client.get("/paam/ledger/v1/entry/list").json()
+            assert case["history"][-1]["operation"] == "REVOKE"
+            page = client.get("/paam/ledger/v2/entry/list").json()
             assert page["total"] == 2
-            assert {item["ledger_type"] for item in page["items"]} == {"INCOME", "EXPENSE"}
+            assert {item["entry_type"] for item in page["items"]} == {0}
 
             restored = client.post(
-                f"/paam/review/v1/case/restore/{case['id']}",
+                f"/paam/review/v2/case/restore/{case['id']}",
                 json={
                     "expected_version": 3,
                     "reason": "恢复核查",
@@ -258,11 +276,8 @@ def test_target_review_confirm_revoke_restore_rebuilds_projection(
             assert restored.status_code == 200, restored.text
             restored_case = restored.json()["body"]
             assert restored_case["version"] == 4
-            assert (
-                restored_case["history"][-1]["reverses_history_id"]
-                == restored_case["history"][-2]["id"]
-            )
-            assert client.get("/paam/ledger/v1/entry/list").json()["total"] == 1
+            assert restored_case["history"][-1]["operation"] == "RESTORE"
+            assert client.get("/paam/ledger/v2/entry/list").json()["total"] == 2
     finally:
         target_intake_preview_store.clear()
         engine.dispose()

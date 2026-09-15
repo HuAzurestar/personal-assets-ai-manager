@@ -135,9 +135,6 @@ def test_target_import_writes_fact_evidence_and_hot_projection(target_import_api
     assert set(inspect(engine).get_table_names()) == set(
         target_database.TARGET_TABLE_NAMES
     )
-    page = client.get("/paam/ledger/v1/entry/list").json()
-    assert page["total"] == 1
-    assert page["items"][0]["outgoing"]["amount_value"] == 1000
     ledger_v2 = client.get("/paam/ledger/v2/entry/list")
     assert ledger_v2.status_code == 200, ledger_v2.text
     assert ledger_v2.json()["total"] == 1
