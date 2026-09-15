@@ -80,6 +80,11 @@ description: Change PAAM FastAPI routers, URL modules or versions, HTTP endpoint
 - Use `POST /{object}/{resource_id}/{action}` only when a domain command cannot
   be represented truthfully as CRUD. Review transitions such as `confirm`,
   `revoke`, and `restore` follow this form.
+- A command that targets several resources uses
+  `POST /{object}/{batch_action}`. Its JSON body carries the identifiers in a
+  resource-specific `*_ids` field, such as `review_ids: [1, 2, 3]`. Do not put
+  several identifiers in the path or encode them as a comma-separated query
+  parameter.
 - Path parameters identify resources. Filters, sorting, and pagination use
   query parameters. Write input uses a JSON request body when a body is needed.
 - Canonical paged list requests use `page` with default `1` and `page_size` with
