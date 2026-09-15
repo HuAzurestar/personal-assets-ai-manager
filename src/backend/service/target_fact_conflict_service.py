@@ -14,7 +14,6 @@ from backend.schema.target_review import (
     TargetReviewCaseRead,
     TargetReviewTransitionRequest,
 )
-from backend.service.target_projection_service import TargetProjectionService
 from backend.service.target_economic_service import TargetEconomicService
 from backend.service.target_review_service import TargetReviewError
 
@@ -25,7 +24,6 @@ class TargetFactConflictService:
     def __init__(self, db: Session):
         self.mapper = TargetFactConflictMapper(db)
         self.review = TargetReviewMapper(db)
-        self.projection = TargetProjectionService(db)
         self.economic = TargetEconomicService(db)
 
     def resolve(
@@ -150,7 +148,6 @@ class TargetFactConflictService:
                 now=now,
             )
             if affected_fact_id:
-                self.projection.rebuild_defaults([affected_fact_id])
                 self.economic.ensure_defaults([affected_fact_id])
             self.review.commit()
             return self._required(case_id)

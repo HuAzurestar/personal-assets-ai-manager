@@ -18,7 +18,6 @@ from backend.schema.intake import (
 )
 from backend.smart_import import public_plan
 from backend.parser.statement_parser import parse_statement
-from backend.service.target_projection_service import TargetProjectionService
 from backend.service.target_economic_service import TargetEconomicService
 
 
@@ -106,9 +105,6 @@ class TargetIntakeService:
                 if not current["can_confirm"]:
                     raise TargetIntakeError(422, "请先处理预览中标出的错误或歧义")
                 result = self.mapper.commit_plan(current, batch_code=token)
-                TargetProjectionService(self.db).rebuild_defaults(
-                    result["affected_fact_ids"]
-                )
                 TargetEconomicService(self.db).ensure_defaults(
                     result["affected_fact_ids"]
                 )

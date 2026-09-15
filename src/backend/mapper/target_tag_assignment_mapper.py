@@ -3,13 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import delete, select, text, union, update
+from sqlalchemy import delete, select, text, update
 from sqlalchemy.orm import Session
 
 from backend.entity import (
     BillFact,
     LedgerEntry,
-    LedgerEntrySource,
     ReviewCase,
     ReviewCaseBill,
     ReviewHistory,
@@ -63,7 +62,7 @@ class TargetTagAssignmentMapper:
 
     @staticmethod
     def _fact_links():
-        allocation_links = select(
+        return select(
             ReviewCaseBill.economic_id.label("ledger_id"),
             ReviewCaseBill.bill_id.label("fact_id"),
         ).join(
@@ -72,12 +71,7 @@ class TargetTagAssignmentMapper:
         ).where(
             ReviewCase.status == "CONFIRMED",
             ReviewCaseBill.economic_id > 0,
-        )
-        legacy_links = select(
-            LedgerEntrySource.ledger_id.label("ledger_id"),
-            LedgerEntrySource.source_id.label("fact_id"),
-        ).where(LedgerEntrySource.source_kind == "BILL_FACT")
-        return union(allocation_links, legacy_links).subquery()
+        ).subquery()
 
     def target(self, ledger_id: int) -> TagAssignmentTarget | None:
         links = self._fact_links()

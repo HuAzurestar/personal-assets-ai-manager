@@ -8,23 +8,20 @@ from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 
 from backend.router.target_tag import router as target_tag_router
-from backend.router.target_review import (
-    legacy_router as target_legacy_review_router,
-    router as target_review_router,
-)
-from backend.router.target_ledger import v1_router as target_ledger_router
+from backend.router.target_review import router as target_review_router, v2_router
+from backend.router.target_economic import router as target_economic_router
 from backend.router.target_dep import get_target_db
 from backend.core.target_database import init_target_db
 from backend.entity import (
     BillFact,
-    LedgerEntrySource,
     LedgerEntryTag,
     ReviewCase,
+    ReviewCaseBill,
     ReviewHistory,
     TargetTag,
     TargetTagView,
 )
-from backend.service.target_projection_service import TargetProjectionService
+from backend.service.target_economic_service import TargetEconomicService
 
 
 @pytest.fixture
@@ -38,8 +35,8 @@ def target_tag_api(tmp_path):
     api = FastAPI()
     api.include_router(target_tag_router)
     api.include_router(target_review_router)
-    api.include_router(target_legacy_review_router)
-    api.include_router(target_ledger_router)
+    api.include_router(v2_router)
+    api.include_router(target_economic_router)
 
     def override_db():
         with sessions() as db:
@@ -73,8 +70,7 @@ def _add_facts(sessions, count, directions=None):
             facts.append(fact)
         db.flush()
         fact_ids = [fact.id for fact in facts]
-        TargetProjectionService(db).rebuild_defaults(fact_ids)
-        db.commit()
+        TargetEconomicService(db).ensure_defaults(fact_ids, commit=True)
         return fact_ids
 
 
@@ -168,9 +164,12 @@ def _create_tag_dictionary(client):
 
 def _ledger_for_fact(sessions, fact_id):
     with sessions() as db:
-        return db.scalar(select(LedgerEntrySource.ledger_id).where(
-            LedgerEntrySource.source_kind == "BILL_FACT",
-            LedgerEntrySource.source_id == fact_id,
+        return db.scalar(select(ReviewCaseBill.economic_id).join(
+            ReviewCase, ReviewCase.id == ReviewCaseBill.case_id,
+        ).where(
+            ReviewCaseBill.bill_id == fact_id,
+            ReviewCaseBill.economic_id > 0,
+            ReviewCase.status == "CONFIRMED",
         ))
 
 
@@ -201,10 +200,9 @@ def test_ledger_tag_assignment_is_versioned_idempotent_and_audited_per_fact(
     assert replay.json()["body"]["version"] == 1
     assert _assign(client, ledger_id, 0, "unclassified", "assign-food").status_code == 409
     assert _assign(client, ledger_id, 0, "food", "stale-assignment").status_code == 409
-    detail = client.get(f"/paam/ledger/v1/entry/detail/{ledger_id}").json()
+    detail = client.get(f"/paam/ledger/v2/entry/detail/{ledger_id}").json()
     assert detail["entry"]["tags"][0]["tag_system_name"] == "food"
-    assert detail["reviews"][0]["review_type"] == "TAG"
-    assert detail["reviews"][0]["is_projection_source"] is True
+    assert {item["review_type"] for item in detail["reviews"]} == {"DEFAULT", "TAG"}
 
     with sessions() as db:
         tag_case = db.scalar(select(ReviewCase).where(ReviewCase.review_type == "TAG"))
@@ -230,83 +228,7 @@ def test_ledger_tag_assignment_is_versioned_idempotent_and_audited_per_fact(
         assert '"category":"unclassified"' in histories[1].after_json
 
 
-def test_merged_ledger_tag_assignment_survives_financial_split_and_restore(
-    target_tag_api,
-):
-    client, sessions, _engine = target_tag_api
-    out_id, in_id = _add_facts(sessions, 2, ["OUT", "IN"])
-    _create_tag_dictionary(client)
-    created = client.post("/paam/review/v1/case/create", json={
-        "review_type": "TRANSFER",
-        "title": "Transfer",
-        "result": {},
-        "lines": [
-            {"bill_id": out_id, "role": "TRANSFER_OUT"},
-            {"bill_id": in_id, "role": "TRANSFER_IN"},
-        ],
-        "idempotency_key": "transfer-create",
-    })
-    assert created.status_code == 200, created.text
-    case = created.json()["body"]
-    confirmed = client.post(f"/paam/review/v1/case/confirm/{case['id']}", json={
-        "expected_version": 1,
-        "idempotency_key": "transfer-confirm",
-    })
-    assert confirmed.status_code == 200, confirmed.text
-    ledger = client.get("/paam/ledger/v1/entry/list").json()["items"][0]
-    assigned = _assign(client, ledger["id"], 0, "food", "merged-food")
-    assert assigned.status_code == 200, assigned.text
-    assert len(assigned.json()["body"]["review_case_ids"]) == 2
-
-    revoked = client.post(f"/paam/review/v1/case/revoke/{case['id']}", json={
-        "expected_version": 2,
-        "idempotency_key": "transfer-revoke",
-    })
-    assert revoked.status_code == 200, revoked.text
-    split = client.get("/paam/ledger/v1/entry/list").json()["items"]
-    assert len(split) == 2
-    assert all(item["tags"][0]["tag_system_name"] == "food" for item in split)
-
-    restored = client.post(f"/paam/review/v1/case/restore/{case['id']}", json={
-        "expected_version": 3,
-        "idempotency_key": "transfer-restore",
-    })
-    assert restored.status_code == 200, restored.text
-    merged = client.get("/paam/ledger/v1/entry/list").json()["items"]
-    assert len(merged) == 1
-    assert merged[0]["tags"][0]["tag_system_name"] == "food"
-
-
-def test_financial_merge_rejects_different_fact_tag_states(target_tag_api):
-    client, sessions, _engine = target_tag_api
-    out_id, in_id = _add_facts(sessions, 2, ["OUT", "IN"])
-    _create_tag_dictionary(client)
-    first_ledger = _ledger_for_fact(sessions, out_id)
-    second_ledger = _ledger_for_fact(sessions, in_id)
-    assert _assign(client, first_ledger, 0, "food", "first-food").status_code == 200
-    assert _assign(client, second_ledger, 0, "unclassified", "second-default").status_code == 200
-    created = client.post("/paam/review/v1/case/create", json={
-        "review_type": "TRANSFER",
-        "title": "Conflicting tags",
-        "result": {},
-        "lines": [
-            {"bill_id": out_id, "role": "TRANSFER_OUT"},
-            {"bill_id": in_id, "role": "TRANSFER_IN"},
-        ],
-        "idempotency_key": "conflict-create",
-    }).json()["body"]
-    confirmed = client.post(f"/paam/review/v1/case/confirm/{created['id']}", json={
-        "expected_version": 1,
-        "idempotency_key": "conflict-confirm",
-    })
-    assert confirmed.status_code == 422
-    with sessions() as db:
-        assert db.get(ReviewCase, created["id"]).status == "PENDING"
-
-
-def test_tag_assignment_select_count_is_independent_of_source_fact_count(
-    target_tag_api,
-):
+def test_tag_assignment_select_count_is_independent_of_split_count(target_tag_api):
     client, sessions, engine = target_tag_api
     _create_tag_dictionary(client)
 
@@ -329,63 +251,27 @@ def test_tag_assignment_select_count_is_independent_of_source_fact_count(
     one_fact = _add_facts(sessions, 1)[0]
     one_count = assign_and_count(_ledger_for_fact(sessions, one_fact), 0, "one-tag")
 
-    many_facts = _add_facts(sessions, 20)
-    created = client.post("/paam/review/v1/case/create", json={
-        "review_type": "AA",
-        "title": "Grouped expenses",
-        "result": {},
-        "lines": [
-            {"bill_id": fact_id, "role": "AA_PAID"}
-            for fact_id in many_facts
+    split_fact = _add_facts(sessions, 1)[0]
+    created = client.post("/paam/review/v2/case/create", json={
+        "behavior_code": "TWENTY_WAY_SPLIT",
+        "entries": [
+            {"client_key": f"part-{index}", "entry_type": 0}
+            for index in range(20)
+        ],
+        "allocations": [
+            {
+                "transaction_fact_id": split_fact,
+                "entry_key": f"part-{index}",
+                "amount_value": 50,
+            }
+            for index in range(20)
         ],
         "idempotency_key": "many-create",
     }).json()["body"]
-    confirmed = client.post(f"/paam/review/v1/case/confirm/{created['id']}", json={
+    confirmed = client.post(f"/paam/review/v2/case/confirm/{created['id']}", json={
         "expected_version": 1,
         "idempotency_key": "many-confirm",
     })
     assert confirmed.status_code == 200, confirmed.text
-    many_ledger = _ledger_for_fact(sessions, many_facts[0])
-    many_count = assign_and_count(many_ledger, 0, "many-tag")
-    assert one_count == 7
+    many_count = assign_and_count(_ledger_for_fact(sessions, split_fact), 0, "many-tag")
     assert many_count == one_count
-
-
-def test_tag_view_restore_reports_merge_conflict_and_rolls_back(target_tag_api):
-    client, sessions, _engine = target_tag_api
-    fact_ids = _add_facts(sessions, 2, directions=["OUT", "IN"])
-    view = client.post("/paam/tag/v1/view/create", json={
-        "name": "Category", "system_name": "category",
-    }).json()["body"]
-    view = client.post(f"/paam/tag/v1/tag/create/{view['id']}", json={
-        "name": "Food", "system_name": "food",
-    }).json()["body"]
-    entries = client.get("/paam/ledger/v1/entry/list").json()["items"]
-    assigned = client.put(f"/paam/tag/v1/assignment/set/{entries[0]['id']}", json={
-        "tag_state": {"category": "food"},
-        "expected_version": 0,
-        "idempotency_key": "restore-conflict-tag",
-    })
-    assert assigned.status_code == 200, assigned.text
-    assert client.put(f"/paam/tag/v1/view/status/{view['id']}", json={
-        "status": "ARCHIVED",
-    }).status_code == 200
-    case = client.post("/paam/review/v1/case/create", json={
-        "review_type": "TRANSFER",
-        "lines": [
-            {"bill_id": fact_ids[0], "role": "TRANSFER_OUT"},
-            {"bill_id": fact_ids[1], "role": "TRANSFER_IN"},
-        ],
-        "idempotency_key": "restore-conflict-create",
-    }).json()["body"]
-    assert client.post(f"/paam/review/v1/case/confirm/{case['id']}", json={
-        "expected_version": 1,
-        "idempotency_key": "restore-conflict-confirm",
-    }).status_code == 200
-    restored = client.put(f"/paam/tag/v1/view/status/{view['id']}", json={
-        "status": "ACTIVE",
-    })
-    assert restored.status_code == 409
-    assert "different category tags" in restored.json()["detail"]
-    archived = client.get("/paam/tag/v1/view/list?include_archived=true").json()["body"]
-    assert archived[0]["status"] == "ARCHIVED"

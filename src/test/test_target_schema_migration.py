@@ -15,7 +15,7 @@ def test_target_schema_is_exact_and_uses_only_implicit_foreign_keys(tmp_path):
         assert {"id", "created_time", "updated_time"}.issubset(columns)
 
 
-def test_target_schema_upgrade_adds_columns_and_hot_indexes(tmp_path):
+def test_target_schema_upgrade_contracts_ledger_and_drops_sources(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'target-upgrade.db'}")
     with engine.begin() as connection:
         connection.execute(text(
@@ -25,9 +25,31 @@ def test_target_schema_upgrade_adds_columns_and_hot_indexes(tmp_path):
             "CREATE TABLE bill_raw ("
             "id INTEGER PRIMARY KEY, bill_id INTEGER, source_reference VARCHAR(160))"
         ))
-        connection.execute(text(
-            "CREATE TABLE ledger_entry (id INTEGER PRIMARY KEY, start_time DATETIME)"
-        ))
+        connection.execute(text("""
+            CREATE TABLE ledger_entry (
+                id INTEGER PRIMARY KEY,
+                economic_type TEXT NOT NULL DEFAULT 'TRANSACTION',
+                cash_direction TEXT NOT NULL DEFAULT 'UNKNOWN',
+                start_time TEXT NOT NULL,
+                in_amount_value INTEGER NOT NULL DEFAULT 0,
+                out_amount_value INTEGER NOT NULL DEFAULT 0,
+                in_currency_code TEXT NOT NULL DEFAULT 'CNY',
+                out_currency_code TEXT NOT NULL DEFAULT 'CNY',
+                in_account_code TEXT NOT NULL DEFAULT 'UNKNOWN',
+                out_account_code TEXT NOT NULL DEFAULT 'UNKNOWN'
+            )
+        """))
+        connection.execute(text("""
+            INSERT INTO ledger_entry (
+                id, economic_type, cash_direction, start_time,
+                in_amount_value, out_amount_value,
+                in_currency_code, out_currency_code,
+                in_account_code, out_account_code
+            ) VALUES (
+                7, 'TRANSACTION', 'OUT', '2026-09-15T10:20:30Z',
+                0, 12345, 'CNY', 'USD', 'unused', 'wallet'
+            )
+        """))
         connection.execute(text(
             "CREATE TABLE ledger_entry_source ("
             "id INTEGER PRIMARY KEY, ledger_id INTEGER, "
@@ -44,9 +66,6 @@ def test_target_schema_upgrade_adds_columns_and_hot_indexes(tmp_path):
     assert "account_code" in {
         item["name"] for item in schema.get_columns("bill_fact")
     }
-    assert {"in_account_code", "out_account_code"}.issubset({
-        item["name"] for item in schema.get_columns("ledger_entry")
-    })
     assert "party" in {
         item["name"] for item in schema.get_columns("review_case_bill")
     }
@@ -60,23 +79,38 @@ def test_target_schema_upgrade_adds_columns_and_hot_indexes(tmp_path):
         item["name"] for item in schema.get_columns("review_case")
     }
     assert {
+        "id",
         "entry_type",
         "entry_direction",
-        "account_code",
-        "counterparty_account_ref",
-        "occurred_time",
-        "economic_type",
-        "cash_direction",
         "amount_value",
         "amount_scale",
         "currency_code",
-        "claim_key",
-        "claim_side",
-        "reversal_of_id",
-        "status",
-    }.issubset({
+        "account_code",
+        "counterparty_account_ref",
+        "occurred_time",
+        "created_time",
+        "updated_time",
+    } == {
         item["name"] for item in schema.get_columns("ledger_entry")
-    })
+    }
+    assert "ledger_entry_source" not in schema.get_table_names()
+    with engine.connect() as connection:
+        row = connection.execute(text(
+            "SELECT id, entry_type, entry_direction, amount_value, amount_scale, "
+            "currency_code, account_code, counterparty_account_ref, occurred_time "
+            "FROM ledger_entry"
+        )).mappings().one()
+    assert dict(row) == {
+        "id": 7,
+        "entry_type": 0,
+        "entry_direction": 2,
+        "amount_value": 12345,
+        "amount_scale": 2,
+        "currency_code": "USD",
+        "account_code": "wallet",
+        "counterparty_account_ref": "",
+        "occurred_time": "2026-09-15T10:20:30Z",
+    }
     expected = {
         "bill_raw": {
             "ix_bill_raw_bill_id_id",
@@ -88,9 +122,7 @@ def test_target_schema_upgrade_adds_columns_and_hot_indexes(tmp_path):
             "ix_review_case_bill_case_id",
             "ix_review_case_bill_economic_id",
         },
-        "ledger_entry_source": {
-            "ix_ledger_entry_source_ledger_kind_id",
-        },
+        "ledger_entry": {"ix_ledger_entry_occurred_time_id"},
     }
     for table_name, index_names in expected.items():
         actual = {item["name"] for item in schema.get_indexes(table_name)}

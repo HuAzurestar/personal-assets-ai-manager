@@ -3,11 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 
-from sqlalchemy import delete, select, union
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from backend.entity import (
-    LedgerEntrySource,
     LedgerEntryTag,
     ReviewCase,
     ReviewCaseBill,
@@ -84,7 +83,7 @@ class TargetTagProjectionMapper:
         return states
 
     def all_ledger_facts(self) -> dict[int, list[int]]:
-        allocation_links = select(
+        links = select(
             ReviewCaseBill.economic_id.label("ledger_id"),
             ReviewCaseBill.bill_id.label("fact_id"),
         ).join(
@@ -93,12 +92,7 @@ class TargetTagProjectionMapper:
         ).where(
             ReviewCase.status == "CONFIRMED",
             ReviewCaseBill.economic_id > 0,
-        )
-        legacy_links = select(
-            LedgerEntrySource.ledger_id.label("ledger_id"),
-            LedgerEntrySource.source_id.label("fact_id"),
-        ).where(LedgerEntrySource.source_kind == "BILL_FACT")
-        links = union(allocation_links, legacy_links).subquery()
+        ).subquery()
         rows = self.db.execute(select(
             links.c.ledger_id,
             links.c.fact_id,

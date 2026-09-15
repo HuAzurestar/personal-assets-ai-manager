@@ -9,12 +9,10 @@ from sqlalchemy.orm import Session
 from backend.entity import (
     BillFact,
     LedgerEntry,
-    LedgerEntrySource,
     ReviewCase,
     ReviewCaseBill,
     ReviewHistory,
 )
-from backend.schema.target_review import FINANCIAL_REVIEW_TYPES
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,12 +60,6 @@ class TargetAccountMapper:
             LedgerEntry.id.in_(ledger_ids)
         ).values(account_code=account_code, updated_time=now))
 
-    def legacy_ledger_id(self, fact_id: int) -> int:
-        return self.db.scalar(select(LedgerEntrySource.ledger_id).where(
-            LedgerEntrySource.source_kind == "BILL_FACT",
-            LedgerEntrySource.source_id == fact_id,
-        )) or 0
-
     def account_case_id(self, fact_id: int) -> int:
         ids = self.db.scalars(select(ReviewCase.id).join(
             ReviewCaseBill,
@@ -78,20 +70,6 @@ class TargetAccountMapper:
         ).order_by(ReviewCase.id)).all()
         if len(ids) > 1:
             raise ValueError(f"fact {fact_id} has more than one ACCOUNT review case")
-        return ids[0] if ids else 0
-
-    def financial_case_id(self, ledger_id: int) -> int:
-        ids = self.db.scalars(select(ReviewCase.id).join(
-            LedgerEntrySource,
-            (LedgerEntrySource.source_kind == "REVIEW_CASE")
-            & (LedgerEntrySource.source_id == ReviewCase.id),
-        ).where(
-            LedgerEntrySource.ledger_id == ledger_id,
-            ReviewCase.status == "CONFIRMED",
-            ReviewCase.review_type.in_(FINANCIAL_REVIEW_TYPES),
-        )).all()
-        if len(ids) > 1:
-            raise ValueError(f"ledger {ledger_id} has multiple financial Review sources")
         return ids[0] if ids else 0
 
     def create_case(

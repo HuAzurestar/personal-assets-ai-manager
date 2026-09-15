@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session
 from backend.entity import (
     BillFact,
     LedgerEntry,
-    LedgerEntrySource,
     LedgerEntryTag,
     ReviewCase,
     ReviewCaseBill,
@@ -130,25 +129,6 @@ class TargetEconomicMapper:
             payload.pop(name, None)
         return payload
 
-    def legacy_ledger_ids(self, fact_ids: list[int]) -> dict[int, int]:
-        if not fact_ids:
-            return {}
-        rows = self.db.execute(select(
-            LedgerEntrySource.source_id,
-            LedgerEntrySource.ledger_id,
-        ).where(
-            LedgerEntrySource.source_kind == "BILL_FACT",
-            LedgerEntrySource.source_id.in_(fact_ids),
-        )).mappings().all()
-        fact_count_by_ledger: dict[int, int] = defaultdict(int)
-        for row in rows:
-            fact_count_by_ledger[row["ledger_id"]] += 1
-        return {
-            row["source_id"]: row["ledger_id"]
-            for row in rows
-            if fact_count_by_ledger[row["ledger_id"]] == 1
-        }
-
     def covered_fact_ids(self, fact_ids: list[int]) -> set[int]:
         if not fact_ids:
             return set()
@@ -169,35 +149,23 @@ class TargetEconomicMapper:
         account_code: str,
         now: datetime,
         *,
-        legacy_ledger_id: int = 0,
         operation: str = "AUTO_REVIEW",
     ) -> int:
         return self.create_defaults(
-            [(fact, amount_value, legacy_ledger_id, account_code)],
+            [(fact, amount_value, account_code)],
             now,
             operation=operation,
         )[0]
 
     def create_defaults(
         self,
-        values: list[tuple[TargetReviewFactVO, int, int, str]],
+        values: list[tuple[TargetReviewFactVO, int, str]],
         now: datetime,
         *,
         operation: str = "AUTO_REVIEW",
     ) -> list[int]:
         if not values:
             return []
-        legacy_ids = [
-            legacy_id
-            for _fact, _amount, legacy_id, _account_code in values
-            if legacy_id
-        ]
-        existing = {
-            entry.id: entry
-            for entry in self.db.scalars(select(LedgerEntry).where(
-                LedgerEntry.id.in_(legacy_ids)
-            )).all()
-        } if legacy_ids else {}
         cases = [ReviewCase(
             review_type="DEFAULT",
             behavior_code="DEFAULT",
@@ -208,45 +176,24 @@ class TargetEconomicMapper:
             result_json="{}",
             created_time=now,
             updated_time=now,
-        ) for fact, _amount, _legacy_id, _account_code in values]
+        ) for fact, _amount, _account_code in values]
         self.db.add_all(cases)
         self.db.flush()
         entries = []
-        new_entries = []
-        for case, (fact, amount_value, legacy_id, account_code) in zip(cases, values):
+        for case, (fact, amount_value, account_code) in zip(cases, values):
             fields = self._economic_fields(
-                economic_type="TRANSACTION",
+                entry_type=0,
                 direction=fact.cash_direction,
                 amount_value=amount_value,
                 amount_scale=fact.amount_scale,
                 currency_code=fact.currency_code,
-                title=case.title,
-                start_time=fact.occurred_time,
-                end_time=fact.occurred_time,
                 account_code=account_code,
-                claim_key="",
-                claim_side="UNKNOWN",
-                reversal_of_id=0,
-                status="ACTIVE",
-                input_hash=self._hash({
-                    "default_review": case.id,
-                    "fact_id": fact.id,
-                    "amount_value": amount_value,
-                }),
-                legacy_type="INCOME" if fact.cash_direction == "IN" else "EXPENSE",
+                occurred_time=fact.occurred_time,
                 now=now,
             )
-            entry = existing.get(legacy_id)
-            if entry is None:
-                fields["allocation_status"] = "V2_ONLY"
-                entry = LedgerEntry(created_time=now, projection_version=1, **fields)
-                new_entries.append(entry)
-            else:
-                for name, value in fields.items():
-                    setattr(entry, name, value)
-                entry.projection_version += 1
+            entry = LedgerEntry(created_time=now, **fields)
             entries.append(entry)
-        self.db.add_all(new_entries)
+        self.db.add_all(entries)
         self.db.flush()
         allocations = [ReviewCaseBill(
             case_id=case.id,
@@ -260,11 +207,11 @@ class TargetEconomicMapper:
             currency_code=fact.currency_code,
             created_time=now,
             updated_time=now,
-        ) for case, entry, (fact, amount_value, _legacy_id, _account_code) in zip(cases, entries, values)]
+        ) for case, entry, (fact, amount_value, _account_code) in zip(cases, entries, values)]
         self.db.add_all(allocations)
         self.db.flush()
         histories = []
-        for case, entry, allocation, (fact, amount_value, _legacy_id, _account_code) in zip(
+        for case, entry, allocation, (fact, amount_value, _account_code) in zip(
             cases, entries, allocations, values
         ):
             request_json = self._canonical({
@@ -532,18 +479,9 @@ class TargetEconomicMapper:
             item = economics_by_key[allocation["economic_key"]]
             fields = self._economic_fields(
                 **item,
-                status="ACTIVE",
-                input_hash=self._hash({
-                    "case_id": case.id,
-                    "version": case.version,
-                    "allocation_id": allocation_model.id,
-                    **item,
-                }),
-                legacy_type=item["economic_type"],
                 now=now,
             )
-            fields["allocation_status"] = "V2_ONLY"
-            entry = LedgerEntry(created_time=now, projection_version=1, **fields)
+            entry = LedgerEntry(created_time=now, **fields)
             self.db.add(entry)
             entries.append((allocation_model, entry))
         self.db.flush()
@@ -552,7 +490,7 @@ class TargetEconomicMapper:
             allocation_model.updated_time = now
         self.db.flush()
         self.create_defaults(
-            [(fact, amount, 0, account_code) for fact, amount, account_code in residuals],
+            [(fact, amount, account_code) for fact, amount, account_code in residuals],
             now,
             operation="AUTO_RESIDUAL",
         )
@@ -605,7 +543,7 @@ class TargetEconomicMapper:
         self._delete_economics(economic_ids)
         self.db.flush()
         self.create_defaults([
-            (facts_by_id[fact_id], amount, 0, account_codes[fact_id])
+            (facts_by_id[fact_id], amount, account_codes[fact_id])
             for fact_id, amount in sorted(released.items())
         ], now, operation="AUTO_RESTORE")
         self.db.flush()
@@ -811,77 +749,32 @@ class TargetEconomicMapper:
         self.db.execute(delete(LedgerEntryTag).where(
             LedgerEntryTag.ledger_id.in_(economic_ids)
         ))
-        self.db.execute(delete(LedgerEntrySource).where(
-            LedgerEntrySource.ledger_id.in_(economic_ids)
-        ))
         self.db.execute(delete(LedgerEntry).where(
             LedgerEntry.id.in_(economic_ids)
         ))
 
     @staticmethod
-    def _entry_type(economic_type: str) -> int:
-        return {
-            "TRANSACTION": 0,
-            "ACCOUNT_TRANSFER": 1,
-            "CLAIM": 2,
-        }[economic_type]
-
-    @staticmethod
     def _economic_fields(
         *,
-        economic_type: str,
+        entry_type: int,
         direction: str,
         amount_value: int,
         amount_scale: int,
         currency_code: str,
-        title: str,
-        start_time: datetime,
-        end_time: datetime,
         account_code: str,
-        claim_key: str,
-        claim_side: str,
-        reversal_of_id: int,
-        status: str,
-        input_hash: str,
-        legacy_type: str,
+        occurred_time: datetime,
         now: datetime,
         client_key: str = "",
-        entry_type: int | None = None,
     ) -> dict:
-        incoming = amount_value if direction == "IN" else 0
-        outgoing = amount_value if direction == "OUT" else 0
         return {
-            "ledger_type": legacy_type,
-            "entry_type": (
-                TargetEconomicMapper._entry_type(economic_type)
-                if entry_type is None else entry_type
-            ),
+            "entry_type": entry_type,
             "entry_direction": 1 if direction == "IN" else 2,
             "account_code": account_code,
             "counterparty_account_ref": "",
-            "occurred_time": start_time,
-            "economic_type": economic_type,
-            "cash_direction": direction,
+            "occurred_time": occurred_time,
             "amount_value": amount_value,
             "amount_scale": amount_scale,
             "currency_code": currency_code,
-            "claim_key": claim_key,
-            "claim_side": claim_side,
-            "reversal_of_id": reversal_of_id,
-            "status": status,
-            "allocation_status": "COMPLETE",
-            "title": title,
-            "start_time": start_time,
-            "end_time": end_time,
-            "in_amount_value": incoming,
-            "in_amount_scale": amount_scale,
-            "in_currency_code": currency_code,
-            "out_amount_value": outgoing,
-            "out_amount_scale": amount_scale,
-            "out_currency_code": currency_code,
-            "in_account_code": account_code if incoming else "UNKNOWN",
-            "out_account_code": account_code if outgoing else "UNKNOWN",
-            "input_hash": input_hash,
             "updated_time": now,
         }
 
@@ -926,8 +819,8 @@ class TargetEconomicMapper:
             "title": case.title,
             "economics": [{
                 "id": entry.id,
-                "economic_type": entry.economic_type,
-                "cash_direction": entry.cash_direction,
+                "entry_type": entry.entry_type,
+                "entry_direction": entry.entry_direction,
                 "amount_value": entry.amount_value,
                 "amount_scale": entry.amount_scale,
                 "currency_code": entry.currency_code,

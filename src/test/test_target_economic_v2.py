@@ -14,7 +14,6 @@ from backend.router.target_dep import get_target_db
 from backend.entity import (
     BillFact,
     LedgerEntry,
-    LedgerEntrySource,
     LedgerEntryTag,
     ReviewCase,
     ReviewCaseBill,
@@ -170,7 +169,6 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
             LedgerEntry, LedgerEntry.id == ReviewCaseBill.economic_id,
         ).where(
             ReviewCase.status == "CONFIRMED",
-            LedgerEntry.status == "ACTIVE",
         ).group_by(ReviewCaseBill.bill_id)).all())
         assert coverage == dict(zip(fact_ids, [50000, 10000, 10000, 10000, 10000]))
 
@@ -292,7 +290,6 @@ def test_partial_manual_reviews_keep_exact_default_coverage_and_are_idempotent(e
         ).where(
             ReviewCaseBill.bill_id == fact_id,
             ReviewCase.status == "CONFIRMED",
-            LedgerEntry.status == "ACTIVE",
         ))
         assert coverage == 10000
 
@@ -479,33 +476,17 @@ def test_account_review_updates_every_split_ledger_and_survives_rebuild(economic
         for item in client.get("/paam/ledger/v2/entry/list").json()["items"]
     } == {"checked-bank"}
 
-def test_backfill_does_not_reuse_a_legacy_aggregate_for_multiple_facts(economic_api):
-    client, sessions = economic_api
-    first_id, second_id = _facts(sessions, [("OUT", 3000, "CNY"), ("OUT", 7000, "CNY")])
-    now = datetime(2026, 9, 13, 12)
-    with sessions() as db:
-        legacy = LedgerEntry(
-            ledger_type="AA",
-            allocation_status="COMPLETE",
-            title="legacy aggregate",
-            start_time=now,
-            end_time=now,
-            out_amount_value=10000,
-            created_time=now,
-            updated_time=now,
-        )
-        db.add(legacy)
-        db.flush()
-        db.add_all([
-            LedgerEntrySource(ledger_id=legacy.id, source_kind="BILL_FACT", source_id=first_id),
-            LedgerEntrySource(ledger_id=legacy.id, source_kind="BILL_FACT", source_id=second_id),
-        ])
-        db.commit()
-        legacy_id = legacy.id
-
-    with sessions() as db:
-        TargetEconomicService(db).backfill_defaults()
-    flows = client.get("/paam/ledger/v2/entry/list").json()
-    assert flows["total"] == 2
-    assert legacy_id not in {item["id"] for item in flows["items"]}
-    assert sorted(item["amount"]["amount_value"] for item in flows["items"]) == [3000, 7000]
+def test_ledger_entry_entity_has_only_cash_projection_columns():
+    assert set(LedgerEntry.__table__.columns.keys()) == {
+        "id",
+        "entry_type",
+        "entry_direction",
+        "amount_value",
+        "amount_scale",
+        "currency_code",
+        "account_code",
+        "counterparty_account_ref",
+        "occurred_time",
+        "created_time",
+        "updated_time",
+    }

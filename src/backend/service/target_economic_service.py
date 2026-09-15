@@ -47,7 +47,6 @@ class TargetEconomicService:
             missing = sorted(set(fact_ids) - {fact.id for fact in facts})
             raise TargetEconomicError(409, f"unknown bill_fact IDs: {missing}")
         coverage = self.mapper.fact_coverage(fact_ids)
-        legacy = self.mapper.legacy_ledger_ids(fact_ids)
         accounts = self.accounts.effective(facts)
         now = datetime.now()
         defaults = []
@@ -59,7 +58,6 @@ class TargetEconomicService:
                 defaults.append((
                     fact,
                     fact.amount_value - allocated,
-                    legacy.get(fact.id, 0) if allocated == 0 else 0,
                     accounts[fact.id].account_code,
                 ))
         self.mapper.create_defaults(defaults, now)
@@ -387,26 +385,15 @@ class TargetEconomicService:
                     "split combined facts into separate ledger entries"
                 )
             row, fact = rows[0]
-            economic_type = {
-                0: "TRANSACTION",
-                1: "ACCOUNT_TRANSFER",
-                2: "CLAIM",
-            }[definition.entry_type]
             economics.append({
                 "client_key": key,
                 "entry_type": definition.entry_type,
-                "economic_type": economic_type,
                 "direction": fact.cash_direction,
                 "amount_value": row.amount_value,
                 "amount_scale": fact.amount_scale,
                 "currency_code": fact.currency_code,
-                "title": payload.description or fact.counterparty or fact.summary,
-                "start_time": fact.occurred_time,
-                "end_time": fact.occurred_time,
                 "account_code": accounts[fact.id].account_code,
-                "claim_key": "",
-                "claim_side": "UNKNOWN",
-                "reversal_of_id": 0,
+                "occurred_time": fact.occurred_time,
             })
         return facts, economics, allocations, accounts
 

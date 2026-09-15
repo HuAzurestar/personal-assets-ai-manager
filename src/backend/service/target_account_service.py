@@ -14,8 +14,6 @@ from backend.schema.target_review import (
     TargetReviewCaseRead,
     TargetReviewTransitionRequest,
 )
-from backend.service.target_projection_service import TargetProjectionService
-from backend.service.target_review_projection_service import TargetReviewProjectionService
 from backend.service.target_review_service import TargetReviewError
 
 
@@ -25,8 +23,6 @@ class TargetAccountService:
     def __init__(self, db: Session):
         self.account = TargetAccountMapper(db)
         self.review = TargetReviewMapper(db)
-        self.defaults = TargetProjectionService(db)
-        self.financial = TargetReviewProjectionService(db)
 
     def set(self, fact_id: int, payload: TargetAccountSetRequest) -> TargetReviewCaseRead:
         account_code = payload.account_code.strip()
@@ -200,17 +196,6 @@ class TargetAccountService:
 
     def _republish(self, target, account_code: str, now: datetime) -> None:
         self.account.update_confirmed_ledgers(target.fact_id, account_code, now)
-        legacy_ledger_id = self.account.legacy_ledger_id(target.fact_id)
-        if not legacy_ledger_id:
-            return
-        financial_case_id = self.account.financial_case_id(legacy_ledger_id)
-        if financial_case_id:
-            financial_case = self._required(financial_case_id)
-            fact_ids = sorted({line.bill_id for line in financial_case.lines})
-            facts = self.review.facts(fact_ids)
-            self.financial.publish(financial_case, facts, now)
-        else:
-            self.defaults.rebuild_defaults([target.fact_id])
 
     def _required(self, case_id: int) -> TargetReviewCaseRead:
         case = self.review.detail(case_id)

@@ -7,18 +7,6 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
-FINANCIAL_REVIEW_TYPES = (
-    "CLASSIFICATION",
-    "AA",
-    "LOAN_BORROW",
-    "LOAN_LEND",
-    "REFUND",
-    "TRANSFER",
-    "FX_EXCHANGE",
-    "DUPLICATE",
-)
-
-
 @dataclass(frozen=True, slots=True)
 class TargetReviewFactVO:
     id: int
@@ -36,68 +24,16 @@ class TargetReviewFactVO:
 
 
 @dataclass(frozen=True, slots=True)
-class TargetReviewLineWriteVO:
-    bill_id: int
-    role: str
-    party: str
-    amount_value: int
-    amount_scale: int
-    currency_code: str
-
-
-@dataclass(frozen=True, slots=True)
 class TargetReviewIdempotencyVO:
     case_id: int
     operation: str
     request_json: str
 
 
-class TargetReviewLineRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    bill_id: int = Field(ge=1)
-    role: str = Field(min_length=1, max_length=40)
-    party: str = Field(default="", max_length=120)
-    amount_value: int | None = Field(default=None, ge=1)
-
-
-class TargetReviewCreateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    review_type: Literal[
-        "CLASSIFICATION",
-        "AA",
-        "LOAN_BORROW",
-        "LOAN_LEND",
-        "REFUND",
-        "TRANSFER",
-        "FX_EXCHANGE",
-        "DUPLICATE",
-    ]
-    title: str = Field(default="", max_length=160)
-    result: dict[str, Any] = Field(default_factory=dict)
-    lines: list[TargetReviewLineRequest] = Field(min_length=1, max_length=200)
-    actor: str = Field(default="local-user", min_length=1, max_length=120)
-    reason: str = Field(default="", max_length=2000)
-    idempotency_key: str = Field(min_length=1, max_length=120)
-
-
 class TargetReviewTransitionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     expected_version: int = Field(ge=1)
-    actor: str = Field(default="local-user", min_length=1, max_length=120)
-    reason: str = Field(default="", max_length=2000)
-    idempotency_key: str = Field(min_length=1, max_length=120)
-
-
-class TargetReviewUpdateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    expected_version: int = Field(ge=1)
-    title: str = Field(default="", max_length=160)
-    result: dict[str, Any] = Field(default_factory=dict)
-    lines: list[TargetReviewLineRequest] = Field(min_length=1, max_length=200)
     actor: str = Field(default="local-user", min_length=1, max_length=120)
     reason: str = Field(default="", max_length=2000)
     idempotency_key: str = Field(min_length=1, max_length=120)
@@ -168,12 +104,6 @@ class TargetReviewCaseResponse(BaseModel):
     status: Literal["success"] = "success"
     message: str = "ok"
     body: TargetReviewCaseRead
-
-
-class TargetReviewCaseListResponse(BaseModel):
-    status: Literal["success"] = "success"
-    message: str = "ok"
-    body: list[TargetReviewCaseRead]
 
 
 class TargetReviewCasePageRead(BaseModel):
