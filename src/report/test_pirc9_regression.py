@@ -214,20 +214,17 @@ def test_partial_refund_honors_confirmed_allocation(live):
     assert total['refund_offset_value'] == 6000, total
 
 
-def test_tag_restore_conflict_is_actionable(live):
+def test_tag_restore_defaults_direct_ledger_assignment(live):
     ids = facts(live, [('OUT', 1000), ('IN', 1000)])
     view = body(live[0].post('/paam/tag/v1/view', json={'name': 'Category', 'system_name': 'category'}))
     body(live[0].post(f'/paam/tag/v1/view/{view["id"]}/tag', json={'name': 'Food', 'system_name': 'food'}))
     entry = entries(live)[0]
-    body(live[0].put(f'/paam/tag/v1/assignment/set/{entry["id"]}', json={
-        'tag_state': {'category': 'food'}, 'expected_projection_version': entry['projection_version'],
-        'idempotency_key': uuid4().hex}))
+    body(live[0].put(f'/paam/tag/v1/assignment/{entry["id"]}', json={
+        'tag_state': {'category': 'food'}, 'expected_projection_version': entry['projection_version']}))
     body(live[0].put(f'/paam/tag/v1/view/{view["id"]}', json={'status': 'ARCHIVED'}))
     transition(live, create(live, 'TRANSFER', ids, ['TRANSFER_OUT', 'TRANSFER_IN']), 'confirm')
     response = live[0].put(f'/paam/tag/v1/view/{view["id"]}', json={'status': 'ACTIVE'})
-    assert response.status_code in (200, 409, 422), f'Restore must succeed or explain the conflict, got {response.status_code}: {response.text}'
-    if response.status_code != 200:
-        assert response.json().get('detail')
+    assert response.status_code == 200, response.text
 
 
 def test_older_pending_review_is_reachable(live, page):

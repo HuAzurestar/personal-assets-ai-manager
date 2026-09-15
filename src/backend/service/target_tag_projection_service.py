@@ -4,89 +4,80 @@ from collections import defaultdict
 
 from sqlalchemy.orm import Session
 
-from backend.mapper.target_tag_projection_mapper import TargetTagProjectionMapper
+from backend.mapper.target_tag_projection_mapper import (
+    ActiveTagValue,
+    TargetTagProjectionMapper,
+)
 
 
 class TargetTagProjectionService:
-    """Resolve per-Fact TAG reviews into one deterministic ledger tag state."""
+    """Maintain one direct effective Tag value per active View and Ledger."""
 
     def __init__(self, db: Session):
         self.mapper = TargetTagProjectionMapper(db)
 
-    def sync(self, fact_ledgers: dict[int, int]) -> None:
-        if not fact_ledgers:
-            return
-        by_ledger: dict[int, list[int]] = defaultdict(list)
-        for fact_id, ledger_id in fact_ledgers.items():
-            by_ledger[ledger_id].append(fact_id)
-        self.sync_economics(by_ledger)
-
-    def sync_economics(self, economic_facts: dict[int, list[int]]) -> None:
-        if not economic_facts:
+    def sync_ledgers(self, ledger_ids: list[int]) -> None:
+        ledger_ids = list(dict.fromkeys(ledger_ids))
+        if not ledger_ids:
             return
         dictionary = self.mapper.active_dictionary()
-        defaults: dict[str, str] = {}
-        tag_ids: dict[tuple[str, str], int] = {}
-        views: set[str] = set()
-        for item in dictionary:
-            views.add(item.view_system_name)
-            tag_ids[(item.view_system_name, item.tag_system_name)] = item.tag_id
-            if item.tag_system_name == "unclassified":
-                defaults[item.view_system_name] = "unclassified"
-        missing_defaults = sorted(views - set(defaults))
-        if missing_defaults:
-            raise ValueError(
-                f"active tag views have no active unclassified value: {missing_defaults}"
-            )
-
-        fact_ids = sorted({
-            fact_id for values in economic_facts.values() for fact_id in values
-        })
-        reviewed = self.mapper.confirmed_states(fact_ids)
-
+        defaults, tag_ids = self._dictionary_maps(dictionary)
+        current = self.mapper.current_states(ledger_ids)
         resolved: dict[int, tuple[int, ...]] = {}
-        for ledger_id, fact_ids in economic_facts.items():
-            selected_ids = []
-            for view_name in sorted(views):
-                values = set()
-                for fact_id in fact_ids:
-                    selected = reviewed.get(fact_id, {}).get(
-                        view_name, defaults[view_name]
-                    )
-                    # Archived values cease to publish but remain in Review history.
-                    if (view_name, selected) not in tag_ids:
-                        selected = defaults[view_name]
-                    values.add(selected)
-                if len(values) != 1:
-                    raise ValueError(
-                        f"ledger {ledger_id} cannot merge facts with different "
-                        f"{view_name} tags: {sorted(values)}"
-                    )
-                selected_ids.append(tag_ids[(view_name, values.pop())])
-            resolved[ledger_id] = tuple(selected_ids)
+        for ledger_id in ledger_ids:
+            state = current.get(ledger_id, {})
+            resolved[ledger_id] = tuple(
+                tag_ids[(view_name, state.get(view_name, default_name))]
+                for view_name, default_name in sorted(defaults.items())
+                if (view_name, state.get(view_name, default_name)) in tag_ids
+            )
         self.mapper.replace(resolved)
 
     def sync_all(self) -> None:
-        self.sync(self.mapper.all_fact_ledgers())
+        self.sync_ledgers(self.mapper.active_ledger_ids())
 
-    def validate_complete(self, state: dict[str, str]) -> dict[str, str]:
+    def assignment(
+        self,
+        state: dict[str, str],
+    ) -> tuple[dict[str, str], tuple[int, ...]]:
         dictionary = self.mapper.active_dictionary()
-        allowed: dict[str, set[str]] = defaultdict(set)
-        for item in dictionary:
-            allowed[item.view_system_name].add(item.tag_system_name)
-        expected = set(allowed)
+        defaults, tag_ids = self._dictionary_maps(dictionary)
+        expected = set(defaults)
         submitted = set(state)
         if submitted != expected:
             missing = sorted(expected - submitted)
             unknown = sorted(submitted - expected)
             raise ValueError(
-                f"tag_state must contain every active view; missing={missing}, unknown={unknown}"
+                f"tag_state must contain every active view; "
+                f"missing={missing}, unknown={unknown}"
             )
         invalid = sorted(
             f"{view}:{value}"
             for view, value in state.items()
-            if value not in allowed[view]
+            if (view, value) not in tag_ids
         )
         if invalid:
             raise ValueError(f"unknown or archived tag values: {invalid}")
-        return {view: state[view] for view in sorted(state)}
+        normalized = {view: state[view] for view in sorted(state)}
+        return normalized, tuple(
+            tag_ids[(view, normalized[view])] for view in normalized
+        )
+
+    @staticmethod
+    def _dictionary_maps(
+        dictionary: tuple[ActiveTagValue, ...],
+    ) -> tuple[dict[str, str], dict[tuple[str, str], int]]:
+        values: dict[str, set[str]] = defaultdict(set)
+        tag_ids: dict[tuple[str, str], int] = {}
+        defaults: dict[str, str] = {}
+        for item in dictionary:
+            values[item.view_system_name].add(item.tag_system_name)
+            tag_ids[(item.view_system_name, item.tag_system_name)] = item.tag_id
+            if item.tag_system_name == "unclassified":
+                defaults[item.view_system_name] = item.tag_system_name
+        missing_defaults = sorted(set(values) - set(defaults))
+        if missing_defaults:
+            raise ValueError(
+                f"active tag views have no active unclassified value: {missing_defaults}"
+            )
+        return defaults, tag_ids

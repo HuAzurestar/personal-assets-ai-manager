@@ -85,7 +85,7 @@ class TargetProjectionService:
                 updated_time=fact.updated_time,
             ))
         fact_ledgers = self.mapper.write_defaults(writes)
-        self.tags.sync(fact_ledgers)
+        self.tags.sync_ledgers(list(fact_ledgers.values()))
 
     @staticmethod
     def _nature(evidence) -> str:

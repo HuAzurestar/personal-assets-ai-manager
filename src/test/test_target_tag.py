@@ -18,7 +18,6 @@ from backend.entity import (
     LedgerEntrySource,
     LedgerEntryTag,
     ReviewCase,
-    ReviewHistory,
     TargetTag,
     TargetTagView,
 )
@@ -179,16 +178,14 @@ def _ledger_for_fact(sessions, fact_id):
         ))
 
 
-def _assign(client, ledger_id, version, value, key):
-    return client.put(f"/paam/tag/v1/assignment/set/{ledger_id}", json={
+def _assign(client, ledger_id, version, value):
+    return client.put(f"/paam/tag/v1/assignment/{ledger_id}", json={
         "tag_state": {"category": value},
         "expected_projection_version": version,
-        "reason": "test tag assignment",
-        "idempotency_key": key,
     })
 
 
-def test_ledger_tag_assignment_is_versioned_idempotent_and_audited_per_fact(
+def test_ledger_tag_assignment_is_direct_versioned_and_idempotent(
     target_tag_api,
 ):
     client, sessions, _engine = target_tag_api
@@ -196,43 +193,34 @@ def test_ledger_tag_assignment_is_versioned_idempotent_and_audited_per_fact(
     _create_tag_dictionary(client)
     ledger_id = _ledger_for_fact(sessions, fact_id)
 
-    assigned = _assign(client, ledger_id, 1, "food", "assign-food")
+    assigned = _assign(client, ledger_id, 1, "food")
     assert assigned.status_code == 200, assigned.text
+    assert assigned.json()["status"] == assigned.status_code
+    assert assigned.json()["message"] == "Ledger tag assignment updated"
     assert assigned.json()["body"]["projection_version"] == 2
     assert assigned.json()["body"]["tag_state"] == {"category": "food"}
+    assert "review_case_ids" not in assigned.json()["body"]
 
-    replay = _assign(client, ledger_id, 1, "food", "assign-food")
+    replay = _assign(client, ledger_id, 1, "food")
     assert replay.status_code == 200, replay.text
     assert replay.json()["body"]["projection_version"] == 2
-    assert _assign(client, ledger_id, 1, "unclassified", "assign-food").status_code == 409
-    assert _assign(client, ledger_id, 1, "food", "stale-assignment").status_code == 409
+    assert _assign(client, ledger_id, 1, "unclassified").status_code == 409
     detail = client.get(f"/paam/ledger/v1/entry/detail/{ledger_id}").json()
     assert detail["entry"]["tags"][0]["tag_system_name"] == "food"
-    assert detail["reviews"][0]["review_type"] == "TAG"
-    assert detail["reviews"][0]["is_projection_source"] is True
+    assert all(item["review_type"] != "TAG" for item in detail["reviews"])
 
     with sessions() as db:
-        tag_case = db.scalar(select(ReviewCase).where(ReviewCase.review_type == "TAG"))
-        assert tag_case.status == "CONFIRMED"
-        assert tag_case.result_json == '{"tag_state":{"category":"food"}}'
-        assert db.query(ReviewHistory).filter_by(case_id=tag_case.id).count() == 1
+        assert db.scalar(select(ReviewCase).where(ReviewCase.review_type == "TAG")) is None
         assignment = db.scalar(select(LedgerEntryTag).where(
             LedgerEntryTag.ledger_id == ledger_id
         ))
         assert db.get(TargetTag, assignment.tag_id).system_name == "food"
 
-    updated = _assign(client, ledger_id, 2, "unclassified", "assign-default")
+    updated = _assign(client, ledger_id, 2, "unclassified")
     assert updated.status_code == 200, updated.text
     assert updated.json()["body"]["projection_version"] == 3
     with sessions() as db:
-        tag_case = db.scalar(select(ReviewCase).where(ReviewCase.review_type == "TAG"))
-        histories = db.scalars(select(ReviewHistory).where(
-            ReviewHistory.case_id == tag_case.id
-        ).order_by(ReviewHistory.version)).all()
-        assert tag_case.version == 2
-        assert len(histories) == 2
-        assert '"category":"food"' in histories[1].before_json
-        assert '"category":"unclassified"' in histories[1].after_json
+        assert db.scalar(select(ReviewCase).where(ReviewCase.review_type == "TAG")) is None
 
 
 def test_merged_ledger_tag_assignment_survives_financial_split_and_restore(
@@ -259,9 +247,9 @@ def test_merged_ledger_tag_assignment_survives_financial_split_and_restore(
     })
     assert confirmed.status_code == 200, confirmed.text
     ledger = client.get("/paam/ledger/v1/entry/list").json()["items"][0]
-    assigned = _assign(client, ledger["id"], ledger["projection_version"], "food", "merged-food")
+    tagged_ledger_id = ledger["id"]
+    assigned = _assign(client, ledger["id"], ledger["projection_version"], "food")
     assert assigned.status_code == 200, assigned.text
-    assert len(assigned.json()["body"]["review_case_ids"]) == 2
 
     revoked = client.post(f"/paam/review/v1/case/revoke/{case['id']}", json={
         "expected_version": 2,
@@ -270,7 +258,16 @@ def test_merged_ledger_tag_assignment_survives_financial_split_and_restore(
     assert revoked.status_code == 200, revoked.text
     split = client.get("/paam/ledger/v1/entry/list").json()["items"]
     assert len(split) == 2
-    assert all(item["tags"][0]["tag_system_name"] == "food" for item in split)
+    split_states = {
+        item["id"]: item["tags"][0]["tag_system_name"]
+        for item in split
+    }
+    assert split_states[tagged_ledger_id] == "food"
+    assert all(
+        state == "unclassified"
+        for ledger_id, state in split_states.items()
+        if ledger_id != tagged_ledger_id
+    )
 
     restored = client.post(f"/paam/review/v1/case/restore/{case['id']}", json={
         "expected_version": 3,
@@ -279,17 +276,22 @@ def test_merged_ledger_tag_assignment_survives_financial_split_and_restore(
     assert restored.status_code == 200, restored.text
     merged = client.get("/paam/ledger/v1/entry/list").json()["items"]
     assert len(merged) == 1
+    assert merged[0]["id"] == tagged_ledger_id
     assert merged[0]["tags"][0]["tag_system_name"] == "food"
 
 
-def test_financial_merge_rejects_different_fact_tag_states(target_tag_api):
+def test_financial_merge_does_not_merge_source_ledger_tag_states(target_tag_api):
     client, sessions, _engine = target_tag_api
     out_id, in_id = _add_facts(sessions, 2, ["OUT", "IN"])
     _create_tag_dictionary(client)
     first_ledger = _ledger_for_fact(sessions, out_id)
     second_ledger = _ledger_for_fact(sessions, in_id)
-    assert _assign(client, first_ledger, 1, "food", "first-food").status_code == 200
-    assert _assign(client, second_ledger, 1, "unclassified", "second-default").status_code == 200
+    source_states = {
+        first_ledger: "unclassified",
+        second_ledger: "food",
+    }
+    for ledger_id, state in source_states.items():
+        assert _assign(client, ledger_id, 1, state).status_code == 200
     created = client.post("/paam/review/v1/case/create", json={
         "review_type": "TRANSFER",
         "title": "Conflicting tags",
@@ -304,9 +306,17 @@ def test_financial_merge_rejects_different_fact_tag_states(target_tag_api):
         "expected_version": 1,
         "idempotency_key": "conflict-confirm",
     })
-    assert confirmed.status_code == 422
+    assert confirmed.status_code == 200, confirmed.text
+    merged = client.get("/paam/ledger/v1/entry/list").json()["items"]
+    assert len(merged) == 1
+    chosen_ledger_id = min(first_ledger, second_ledger)
+    assert merged[0]["id"] == chosen_ledger_id
+    assert (
+        merged[0]["tags"][0]["tag_system_name"]
+        == source_states[chosen_ledger_id]
+    )
     with sessions() as db:
-        assert db.get(ReviewCase, created["id"]).status == "PENDING"
+        assert db.get(ReviewCase, created["id"]).status == "CONFIRMED"
 
 
 def test_tag_assignment_select_count_is_independent_of_source_fact_count(
@@ -315,7 +325,7 @@ def test_tag_assignment_select_count_is_independent_of_source_fact_count(
     client, sessions, engine = target_tag_api
     _create_tag_dictionary(client)
 
-    def assign_and_count(ledger_id, version, key):
+    def assign_and_count(ledger_id, version):
         statements = []
 
         def count_selects(_connection, _cursor, statement, _parameters, _context, _many):
@@ -324,15 +334,17 @@ def test_tag_assignment_select_count_is_independent_of_source_fact_count(
 
         event.listen(engine, "before_cursor_execute", count_selects)
         try:
-            response = _assign(client, ledger_id, version, "food", key)
+            response = _assign(client, ledger_id, version, "food")
         finally:
             event.remove(engine, "before_cursor_execute", count_selects)
         assert response.status_code == 200, response.text
         assert all("SELECT *" not in statement.upper() for statement in statements)
+        assert all("ledger_entry_source" not in statement.lower() for statement in statements)
+        assert all("review_case" not in statement.lower() for statement in statements)
         return len(statements)
 
     one_fact = _add_facts(sessions, 1)[0]
-    one_count = assign_and_count(_ledger_for_fact(sessions, one_fact), 1, "one-tag")
+    one_count = assign_and_count(_ledger_for_fact(sessions, one_fact), 1)
 
     many_facts = _add_facts(sessions, 20)
     created = client.post("/paam/review/v1/case/create", json={
@@ -351,12 +363,12 @@ def test_tag_assignment_select_count_is_independent_of_source_fact_count(
     })
     assert confirmed.status_code == 200, confirmed.text
     many_ledger = _ledger_for_fact(sessions, many_facts[0])
-    many_count = assign_and_count(many_ledger, 2, "many-tag")
-    assert one_count == 6
+    many_count = assign_and_count(many_ledger, 2)
+    assert one_count == 3
     assert many_count == one_count
 
 
-def test_tag_view_restore_reports_merge_conflict_and_rolls_back(target_tag_api):
+def test_tag_view_restore_defaults_each_ledger_without_fact_merge(target_tag_api):
     client, sessions, _engine = target_tag_api
     fact_ids = _add_facts(sessions, 2, directions=["OUT", "IN"])
     view = client.post("/paam/tag/v1/view", json={
@@ -366,10 +378,9 @@ def test_tag_view_restore_reports_merge_conflict_and_rolls_back(target_tag_api):
         "name": "Food", "system_name": "food",
     }).json()["body"]
     entries = client.get("/paam/ledger/v1/entry/list").json()["items"]
-    assigned = client.put(f"/paam/tag/v1/assignment/set/{entries[0]['id']}", json={
+    assigned = client.put(f"/paam/tag/v1/assignment/{entries[0]['id']}", json={
         "tag_state": {"category": "food"},
         "expected_projection_version": entries[0]["projection_version"],
-        "idempotency_key": "restore-conflict-tag",
     })
     assert assigned.status_code == 200, assigned.text
     assert client.put(f"/paam/tag/v1/view/{view['id']}", json={
@@ -390,11 +401,13 @@ def test_tag_view_restore_reports_merge_conflict_and_rolls_back(target_tag_api):
     restored = client.put(f"/paam/tag/v1/view/{view['id']}", json={
         "status": "ACTIVE",
     })
-    assert restored.status_code == 409
-    assert restored.json()["status"] == 409
-    assert "different category tags" in restored.json()["message"]
-    assert restored.json()["body"]["code"] == "TAG_ERROR"
+    assert restored.status_code == 200, restored.text
+    active_ledgers = client.get("/paam/ledger/v1/entry/list").json()["items"]
+    assert all(
+        item["tags"][0]["tag_system_name"] == "unclassified"
+        for item in active_ledgers
+    )
     archived = client.get(
         "/paam/tag/v1/view/list?include_archived=true"
     ).json()["body"]["items"]
-    assert archived[0]["status"] == "ARCHIVED"
+    assert archived[0]["status"] == "ACTIVE"

@@ -677,7 +677,7 @@ async function editTags(ledgerId, version) {
   if (renderVersion !== state.renderVersion) return;
   if (!views.length) return toast("请先创建标签维度", true);
   const current = Object.fromEntries(detail.entry.tags.map((item) => [item.view_system_name, item.tag_system_name]));
-  const dialog = modal("编辑最终流水标签", `<form data-form="tag-assignment" data-ledger="${ledgerId}" data-version="${version}" class="stack">${views.map((view) => `<label>${esc(view.name)}<select name="${esc(view.system_name)}">${view.tags.map((tag) => `<option value="${esc(tag.system_name)}" ${(current[view.system_name] || "unclassified") === tag.system_name ? "selected" : ""}>${esc(tag.name)}</option>`).join("")}</select></label>`).join("")}<label>修改原因<input name="reason" value="用户修订标签"></label><div class="actions"><button class="primary">保存标签</button></div></form>`);
+  const dialog = modal("编辑最终流水标签", `<form data-form="tag-assignment" data-ledger="${ledgerId}" data-version="${version}" class="stack">${views.map((view) => `<label>${esc(view.name)}<select name="${esc(view.system_name)}">${view.tags.map((tag) => `<option value="${esc(tag.system_name)}" ${(current[view.system_name] || "unclassified") === tag.system_name ? "selected" : ""}>${esc(tag.name)}</option>`).join("")}</select></label>`).join("")}<div class="actions"><button class="primary">保存标签</button></div></form>`);
   bindPage(dialog);
 }
 
@@ -1724,10 +1724,9 @@ function bindPage(root) {
 
 async function submitTags(event) {
   event.preventDefault(); const form = event.currentTarget; const data = new FormData(form);
-  const idempotencyKey = beginSubmit(form); if (!idempotencyKey) return;
-  const reason = data.get("reason"); data.delete("reason");
+  if (!beginSubmit(form)) return;
   try {
-    await jsonRequest(`/paam/tag/v1/assignment/set/${form.dataset.ledger}`, "PUT", { tag_state: Object.fromEntries(data), expected_projection_version: Number(form.dataset.version), reason, idempotency_key: idempotencyKey });
+    await jsonRequest(`/paam/tag/v1/assignment/${form.dataset.ledger}`, "PUT", { tag_state: Object.fromEntries(data), expected_projection_version: Number(form.dataset.version) });
     closeDialogs(); toast("标签已保存"); await render();
   } catch (error) { endSubmit(form); showFormError(form, error); }
 }

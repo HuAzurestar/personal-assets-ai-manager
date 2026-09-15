@@ -114,7 +114,7 @@ class TargetReviewProjectionService:
             created_time=min(fact.created_time for fact in facts),
             updated_time=now,
         ))
-        self.tags.sync({fact_id: ledger_id for fact_id in fact_ids})
+        self.tags.sync_ledgers([ledger_id])
 
     def revoke(self, case_id: int, fact_ids: list[int]) -> None:
         self.mapper.detach(case_id)

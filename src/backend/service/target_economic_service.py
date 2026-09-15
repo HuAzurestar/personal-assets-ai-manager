@@ -55,7 +55,7 @@ class TargetEconomicService:
                 ))
         self.mapper.create_defaults(defaults, now)
         self._assert_exact(facts)
-        self.tags.sync_economics(self.mapper.active_economic_facts(fact_ids))
+        self.tags.sync_ledgers(list(self.mapper.active_economic_facts(fact_ids)))
         if commit:
             self.mapper.commit()
 
@@ -200,7 +200,7 @@ class TargetEconomicService:
             ):
                 raise TargetEconomicError(409, "review version changed; reload before confirming")
             self._assert_exact(facts)
-            self.tags.sync_economics(self.mapper.active_economic_facts(fact_ids))
+            self.tags.sync_ledgers(list(self.mapper.active_economic_facts(fact_ids)))
             self.mapper.commit()
             return self._required(case_id)
         except TargetEconomicError:
@@ -306,7 +306,9 @@ class TargetEconomicService:
             ):
                 raise TargetEconomicError(409, "review version changed; reload before revoking")
             self._assert_exact(facts)
-            self.tags.sync_economics(self.mapper.active_economic_facts(sorted(released)))
+            self.tags.sync_ledgers(list(
+                self.mapper.active_economic_facts(sorted(released))
+            ))
             self.mapper.commit()
             return self._required(case_id)
         except TargetEconomicError:

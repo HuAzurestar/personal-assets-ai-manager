@@ -6,54 +6,17 @@ from datetime import datetime
 from sqlalchemy import delete, select, text, update
 from sqlalchemy.orm import Session
 
-from backend.entity import (
-    BillFact,
-    LedgerEntry,
-    LedgerEntrySource,
-    ReviewCase,
-    ReviewCaseBill,
-    ReviewHistory,
-)
-
-
-@dataclass(frozen=True, slots=True)
-class TagAssignmentFact:
-    id: int
-    amount_value: int
-    amount_scale: int
-    currency_code: str
+from backend.entity import LedgerEntry, LedgerEntryTag, TargetTag, TargetTagView
 
 
 @dataclass(frozen=True, slots=True)
 class TagAssignmentTarget:
     ledger_id: int
     projection_version: int
-    facts: tuple[TagAssignmentFact, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class ExistingTagCase:
-    id: int
-    bill_id: int
-    status: str
-    version: int
-    title: str
-    result_json: str
-    line_id: int
-    amount_value: int
-    amount_scale: int
-    currency_code: str
-    created_time: datetime
-
-
-@dataclass(frozen=True, slots=True)
-class TagHistoryReplay:
-    operation: str
-    request_json: str
 
 
 class TargetTagAssignmentMapper:
-    """Bounded SQL for one ledger-level tag assignment command."""
+    """Bounded SQL for one direct Ledger Tag replacement."""
 
     def __init__(self, db: Session):
         self.db = db
@@ -63,145 +26,56 @@ class TargetTagAssignmentMapper:
             self.db.execute(text("BEGIN IMMEDIATE"))
 
     def target(self, ledger_id: int) -> TagAssignmentTarget | None:
-        rows = self.db.execute(select(
+        row = self.db.execute(select(
             LedgerEntry.id.label("ledger_id"),
             LedgerEntry.projection_version,
-            BillFact.id,
-            BillFact.amount_value,
-            BillFact.amount_scale,
-            BillFact.currency_code,
-        ).join(
-            LedgerEntrySource,
-            LedgerEntrySource.ledger_id == LedgerEntry.id,
-        ).join(
-            BillFact,
-            BillFact.id == LedgerEntrySource.source_id,
         ).where(
             LedgerEntry.id == ledger_id,
-            LedgerEntrySource.source_kind == "BILL_FACT",
-        ).order_by(BillFact.id)).mappings().all()
-        if not rows:
-            return None
-        return TagAssignmentTarget(
-            ledger_id=rows[0]["ledger_id"],
-            projection_version=rows[0]["projection_version"],
-            facts=tuple(TagAssignmentFact(
-                id=row["id"],
-                amount_value=row["amount_value"],
-                amount_scale=row["amount_scale"],
-                currency_code=row["currency_code"],
-            ) for row in rows),
-        )
+            LedgerEntry.status == "ACTIVE",
+        )).mappings().one_or_none()
+        return TagAssignmentTarget(**row) if row else None
 
-    def cases(self, fact_ids: list[int]) -> dict[int, ExistingTagCase]:
-        if not fact_ids:
-            return {}
+    def state(self, ledger_id: int) -> dict[str, str]:
         rows = self.db.execute(select(
-            ReviewCase.id,
-            ReviewCaseBill.bill_id,
-            ReviewCase.status,
-            ReviewCase.version,
-            ReviewCase.title,
-            ReviewCase.result_json,
-            ReviewCaseBill.id.label("line_id"),
-            ReviewCaseBill.amount_value,
-            ReviewCaseBill.amount_scale,
-            ReviewCaseBill.currency_code,
-            ReviewCase.created_time,
+            TargetTagView.system_name.label("view_system_name"),
+            TargetTag.system_name.label("tag_system_name"),
+        ).select_from(LedgerEntryTag).join(
+            TargetTag,
+            TargetTag.id == LedgerEntryTag.tag_id,
         ).join(
-            ReviewCaseBill,
-            ReviewCaseBill.case_id == ReviewCase.id,
+            TargetTagView,
+            TargetTagView.id == TargetTag.view_id,
         ).where(
-            ReviewCase.review_type == "TAG",
-            ReviewCaseBill.bill_id.in_(fact_ids),
-        ).order_by(ReviewCaseBill.bill_id, ReviewCase.id)).mappings().all()
-        result = {}
+            LedgerEntryTag.ledger_id == ledger_id,
+            TargetTagView.status == "ACTIVE",
+            TargetTag.status == "ACTIVE",
+        ).order_by(TargetTagView.id, TargetTag.id)).mappings().all()
+        state: dict[str, str] = {}
         for row in rows:
-            fact_id = row["bill_id"]
-            if fact_id in result:
-                raise ValueError(f"fact {fact_id} has more than one TAG review case")
-            result[fact_id] = ExistingTagCase(**row)
-        return result
+            view_name = row["view_system_name"]
+            if view_name in state:
+                raise ValueError(
+                    f"ledger {ledger_id} has multiple active tags in view {view_name}"
+                )
+            state[view_name] = row["tag_system_name"]
+        return state
 
-    def idempotency(self, key: str) -> TagHistoryReplay | None:
-        row = self.db.execute(select(
-            ReviewHistory.operation,
-            ReviewHistory.request_json,
-        ).where(ReviewHistory.idempotency_key == key)).mappings().one_or_none()
-        return TagHistoryReplay(**row) if row else None
-
-    def create_cases(
-        self,
-        facts: list[TagAssignmentFact],
-        *,
-        title: str,
-        result_json: str,
-        now: datetime,
-    ) -> dict[int, int]:
-        cases = [ReviewCase(
-            review_type="TAG",
-            behavior_code="TAG",
-            status="CONFIRMED",
-            allocation_status="COMPLETE",
-            version=1,
-            title=title,
-            result_json=result_json,
-            created_time=now,
-            updated_time=now,
-        ) for _fact in facts]
-        self.db.add_all(cases)
-        self.db.flush()
-        return {fact.id: case.id for fact, case in zip(facts, cases, strict=True)}
-
-    def update_cases(
-        self,
-        cases: list[ExistingTagCase],
-        *,
-        title: str,
-        result_json: str,
-        now: datetime,
-    ) -> None:
-        for case in cases:
-            self.db.execute(update(ReviewCase).where(
-                ReviewCase.id == case.id,
-                ReviewCase.version == case.version,
-            ).values(
-                status="CONFIRMED",
-                allocation_status="COMPLETE",
-                version=case.version + 1,
-                title=title,
-                result_json=result_json,
-                updated_time=now,
-            ))
-
-    def replace_lines(
-        self,
-        case_by_fact: dict[int, int],
-        facts: list[TagAssignmentFact],
-        *,
-        now: datetime,
-    ) -> None:
-        case_ids = list(case_by_fact.values())
-        self.db.execute(delete(ReviewCaseBill).where(
-            ReviewCaseBill.case_id.in_(case_ids)
+    def replace(self, ledger_id: int, tag_ids: tuple[int, ...]) -> None:
+        self.db.execute(delete(LedgerEntryTag).where(
+            LedgerEntryTag.ledger_id == ledger_id,
         ))
-        self.db.add_all([ReviewCaseBill(
-            case_id=case_by_fact[fact.id],
-            bill_id=fact.id,
-            role="TAGGED",
-            party="",
-            amount_value=fact.amount_value,
-            amount_scale=fact.amount_scale,
-            currency_code=fact.currency_code,
-            created_time=now,
-            updated_time=now,
-        ) for fact in facts])
+        self.db.add_all([
+            LedgerEntryTag(ledger_id=ledger_id, tag_id=tag_id)
+            for tag_id in tag_ids
+        ])
         self.db.flush()
 
-    def add_histories(self, histories: list[ReviewHistory]) -> None:
-        self.db.add_all(histories)
-
-    def advance_projection(self, ledger_id: int, expected_version: int, now: datetime) -> int:
+    def advance_projection(
+        self,
+        ledger_id: int,
+        expected_version: int,
+        now: datetime,
+    ) -> int:
         result = self.db.execute(update(LedgerEntry).where(
             LedgerEntry.id == ledger_id,
             LedgerEntry.projection_version == expected_version,

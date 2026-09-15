@@ -220,14 +220,14 @@ V2 中该表是一条单方向、单币种的 Economic Flow。旧 in/out 和
 
 `(view_id, system_name)` 唯一。每个活动维度有受保护的 `unclassified` 默认值；定义采用归档而不是删除。
 
-### 11. `ledger_entry_tag`：热投影标签
+### 11. `ledger_entry_tag`：Ledger 当前标签
 
 | 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
 | `ledger_id` | INTEGER | `0` | 隐式 Ledger ID |
 | `tag_id` | INTEGER | `0` | 隐式 Tag ID |
 
-`(ledger_id, tag_id)` 唯一。列表页按返回的 Ledger ID 一次批量读取。当前规模无需 Elasticsearch；引入第二套存储会增加一致性成本。
+`(ledger_id, tag_id)` 唯一。Tag Assignment 直接以 Ledger ID 为对象，不经 Fact、`ledger_entry_source` 或 Review 间接派生。每个活动 Ledger 在每个活动 Tag View 下恰有一个当前值；缺失值补为 `unclassified`。列表页按返回的 Ledger ID 一次批量读取。当前规模无需 Elasticsearch；引入第二套存储会增加一致性成本。
 
 ## 热、冷与读取规则
 
