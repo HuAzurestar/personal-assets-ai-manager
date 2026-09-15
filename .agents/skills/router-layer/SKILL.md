@@ -37,8 +37,17 @@ description: Change PAAM FastAPI routers, URL modules or versions, HTTP endpoint
 - Follow `Router -> Service -> Data Mapper -> Entity / SQLite`.
 - Routers own HTTP parsing, dependency injection, status codes, and DTO
   validation only. They do not own use-case orchestration or SQL.
+- Every business Router declares its complete module prefix on `APIRouter`.
+  Route decorators contain only object-relative paths. System routes are the
+  exception because they do not share one business prefix.
+- Prefer the direct `Request DTO -> Service -> Response DTO` flow. Do not add a
+  route-local response-envelope helper when constructing the declared response
+  DTO directly is equally clear.
 - Use one primary `APIRouter` per file and one primary Service responsibility
   per Router object.
+- Format business `APIRouter` declarations consistently with `prefix`, `tags`,
+  and `route_class` on separate lines in that order. Omit inapplicable options
+  from infrastructure-only Routers such as System.
 - Custom Router files use singular nouns. Do not add the migration-era
   `target_` prefix.
 - During migration, isolate compatibility routes with a `_legacy` suffix. New
