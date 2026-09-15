@@ -5,7 +5,7 @@ description: Change PAAM import files, raw rows, normalized bill facts, parsing,
 
 # Fact layer
 
-Use `docs/data-model.md` as the target schema contract.
+Use `src/doc/data-model.md` as the target schema contract.
 
 - `import_file` represents one imported artifact and owns source, institution, SHA-256, covered period, and row counts.
 - `bill_raw` represents one immutable source row. `(import_file_id, source_row_number)` is unique. Multiple raw rows may point to the same `bill_fact`.

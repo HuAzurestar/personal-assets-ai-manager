@@ -4,14 +4,20 @@ PAAM uses a layered modular monolith. Keep the trusted ledger transactionally co
 
 ## Required flow
 
-`Controller -> Service -> Data Mapper -> Model / SQLite`
+`Router -> Service -> Data Mapper -> Entity / SQLite`
 
-- Controllers own HTTP parsing, response codes, and DTO validation only.
+- Routers own HTTP parsing, response codes, and DTO validation only.
 - Services own use cases, business rules, transactions, idempotency, and projection updates.
 - Data Mappers own explicit-column SQL, batch loading, and row-to-VO assembly.
-- Models declare storage only. DTOs and VOs never execute SQL.
+- Entities declare storage only, one file per table. DTOs and VOs never execute SQL.
 - Do not add a Repository layer unless it has a documented responsibility that a Mapper does not already provide.
-- Frontend code calls versioned APIs and never imports backend models.
+- Frontend code calls versioned APIs and never imports backend entities.
+- Custom file and directory names use singular nouns. Preserve tool-required
+  names, product names, upstream license names, and generated evidence names.
+- Code lives in `src/backend` and `src/frontend`; assets in `src/asset`.
+  Supporting files live in `src/doc`, `src/script`, `src/test`, and `src/report`.
+- Parsers adapt file inputs; Services retain use-case orchestration. Do not
+  reorganize existing Mapper/Service responsibilities during path-only changes.
 
 ## SQL rules
 
@@ -40,4 +46,4 @@ Read the relevant module skill before changing that module:
 - `.agents/skills/review-layer/SKILL.md`
 - `.agents/skills/ledger-api/SKILL.md`
 
-The authoritative 11-table dictionary and layer boundaries are in `docs/data-model.md`.
+The authoritative 11-table dictionary and layer boundaries are in `src/doc/data-model.md`.
