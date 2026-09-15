@@ -9,7 +9,7 @@
 - [x] Economic Type 收敛为 TRANSACTION、ACCOUNT_TRANSFER、CLAIM；场景名称保留在 Review。
 - [x] 旧 23 表与 5 张过渡兼容表从开发数据库移除。
 - [x] 旧 Controller、Service、Mapper、ORM、影子迁移器、接口与页面物理删除。
-- [x] 运行入口只初始化 11 张目标表。
+- [x] 运行入口只初始化 10 张目标表。
 - [x] DTO/VO 不执行 SQL；Controller 和 Service 不拼 SQL。
 - [x] 列表、详情、汇总只查询明确字段，禁止 `SELECT *`。
 - [x] 流水列表的标签使用一次 `ledger_id IN (...)` 批量查询。
@@ -39,13 +39,12 @@
 
 | 索引 | 用途 |
 | --- | --- |
-| `ix_ledger_entry_time_id` | 流水按时间和 ID 稳定分页 |
+| `ix_ledger_entry_occurred_time_id` | 流水按发生时间和 ID 稳定分页 |
 | `ix_bill_fact_occurred_time_id` | 导入候选的时间窗和事实排序 |
 | `ix_bill_raw_bill_id_id` | 详情批量取原始证据 |
 | `ix_bill_raw_source_reference_bill_id` | 来源引用去重；非空部分索引 |
 | `ix_review_case_bill_bill_case` | 从 Fact 反查相关 Review |
 | `ix_review_case_bill_case_id` | 批量读取一个/多个 Case 明细 |
-| `ix_ledger_entry_source_ledger_kind_id` | 从热投影读取 Fact/Review 来源 |
 
 唯一索引另用于文件 SHA、Fact key、Review 版本/幂等键、投影来源和标签关系。没有为低频文本、状态枚举或未证实路径提前堆索引。
 

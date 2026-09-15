@@ -9,24 +9,25 @@
 `review_case_bill`（迁移期物理名；语义为 Flow Allocation）。
 
 Allocation 是三元关系：每行同时保存 `case_id`、`bill_id`、
-`economic_id` 和一份明确金额。一个 Review、Fact 或 Economic 都可以
-拥有多条 Allocation；一次完整审查由事实集合、经济集合和分配矩阵组成。
+`economic_id` 和一份明确金额。一个 Review 或 Fact 可以拥有多条
+Allocation；已发布的 LedgerEntry 只拥有一条 Allocation，因此只对应
+一个 Fact。一次完整审查由事实集合、账本集合和分配矩阵组成。
 
 Economic Type 仅允许 `TRANSACTION`、`ACCOUNT_TRANSFER`、`CLAIM`。
 AA、垫付、借款、退款、转账和换汇是 `review_case.behavior_code`，不参与
 Economic Type 汇总。
 
-对每条已接受 Fact，所有 CONFIRMED Review 且 ACTIVE Economic 的
-Allocation 金额之和必须严格等于 Fact 金额。对每条 ACTIVE Economic，
-有效 Allocation 之和也必须严格等于 Economic 金额。Pending 建议不占用
+对每条已接受 Fact，所有 CONFIRMED Review 的 Allocation 金额之和必须
+严格等于 Fact 金额。每条 LedgerEntry 的有效 Allocation 之和也必须严格
+等于 LedgerEntry 金额。Pending 建议不占用
 正式金额；导入通过 CONFIRMED DEFAULT Review 生成等额 TRANSACTION。
 取消人工 Review 时，释放金额立即通过新的 DEFAULT Review 恢复为
 TRANSACTION，因此正式经济层不存在 PARTIAL 或 UNRESOLVED 金额。
 
 Fact、Allocation 和 Economic 必须同方向、同币种。换汇由不同币种的
 多个 ACCOUNT_TRANSFER Economic 表达，不保存汇率、不跨币种求净额。
-CLAIM 使用 `claim_key` 和 `claim_side` 聚合建立、结算及余额；退款等
-冲正使用 `reversal_of_id` 指向原 TRANSACTION。
+CLAIM 目前仅表示债类现金流水分类，不在 LedgerEntry 中维护资产、负债、
+债权余额或估值；这些能力以后由独立资产管理模型承接。
 
 原始文件、Raw、Review 历史和标签表仍然保留；“四个核心对象”不表示
 删除证据与审计辅助表。
@@ -38,8 +39,8 @@ CLAIM 使用 `claim_key` 和 `claim_side` 聚合建立、结算及余额；退�
 | 字段 | 类型 | 规则 |
 | --- | --- | --- |
 | `id` | INTEGER | 主键 |
-| `created_time` | DATETIME | `NOT NULL DEFAULT CURRENT_TIMESTAMP` |
-| `updated_time` | DATETIME | `NOT NULL DEFAULT CURRENT_TIMESTAMP` |
+| `created_time` | TEXT | `NOT NULL`，UTC ISO-8601 |
+| `updated_time` | TEXT | `NOT NULL`，UTC ISO-8601 |
 
 业务字段使用 `NOT NULL`；缺省文本使用空串，未知语义使用 `UNKNOWN` 等明确状态。缺失的必要金额、方向或时间不能用 0/默认时间伪造。关系全部使用隐式 ID，不声明 SQL `FOREIGN KEY`，由 Service 批量校验并在同一事务内写入。
 
@@ -159,49 +160,23 @@ Fact 只放跨来源稳定、计算必须的核心字段。客户详情、完整
 
 ### 7. `ledger_entry`：最终展示的一条实际账本记录
 
-V2 中该表是一条单方向、单币种的 Economic Flow。旧 in/out 和
-`ledger_type` 字段仅用于 v1 迁移兼容，新查询不得用它们决定经济语义。
+该表是一条单方向、单币种且已经由 CONFIRMED Review 发布的流水。
+一条 LedgerEntry 只对应一个 Fact；一个 Fact 可以拆分为多条 LedgerEntry。
 
 | 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `ledger_type` | VARCHAR(40) | `UNRESOLVED` | v1 兼容字段；V2 查询不得用于分类 |
-| `economic_type` | VARCHAR(40) | `TRANSACTION` | TRANSACTION/ACCOUNT_TRANSFER/CLAIM |
-| `cash_direction` | VARCHAR(8) | `UNKNOWN` | IN/OUT |
-| `amount_value` | BIGINT | `0` | 单方向 Economic 的整数金额 |
-| `amount_scale` | SMALLINT | `2` | Economic 金额精度 |
-| `currency_code` | VARCHAR(12) | `CNY` | Economic 币种 |
-| `claim_key` | VARCHAR(160) | `''` | CLAIM 周期的稳定关联键 |
-| `claim_side` | VARCHAR(20) | `UNKNOWN` | RECEIVABLE/PAYABLE/UNKNOWN |
-| `reversal_of_id` | INTEGER | `0` | 冲正指向的原 TRANSACTION Economic ID |
-| `status` | VARCHAR(20) | `ACTIVE` | PENDING/ACTIVE/REVOKED |
-| `allocation_status` | VARCHAR(20) | `DEFAULT` | v1 兼容字段；`V2_ONLY` 防止新 Economic 泄漏到旧列表，V2 发布只看 `status` 与金额守恒 |
-| `title` | VARCHAR(200) | `''` | 列表使用的紧凑标题 |
-| `start_time` | DATETIME | 无伪造默认 | 来源 Fact 的最早时间 |
-| `end_time` | DATETIME | 无伪造默认 | 来源 Fact 的最晚时间 |
-| `in_amount_value` | BIGINT | `0` | 流入整数金额 |
-| `in_amount_scale` | SMALLINT | `2` | 流入精度 |
-| `in_currency_code` | VARCHAR(12) | `CNY` | 流入币种 |
-| `out_amount_value` | BIGINT | `0` | 流出整数金额 |
-| `out_amount_scale` | SMALLINT | `2` | 流出精度 |
-| `out_currency_code` | VARCHAR(12) | `CNY` | 流出币种 |
-| `in_account_code` | VARCHAR(120) | `UNKNOWN` | 有效流入账户；多个时为 MULTIPLE |
-| `out_account_code` | VARCHAR(120) | `UNKNOWN` | 有效流出账户；多个时为 MULTIPLE |
-| `input_hash` | VARCHAR(64) | `''` | 排序后的 Fact/Review 输入指纹 |
-| `projection_version` | INTEGER | `1` | 投影规则版本及并发依据 |
+| `entry_type` | INTEGER | 无伪造默认 | 0=TRANSACTION，1=ACCOUNT_TRANSFER，2=CLAIM_CASHFLOW |
+| `entry_direction` | INTEGER | 无伪造默认 | 1=IN，2=OUT |
+| `amount_value` | BIGINT | 无伪造默认 | 单方向 LedgerEntry 的正整数金额 |
+| `amount_scale` | SMALLINT | `2` | 金额精度 |
+| `currency_code` | VARCHAR(12) | 无伪造默认 | 币种或稳定单位代码 |
+| `account_code` | VARCHAR(120) | 无伪造默认 | 本方账户代码 |
+| `counterparty_account_ref` | VARCHAR(200) | `''` | 对手方账户引用；未知时为空串 |
+| `occurred_time` | TEXT | 无伪造默认 | 来源 Fact 的 ISO-8601 发生时间 |
 
 普通 Fact 导入后默认生成同方向、同币种、等额的 TRANSACTION。人工 Review 可以把事实金额重新分配为 TRANSACTION、ACCOUNT_TRANSFER 或 CLAIM；AA、借贷、退款、转账和换汇只保存在 Review 行为说明中。每条 Economic 只有一个方向和币种，跨币种行为必须拆成多条 Economic，并且永不折算汇率。
 
-### 8. `ledger_entry_source`：投影反向追溯
-
-| 字段 | 类型 | 默认 | 说明 |
-| --- | --- | --- | --- |
-| `ledger_id` | INTEGER | `0` | 隐式 Ledger ID |
-| `source_kind` | VARCHAR(20) | `BILL_FACT` | BILL_FACT 或 REVIEW_CASE |
-| `source_id` | INTEGER | `0` | 对应来源 ID |
-
-该表只供 v1 投影兼容和导入迁移定位使用。V2 的 Fact、Review、Economic 追溯只通过 `review_case_bill` 三元分配关系完成；不能再依据这里的唯一约束推断 Fact 与 Economic 是 1:1。
-
-### 9. `tag_view`：标签维度
+### 8. `tag_view`：标签维度
 
 | 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
@@ -209,7 +184,7 @@ V2 中该表是一条单方向、单币种的 Economic Flow。旧 in/out 和
 | `system_name` | VARCHAR(64) | `''` | 唯一稳定代码 |
 | `status` | VARCHAR(20) | `ACTIVE` | ACTIVE/ARCHIVED |
 
-### 10. `tag`：标签值
+### 9. `tag`：标签值
 
 | 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
@@ -220,7 +195,7 @@ V2 中该表是一条单方向、单币种的 Economic Flow。旧 in/out 和
 
 `(view_id, system_name)` 唯一。每个活动维度有受保护的 `unclassified` 默认值；定义采用归档而不是删除。
 
-### 11. `ledger_entry_tag`：热投影标签
+### 10. `ledger_entry_tag`：热投影标签
 
 | 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
@@ -233,9 +208,8 @@ V2 中该表是一条单方向、单币种的 Economic Flow。旧 in/out 和
 
 | 数据 | 热度 | 正常读取方式 |
 | --- | --- | --- |
-| `ledger_entry` | 热 | 只读取 ACTIVE Economic 的列表、筛选和按币种汇总 |
+| `ledger_entry` | 热 | 读取已确认 Review 发布的列表、筛选和按币种汇总 |
 | `ledger_entry_tag`、`tag`、`tag_view` | 热/温 | 列表按 ID 批量取；字典独立取 |
-| `ledger_entry_source` | 温 | 仅单条详情和投影重建 |
 | `bill_fact` | 温 | 导入核对、审查、单条详情 |
 | `review_case`、`review_case_bill` | 温 | 审查工作台与单条详情 |
 | `import_file`、`bill_raw`、`review_history` | 冷 | 来源追溯、问题核查、审计详情 |
@@ -244,11 +218,11 @@ V2 中该表是一条单方向、单币种的 Economic Flow。旧 in/out 和
 
 ## 迁移结论
 
-旧 23 张业务表和 5 张过渡表已经从模型和运行时删除。现有 11 表数据库采用原位迁移，必要语义分别进入：
+旧业务表和过渡表已经从模型和运行时删除。现有数据库原位迁移为 10 张目标表，必要语义分别进入：
 
 - 文件/批次/来源/异常：`import_file + bill_raw`。
 - 规范流水：`bill_fact`。
 - AA/垫付/借贷/退款/转账/换汇等行为：统一 Review 三表。
 - 正式经济结果：`ledger_entry`、三元 `review_case_bill` 与标签表。
 
-启动时为历史 Fact 补建 CONFIRMED DEFAULT Review 与等额 TRANSACTION，并复用可用的 v1 默认 Ledger 行。迁移期保留旧列和旧读取 API，但 V2 写入、汇总与新页面只使用三类 Economic 语义，不做长期双写设计。
+启动时为历史 Fact 补建 CONFIRMED DEFAULT Review 与等额 TRANSACTION。旧 Ledger 列会折叠为 11 字段物理结构，旧来源表和旧读取 API 均被删除；追溯统一通过 `review_case_bill` 完成。
