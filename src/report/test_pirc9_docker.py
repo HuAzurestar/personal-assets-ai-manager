@@ -64,7 +64,7 @@ def imported(client, specs, day='2026-08-01'):
     plan = body(client.post('/paam/import/v1/preview', json={'files': [{
         'filename': f'{name}.csv', 'content_base64': base64.b64encode(content).decode()}]}))
     assert plan['can_confirm'], plan
-    result = body(client.post(f'/paam/import/v1/preview/confirm/{plan["token"]}', json={'version': plan['version']}))
+    result = body(client.post(f'/paam/import/v1/preview/{plan["token"]}/confirm', json={'version': plan['version']}))
     ids = result['bill_fact_ids']
     assert len(ids) == len(specs)
     return name, ids
@@ -264,7 +264,7 @@ def test_ui_import_tag_account_review_and_duplicate_import(client, page):
         assert ledger(client, name)[0]['out_account_code'] == 'docker-ui-wallet'
     plan = body(client.post('/paam/import/v1/preview', json={'files': [{
         'filename': f'renamed-{name}.csv', 'content_base64': base64.b64encode(content).decode()}]}))
-    body(client.post(f'/paam/import/v1/preview/confirm/{plan["token"]}', json={'version': plan['version']}))
+    body(client.post(f'/paam/import/v1/preview/{plan["token"]}/confirm', json={'version': plan['version']}))
     assert len(ledger(client, name)) == 1
     totals = body(client.get('/paam/ledger/v1/summary?date_from=2026-08-04&date_to=2026-08-04'))['totals']
     assert sum(item['expense_value'] for item in totals if item['currency_code'] == 'CNY') == before_expense + 1234
@@ -292,7 +292,7 @@ def test_invalid_preview_does_not_write_ledger(client):
     plan = body(client.post('/paam/import/v1/preview', json={'files': [{
         'filename': 'invalid-docker.csv', 'content_base64': base64.b64encode(b'not,a,statement').decode()}]}))
     assert not plan['can_confirm']
-    response = client.post(f'/paam/import/v1/preview/confirm/{plan["token"]}', json={'version': plan['version']})
+    response = client.post(f'/paam/import/v1/preview/{plan["token"]}/confirm', json={'version': plan['version']})
     assert response.status_code == 422
     assert body(client.get('/paam/ledger/v1/entry/list'))['total'] == before
 
@@ -303,7 +303,7 @@ def test_fact_conflict_dismiss_reopen_resolve_via_ui(client, page):
         plan = body(client.post('/paam/import/v1/preview', json={'files': [{
             'filename': f'{name}-{suffix}.csv', 'content_base64': base64.b64encode(data).decode()}]}))
         assert plan['can_confirm'], plan
-        body(client.post(f'/paam/import/v1/preview/confirm/{plan["token"]}', json={'version': plan['version']}))
+        body(client.post(f'/paam/import/v1/preview/{plan["token"]}/confirm', json={'version': plan['version']}))
     original_entry = ledger(client, name)[0]
     case = next(c for c in body(client.get('/paam/review/v1/case/list?limit=200')) if c['review_type'] == 'FACT_CONFLICT')
     for action, status in [('dismiss', 'REJECTED'), ('reopen', 'PENDING')]:
@@ -314,7 +314,7 @@ def test_fact_conflict_dismiss_reopen_resolve_via_ui(client, page):
     open_review(page, case)
     page.locator('[data-action="conflict-resolve"]').click()
     page.locator('[name="resolution_type"]').select_option('CREATE_NEW')
-    with page.expect_response(f'**/paam/review/v1/fact-conflict/resolve/{case["id"]}') as response:
+    with page.expect_response(f'**/paam/import/v1/fact-conflict/{case["id"]}/resolve') as response:
         page.locator('[data-form="conflict"] button.primary').click()
     assert response.value.status == 200, response.value.text()
     resolved = body(client.get(f'/paam/review/v1/case/detail/{case["id"]}'))

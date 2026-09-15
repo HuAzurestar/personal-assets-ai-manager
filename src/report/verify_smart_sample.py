@@ -75,7 +75,7 @@ def preview(client, files):
 
 def confirm(client, plan):
     return client.post(
-        f"/paam/import/v1/preview/confirm/{plan['token']}",
+        f"/paam/import/v1/preview/{plan['token']}/confirm",
         json={"version": plan["version"]},
     )
 

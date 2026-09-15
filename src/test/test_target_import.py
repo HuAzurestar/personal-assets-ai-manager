@@ -110,7 +110,7 @@ def _preview(client, filename: str, content: bytes, password: str | None = None)
 
 def _confirm(client, preview):
     return client.post(
-        f"/paam/import/v1/preview/confirm/{preview['token']}",
+        f"/paam/import/v1/preview/{preview['token']}/confirm",
         json={"version": preview["version"]},
     )
 
@@ -220,15 +220,15 @@ def test_import_history_rows_are_loaded_by_page(target_import_api):
     batch_id = confirmed.json()["body"]["import_file_ids"][0]
 
     first = client.get(
-        "/paam/import/v1/batch/row/list",
-        params={"batch_id": batch_id, "page": 1, "page_size": 20},
+        f"/paam/import/v1/batch/{batch_id}/row/list",
+        params={"page": 1, "page_size": 20},
     ).json()["body"]
     assert (first["total"], len(first["items"])) == (26, 20)
     assert first["summary"] == {"success": 26, "skipped": 0, "invalid": 0}
 
     second = client.get(
-        "/paam/import/v1/batch/row/list",
-        params={"batch_id": batch_id, "page": 2, "page_size": 20},
+        f"/paam/import/v1/batch/{batch_id}/row/list",
+        params={"page": 2, "page_size": 20},
     ).json()["body"]
     assert (second["page"], len(second["items"])) == (2, 6)
     assert second["items"][0]["id"] > first["items"][-1]["id"]
@@ -321,7 +321,7 @@ def test_target_fact_conflict_is_recorded_for_review(target_import_api):
         assert case.status == "PENDING"
 
     resolved = client.post(
-        f"/paam/review/v1/fact-conflict/resolve/{case.id}",
+        f"/paam/import/v1/fact-conflict/{case.id}/resolve",
         json={
             "resolution_type": "CREATE_NEW",
             "expected_version": 1,

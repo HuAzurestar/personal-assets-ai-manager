@@ -16,40 +16,49 @@ from backend.service.target_fact_conflict_service import TargetFactConflictServi
 
 
 router = APIRouter(
-    prefix="/paam/review/v1",
-    tags=["target-review"],
+    prefix="/paam/import/v1",
+    tags=["import"],
     route_class=DomainErrorRoute,
 )
 
 
-@router.post("/fact-conflict/resolve/{case_id}", response_model=TargetReviewCaseResponse)
+@router.post(
+    "/fact-conflict/{conflict_id}/resolve",
+    response_model=TargetReviewCaseResponse,
+)
 def resolve_conflict(
-    case_id: int,
+    conflict_id: int,
     payload: TargetFactConflictResolveRequest,
     db: Session = Depends(get_db),
 ):
     return TargetReviewCaseResponse(
-        body=TargetFactConflictService(db).resolve(case_id, payload)
+        body=TargetFactConflictService(db).resolve(conflict_id, payload)
     )
 
 
-@router.post("/fact-conflict/dismiss/{case_id}", response_model=TargetReviewCaseResponse)
+@router.post(
+    "/fact-conflict/{conflict_id}/dismiss",
+    response_model=TargetReviewCaseResponse,
+)
 def dismiss_conflict(
-    case_id: int,
+    conflict_id: int,
     payload: TargetReviewTransitionRequest,
     db: Session = Depends(get_db),
 ):
     return TargetReviewCaseResponse(
-        body=TargetFactConflictService(db).dismiss(case_id, payload)
+        body=TargetFactConflictService(db).dismiss(conflict_id, payload)
     )
 
 
-@router.post("/fact-conflict/reopen/{case_id}", response_model=TargetReviewCaseResponse)
+@router.post(
+    "/fact-conflict/{conflict_id}/reopen",
+    response_model=TargetReviewCaseResponse,
+)
 def reopen_conflict(
-    case_id: int,
+    conflict_id: int,
     payload: TargetReviewTransitionRequest,
     db: Session = Depends(get_db),
 ):
     return TargetReviewCaseResponse(
-        body=TargetFactConflictService(db).reopen(case_id, payload)
+        body=TargetFactConflictService(db).reopen(conflict_id, payload)
     )

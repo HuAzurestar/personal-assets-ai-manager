@@ -63,7 +63,7 @@ with tempfile.TemporaryDirectory(prefix="paam-target-samples-") as temp:
         assert sum(len(doc["rows"]) for doc in preview["documents"]) == 827
 
         confirmation = client.post(
-            f"/paam/import/v1/preview/confirm/{preview['token']}",
+            f"/paam/import/v1/preview/{preview['token']}/confirm",
             json={"version": preview["version"]},
         )
         assert confirmation.status_code == 200, confirmation.text
@@ -97,7 +97,7 @@ with tempfile.TemporaryDirectory(prefix="paam-target-samples-") as temp:
             )
 
         repeated = client.post(
-            f"/paam/import/v1/preview/confirm/{preview['token']}",
+            f"/paam/import/v1/preview/{preview['token']}/confirm",
             json={"version": preview["version"]},
         )
         assert repeated.status_code == 200
@@ -112,7 +112,7 @@ with tempfile.TemporaryDirectory(prefix="paam-target-samples-") as temp:
         assert replay["counts"].get("new", 0) == 0
         assert replay["counts"]["duplicate_file"] == 827
         replay_confirmation = client.post(
-            f"/paam/import/v1/preview/confirm/{replay['token']}",
+            f"/paam/import/v1/preview/{replay['token']}/confirm",
             json={"version": replay["version"]},
         )
         assert replay_confirmation.status_code == 200

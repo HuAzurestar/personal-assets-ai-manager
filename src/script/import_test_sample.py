@@ -23,7 +23,7 @@ if __name__ == "__main__":
         assert plan["can_confirm"], "Preview needs attention; no confirmation was sent"
         print("Preview:", plan["counts"], flush=True)
         response = client.post(
-            f"/paam/import/v1/preview/confirm/{plan['token']}",
+            f"/paam/import/v1/preview/{plan['token']}/confirm",
             json={"version": plan["version"]},
         )
         response.raise_for_status()
@@ -34,7 +34,7 @@ if __name__ == "__main__":
         records.raise_for_status()
         assert records.json()["total"] == 803
         repeated = client.post(
-            f"/paam/import/v1/preview/confirm/{plan['token']}",
+            f"/paam/import/v1/preview/{plan['token']}/confirm",
             json={"version": plan["version"]},
         )
         repeated.raise_for_status()

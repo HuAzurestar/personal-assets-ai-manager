@@ -118,7 +118,7 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
             assert preview_response.status_code == 200, preview_response.text
             preview = preview_response.json()["body"]
             confirmation = client.post(
-                f"/paam/import/v1/preview/confirm/{preview['token']}",
+                f"/paam/import/v1/preview/{preview['token']}/confirm",
                 json={"version": preview["version"]},
             )
             assert confirmation.status_code == 200, confirmation.text
@@ -162,7 +162,7 @@ def test_target_review_confirm_revoke_restore_rebuilds_projection(
                 }]},
             ).json()["body"]
             confirmation = client.post(
-                f"/paam/import/v1/preview/confirm/{preview['token']}",
+                f"/paam/import/v1/preview/{preview['token']}/confirm",
                 json={"version": preview["version"]},
             )
             assert confirmation.status_code == 200, confirmation.text

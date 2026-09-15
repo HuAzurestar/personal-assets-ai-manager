@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.orm import Session
 
 from backend.router.dependency import get_db
@@ -18,7 +18,7 @@ from backend.service.target_intake_service import TargetIntakeService
 
 router = APIRouter(
     prefix="/paam/import/v1",
-    tags=["target-imports"],
+    tags=["import"],
     route_class=DomainErrorRoute,
 )
 
@@ -37,7 +37,7 @@ def revise(
     return IntakeResponse(body=TargetIntakeService(db).revise(token, payload))
 
 
-@router.post("/preview/confirm/{token}", response_model=IntakeResponse)
+@router.post("/preview/{token}/confirm", response_model=IntakeResponse)
 def confirm(
     token: str,
     payload: IntakeConfirmRequest,
@@ -64,9 +64,9 @@ def history(
     )
 
 
-@router.get("/batch/row/list", response_model=IntakeResponse)
+@router.get("/batch/{batch_id}/row/list", response_model=IntakeResponse)
 def rows(
-    batch_id: int = Query(ge=1),
+    batch_id: int = Path(ge=1),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),

@@ -842,7 +842,7 @@ async function renderImportBatchDrawer(dialog) {
   body.innerHTML = '<div class="preview-drawer-loading">正在读取当前页…</div>';
   range.textContent = "正在读取当前页…";
   try {
-    const result = await request(`/paam/import/v1/batch/row/list?batch_id=${dialog.dataset.batchId}&page=${page}&page_size=${pageSize}`, {
+    const result = await request(`/paam/import/v1/batch/${dialog.dataset.batchId}/row/list?page=${page}&page_size=${pageSize}`, {
       signal: controller.signal,
     });
     if (!dialog.open || dialog.requestController !== controller) return;
@@ -1737,7 +1737,7 @@ async function confirmImport() {
   state.confirmingImport = true;
   const button = $('[data-action="confirm-import"]');
   if (button) button.disabled = true;
-  try { const result = await jsonRequest(`/paam/import/v1/preview/confirm/${state.importPlan.token}`, "POST", { version: state.importPlan.version }); state.importPlan = null; toast(`导入完成：${result.bill_fact_ids?.length || 0} 条新事实`); route("import-history"); } catch (error) { if (button) button.disabled = false; const form = button?.closest("form"); if (form) showFormError(form, error); else toast(error.message, true); }
+  try { const result = await jsonRequest(`/paam/import/v1/preview/${state.importPlan.token}/confirm`, "POST", { version: state.importPlan.version }); state.importPlan = null; toast(`导入完成：${result.bill_fact_ids?.length || 0} 条新事实`); route("import-history"); } catch (error) { if (button) button.disabled = false; const form = button?.closest("form"); if (form) showFormError(form, error); else toast(error.message, true); }
   finally { state.confirmingImport = false; }
 }
 function simpleDictionaryDialog(kind, viewId = "") {
@@ -1804,7 +1804,7 @@ async function transitionConflict(button) {
   if (button.disabled) return;
   button.disabled = true;
   try {
-    await jsonRequest(`/paam/review/v1/fact-conflict/${button.dataset.kind}/${button.dataset.id}`, "POST", { expected_version: Number(button.dataset.version), reason: "用户处理事实冲突", idempotency_key: key() });
+    await jsonRequest(`/paam/import/v1/fact-conflict/${button.dataset.id}/${button.dataset.kind}`, "POST", { expected_version: Number(button.dataset.version), reason: "用户处理事实冲突", idempotency_key: key() });
     closeDialogs(); toast("冲突状态已更新"); await render();
   } catch (error) { button.disabled = false; throw error; }
 }
@@ -1815,7 +1815,7 @@ async function submitConflict(event) {
   event.preventDefault(); const form = event.currentTarget; const data = Object.fromEntries(new FormData(form));
   const idempotencyKey = beginSubmit(form); if (!idempotencyKey) return;
   data.existing_bill_id = data.existing_bill_id ? Number(data.existing_bill_id) : 0;
-  try { await jsonRequest(`/paam/review/v1/fact-conflict/resolve/${form.dataset.id}`, "POST", { ...data, expected_version: Number(form.dataset.version), idempotency_key: idempotencyKey }); closeDialogs(); toast("事实冲突已解决"); await render(); } catch (error) { endSubmit(form); showFormError(form, error); }
+  try { await jsonRequest(`/paam/import/v1/fact-conflict/${form.dataset.id}/resolve`, "POST", { ...data, expected_version: Number(form.dataset.version), idempotency_key: idempotencyKey }); closeDialogs(); toast("事实冲突已解决"); await render(); } catch (error) { endSubmit(form); showFormError(form, error); }
 }
 
 $$('[data-page]').forEach((button) => button.onclick = () => route(button.dataset.page));
