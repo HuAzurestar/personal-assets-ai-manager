@@ -5,7 +5,7 @@ from dataclasses import asdict
 
 from sqlalchemy.orm import Session
 
-from backend.core.error import MultipleTagsForView, UnknownTagSelector
+from backend.error import MultipleTagsForView, UnknownTagSelector
 from backend.mapper.target_ledger_mapper import TargetLedgerMapper
 from backend.schema.target_ledger import (
     TargetFactEvidenceRead,

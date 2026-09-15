@@ -7,6 +7,7 @@ from datetime import datetime
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
+from backend.error import TargetReviewError
 from backend.mapper.target_account_mapper import TargetAccountMapper
 from backend.mapper.target_review_mapper import TargetReviewMapper
 from backend.schema.target_review import (
@@ -16,7 +17,6 @@ from backend.schema.target_review import (
 )
 from backend.service.target_projection_service import TargetProjectionService
 from backend.service.target_review_projection_service import TargetReviewProjectionService
-from backend.service.target_review_service import TargetReviewError
 
 
 class TargetAccountService:

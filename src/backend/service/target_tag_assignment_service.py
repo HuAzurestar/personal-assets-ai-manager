@@ -7,6 +7,7 @@ from datetime import datetime
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
+from backend.error import TargetTagError
 from backend.mapper.target_tag_assignment_mapper import (
     ExistingTagCase,
     TargetTagAssignmentMapper,
@@ -14,7 +15,6 @@ from backend.mapper.target_tag_assignment_mapper import (
 from backend.entity import ReviewHistory
 from backend.schema.target_tag import TargetTagAssignmentRead, TargetTagAssignmentRequest
 from backend.service.target_tag_projection_service import TargetTagProjectionService
-from backend.service.target_tag_service import TargetTagError
 
 
 class TargetTagAssignmentService:

@@ -10,6 +10,7 @@ from backend.core.intake_preview_store import (
     IntakePreviewState,
     target_intake_preview_store,
 )
+from backend.error import TargetIntakeError
 from backend.mapper.target_intake_mapper import TargetIntakeMapper
 from backend.schema.intake import (
     IntakeConfirmRequest,
@@ -20,12 +21,6 @@ from backend.smart_import import public_plan
 from backend.parser.statement_parser import parse_statement
 from backend.service.target_projection_service import TargetProjectionService
 from backend.service.target_economic_service import TargetEconomicService
-
-
-class TargetIntakeError(Exception):
-    def __init__(self, status_code: int, message: str):
-        super().__init__(message)
-        self.status_code = status_code
 
 
 class TargetIntakeService:

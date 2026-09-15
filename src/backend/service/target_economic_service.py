@@ -7,6 +7,7 @@ from datetime import datetime
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
+from backend.error import TargetEconomicError
 from backend.mapper.target_economic_mapper import TargetEconomicMapper
 from backend.schema.target_review import (
     TargetEconomicReviewCreateRequest,
@@ -19,12 +20,6 @@ from backend.schema.target_review import (
     TargetReviewTransitionRequest,
 )
 from backend.service.target_tag_projection_service import TargetTagProjectionService
-
-
-class TargetEconomicError(Exception):
-    def __init__(self, status_code: int, message: str):
-        super().__init__(message)
-        self.status_code = status_code
 
 
 class TargetEconomicService:

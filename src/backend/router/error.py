@@ -6,18 +6,7 @@ from typing import Any
 from fastapi import HTTPException, Request, Response
 from fastapi.routing import APIRoute
 
-from backend.service.target_economic_service import TargetEconomicError
-from backend.service.target_intake_service import TargetIntakeError
-from backend.service.target_review_service import TargetReviewError
-from backend.service.target_tag_service import TargetTagError
-
-
-DOMAIN_ERROR_TYPES = (
-    TargetEconomicError,
-    TargetIntakeError,
-    TargetReviewError,
-    TargetTagError,
-)
+from backend.error import DomainError
 
 
 class DomainErrorRoute(APIRoute):
@@ -31,7 +20,7 @@ class DomainErrorRoute(APIRoute):
         async def translated(request: Request) -> Response:
             try:
                 return await original(request)
-            except DOMAIN_ERROR_TYPES as error:
+            except DomainError as error:
                 raise HTTPException(
                     status_code=error.status_code,
                     detail=str(error),

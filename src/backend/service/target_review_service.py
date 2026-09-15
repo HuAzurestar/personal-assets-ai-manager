@@ -8,6 +8,7 @@ from datetime import datetime
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
+from backend.error import TargetReviewError
 from backend.mapper.target_review_mapper import TargetReviewMapper
 from backend.schema.target_review import (
     FINANCIAL_REVIEW_TYPES,
@@ -36,12 +37,6 @@ ROLE_DIRECTIONS = {
     "FX_EXCHANGE": {"FX_OUT": "OUT", "FX_IN": "IN", "FX_FEE": "OUT"},
     "DUPLICATE": {"DUPLICATE_RETAINED": None, "DUPLICATE_EXCLUDED": None},
 }
-
-
-class TargetReviewError(Exception):
-    def __init__(self, status_code: int, message: str):
-        super().__init__(message)
-        self.status_code = status_code
 
 
 class TargetReviewService:

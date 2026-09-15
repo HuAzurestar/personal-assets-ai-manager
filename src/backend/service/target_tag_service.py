@@ -5,6 +5,7 @@ from datetime import datetime
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from backend.error import TargetTagError
 from backend.mapper.target_tag_mapper import TargetTagMapper
 from backend.schema.target_tag import (
     TargetTagCreateRequest,
@@ -13,12 +14,6 @@ from backend.schema.target_tag import (
     TargetTagViewRead,
 )
 from backend.service.target_tag_projection_service import TargetTagProjectionService
-
-
-class TargetTagError(Exception):
-    def __init__(self, status_code: int, message: str):
-        super().__init__(message)
-        self.status_code = status_code
 
 
 class TargetTagService:
