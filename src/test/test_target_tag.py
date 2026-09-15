@@ -84,6 +84,8 @@ def test_target_tag_dictionary_assigns_one_default_per_active_view(target_tag_ap
         "system_name": "category",
     })
     assert created.status_code == 200, created.text
+    assert created.json()["status"] == created.status_code
+    assert created.json()["message"] == "Tag view created"
     view = created.json()["body"]
     assert [(tag["name"], tag["system_name"]) for tag in view["tags"]] == [
         ("未分类", "unclassified")
@@ -115,7 +117,7 @@ def test_target_tag_dictionary_assigns_one_default_per_active_view(target_tag_ap
         f"/paam/tag/v1/view/{view['id']}",
         json={"status": "ARCHIVED"},
     ).status_code == 200
-    assert client.get("/paam/tag/v1/view/list").json()["body"] == []
+    assert client.get("/paam/tag/v1/view/list").json()["body"]["items"] == []
     assert client.put(
         f"/paam/tag/v1/view/{view['id']}",
         json={"status": "ACTIVE"},
@@ -146,8 +148,13 @@ def test_target_tag_list_query_count_is_fixed(target_tag_api):
     finally:
         event.remove(engine, "before_cursor_execute", count_selects)
     assert response.status_code == 200
-    assert len(response.json()["body"]) == 20
-    assert len(statements) == 2
+    assert response.json()["status"] == response.status_code
+    assert response.json()["message"] == "Tag view list retrieved"
+    body = response.json()["body"]
+    assert set(body) == {"items", "total", "page", "page_size"}
+    assert (body["total"], body["page"], body["page_size"]) == (20, 1, 20)
+    assert len(body["items"]) == 20
+    assert len(statements) == 3
     assert all("SELECT *" not in statement.upper() for statement in statements)
 
 
@@ -387,5 +394,7 @@ def test_tag_view_restore_reports_merge_conflict_and_rolls_back(target_tag_api):
     assert restored.json()["status"] == 409
     assert "different category tags" in restored.json()["message"]
     assert restored.json()["body"]["code"] == "TAG_ERROR"
-    archived = client.get("/paam/tag/v1/view/list?include_archived=true").json()["body"]
+    archived = client.get(
+        "/paam/tag/v1/view/list?include_archived=true"
+    ).json()["body"]["items"]
     assert archived[0]["status"] == "ARCHIVED"

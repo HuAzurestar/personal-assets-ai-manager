@@ -52,16 +52,23 @@ class TargetTagViewRead(BaseModel):
     tags: list[TargetTagRead]
 
 
+class TargetTagViewPageRead(BaseModel):
+    items: list[TargetTagViewRead]
+    total: int
+    page: int
+    page_size: int
+
+
 class TargetTagViewResponse(BaseModel):
-    status: Literal["success"] = "success"
+    status: Literal[200] = 200
     message: str = "ok"
     body: TargetTagViewRead
 
 
 class TargetTagViewListResponse(BaseModel):
-    status: Literal["success"] = "success"
+    status: Literal[200] = 200
     message: str = "ok"
-    body: list[TargetTagViewRead]
+    body: TargetTagViewPageRead
 
 
 class TargetTagAssignmentRead(BaseModel):

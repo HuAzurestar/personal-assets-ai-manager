@@ -177,7 +177,7 @@ def test_tag_restore_after_merge_returns_actionable_result(client, page):
     view = body(client.post('/paam/tag/v1/view', json={'name': 'Docker archive conflict', 'system_name': system}))
     body(client.post(f'/paam/tag/v1/view/{view["id"]}/tag', json={'name': 'Food', 'system_name': 'food'}))
     entry = ledger(client, name)[0]
-    views = body(client.get('/paam/tag/v1/view/list'))
+    views = body(client.get('/paam/tag/v1/view/list?page=1&page_size=100'))['items']
     state = {view['system_name']: 'unclassified' for view in views}
     state[system] = 'food'
     body(client.put(f'/paam/tag/v1/assignment/set/{entry["id"]}', json={
@@ -212,7 +212,7 @@ def test_ui_import_tag_account_review_and_duplicate_import(client, page):
     page.locator('dialog [name="system_name"]').fill(system)
     page.locator('[data-form="dictionary"] button.primary').click()
     expect(page.locator('dialog')).to_have_count(0)
-    view = next(v for v in body(client.get('/paam/tag/v1/view/list')) if v['system_name'] == system)
+    view = next(v for v in body(client.get('/paam/tag/v1/view/list?page=1&page_size=100'))['items'] if v['system_name'] == system)
     page.locator(f'[data-action="new-tag"][data-id="{view["id"]}"]').click()
     inline_tag = page.locator(f'[data-form="inline-tag"][data-view="{view["id"]}"]')
     inline_tag.locator('[name="name"]').fill('Docker selected tag')
@@ -225,7 +225,7 @@ def test_ui_import_tag_account_review_and_duplicate_import(client, page):
     page.locator('[data-form="tag-assignment"] button.primary').click()
     expect(page.locator('dialog')).to_have_count(0)
     assert any(tag['tag_system_name'] == 'selected' for tag in ledger(client, name)[0]['tags'])
-    tag = next(t for t in body(client.get('/paam/tag/v1/view/list')) if t['system_name'] == system)['tags']
+    tag = next(t for t in body(client.get('/paam/tag/v1/view/list?page=1&page_size=100'))['items'] if t['system_name'] == system)['tags']
     tag_id = next(t['id'] for t in tag if t['system_name'] == 'selected')
     page.locator('nav [data-page="tags"]').click()
     for target, expected in [('ARCHIVED', 'unclassified'), ('ACTIVE', 'selected')]:

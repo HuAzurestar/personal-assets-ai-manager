@@ -389,10 +389,11 @@ async function legacyLedgerPage() {
   query.delete("detail");
   if (!query.has("page")) query.set("page", "1");
   if (!query.has("page_size")) query.set("page_size", "25");
-  const [result, views] = await Promise.all([
+  const [result, viewPage] = await Promise.all([
     request(`/paam/ledger/v1/entry/list?${query}`),
-    request("/paam/tag/v1/view/list"),
+    request("/paam/tag/v1/view/list?page=1&page_size=100"),
   ]);
+  const views = viewPage.items;
   const selectedTags = new Map(state.params.getAll("tag").map((selector) => selector.split(":", 2)));
   const tagFilters = views.map((view) => `<label class="ledger-tag-view"><span>${esc(view.name)}</span><select name="tag" aria-label="${esc(view.name)}"><option value="">全部</option>${view.tags.map((tag) => {
     const value = `${view.system_name}:${tag.system_name}`;
@@ -615,7 +616,8 @@ async function ledgerImportsPage() {
 }
 
 async function ledgerTagsPage() {
-  const views = await request("/paam/tag/v1/view/list?include_archived=true");
+  const viewPage = await request("/paam/tag/v1/view/list?page=1&page_size=100&include_archived=true");
+  const views = viewPage.items;
   state.detailTagViews = new Map(views.map((view) => [view.id, view]));
   const rows = views.map((view) => `<tr class="detail-click-row" tabindex="0" data-tag-view-row="${view.id}"><td><button type="button" class="detail-primary" data-action="tag-view-detail" data-id="${view.id}"><strong>${esc(view.name)}</strong><small>${esc(view.system_name)}</small></button></td><td>${view.tags.length}</td><td><div class="tag-list">${view.tags.slice(0, 5).map((tag) => `<span class="tag">${esc(tag.name)}</span>`).join("")}${view.tags.length > 5 ? `<span class="muted">+${view.tags.length - 5}</span>` : ""}</div></td><td><span class="badge neutral">${esc(statusNames[view.status] || view.status)}</span></td><td class="detail-arrow">→</td></tr>`).join("");
   return detailList({ active: "ledger-tags", title: "分类标签", description: "查看维度、标签值和启用状态；维护操作仍使用 v1 接口。", total: views.length, headers: ["维度", "标签数", "标签值", "状态", ""], rows });
@@ -667,10 +669,11 @@ async function showDetail(id) {
 
 async function editTags(ledgerId, version) {
   const renderVersion = state.renderVersion;
-  const [views, detail] = await Promise.all([
-    request("/paam/tag/v1/view/list"),
+  const [viewPage, detail] = await Promise.all([
+    request("/paam/tag/v1/view/list?page=1&page_size=100"),
     request(`/paam/ledger/v1/entry/detail/${ledgerId}`),
   ]);
+  const views = viewPage.items;
   if (renderVersion !== state.renderVersion) return;
   if (!views.length) return toast("请先创建标签维度", true);
   const current = Object.fromEntries(detail.entry.tags.map((item) => [item.view_system_name, item.tag_system_name]));
@@ -1052,7 +1055,8 @@ async function reviseImport(event) {
 }
 
 async function tagsPage() {
-  const views = await request("/paam/tag/v1/view/list?include_archived=true");
+  const viewPage = await request("/paam/tag/v1/view/list?page=1&page_size=100&include_archived=true");
+  const views = viewPage.items;
   const activeCount = views.filter((view) => view.status === "ACTIVE").length;
   const cards = views.map((view) => {
     const isActive = view.status === "ACTIVE";
