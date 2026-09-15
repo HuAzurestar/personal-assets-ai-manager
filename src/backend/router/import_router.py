@@ -16,19 +16,23 @@ from backend.schema.intake import (
 from backend.service.target_intake_service import TargetIntakeService
 
 
-router = APIRouter(tags=["target-imports"], route_class=DomainErrorRoute)
+router = APIRouter(
+    prefix="/paam/import/v1",
+    tags=["target-imports"],
+    route_class=DomainErrorRoute,
+)
 
 
 def _envelope(body: dict[str, object] | list[dict[str, object]]) -> IntakeResponse:
     return IntakeResponse(body=body)
 
 
-@router.post("/paam/import/v1/preview", response_model=IntakeResponse)
+@router.post("/preview", response_model=IntakeResponse)
 def preview(payload: IntakePreviewRequest, db: Session = Depends(get_db)):
     return _envelope(TargetIntakeService(db).preview(payload))
 
 
-@router.put("/paam/import/v1/preview/{token}", response_model=IntakeResponse)
+@router.put("/preview/{token}", response_model=IntakeResponse)
 def revise(
     token: str,
     payload: IntakeReviseRequest,
@@ -37,7 +41,7 @@ def revise(
     return _envelope(TargetIntakeService(db).revise(token, payload))
 
 
-@router.post("/paam/import/v1/preview/confirm/{token}", response_model=IntakeResponse)
+@router.post("/preview/confirm/{token}", response_model=IntakeResponse)
 def confirm(
     token: str,
     payload: IntakeConfirmRequest,
@@ -46,7 +50,7 @@ def confirm(
     return _envelope(TargetIntakeService(db).confirm(token, payload))
 
 
-@router.get("/paam/import/v1/batch/list", response_model=IntakeResponse)
+@router.get("/batch/list", response_model=IntakeResponse)
 def history(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=10, ge=1, le=100),
@@ -62,7 +66,7 @@ def history(
     ))
 
 
-@router.get("/paam/import/v1/batch/row/list", response_model=IntakeResponse)
+@router.get("/batch/row/list", response_model=IntakeResponse)
 def rows(
     batch_id: int = Query(ge=1),
     page: int = Query(default=1, ge=1),
@@ -76,6 +80,6 @@ def rows(
     ))
 
 
-@router.get("/paam/import/v1/account/list", response_model=IntakeResponse)
+@router.get("/account/list", response_model=IntakeResponse)
 def accounts(db: Session = Depends(get_db)):
     return _envelope(TargetIntakeService(db).accounts())
