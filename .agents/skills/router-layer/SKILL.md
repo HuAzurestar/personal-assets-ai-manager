@@ -34,6 +34,41 @@ description: Change PAAM FastAPI routers, URL modules or versions, HTTP endpoint
 - The production module prefixes are `/paam/import/v1`, `/paam/ledger/v1`, and
   `/paam/tag/v1`. System health remains under `/api/health`.
 
+## Ledger API migration
+
+- The strict Review-Fact-Economic Allocation implementation is the production
+  Ledger implementation. Its public API belongs under `/paam/ledger/v1`; do
+  not expose it as `/paam/review/v2` or `/paam/economy/v1`.
+- Canonical Ledger read objects are `/flow/list`, `/flow/{ledger_id}`, and
+  `/flow/summary`.
+- Canonical Ledger Review objects use `/review`, `/review/list`,
+  `/review/{review_id}`, and `/review/{review_id}/{action}`. Creation uses
+  `POST /review`, update uses `PUT /review/{review_id}`, and state transitions
+  use actions only after the identifier.
+- Ledger-facing Fact candidates use `/fact/list`. They must adopt the shared
+  `page` and `page_size` contract before the old limit-only endpoint is
+  retired.
+- The aggregate `/ledger/v1/entry/*`, non-Allocation `/review/v1/case/*`, and
+  Fact-based `/review/v1/account/*` contracts are legacy. Account correction
+  remains a separate migration decision until a Ledger-owned replacement is
+  designed; do not hide that redesign inside a path rename.
+
+## Caller migration safety
+
+- A route path change and every in-repository frontend path replacement belong
+  in the same commit. For a path-only migration, do not redesign page layout,
+  navigation, interaction flow, request fields, or response handling.
+- Before deleting a compatibility route, search `src/frontend`, `src/script`,
+  `src/report`, and `src/test` for its complete old prefix. Delete it only when
+  active callers are migrated or intentionally removed in the same commit.
+- A legacy detail route stays available until the canonical detail response
+  supplies every field used by the UI. Migrate Tag editing and other retained
+  controls to the canonical Ledger detail before removing the legacy route.
+- Keep API path migration separate from response-envelope normalization and
+  business behavior changes. Each gets its own commit and verification.
+- After each route migration, verify OpenAPI contains the new route and omits
+  the retired route, then run backend tests and the affected UI/runtime tests.
+
 ## Router rules
 
 - Follow `Router -> Service -> Data Mapper -> Entity / SQLite`.

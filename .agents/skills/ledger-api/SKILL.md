@@ -14,7 +14,7 @@ description: Change PAAM ledger projections, summaries, tags, DTOs/VOs, Services
   coordinated migration it remains physically stored in `ledger_entry`.
 - Economic Type is exactly TRANSACTION, ACCOUNT_TRANSFER, or CLAIM. AA, loan,
   refund, and FX are Review behavior codes, not Economic Types.
-- `review_case_bill` is the physical v2 ternary Allocation during migration:
+- `review_case_bill` is the physical ternary Allocation during migration:
   one row maps one Review, one Fact, and one Economic.
 - A single Economic never mixes direction or currency. Never store an exchange
   rate or convert currencies; summaries remain per currency.
