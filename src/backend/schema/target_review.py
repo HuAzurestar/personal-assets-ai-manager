@@ -273,7 +273,7 @@ class TargetEconomicReviewRead(BaseModel):
 
 
 class TargetEconomicReviewResponse(BaseModel):
-    status: Literal["success"] = "success"
+    status: Literal[200] = 200
     message: str = "ok"
     body: TargetEconomicReviewRead
 
@@ -298,7 +298,7 @@ class TargetEconomicReviewPageRead(BaseModel):
 
 
 class TargetEconomicReviewPageResponse(BaseModel):
-    status: Literal["success"] = "success"
+    status: Literal[200] = 200
     message: str = "ok"
     body: TargetEconomicReviewPageRead
 

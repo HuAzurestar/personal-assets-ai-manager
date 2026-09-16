@@ -88,6 +88,8 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
         "idempotency_key": "advance-create",
     })
     assert response.status_code == 200, response.text
+    assert response.json()["status"] == response.status_code
+    assert response.json()["message"] == "Ledger review created"
     case = response.json()["body"]
     assert case["status"] == "PENDING"
     assert len(case["economics"]) == 3
@@ -240,7 +242,10 @@ def test_partial_manual_reviews_keep_exact_default_coverage_and_are_idempotent(e
     assert candidate_page["page"] == 1
     assert candidate_page["page_size"] == 20
     assert [(item["id"], item["available_value"]) for item in candidates] == [(fact_id, 6000)]
-    cases = client.get("/paam/ledger/v1/review/list").json()["body"]
+    case_response = client.get("/paam/ledger/v1/review/list")
+    assert case_response.json()["status"] == case_response.status_code
+    assert case_response.json()["message"] == "Ledger reviews listed"
+    cases = case_response.json()["body"]
     assert cases["total"] == 1
     assert cases["items"][0]["economic_count"] == 1
     assert cases["items"][0]["allocation_count"] == 1

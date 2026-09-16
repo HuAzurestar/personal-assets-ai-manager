@@ -29,7 +29,10 @@ def create_case(
     payload: TargetEconomicReviewCreateRequest,
     db: Session = Depends(get_db),
 ):
-    return TargetEconomicReviewResponse(body=TargetEconomicService(db).create(payload))
+    return TargetEconomicReviewResponse(
+        message="Ledger review created",
+        body=TargetEconomicService(db).create(payload),
+    )
 
 
 @router.post("/review/{review_id}/confirm", response_model=TargetEconomicReviewResponse)
@@ -39,6 +42,7 @@ def confirm_case(
     db: Session = Depends(get_db),
 ):
     return TargetEconomicReviewResponse(
+        message="Ledger review confirmed",
         body=TargetEconomicService(db).confirm(review_id, payload)
     )
 
@@ -50,6 +54,7 @@ def update_case(
     db: Session = Depends(get_db),
 ):
     return TargetEconomicReviewResponse(
+        message="Ledger review updated",
         body=TargetEconomicService(db).update(review_id, payload)
     )
 
@@ -61,6 +66,7 @@ def revoke_case(
     db: Session = Depends(get_db),
 ):
     return TargetEconomicReviewResponse(
+        message="Ledger review revoked",
         body=TargetEconomicService(db).revoke(review_id, payload)
     )
 
@@ -72,6 +78,7 @@ def restore_case(
     db: Session = Depends(get_db),
 ):
     return TargetEconomicReviewResponse(
+        message="Ledger review restored",
         body=TargetEconomicService(db).confirm(review_id, payload, restore=True)
     )
 
@@ -84,6 +91,7 @@ def case_page(
     db: Session = Depends(get_db),
 ):
     return TargetEconomicReviewPageResponse(
+        message="Ledger reviews listed",
         body=TargetEconomicService(db).page(page, page_size, status)
     )
 
@@ -91,5 +99,6 @@ def case_page(
 @router.get("/review/{review_id}", response_model=TargetEconomicReviewResponse)
 def case_detail(review_id: int, db: Session = Depends(get_db)):
     return TargetEconomicReviewResponse(
+        message="Ledger review returned",
         body=TargetEconomicService(db).detail(review_id)
     )
