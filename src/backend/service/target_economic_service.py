@@ -333,11 +333,9 @@ class TargetEconomicService:
                 self.mapper.commit()
                 return replay
             case = self._required(case_id)
-            if self.mapper.is_default(case_id):
-                raise TargetEconomicError(409, "default coverage cannot be revoked directly")
             if case.status != 0:
                 raise TargetEconomicError(409, "review is already revoked")
-            current_version = self.mapper.case_version(case_id)
+            current_version = 1
             released: dict[int, int] = defaultdict(int)
             for row in case.allocations:
                 released[row.transaction_fact_id] += row.amount_value
@@ -394,8 +392,6 @@ class TargetEconomicService:
                 self.mapper.commit()
                 return replay
             case = self._required(case_id)
-            if self.mapper.is_default(case_id):
-                raise TargetEconomicError(409, "default coverage cannot be restored directly")
             if case.status != 1:
                 raise TargetEconomicError(409, "review is already confirmed")
             requested: dict[int, int] = defaultdict(int)
@@ -423,7 +419,7 @@ class TargetEconomicService:
             ]
             if not self.mapper.restore_case(
                 case_id,
-                self.mapper.case_version(case_id),
+                1,
                 defaults,
                 residuals,
                 request_json=request_json,

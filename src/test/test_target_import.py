@@ -300,7 +300,7 @@ def test_corrupt_workbook_is_a_preview_error(target_import_api, extension):
         assert db.query(BillFact).count() == 0
 
 
-def test_target_fact_conflict_is_recorded_for_review(target_import_api):
+def test_target_fact_conflict_stays_on_import_row(target_import_api):
     client, sessions, _ = target_import_api
     first = _preview(client, "first.csv", _csv())
     assert _confirm(client, first).status_code == 200
@@ -311,27 +311,8 @@ def test_target_fact_conflict_is_recorded_for_review(target_import_api):
 
     with sessions() as db:
         raw = db.scalar(select(BillRaw).where(BillRaw.issue_code == "FACT_CONFLICT"))
-        case = db.scalar(select(ReviewCase).where(
-            ReviewCase.review_type == "FACT_CONFLICT"
-        ))
         assert (raw.parse_status, raw.bill_id) == ("INVALID", 0)
-        assert case.status == "PENDING"
-
-    resolved = client.post(
-        f"/paam/review/v1/fact-conflict/resolve/{case.id}",
-        json={
-            "resolution_type": "CREATE_NEW",
-            "expected_version": 1,
-            "reason": "verified separate transaction",
-            "idempotency_key": "fact-conflict-create-new",
-        },
-    )
-    assert resolved.status_code == 200, resolved.text
-    with sessions() as db:
-        assert [item.amount_value for item in db.scalars(
-            select(BillFact).order_by(BillFact.id)
-        )] == [1000, 2000]
-        assert db.query(LedgerEntry).count() == 2
+        assert db.query(ReviewCase).count() == 1
 
 
 def test_source_override_cannot_contradict_statement_content():

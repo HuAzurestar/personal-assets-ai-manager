@@ -12,8 +12,8 @@ from backend.entity import (
     BillFact,
     LedgerEntry,
     ReviewCase,
-    ReviewCaseBill,
-    ReviewHistory,
+    ReviewAllocation,
+    ReviewRevision,
 )
 from backend.schema.target_review import (
     TargetEconomicFlowRead,
@@ -22,6 +22,9 @@ from backend.schema.target_review import (
     TargetReviewFactVO,
     TargetReviewRevisionRead,
 )
+
+ReviewCaseBill = ReviewAllocation
+ReviewHistory = ReviewRevision
 
 
 class TargetEconomicMapper:
@@ -57,10 +60,10 @@ class TargetEconomicMapper:
         return list(self.db.scalars(select(BillFact.id).order_by(BillFact.id)).all())
 
     def review_page(self, page: int, page_size: int, status: int | None = None) -> tuple[list[dict], int]:
-        clauses = [
-            ReviewCase.behavior_code != "DEFAULT",
-            ReviewCase.review_type.not_in(("ACCOUNT", "TAG", "FACT_CONFLICT")),
-        ]
+        clauses = [~select(ReviewRevision.id).where(
+            ReviewRevision.review_case_id == ReviewCase.id,
+            ReviewRevision.actor == "system",
+        ).exists()]
         if status is not None:
             clauses.append(ReviewCase.status == ("CONFIRMED" if status == 0 else "REVOKED"))
         grouped = select(
@@ -70,10 +73,10 @@ class TargetEconomicMapper:
             ReviewCase.title,
             ReviewCase.created_time,
             ReviewCase.updated_time,
-            func.count(ReviewCaseBill.id).label("ledger_entry_count"),
-            func.count(ReviewCaseBill.id).label("allocation_count"),
+            func.count(ReviewAllocation.id).label("ledger_entry_count"),
+            func.count(ReviewAllocation.id).label("allocation_count"),
         ).join(
-            ReviewCaseBill, ReviewCaseBill.case_id == ReviewCase.id,
+            ReviewAllocation, ReviewAllocation.review_case_id == ReviewCase.id,
         ).where(*clauses).group_by(ReviewCase.id)
         total = int(self.db.scalar(select(func.count()).select_from(grouped.subquery())) or 0)
         rows = self.db.execute(grouped.order_by(
@@ -84,16 +87,6 @@ class TargetEconomicMapper:
             "behavior_type": 1 if row["behavior_code"] == "BORROW_AND_REPAY" else 0,
             "status": 0 if row["status"] == "CONFIRMED" else 1,
         } for row in rows], total
-
-    def case_version(self, case_id: int) -> int:
-        return int(self.db.scalar(select(ReviewCase.version).where(
-            ReviewCase.id == case_id
-        )) or 0)
-
-    def is_default(self, case_id: int) -> bool:
-        return self.db.scalar(select(ReviewCase.behavior_code).where(
-            ReviewCase.id == case_id
-        )) == "DEFAULT"
 
     def fact_candidates(self, limit: int) -> list[dict]:
         rows = self.db.execute(select(
@@ -106,16 +99,19 @@ class TargetEconomicMapper:
             BillFact.account_code,
             BillFact.counterparty,
             BillFact.summary,
-            func.sum(ReviewCaseBill.amount_value).label("available_value"),
+            func.sum(ReviewAllocation.amount_value).label("available_value"),
         ).join(
-            ReviewCaseBill, ReviewCaseBill.bill_id == BillFact.id,
+            ReviewAllocation, ReviewAllocation.transaction_fact_id == BillFact.id,
         ).join(
-            ReviewCase, ReviewCase.id == ReviewCaseBill.case_id,
+            ReviewCase, ReviewCase.id == ReviewAllocation.review_case_id,
         ).join(
-            LedgerEntry, LedgerEntry.id == ReviewCaseBill.economic_id,
+            LedgerEntry, LedgerEntry.id == ReviewAllocation.ledger_entry_id,
         ).where(
-            ReviewCase.behavior_code == "DEFAULT",
             ReviewCase.status == "CONFIRMED",
+            select(ReviewRevision.id).where(
+                ReviewRevision.review_case_id == ReviewCase.id,
+                ReviewRevision.actor == "system",
+            ).exists(),
         ).group_by(BillFact.id).order_by(
             BillFact.occurred_time.desc(), BillFact.id.desc(),
         ).limit(limit)).mappings().all()
@@ -125,10 +121,10 @@ class TargetEconomicMapper:
         if not key:
             return None
         return self.db.execute(select(
-            ReviewHistory.case_id,
-            ReviewHistory.operation,
-            ReviewHistory.request_json,
-        ).where(ReviewHistory.idempotency_key == key)).mappings().one_or_none()
+            ReviewRevision.review_case_id.label("case_id"),
+            ReviewRevision.operation,
+            ReviewRevision.request_json,
+        ).where(ReviewRevision.idempotency_key == key)).mappings().one_or_none()
 
     def latest_plan_payload(self, case_id: int) -> dict | None:
         value = self.db.scalar(select(ReviewHistory.request_json).where(
@@ -180,13 +176,9 @@ class TargetEconomicMapper:
         if not values:
             return []
         cases = [ReviewCase(
-            review_type="DEFAULT",
-            behavior_code="DEFAULT",
+            behavior_type=0,
             status="CONFIRMED",
-            allocation_status="COMPLETE",
-            version=1,
             title=fact.counterparty or fact.summary or "默认交易",
-            result_json="{}",
             created_time=now,
             updated_time=now,
         ) for fact, _amount, _account_code in values]
@@ -209,12 +201,9 @@ class TargetEconomicMapper:
         self.db.add_all(entries)
         self.db.flush()
         allocations = [ReviewCaseBill(
-            case_id=case.id,
-            bill_id=fact.id,
-            economic_id=entry.id,
-            entry_type=0,
-            role="DEFAULT_INCOME_AND_EXPENSE",
-            party="",
+            review_case_id=case.id,
+            transaction_fact_id=fact.id,
+            ledger_entry_id=entry.id,
             amount_value=amount_value,
             amount_scale=fact.amount_scale,
             currency_code=fact.currency_code,
@@ -234,15 +223,11 @@ class TargetEconomicMapper:
             })
             after_json = self._snapshot(case, [entry], [allocation])
             histories.append(ReviewHistory(
-                case_id=case.id,
-                version=case.version,
-                operation=operation,
-                schema_version=2,
+                review_case_id=case.id,
+                operation="CREATE",
                 request_json=request_json,
                 before_json="{}",
                 after_json=after_json,
-                snapshot_hash=hashlib.sha256(after_json.encode()).hexdigest(),
-                reverses_history_id=0,
                 actor="system",
                 reason="ensure every accepted fact has complete economic coverage",
                 idempotency_key="",
@@ -268,36 +253,13 @@ class TargetEconomicMapper:
         record_history: bool = True,
     ) -> int:
         case = ReviewCase(
-            review_type="LEDGER",
-            behavior_code="BORROW_AND_REPAY" if behavior_type == 1 else "NORMAL_TRANSACTION",
-            status="PENDING",
-            allocation_status="COMPLETE",
-            version=1,
+            behavior_type=behavior_type,
+            status="CONFIRMED",
             title=title,
-            result_json="{}",
             created_time=now,
             updated_time=now,
         )
         self.db.add(case)
-        self.db.flush()
-        entry_types = {
-            item["client_key"]: item["entry_type"]
-            for item in economics
-        }
-        rows = [ReviewCaseBill(
-                case_id=case.id,
-                bill_id=item["fact_id"],
-                economic_id=0,
-                entry_type=entry_types[item["economic_key"]],
-                role=item["role"],
-                party="",
-                amount_value=item["amount_value"],
-                amount_scale=item["amount_scale"],
-                currency_code=item["currency_code"],
-                created_time=now,
-                updated_time=now,
-            ) for item in allocations]
-        self.db.add_all(rows)
         self.db.flush()
         if record_history:
             snapshot = self._review_json(self.detail(case.id))
@@ -394,8 +356,11 @@ class TargetEconomicMapper:
             LedgerEntry, LedgerEntry.id == ReviewCaseBill.economic_id,
         ).where(
             ReviewCaseBill.bill_id.in_(fact_ids),
-            ReviewCase.behavior_code == "DEFAULT",
             ReviewCase.status == "CONFIRMED",
+            select(ReviewRevision.id).where(
+                ReviewRevision.review_case_id == ReviewCase.id,
+                ReviewRevision.actor == "system",
+            ).exists(),
         ).order_by(ReviewCaseBill.bill_id, ReviewCaseBill.id)).mappings().all())
 
     def activate_case(
@@ -430,34 +395,25 @@ class TargetEconomicMapper:
             for default in defaults:
                 before_default = self._canonical({
                     "id": default.id,
-                    "behavior_code": "DEFAULT",
                     "status": "CONFIRMED",
-                    "version": default.version,
                     "allocations": rows_by_case[default.id],
                 })
                 default.status = "REVOKED"
-                default.version += 1
                 default.updated_time = now
                 after_default = self._canonical({
                     "id": default.id,
-                    "behavior_code": "DEFAULT",
                     "status": "REVOKED",
-                    "version": default.version,
                     "allocations": rows_by_case[default.id],
                 })
                 self.db.add(ReviewHistory(
-                    case_id=default.id,
-                    version=default.version,
-                    operation="AUTO_REPLACED",
-                    schema_version=2,
+                    review_case_id=default.id,
+                    operation="REVOKE",
                     request_json=self._canonical({
                         "operation": "AUTO_REPLACED",
                         "replacement_case_id": case_id,
                     }),
                     before_json=before_default,
                     after_json=after_default,
-                    snapshot_hash=hashlib.sha256(after_default.encode()).hexdigest(),
-                    reverses_history_id=0,
                     actor="system",
                     reason="amount was reassigned by a confirmed economic review",
                     idempotency_key="",
@@ -467,23 +423,10 @@ class TargetEconomicMapper:
             # Revoked coverage remains immutable evidence. Effectiveness is
             # determined by the owning ReviewCase status.
         case.status = "CONFIRMED"
-        case.version += 1
         case.updated_time = now
-        allocation_models = list(self.db.scalars(select(
-            ReviewCaseBill
-        ).where(ReviewCaseBill.case_id == case_id).order_by(ReviewCaseBill.id)).all())
-        if len(allocation_models) != len(allocations):
-            raise RuntimeError("review allocation plan changed before confirmation")
         economics_by_key = {item["client_key"]: item for item in economics}
         entries = []
-        for allocation_model, allocation in zip(allocation_models, allocations):
-            if (
-                allocation_model.bill_id not in facts_by_id
-                or
-                allocation_model.bill_id != allocation["fact_id"]
-                or allocation_model.amount_value != allocation["amount_value"]
-            ):
-                raise RuntimeError("review allocation plan changed before confirmation")
+        for allocation in allocations:
             item = economics_by_key[allocation["economic_key"]]
             fields = self._economic_fields(
                 **item,
@@ -491,11 +434,18 @@ class TargetEconomicMapper:
             )
             entry = LedgerEntry(created_time=now, **fields)
             self.db.add(entry)
-            entries.append((allocation_model, entry))
+            entries.append((allocation, entry))
         self.db.flush()
-        for allocation_model, entry in entries:
-            allocation_model.economic_id = entry.id
-            allocation_model.updated_time = now
+        self.db.add_all([ReviewAllocation(
+            review_case_id=case_id,
+            transaction_fact_id=allocation["fact_id"],
+            ledger_entry_id=entry.id,
+            amount_value=allocation["amount_value"],
+            amount_scale=allocation["amount_scale"],
+            currency_code=allocation["currency_code"],
+            created_time=now,
+            updated_time=now,
+        ) for allocation, entry in entries])
         self.db.flush()
         self.create_defaults(
             [(fact, amount, account_code) for fact, amount, account_code in residuals],
@@ -537,7 +487,6 @@ class TargetEconomicMapper:
             return False
         before = self.detail(case_id)
         case.status = "REVOKED"
-        case.version += 1
         case.updated_time = now
         self.db.flush()
         self.create_defaults([
@@ -583,10 +532,8 @@ class TargetEconomicMapper:
         )).all()) if default_case_ids else []
         for default in defaults:
             default.status = "REVOKED"
-            default.version += 1
             default.updated_time = now
         case.status = "CONFIRMED"
-        case.version += 1
         case.updated_time = now
         self.create_defaults(residuals, now, operation="AUTO_RESIDUAL")
         self.db.flush()
@@ -823,15 +770,11 @@ class TargetEconomicMapper:
         now: datetime,
     ) -> None:
         self.db.add(ReviewHistory(
-            case_id=case.id,
-            version=case.version,
+            review_case_id=case.id,
             operation=operation,
-            schema_version=2,
             request_json=request_json,
             before_json=before_json,
             after_json=after_json,
-            snapshot_hash=hashlib.sha256(after_json.encode()).hexdigest(),
-            reverses_history_id=reverses_history_id,
             actor=actor,
             reason=reason,
             idempotency_key=idempotency_key,
@@ -843,9 +786,8 @@ class TargetEconomicMapper:
     def _snapshot(self, case, entries, allocations) -> str:
         return self._canonical({
             "id": case.id,
-            "behavior_code": case.behavior_code,
+            "behavior_type": case.behavior_type,
             "status": case.status,
-            "version": case.version,
             "title": case.title,
             "economics": [{
                 "id": entry.id,

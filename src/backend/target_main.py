@@ -9,11 +9,10 @@ from fastapi.templating import Jinja2Templates
 
 from backend.router.target_intake import router as target_intake_router
 from backend.router.target_economic import router as target_economic_router
-from backend.router.target_review import router as target_review_router, v2_router as economic_review_router
+from backend.router.target_review import v2_router as economic_review_router
 from backend.router.target_tag import router as target_tag_router
 from backend.core import target_database
 from backend.core.config import APP_DISPLAY_NAME, RESOURCE_DIR
-from backend.service.target_economic_service import TargetEconomicService
 
 
 templates = Jinja2Templates(directory=RESOURCE_DIR / "frontend")
@@ -22,8 +21,6 @@ templates = Jinja2Templates(directory=RESOURCE_DIR / "frontend")
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     target_database.init_target_db()
-    with target_database.SessionLocal() as db:
-        TargetEconomicService(db).backfill_defaults()
     yield
 
 
@@ -36,7 +33,6 @@ app.mount("/static", StaticFiles(directory=RESOURCE_DIR / "frontend"), name="sta
 app.mount("/asset", StaticFiles(directory=RESOURCE_DIR / "asset"), name="asset")
 app.include_router(target_intake_router)
 app.include_router(target_economic_router)
-app.include_router(target_review_router)
 app.include_router(economic_review_router)
 app.include_router(target_tag_router)
 

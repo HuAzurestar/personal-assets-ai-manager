@@ -1,0 +1,35 @@
+from __future__ import annotations
+
+from sqlalchemy import BigInteger, Index, Integer, SmallInteger, String, UniqueConstraint, literal
+from sqlalchemy.orm import Mapped, column_property, mapped_column, synonym
+
+from backend.core.target_database import TargetBase
+from backend.entity.base import TargetTable
+
+
+class ReviewAllocation(TargetTable, TargetBase):
+    __tablename__ = "review_allocation"
+    __table_args__ = (
+        UniqueConstraint("ledger_entry_id", name="uq_review_allocation_ledger_entry_id"),
+        Index("ix_review_allocation_case_id", "review_case_id", "id"),
+        Index(
+            "ix_review_allocation_fact_case",
+            "transaction_fact_id",
+            "review_case_id",
+            "id",
+        ),
+    )
+
+    review_case_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    transaction_fact_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    ledger_entry_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    amount_value: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    amount_scale: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=2)
+    currency_code: Mapped[str] = mapped_column(String(12), nullable=False)
+
+    case_id = synonym("review_case_id")
+    bill_id = synonym("transaction_fact_id")
+    economic_id = synonym("ledger_entry_id")
+    entry_type = column_property(literal(0))
+    role = column_property(literal("ALLOCATED"))
+    party = column_property(literal(""))

@@ -66,16 +66,17 @@ def test_review_lookup_from_bill_uses_implicit_id_index():
     engine = _target_engine()
     plan = _plan(
         engine,
-        "SELECT case_id FROM review_case_bill WHERE bill_id IN (1, 2, 3)",
+        "SELECT review_case_id FROM review_allocation "
+        "WHERE transaction_fact_id IN (1, 2, 3)",
     )
-    assert "ix_review_case_bill_bill_case" in plan
+    assert "ix_review_allocation_fact_case" in plan
 
 
 def test_review_lines_batch_lookup_uses_case_index():
     engine = _target_engine()
     plan = _plan(
         engine,
-        "SELECT id, case_id, bill_id FROM review_case_bill "
-        "WHERE case_id IN (1, 2, 3) ORDER BY case_id, id",
+        "SELECT id, review_case_id, transaction_fact_id FROM review_allocation "
+        "WHERE review_case_id IN (1, 2, 3) ORDER BY review_case_id, id",
     )
-    assert "ix_review_case_bill_case_id" in plan
+    assert "ix_review_allocation_case_id" in plan

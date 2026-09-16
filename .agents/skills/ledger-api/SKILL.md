@@ -13,8 +13,8 @@ description: Change PAAM ledger projections, summaries, tags, Controllers, DTOs/
 - Ledger entry type is exactly INCOME_AND_EXPENSE, INTERNAL_TRANSFER, or
   ASSET_AND_LIABILITY. The last type classifies cash flow only; it does not
   maintain asset units, valuations, or balances. Review behavior is separate.
-- `review_case_bill` is the physical v2 ternary Allocation during migration:
-  one row maps one Review, one Fact, and one Economic.
+- `review_allocation` is the physical ternary Allocation: one row maps one
+  Review, one Fact, and one LedgerEntry.
 - A single Economic never mixes direction or currency. Never store an exchange
   rate or convert currencies; summaries remain per currency.
 - List and summary SQL names every selected column. Sparse tags are loaded once with `WHERE ledger_id IN (...)` and assembled by ID.
