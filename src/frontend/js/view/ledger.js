@@ -477,7 +477,7 @@ function showSummaryDetail(type) {
 async function ledgerReviewsPage() {
   const query = new URLSearchParams({ page: state.params.get("page") || "1", page_size: "20" });
   if (state.params.get("status")) query.set("status", state.params.get("status"));
-  const result = await request(`/paam/review/v2/case/page?${query}`);
+  const result = await request(`/paam/ledger/v1/review/list?${query}`);
   state.detailEconomicReviews = new Map(result.items.map((item) => [item.id, item]));
   const rows = result.items.map((item) => `<tr class="detail-click-row" tabindex="0" data-review-row="${item.id}">
     <td>${date(item.updated_time)}</td><td><button type="button" class="detail-primary" data-action="economic-review-detail" data-id="${item.id}"><strong>${esc(item.title || item.behavior_code || "未填写标题")}</strong><small>#${item.id} · ${esc(item.behavior_code || "未说明行为")}</small></button></td>
@@ -488,7 +488,7 @@ async function ledgerReviewsPage() {
 }
 
 async function showEconomicReview(id) {
-  const item = await request(`/paam/review/v2/case/detail/${id}`);
+  const item = await request(`/paam/ledger/v1/review/${id}`);
   const economics = item.economics.map((flow) => `<div class="drawer-review-row"><span><strong>Economic #${flow.id} · ${esc(typeNames[flow.economic_type] || flow.economic_type)}</strong><small>${flow.cash_direction} · ${esc(flow.currency_code)}</small></span><strong>${money({ amount_value: flow.amount_value, amount_scale: flow.amount_scale, currency_code: flow.currency_code })}</strong></div>`).join("");
   const allocations = item.allocations.map((row) => `<div class="drawer-review-row"><span><strong>Fact #${row.fact_id} → Economic #${row.economic_id}</strong><small>${esc(row.role)}</small></span><strong>${money({ amount_value: row.amount_value, amount_scale: row.amount_scale, currency_code: row.currency_code })}</strong></div>`).join("");
   let action = "";
@@ -501,7 +501,7 @@ async function showEconomicReview(id) {
 async function transitionEconomicReview(button) {
   const labels = { confirm: "确认", revoke: "撤销", restore: "恢复" };
   if (!confirm(`${labels[button.dataset.kind]}这次经济审查？`)) return;
-  await jsonRequest(`/paam/review/v2/case/${button.dataset.kind}/${button.dataset.id}`, "POST", { expected_version: Number(button.dataset.version), reason: `人工${labels[button.dataset.kind]}经济审查`, idempotency_key: key() });
+  await jsonRequest(`/paam/ledger/v1/review/${button.dataset.id}/${button.dataset.kind}`, "POST", { expected_version: Number(button.dataset.version), reason: `人工${labels[button.dataset.kind]}经济审查`, idempotency_key: key() });
   closeDialogs();
   toast(`${labels[button.dataset.kind]}完成，经济流水已重新投影`);
   await render();
@@ -581,7 +581,7 @@ async function openEconomicReviewEditor() {
         claim_side: data.get(`side-${item.key}`),
         reversal_of_id: Number(data.get(`reversal-${item.key}`) || 0),
       }));
-      const created = await jsonRequest("/paam/review/v2/case/create", "POST", {
+      const created = await jsonRequest("/paam/ledger/v1/review", "POST", {
         behavior_code: data.get("behavior_code"),
         title: data.get("title") || "",
         result: {}, economics: definitions, allocations,

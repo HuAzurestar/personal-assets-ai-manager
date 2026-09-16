@@ -90,6 +90,7 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
             assert "/paam/import/v1/preview/" in script.text
             assert "/paam/review/v2" in script.text
             assert "/paam/ledger/v1/flow" in script.text
+            assert "/paam/ledger/v1/review" in script.text
             for path in (
                 "/static/js/util/core.js", "/static/js/navigation.js",
                 "/static/js/view/account.js", "/static/js/api/client.js",

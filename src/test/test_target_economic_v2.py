@@ -8,6 +8,7 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 
 from backend.router.ledger import router as ledger_router
+from backend.router.ledger_fact_legacy import router as ledger_fact_legacy_router
 from backend.router.ledger_review import router as ledger_review_router
 from backend.router.dependency import get_db
 from backend.entity import BillFact, LedgerEntry, LedgerEntrySource, ReviewCase, ReviewCaseBill
@@ -25,6 +26,7 @@ def economic_api(tmp_path):
     init_target_db(bind=engine)
     api = FastAPI()
     api.include_router(ledger_review_router)
+    api.include_router(ledger_fact_legacy_router)
     api.include_router(ledger_router)
 
     def override_db():
@@ -67,7 +69,7 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
         ("IN", 10000, "CNY"),
         ("IN", 10000, "CNY"),
     ])
-    response = client.post("/paam/review/v2/case/create", json={
+    response = client.post("/paam/ledger/v1/review", json={
         "behavior_code": "ADVANCE",
         "title": "垫付分摊",
         "economics": [
@@ -92,7 +94,7 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
     assert len(case["allocations"]) == 6
 
     confirmed = client.post(
-        f"/paam/review/v2/case/confirm/{case['id']}",
+        f"/paam/ledger/v1/review/{case['id']}/confirm",
         json={"expected_version": 1, "idempotency_key": "advance-confirm"},
     )
     assert confirmed.status_code == 200, confirmed.text
@@ -127,7 +129,7 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
         assert coverage == dict(zip(fact_ids, [50000, 10000, 10000, 10000, 10000]))
 
     revoked = client.post(
-        f"/paam/review/v2/case/revoke/{case['id']}",
+        f"/paam/ledger/v1/review/{case['id']}/revoke",
         json={"expected_version": 2, "idempotency_key": "advance-revoke"},
     )
     assert revoked.status_code == 200, revoked.text
@@ -171,14 +173,14 @@ def test_loan_many_facts_compose_claim_and_balance_to_zero(economic_api):
         {"fact_id": fact_ids[3], "economic_key": "repayment-2", "amount_value": 300000},
         {"fact_id": fact_ids[4], "economic_key": "repayment-3", "amount_value": 400000},
     ]
-    case = client.post("/paam/review/v2/case/create", json={
+    case = client.post("/paam/ledger/v1/review", json={
         "behavior_code": "LOAN",
         "economics": economics,
         "allocations": allocations,
         "idempotency_key": "loan-create",
     }).json()["body"]
     confirmed = client.post(
-        f"/paam/review/v2/case/confirm/{case['id']}",
+        f"/paam/ledger/v1/review/{case['id']}/confirm",
         json={"expected_version": 1, "idempotency_key": "loan-confirm"},
     )
     assert confirmed.status_code == 200, confirmed.text
@@ -195,7 +197,7 @@ def test_loan_many_facts_compose_claim_and_balance_to_zero(economic_api):
 def test_one_economic_cannot_mix_direction_or_currency(economic_api):
     client, sessions = economic_api
     out_id, in_id = _facts(sessions, [("OUT", 12000, "CNY"), ("IN", 2000, "USD")])
-    response = client.post("/paam/review/v2/case/create", json={
+    response = client.post("/paam/ledger/v1/review", json={
         "behavior_code": "FX_EXCHANGE",
         "economics": [{"client_key": "mixed", "economic_type": "ACCOUNT_TRANSFER"}],
         "allocations": [
@@ -210,7 +212,7 @@ def test_one_economic_cannot_mix_direction_or_currency(economic_api):
 def test_partial_manual_reviews_keep_exact_default_coverage_and_are_idempotent(economic_api):
     client, sessions = economic_api
     fact_id = _facts(sessions, [("OUT", 10000, "CNY")])[0]
-    created = client.post("/paam/review/v2/case/create", json={
+    created = client.post("/paam/ledger/v1/review", json={
         "behavior_code": "SPLIT_PURCHASE",
         "economics": [{"client_key": "part", "economic_type": "TRANSACTION"}],
         "allocations": [{
@@ -221,14 +223,14 @@ def test_partial_manual_reviews_keep_exact_default_coverage_and_are_idempotent(e
         "idempotency_key": "partial-create",
     }).json()["body"]
     payload = {"expected_version": 1, "idempotency_key": "partial-confirm"}
-    first = client.post(f"/paam/review/v2/case/confirm/{created['id']}", json=payload)
-    replay = client.post(f"/paam/review/v2/case/confirm/{created['id']}", json=payload)
+    first = client.post(f"/paam/ledger/v1/review/{created['id']}/confirm", json=payload)
+    replay = client.post(f"/paam/ledger/v1/review/{created['id']}/confirm", json=payload)
     assert first.status_code == replay.status_code == 200
     assert first.json()["body"] == replay.json()["body"]
 
     candidates = client.get("/paam/review/v2/fact/candidates").json()["body"]
     assert [(item["id"], item["available_value"]) for item in candidates] == [(fact_id, 6000)]
-    cases = client.get("/paam/review/v2/case/page").json()["body"]
+    cases = client.get("/paam/ledger/v1/review/list").json()["body"]
     assert cases["total"] == 1
     assert cases["items"][0]["economic_count"] == 1
     assert cases["items"][0]["allocation_count"] == 1
@@ -249,7 +251,7 @@ def test_partial_manual_reviews_keep_exact_default_coverage_and_are_idempotent(e
 def test_fx_review_uses_two_single_currency_account_transfers(economic_api):
     client, sessions = economic_api
     cny_id, usd_id = _facts(sessions, [("OUT", 12000, "CNY"), ("IN", 2000, "USD")])
-    case = client.post("/paam/review/v2/case/create", json={
+    case = client.post("/paam/ledger/v1/review", json={
         "behavior_code": "FX_EXCHANGE",
         "economics": [
             {"client_key": "cny", "economic_type": "ACCOUNT_TRANSFER"},
@@ -261,7 +263,7 @@ def test_fx_review_uses_two_single_currency_account_transfers(economic_api):
         ],
         "idempotency_key": "fx-create",
     }).json()["body"]
-    response = client.post(f"/paam/review/v2/case/confirm/{case['id']}", json={
+    response = client.post(f"/paam/ledger/v1/review/{case['id']}/confirm", json={
         "expected_version": 1,
         "idempotency_key": "fx-confirm",
     })
@@ -285,7 +287,7 @@ def test_transaction_reversal_is_linked_and_cannot_exceed_original(economic_api)
         ("IN", 4000, "CNY"),
         ("IN", 7000, "CNY"),
     ])
-    seed = client.post("/paam/review/v2/case/create", json={
+    seed = client.post("/paam/ledger/v1/review", json={
         "behavior_code": "SEED_DEFAULT",
         "economics": [{"client_key": "unused", "economic_type": "TRANSACTION"}],
         "allocations": [{"fact_id": original_id, "economic_key": "unused", "amount_value": 1}],
@@ -297,7 +299,7 @@ def test_transaction_reversal_is_linked_and_cannot_exceed_original(economic_api)
     ).json()["items"][0]["id"]
 
     def reversal(fact_id, amount, suffix):
-        return client.post("/paam/review/v2/case/create", json={
+        return client.post("/paam/ledger/v1/review", json={
             "behavior_code": "REFUND",
             "economics": [{
                 "client_key": "refund",
@@ -313,14 +315,14 @@ def test_transaction_reversal_is_linked_and_cannot_exceed_original(economic_api)
         }).json()["body"]
 
     first = reversal(refund_1, 4000, "one")
-    confirmed = client.post(f"/paam/review/v2/case/confirm/{first['id']}", json={
+    confirmed = client.post(f"/paam/ledger/v1/review/{first['id']}/confirm", json={
         "expected_version": 1,
         "idempotency_key": "refund-confirm-one",
     })
     assert confirmed.status_code == 200
     assert confirmed.json()["body"]["economics"][0]["reversal_of_id"] == original_economic_id
 
-    rejected = client.post("/paam/review/v2/case/create", json={
+    rejected = client.post("/paam/ledger/v1/review", json={
         "behavior_code": "REFUND",
         "economics": [{
             "client_key": "refund",
