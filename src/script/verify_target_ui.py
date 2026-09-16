@@ -188,10 +188,18 @@ def run() -> None:
                     re.compile(r"active")
                 )
                 page.locator('[data-action="economic-detail"]').first.click()
-                expect(page.locator("dialog.detail-view-drawer[open]")).to_contain_text(
+                economic_drawer = page.locator("dialog.detail-view-drawer[open]")
+                expect(economic_drawer).to_contain_text(
                     "来源事实"
                 )
-                page.locator("dialog[open] [data-close]").first.click()
+                economic_drawer.locator('[data-action="edit-ledger-account"]').click()
+                account_form = page.locator('dialog[open] [data-form="ledger-account"]')
+                expect(account_form).to_be_visible()
+                account_form.locator('input[name="account_code"]').fill(
+                    "ui-ledger-account"
+                )
+                account_form.locator("button.primary").click()
+                expect(page.get_by_text("ui-ledger-account").first).to_be_visible()
 
                 page.locator('.detail-tabs [data-page="ledger-imports"]').click()
                 expect(page.locator('[data-action="import-file-detail"]')).to_be_visible()

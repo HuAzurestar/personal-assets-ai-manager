@@ -219,14 +219,6 @@ class TargetEconomicMapper:
         ).limit(page_size)).mappings().all()
         return [dict(row) for row in rows], total
 
-    def fact_candidates(self, limit: int) -> list[dict]:
-        rows = self.db.execute(
-            self._fact_candidate_query().order_by(
-                BillFact.occurred_time.desc(), BillFact.id.desc(),
-            ).limit(limit)
-        ).mappings().all()
-        return [dict(row) for row in rows]
-
     def idempotency(self, key: str):
         if not key:
             return None

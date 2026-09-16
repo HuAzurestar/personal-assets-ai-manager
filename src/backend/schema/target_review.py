@@ -41,16 +41,6 @@ class TargetReviewTransitionRequest(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=120)
 
 
-class TargetAccountSetRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    account_code: str = Field(min_length=1, max_length=120)
-    expected_version: int = Field(ge=0)
-    actor: str = Field(default="local-user", min_length=1, max_length=120)
-    reason: str = Field(default="", max_length=2000)
-    idempotency_key: str = Field(min_length=1, max_length=120)
-
-
 class TargetFactConflictResolveRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -100,12 +90,6 @@ class TargetReviewCaseRead(BaseModel):
     history: list[TargetReviewHistoryRead]
     created_time: datetime
     updated_time: datetime
-
-
-class TargetReviewCaseResponse(BaseModel):
-    status: Literal["success"] = "success"
-    message: str = "ok"
-    body: TargetReviewCaseRead
 
 
 class TargetFactConflictFilter(BaseModel):
@@ -304,19 +288,6 @@ class TargetFactAllocationCandidateRead(BaseModel):
     available_value: int
 
 
-class TargetFactAllocationCandidatePageRead(BaseModel):
-    items: list[TargetFactAllocationCandidateRead]
-    total: int
-    page: int
-    page_size: int
-
-
-class TargetFactAllocationCandidatePageResponse(BaseModel):
-    status: Literal[200] = 200
-    message: str = "ok"
-    body: TargetFactAllocationCandidatePageRead
-
-
 class TargetReviewCandidateFilter(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -347,7 +318,5 @@ class TargetReviewCandidatePageResponse(BaseModel):
     body: TargetReviewCandidatePageRead
 
 
-class TargetFactAllocationCandidateResponse(BaseModel):
-    status: Literal["success"] = "success"
-    message: str = "ok"
-    body: list[TargetFactAllocationCandidateRead]
+# Review candidates are a Review creation aid, not a Transaction Fact PO page.
+

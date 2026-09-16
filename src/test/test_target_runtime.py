@@ -30,7 +30,6 @@ def test_openapi_locks_canonical_ledger_v1_contract():
         "/paam/ledger/v1/review/{review_id}/confirm",
         "/paam/ledger/v1/review/{review_id}/revoke",
         "/paam/ledger/v1/review/{review_id}/restore",
-        "/paam/ledger/v1/fact/list",
         "/paam/ledger/v1/review_candidate/list",
         "/paam/ledger/v1/flow/{ledger_id}/account",
     } <= paths
@@ -43,7 +42,6 @@ def test_openapi_locks_canonical_ledger_v1_contract():
         "/paam/import/v1/fact_conflict/{conflict_id}/dismiss",
         "/paam/import/v1/fact_conflict/{conflict_id}/reopen",
         "/paam/import/v1/import_file/summary",
-        "/paam/review/v1/account/set/{fact_id}",
     } <= paths
     assert "/paam/review/v1/case/page" not in paths
     assert "/paam/review/v1/case/detail/{case_id}" not in paths
@@ -53,6 +51,10 @@ def test_openapi_locks_canonical_ledger_v1_contract():
     assert "/paam/import/v1/account/list" not in paths
     assert "/paam/ledger/v1/entry/list" not in paths
     assert "/paam/review/v1/case/create" not in paths
+    assert "/paam/ledger/v1/fact/list" not in paths
+    assert "/paam/review/v1/account/set/{fact_id}" not in paths
+    assert "/paam/review/v1/account/revoke/{case_id}" not in paths
+    assert "/paam/review/v1/account/restore/{case_id}" not in paths
 
     schemas = specification["components"]["schemas"]
     for name in (
@@ -61,7 +63,6 @@ def test_openapi_locks_canonical_ledger_v1_contract():
         "EconomicSummaryResponse",
         "TargetEconomicReviewResponse",
         "TargetEconomicReviewPageResponse",
-        "TargetFactAllocationCandidatePageResponse",
         "ImportFactConflictResponse",
         "ImportFactConflictPageResponse",
         "ImportFileSummaryResponse",
@@ -198,7 +199,9 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
             assert "/paam/import/v1/preview/" in script.text
             assert "/paam/ledger/v1/flow" in script.text
             assert "/paam/ledger/v1/review" in script.text
-            assert "/paam/ledger/v1/fact" in script.text
+            assert "/paam/ledger/v1/review_candidate" in script.text
+            assert "/paam/ledger/v1/fact/list" not in script.text
+            assert "/paam/review/v1/account" not in script.text
             assert "/paam/review/v2" not in script.text
             assert "/paam/ledger/v1/entry/" not in script.text
             for path in (

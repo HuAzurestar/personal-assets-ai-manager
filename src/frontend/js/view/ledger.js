@@ -238,7 +238,7 @@ async function loadFactCandidates(maxItems) {
   const pageSize = Math.min(maxItems, 100);
   let page = 1;
   while (items.length < maxItems) {
-    const result = await request(`/paam/ledger/v1/fact/list?${new URLSearchParams({ page, page_size: pageSize })}`);
+    const result = await request(`/paam/ledger/v1/review_candidate/list?${new URLSearchParams({ page, page_size: pageSize })}`);
     items.push(...result.items);
     if (!result.items.length || items.length >= result.total) break;
     page += 1;
@@ -326,7 +326,7 @@ async function showEconomicDetail(id) {
   const facts = detail.facts.map((item) => `<div class="drawer-review-row"><span><strong>Fact #${item.id} · ${esc(item.summary || item.counterparty)}</strong><small>${date(item.occurred_time)} · Fact 来源账户 ${esc(item.account_code)}</small></span><strong>${money(item.amount)}</strong></div>`).join("");
   const reviews = detail.reviews.map((item) => `<div class="drawer-review-row"><span><strong>Review #${item.id} · ${esc(item.behavior_code)}</strong><small>${esc(item.title)} · ${esc(statusNames[item.status] || item.status)}</small></span><span>v${item.version}</span></div>`).join("");
   const typeCode = flow.economic_type;
-  detailDrawer({ title: `账本流水 #${flow.id}`, kicker: `${esc(typeNames[typeCode] || typeCode)} · LEDGER #${flow.id}`, subtitle: `${date(flow.occurred_time)} · ${flow.cash_direction === "IN" ? "流入" : "流出"}`, body: `<section class="drawer-record-card"><div><span>已确认账本投影</span><h3>${esc(typeNames[typeCode] || typeCode)}</h3><small>${esc(flow.account_code)} · 单方向、单币种</small></div><strong class="ledger-fact-money ${flow.cash_direction === "IN" ? "plus" : "minus"}">${signedMoney(flow.amount, flow.cash_direction)}</strong></section><section class="drawer-section"><h3>来源事实</h3>${facts || '<p class="muted">没有关联事实</p>'}</section><section class="drawer-section"><h3>审查与分配</h3>${reviews}${allocations}</section>`, footer: `<button type="button" class="primary" data-action="edit-tags" data-id="${flow.id}">编辑标签</button>` });
+  detailDrawer({ title: `账本流水 #${flow.id}`, kicker: `${esc(typeNames[typeCode] || typeCode)} · LEDGER #${flow.id}`, subtitle: `${date(flow.occurred_time)} · ${flow.cash_direction === "IN" ? "流入" : "流出"}`, body: `<section class="drawer-record-card"><div><span>已确认账本投影</span><h3>${esc(typeNames[typeCode] || typeCode)}</h3><small>${esc(flow.account_code)} · 单方向、单币种</small></div><strong class="ledger-fact-money ${flow.cash_direction === "IN" ? "plus" : "minus"}">${signedMoney(flow.amount, flow.cash_direction)}</strong></section><section class="drawer-section"><h3>来源事实</h3>${facts || '<p class="muted">没有关联事实</p>'}</section><section class="drawer-section"><h3>审查与分配</h3>${reviews}${allocations}</section>`, footer: `<button type="button" class="quiet" data-action="edit-ledger-account" data-id="${flow.id}">编辑账户</button><button type="button" class="primary" data-action="edit-tags" data-id="${flow.id}">编辑标签</button>` });
 }
 
 function showSummaryDetail(type) {
@@ -544,8 +544,9 @@ async function editTags(ledgerId) {
   bindPage(dialog);
 }
 
-async function editAccount(button) {
-  const dialog = modal("修正事实账户", `<form data-form="account" data-fact="${button.dataset.fact}" data-ledger="${button.dataset.ledger}" data-version="${button.dataset.version}" class="stack"><label>账户代码<input name="account_code" value="${esc(button.dataset.account)}" required maxlength="120"></label><label>修正原因<input name="reason" value="人工核对原始证据"></label><div class="actions"><button class="primary">保存账户修正</button></div></form>`, false);
+async function editLedgerAccount(ledgerId) {
+  const account = await request(`/paam/ledger/v1/flow/${ledgerId}/account`);
+  const dialog = modal("编辑账本账户", `<form data-form="ledger-account" data-ledger="${account.ledger_id}" data-version="${account.projection_version}" class="stack"><label>账户代码<input name="account_code" value="${esc(account.account_code)}" required maxlength="120"></label><div class="actions"><button class="primary">保存账本账户</button></div></form>`, false);
   bindPage(dialog);
 }
 
@@ -1124,14 +1125,13 @@ function bindPage(root) {
   });
   $$('[data-action="fact-conflict-detail"]', root).forEach((button) => button.onclick = () => showFactConflict(button.dataset.id).catch((error) => toast(error.message, true)));
   $$('[data-action="edit-tags"]', root).forEach((button) => button.onclick = () => editTags(button.dataset.id).catch((error) => toast(error.message, true)));
-  $$('[data-action="account"]', root).forEach((button) => button.onclick = () => editAccount(button));
+  $$('[data-action="edit-ledger-account"]', root).forEach((button) => button.onclick = () => editLedgerAccount(button.dataset.id).catch((error) => toast(error.message, true)));
   $('[data-action="new-view"]', root)?.addEventListener("click", () => simpleDictionaryDialog("view"));
   $$('[data-action="new-tag"]', root).forEach((button) => button.onclick = () => openInlineTag(button));
   $$('[data-action="new-tag-inline"]', root).forEach((button) => button.onclick = () => openInlineTag(button));
   $$('[data-action="cancel-tag"]', root).forEach((button) => button.onclick = () => closeInlineTag(button.closest("form")));
   $$('[data-action="view-status"]', root).forEach((button) => button.onclick = () => dictionaryStatus("view", button).catch((error) => toast(error.message, true)));
   $$('[data-action="tag-status"]', root).forEach((button) => button.onclick = () => dictionaryStatus("tag", button).catch((error) => toast(error.message, true)));
-  $$('[data-action="account-transition"]', root).forEach((button) => button.onclick = () => transitionAccount(button).catch((error) => toast(error.message, true)));
   $$('[data-action="conflict-transition"]', root).forEach((button) => button.onclick = () => transitionConflict(button).catch((error) => toast(error.message, true)));
   $$('[data-action="conflict-resolve"]', root).forEach((button) => button.onclick = () => conflictDialog(button));
   const importForm = $('[data-form="import-preview"]', root);
@@ -1228,7 +1228,7 @@ function bindPage(root) {
     });
     form.addEventListener("submit", submitInlineTag);
   });
-  $('[data-form="account"]', root)?.addEventListener("submit", submitAccount);
+  $('[data-form="ledger-account"]', root)?.addEventListener("submit", submitLedgerAccount);
   $('[data-form="dictionary"]', root)?.addEventListener("submit", submitDictionary);
   $('[data-form="conflict"]', root)?.addEventListener("submit", submitConflict);
   $$('form[data-form]', root).forEach(bindCommandForm);
@@ -1242,12 +1242,12 @@ async function submitTags(event) {
     closeDialogs(); toast("标签已保存"); await render();
   } catch (error) { endSubmit(form); showFormError(form, error); }
 }
-async function submitAccount(event) {
+async function submitLedgerAccount(event) {
   event.preventDefault(); const form = event.currentTarget; const data = Object.fromEntries(new FormData(form));
-  const idempotencyKey = beginSubmit(form); if (!idempotencyKey) return;
+  if (!beginSubmit(form)) return;
   try {
-    await jsonRequest(`/paam/review/v1/account/set/${form.dataset.fact}`, "PUT", { ...data, expected_version: Number(form.dataset.version), idempotency_key: idempotencyKey });
-    closeDialogs(); toast("账户修正已保存"); await render();
+    await jsonRequest(`/paam/ledger/v1/flow/${form.dataset.ledger}/account`, "PUT", { ...data, expected_projection_version: Number(form.dataset.version) });
+    closeDialogs(); toast("账本账户已保存"); await render();
   } catch (error) { endSubmit(form); showFormError(form, error); }
 }
 async function confirmImport() {
@@ -1287,14 +1287,6 @@ async function dictionaryStatus(kind, button) {
   const url = kind === "view" ? `/paam/tag/v1/view/${button.dataset.id}` : `/paam/tag/v1/view/${button.dataset.view}/tag/${button.dataset.id}`;
   try { await jsonRequest(url, "PUT", { status: button.dataset.status }); toast("状态已更新"); await render(); }
   catch (error) { button.disabled = false; throw error; }
-}
-async function transitionAccount(button) {
-  if (button.disabled) return;
-  button.disabled = true;
-  try {
-    await jsonRequest(`/paam/review/v1/account/${button.dataset.kind}/${button.dataset.id}`, "POST", { expected_version: Number(button.dataset.version), reason: "用户更新账户修正", idempotency_key: key() });
-    closeDialogs(); toast("账户 Review 已更新"); await render();
-  } catch (error) { button.disabled = false; throw error; }
 }
 async function transitionConflict(button) {
   if (button.disabled) return;

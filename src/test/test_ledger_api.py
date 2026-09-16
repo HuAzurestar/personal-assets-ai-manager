@@ -7,11 +7,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event, func, select
 from sqlalchemy.orm import sessionmaker
 
-from backend.router.ledger_fact import router as ledger_fact_router
 from backend.router.dependency import get_db
 from backend.router.ledger import router as ledger_router
 from backend.router.ledger_account import router as ledger_account_router
-from backend.router.ledger_account_legacy import router as ledger_account_legacy_router
 from backend.router.ledger_review import router as ledger_review_router
 from backend.router.ledger_review_candidate import router as ledger_review_candidate_router
 from backend.router.tag import router as tag_router
@@ -39,8 +37,6 @@ def economic_api(tmp_path):
     api = FastAPI()
     api.include_router(ledger_review_router)
     api.include_router(ledger_account_router)
-    api.include_router(ledger_account_legacy_router)
-    api.include_router(ledger_fact_router)
     api.include_router(ledger_review_candidate_router)
     api.include_router(ledger_router)
     api.include_router(tag_router)
@@ -343,7 +339,7 @@ def test_partial_manual_reviews_keep_exact_default_coverage_and_are_idempotent(e
     assert first.status_code == replay.status_code == 200
     assert first.json()["body"] == replay.json()["body"]
 
-    candidate_page = client.get("/paam/ledger/v1/fact/list").json()["body"]
+    candidate_page = client.get("/paam/ledger/v1/review_candidate/list").json()["body"]
     candidates = candidate_page["items"]
     assert candidate_page["total"] == 1
     assert candidate_page["page"] == 1
@@ -374,7 +370,7 @@ def test_partial_manual_reviews_keep_exact_default_coverage_and_are_idempotent(e
         assert coverage == 10000
 
 
-def test_fact_candidate_list_is_paged_with_fixed_query_count(economic_api):
+def test_review_candidate_list_is_paged_with_fixed_query_count(economic_api):
     client, sessions = economic_api
     fact_ids = _facts(sessions, [
         ("OUT", 1000, "CNY"),
@@ -393,12 +389,14 @@ def test_fact_candidate_list_is_paged_with_fixed_query_count(economic_api):
     engine = sessions.kw["bind"]
     event.listen(engine, "before_cursor_execute", count_selects)
     try:
-        first = client.get("/paam/ledger/v1/fact/list?page=1&page_size=2")
+        first = client.get(
+            "/paam/ledger/v1/review_candidate/list?page=1&page_size=2"
+        )
     finally:
         event.remove(engine, "before_cursor_execute", count_selects)
     assert first.status_code == 200, first.text
     assert first.json()["status"] == first.status_code
-    assert first.json()["message"] == "Ledger facts listed"
+    assert first.json()["message"] == "Ledger review candidates listed"
     page = first.json()["body"]
     assert page["total"] == 3
     assert page["page"] == 1
@@ -406,7 +404,9 @@ def test_fact_candidate_list_is_paged_with_fixed_query_count(economic_api):
     assert len(page["items"]) == 2
     assert len(statements) == 2
 
-    second = client.get("/paam/ledger/v1/fact/list?page=2&page_size=2").json()["body"]
+    second = client.get(
+        "/paam/ledger/v1/review_candidate/list?page=2&page_size=2"
+    ).json()["body"]
     assert second["total"] == 3
     assert len(second["items"]) == 1
 
@@ -551,7 +551,7 @@ def test_tag_sync_uses_allocations_for_every_split_ledger_entry(economic_api):
         assert db.query(LedgerEntryTag).count() == 2
 
 
-def test_account_review_updates_every_split_ledger_and_survives_rebuild(economic_api):
+def test_ledger_account_update_changes_only_selected_split_ledger(economic_api):
     client, sessions = economic_api
     fact_id = _facts(sessions, [("OUT", 10000, "CNY")])[0]
     with sessions() as db:
@@ -574,44 +574,29 @@ def test_account_review_updates_every_split_ledger_and_survives_rebuild(economic
     })
     assert confirmed.status_code == 200, confirmed.text
     ledger_ids = [row["id"] for row in confirmed.json()["body"]["economics"]]
-    corrected = client.put(f"/paam/review/v1/account/set/{fact_id}", json={
+    selected_ledger_id = ledger_ids[0]
+    account = client.get(
+        f"/paam/ledger/v1/flow/{selected_ledger_id}/account"
+    ).json()["body"]
+    corrected = client.put(f"/paam/ledger/v1/flow/{selected_ledger_id}/account", json={
         "account_code": "checked-bank",
-        "expected_version": 0,
-        "idempotency_key": "split-account-set",
+        "expected_projection_version": account["projection_version"],
     })
     assert corrected.status_code == 200, corrected.text
     details = [
         client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]
         for ledger_id in ledger_ids
     ]
-    assert all(item["flow"]["account_code"] == "checked-bank" for item in details)
-    assert all(item["facts"][0]["account_review_version"] == 1 for item in details)
+    assert details[0]["flow"]["account_code"] == "checked-bank"
+    assert details[1]["flow"]["account_code"] == "account-1"
+    assert all(item["facts"][0]["account_code"] == "account-1" for item in details)
     assert all(
         {review["review_type"] for review in item["reviews"]}
-        == {"SPLIT_PURCHASE", "ACCOUNT"}
+        == {"SPLIT_PURCHASE"}
         for item in details
     )
     with sessions() as db:
         assert db.get(BillFact, fact_id).account_code == "account-1"
-
-    revoked = client.post(f"/paam/ledger/v1/review/{case['id']}/revoke", json={
-        "expected_version": 2,
-        "idempotency_key": "split-account-review-revoke",
-    })
-    assert revoked.status_code == 200, revoked.text
-    rebuilt = client.get("/paam/ledger/v1/flow/list").json()["body"]["items"]
-    assert len(rebuilt) == 1
-    assert rebuilt[0]["account_code"] == "checked-bank"
-
-    restored = client.post(f"/paam/ledger/v1/review/{case['id']}/restore", json={
-        "expected_version": 3,
-        "idempotency_key": "split-account-review-restore",
-    })
-    assert restored.status_code == 200, restored.text
-    assert {
-        item["account_code"]
-        for item in client.get("/paam/ledger/v1/flow/list").json()["body"]["items"]
-    } == {"checked-bank"}
 
 def test_ledger_entry_entity_has_only_cash_projection_columns():
     assert set(LedgerEntry.__table__.columns.keys()) == {

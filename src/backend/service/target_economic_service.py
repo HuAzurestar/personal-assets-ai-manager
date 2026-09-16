@@ -18,7 +18,6 @@ from backend.schema.target_review import (
     TargetEconomicReviewSorter,
     TargetEconomicReviewUpdateRequest,
     TargetFactAllocationCandidateRead,
-    TargetFactAllocationCandidatePageRead,
     TargetReviewFactVO,
     TargetReviewCandidateFilter,
     TargetReviewCandidatePageRead,
@@ -107,25 +106,6 @@ class TargetEconomicService:
             q=q,
             filter=filter_value,
             sorter=sorter,
-        )
-
-    def fact_candidates(self, limit: int = 100) -> list[TargetFactAllocationCandidateRead]:
-        return [
-            TargetFactAllocationCandidateRead(**row)
-            for row in self.mapper.fact_candidates(limit)
-        ]
-
-    def fact_candidate_page(
-        self,
-        page: int,
-        page_size: int,
-    ) -> TargetFactAllocationCandidatePageRead:
-        rows, total = self.mapper.fact_candidate_page(page, page_size)
-        return TargetFactAllocationCandidatePageRead(
-            items=[TargetFactAllocationCandidateRead(**row) for row in rows],
-            total=total,
-            page=page,
-            page_size=page_size,
         )
 
     def review_candidate_page(
