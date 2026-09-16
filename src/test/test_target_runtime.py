@@ -31,6 +31,8 @@ def test_openapi_locks_canonical_ledger_v1_contract():
         "/paam/ledger/v1/review/{review_id}/revoke",
         "/paam/ledger/v1/review/{review_id}/restore",
         "/paam/ledger/v1/fact/list",
+        "/paam/ledger/v1/review_candidate/list",
+        "/paam/ledger/v1/flow/{ledger_id}/account",
     } <= paths
     assert not any(path.startswith("/paam/economy/") for path in paths)
     assert not any(path.startswith("/paam/review/v2") for path in paths)
@@ -63,6 +65,8 @@ def test_openapi_locks_canonical_ledger_v1_contract():
         "ImportFactConflictResponse",
         "ImportFactConflictPageResponse",
         "ImportFileSummaryResponse",
+        "LedgerAccountResponse",
+        "TargetReviewCandidatePageResponse",
     ):
         assert schemas[name]["properties"]["status"]["const"] == 200
 

@@ -49,13 +49,16 @@ description: Change PAAM FastAPI routers, URL modules or versions, HTTP endpoint
   `/review/{review_id}`, and `/review/{review_id}/{action}`. Creation uses
   `POST /review`, update uses `PUT /review/{review_id}`, and state transitions
   use actions only after the identifier.
-- Ledger-facing Fact candidates use `/fact/list`. They must adopt the shared
-  `page` and `page_size` contract before the old limit-only endpoint is
-  retired.
+- Ledger Review candidates use `/review_candidate/list`. They are a creation
+  aid, not the Transaction Fact PO list, and follow the shared
+  `q/filter/sorter/page/page_size` contract.
+- A Ledger-owned account is the nested subresource
+  `/flow/{ledger_id}/account`. Reading or updating it starts from the Ledger ID
+  and never rewrites the source Transaction Fact account. Updates use the
+  Ledger projection version for optimistic concurrency.
 - The aggregate `/ledger/v1/entry/*`, non-Allocation `/review/v1/case/*`, and
   Fact-based `/review/v1/account/*` contracts are legacy. Account correction
-  remains a separate migration decision until a Ledger-owned replacement is
-  designed; do not hide that redesign inside a path rename.
+  must not be restored after callers migrate to the Ledger-owned subresource.
 
 ## Import API migration
 

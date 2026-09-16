@@ -25,6 +25,8 @@ from backend.schema.target_review import (
     TargetFlowAllocationRead,
     TargetReviewFactVO,
     TargetReviewHistoryRead,
+    TargetReviewCandidateFilter,
+    TargetReviewCandidateSorter,
 )
 
 
@@ -144,7 +146,32 @@ class TargetEconomicMapper:
         ).offset((page - 1) * page_size).limit(page_size)).mappings().all()
         return [dict(row) for row in rows], total
 
-    def _fact_candidate_query(self):
+    def _fact_candidate_query(
+        self,
+        q: str = "",
+        filter_value: TargetReviewCandidateFilter | None = None,
+    ):
+        clauses = [
+            ReviewCase.behavior_code == "DEFAULT",
+            ReviewCase.status == "CONFIRMED",
+        ]
+        if q:
+            pattern = f"%{q}%"
+            clauses.append(or_(
+                cast(BillFact.id, String).like(pattern),
+                BillFact.account_code.like(pattern),
+                BillFact.counterparty.like(pattern),
+                BillFact.summary.like(pattern),
+            ))
+        if filter_value is not None:
+            if filter_value.cash_direction:
+                clauses.append(BillFact.cash_direction == filter_value.cash_direction)
+            if filter_value.currency_code:
+                clauses.append(
+                    BillFact.currency_code == filter_value.currency_code.upper()
+                )
+            if filter_value.account_code:
+                clauses.append(BillFact.account_code == filter_value.account_code)
         return select(
             BillFact.id,
             BillFact.occurred_time,
@@ -162,30 +189,41 @@ class TargetEconomicMapper:
             ReviewCase, ReviewCase.id == ReviewCaseBill.case_id,
         ).join(
             LedgerEntry, LedgerEntry.id == ReviewCaseBill.economic_id,
-        ).where(
-            ReviewCase.behavior_code == "DEFAULT",
-            ReviewCase.status == "CONFIRMED",
-        ).group_by(BillFact.id).order_by(
-            BillFact.occurred_time.desc(), BillFact.id.desc(),
-        )
+        ).where(*clauses).group_by(BillFact.id)
 
     def fact_candidate_page(
         self,
         page: int,
         page_size: int,
+        q: str = "",
+        filter_value: TargetReviewCandidateFilter | None = None,
+        sorter: TargetReviewCandidateSorter | None = None,
     ) -> tuple[list[dict], int]:
-        query = self._fact_candidate_query()
+        query = self._fact_candidate_query(q, filter_value)
         total = self.db.scalar(select(func.count()).select_from(
             query.order_by(None).subquery()
         )) or 0
-        rows = self.db.execute(query.offset(
+        sort_field = sorter.field if sorter is not None else "occurred_time"
+        sort_order = sorter.order if sorter is not None else "desc"
+        sort_columns = {
+            "id": BillFact.id,
+            "occurred_time": BillFact.occurred_time,
+            "amount_value": BillFact.amount_value,
+            "available_value": func.sum(ReviewCaseBill.amount_value),
+        }
+        column = sort_columns[sort_field]
+        order = column.asc() if sort_order == "asc" else column.desc()
+        id_order = BillFact.id.asc() if sort_order == "asc" else BillFact.id.desc()
+        rows = self.db.execute(query.order_by(order, id_order).offset(
             (page - 1) * page_size
         ).limit(page_size)).mappings().all()
         return [dict(row) for row in rows], total
 
     def fact_candidates(self, limit: int) -> list[dict]:
         rows = self.db.execute(
-            self._fact_candidate_query().limit(limit)
+            self._fact_candidate_query().order_by(
+                BillFact.occurred_time.desc(), BillFact.id.desc(),
+            ).limit(limit)
         ).mappings().all()
         return [dict(row) for row in rows]
 

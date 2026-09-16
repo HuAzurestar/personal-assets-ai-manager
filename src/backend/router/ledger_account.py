@@ -1,4 +1,4 @@
-"""Ledger account review HTTP adapter."""
+"""Ledger-owned Account subresource HTTP adapter."""
 
 from __future__ import annotations
 
@@ -7,45 +7,32 @@ from sqlalchemy.orm import Session
 
 from backend.router.dependency import get_db
 from backend.router.error import DomainErrorRoute
-from backend.schema.target_review import (
-    TargetAccountSetRequest,
-    TargetReviewCaseResponse,
-    TargetReviewTransitionRequest,
-)
-from backend.service.target_account_service import TargetAccountService
+from backend.schema.ledger_account import LedgerAccountResponse, LedgerAccountUpdateRequest
+from backend.service.ledger_account_service import LedgerAccountService
 
 
 router = APIRouter(
-    prefix="/paam/review/v1",
-    tags=["target-review"],
+    prefix="/paam/ledger/v1",
+    tags=["ledger-account"],
     route_class=DomainErrorRoute,
 )
 
 
-@router.put("/account/set/{fact_id}", response_model=TargetReviewCaseResponse)
-def set_account(
-    fact_id: int,
-    payload: TargetAccountSetRequest,
+@router.get("/flow/{ledger_id}/account", response_model=LedgerAccountResponse)
+def get_account(ledger_id: int, db: Session = Depends(get_db)):
+    return LedgerAccountResponse(
+        message="Ledger account returned",
+        body=LedgerAccountService(db).get(ledger_id),
+    )
+
+
+@router.put("/flow/{ledger_id}/account", response_model=LedgerAccountResponse)
+def update_account(
+    ledger_id: int,
+    payload: LedgerAccountUpdateRequest,
     db: Session = Depends(get_db),
 ):
-    return TargetReviewCaseResponse(body=TargetAccountService(db).set(fact_id, payload))
-
-
-@router.post("/account/revoke/{case_id}", response_model=TargetReviewCaseResponse)
-def revoke_account(
-    case_id: int,
-    payload: TargetReviewTransitionRequest,
-    db: Session = Depends(get_db),
-):
-    return TargetReviewCaseResponse(body=TargetAccountService(db).revoke(case_id, payload))
-
-
-@router.post("/account/restore/{case_id}", response_model=TargetReviewCaseResponse)
-def restore_account(
-    case_id: int,
-    payload: TargetReviewTransitionRequest,
-    db: Session = Depends(get_db),
-):
-    return TargetReviewCaseResponse(
-        body=TargetAccountService(db).revoke(case_id, payload, restore=True)
+    return LedgerAccountResponse(
+        message="Ledger account updated",
+        body=LedgerAccountService(db).update(ledger_id, payload),
     )

@@ -20,6 +20,9 @@ from backend.schema.target_review import (
     TargetFactAllocationCandidateRead,
     TargetFactAllocationCandidatePageRead,
     TargetReviewFactVO,
+    TargetReviewCandidateFilter,
+    TargetReviewCandidatePageRead,
+    TargetReviewCandidateSorter,
     TargetReviewTransitionRequest,
 )
 from backend.service.target_tag_projection_service import TargetTagProjectionService
@@ -123,6 +126,31 @@ class TargetEconomicService:
             total=total,
             page=page,
             page_size=page_size,
+        )
+
+    def review_candidate_page(
+        self,
+        page: int,
+        page_size: int,
+        q: str,
+        filter_value: TargetReviewCandidateFilter,
+        sorter: TargetReviewCandidateSorter,
+    ) -> TargetReviewCandidatePageRead:
+        rows, total = self.mapper.fact_candidate_page(
+            page,
+            page_size,
+            q,
+            filter_value,
+            sorter,
+        )
+        return TargetReviewCandidatePageRead(
+            items=[TargetFactAllocationCandidateRead(**row) for row in rows],
+            total=total,
+            page=page,
+            page_size=page_size,
+            q=q,
+            filter=filter_value,
+            sorter=sorter,
         )
 
     def create(self, payload: TargetEconomicReviewCreateRequest) -> TargetEconomicReviewRead:

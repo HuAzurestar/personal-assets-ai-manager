@@ -11,7 +11,9 @@ from backend.router.ledger_fact import router as ledger_fact_router
 from backend.router.dependency import get_db
 from backend.router.ledger import router as ledger_router
 from backend.router.ledger_account import router as ledger_account_router
+from backend.router.ledger_account_legacy import router as ledger_account_legacy_router
 from backend.router.ledger_review import router as ledger_review_router
+from backend.router.ledger_review_candidate import router as ledger_review_candidate_router
 from backend.router.tag import router as tag_router
 from backend.router.tag_assignment import router as tag_assignment_router
 from backend.entity import (
@@ -37,7 +39,9 @@ def economic_api(tmp_path):
     api = FastAPI()
     api.include_router(ledger_review_router)
     api.include_router(ledger_account_router)
+    api.include_router(ledger_account_legacy_router)
     api.include_router(ledger_fact_router)
+    api.include_router(ledger_review_candidate_router)
     api.include_router(ledger_router)
     api.include_router(tag_router)
     api.include_router(tag_assignment_router)
@@ -405,6 +409,27 @@ def test_fact_candidate_list_is_paged_with_fixed_query_count(economic_api):
     second = client.get("/paam/ledger/v1/fact/list?page=2&page_size=2").json()["body"]
     assert second["total"] == 3
     assert len(second["items"]) == 1
+
+
+def test_review_candidate_list_supports_shared_query_contract(economic_api):
+    client, sessions = economic_api
+    fact_ids = _facts(sessions, [
+        ("OUT", 1000, "CNY"),
+        ("IN", 2000, "USD"),
+    ])
+    with sessions() as db:
+        TargetEconomicService(db).ensure_defaults(fact_ids, commit=True)
+
+    response = client.get("/paam/ledger/v1/review_candidate/list", params={
+        "q": str(fact_ids[1]),
+        "filter": '{"cash_direction":"IN","currency_code":"usd"}',
+        "sorter": '{"field":"available_value","order":"asc"}',
+    })
+    assert response.status_code == 200, response.text
+    body = response.json()["body"]
+    assert [item["id"] for item in body["items"]] == [fact_ids[1]]
+    assert body["filter"]["currency_code"] == "usd"
+    assert body["sorter"] == {"field": "available_value", "order": "asc"}
 
 
 def test_fx_review_uses_two_single_currency_account_transfers(economic_api):

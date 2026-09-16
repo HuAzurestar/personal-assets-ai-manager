@@ -317,6 +317,36 @@ class TargetFactAllocationCandidatePageResponse(BaseModel):
     body: TargetFactAllocationCandidatePageRead
 
 
+class TargetReviewCandidateFilter(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    cash_direction: Literal["IN", "OUT"] | None = None
+    currency_code: str | None = None
+    account_code: str | None = None
+
+
+class TargetReviewCandidateSorter(ListSorter):
+    field: Literal["id", "occurred_time", "amount_value", "available_value"] = (
+        "occurred_time"
+    )
+
+
+class TargetReviewCandidatePageRead(BaseModel):
+    items: list[TargetFactAllocationCandidateRead]
+    total: int
+    page: int
+    page_size: int
+    q: str
+    filter: TargetReviewCandidateFilter
+    sorter: TargetReviewCandidateSorter
+
+
+class TargetReviewCandidatePageResponse(BaseModel):
+    status: Literal[200] = 200
+    message: str = "ok"
+    body: TargetReviewCandidatePageRead
+
+
 class TargetFactAllocationCandidateResponse(BaseModel):
     status: Literal["success"] = "success"
     message: str = "ok"

@@ -10,6 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from backend.router.dependency import get_db
 from backend.router.ledger import router as ledger_router
 from backend.router.ledger_account import router as ledger_account_router
+from backend.router.ledger_account_legacy import router as ledger_account_legacy_router
 from backend.router.ledger_review import router as ledger_review_router
 from backend.core.target_database import init_target_db
 from backend.entity import BillFact, ReviewCase, ReviewCaseBill, ReviewHistory
@@ -26,6 +27,7 @@ def target_account_api(tmp_path):
     init_target_db(bind=engine)
     api = FastAPI()
     api.include_router(ledger_account_router)
+    api.include_router(ledger_account_legacy_router)
     api.include_router(ledger_review_router)
     api.include_router(ledger_router)
 
@@ -83,6 +85,36 @@ def _set_account(client, fact_id, review_version, account, key):
         "reason": "account evidence checked",
         "idempotency_key": key,
     })
+
+
+def test_ledger_account_is_independent_from_transaction_fact(target_account_api):
+    client, sessions = target_account_api
+    fact_id = _facts(sessions, [("OUT", "fact-wallet")])[0]
+    ledger_id = _ledger_id(sessions, fact_id)
+
+    account = client.get(f"/paam/ledger/v1/flow/{ledger_id}/account")
+    assert account.status_code == 200, account.text
+    assert account.json()["body"]["account_code"] == "fact-wallet"
+
+    updated = client.put(f"/paam/ledger/v1/flow/{ledger_id}/account", json={
+        "account_code": "ledger-wallet",
+        "expected_projection_version": account.json()["body"]["projection_version"],
+    })
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["body"]["account_code"] == "ledger-wallet"
+    assert updated.json()["body"]["projection_version"] == 2
+
+    with sessions() as db:
+        assert db.get(BillFact, fact_id).account_code == "fact-wallet"
+    detail = client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]
+    assert detail["flow"]["account_code"] == "ledger-wallet"
+    assert detail["facts"][0]["account_code"] == "fact-wallet"
+
+    stale = client.put(f"/paam/ledger/v1/flow/{ledger_id}/account", json={
+        "account_code": "stale-wallet",
+        "expected_projection_version": 1,
+    })
+    assert stale.status_code == 409
 
 
 def test_account_correction_keeps_fact_immutable_and_rebuilds_default_projection(
