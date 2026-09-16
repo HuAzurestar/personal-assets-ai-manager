@@ -465,19 +465,49 @@ async function openEconomicReviewEditor() {
 }
 
 async function ledgerImportsPage() {
-  const query = new URLSearchParams({ page: state.params.get("page") || "1", page_size: state.params.get("page_size") || "20" });
-  if (state.params.get("q")) query.set("q", state.params.get("q"));
-  if (state.params.get("account")) query.set("account", state.params.get("account"));
-  const [result, accountPage] = await Promise.all([request(`/paam/import/v1/batch/list?${query}`), request("/paam/import/v1/account/list?page=1&page_size=100")]);
-  const accounts = accountPage.items;
-  state.historyAccountNames = new Map(accounts.map((account) => [account.identity, account.display_name || account.identity]));
-  const rows = result.items.map((item) => {
-    const accountLabels = (item.account_codes || []).map((identity) => state.historyAccountNames.get(identity) || identity).join("、") || "未识别";
-    return `<tr class="detail-click-row" tabindex="0" data-import-row="${item.id}"><td>${date(item.imported_at)}</td><td><button type="button" class="detail-primary" data-action="batch-rows" data-id="${item.id}" data-filename="${esc(item.filename)}"><strong>${esc(item.filename)}</strong><small>批次 #${item.id} · ${esc(sourceLabels[item.source_type] || item.source_type)}</small></button></td><td>${esc(accountLabels)}</td><td>${item.imported_count} / ${item.row_count}</td><td><span class="badge ${item.status === "IMPORTED" ? "neutral" : "warn"}">${esc(statusLabels[item.status] || item.status)}</span></td><td class="detail-arrow">→</td></tr>`;
-  }).join("");
-  const accountOptions = accounts.map((account) => `<option value="${esc(account.identity)}" ${state.params.get("account") === account.identity ? "selected" : ""}>${esc(account.display_name || account.identity)}</option>`).join("");
-  const toolbar = `<form class="detail-filter" data-form="detail-import-filter"><label class="grow">搜索<input name="q" value="${esc(state.params.get("q") || "")}" placeholder="文件名、来源或批次编号"></label><label>来源账户<select name="account"><option value="">全部账户</option>${accountOptions}</select></label><button type="button" class="quiet" data-action="detail-clear" data-page-id="ledger-imports">清空</button><button class="primary">筛选</button></form>`;
-  return detailListView({ active: "ledger-imports", toolbar, title: "Import File", description: "每行代表一个导入文件 PO；原始行与 Transaction Fact 属于详情关系。", total: result.total, headers: ["导入时间", "文件", "来源账户", "成功 / 总数", "状态", ""], rows, footer: detailPager(result, "ledger-imports") });
+  const q = (state.params.get("q") || "").trim();
+  const sourceType = state.params.get("source_type") || "";
+  const status = state.params.get("status") || "";
+  const sortField = state.params.get("sort_field") || "created_time";
+  const sortOrder = state.params.get("sort_order") || "desc";
+  const filter = Object.fromEntries(Object.entries({
+    source_type: sourceType,
+    status,
+  }).filter(([, value]) => value));
+  const query = new URLSearchParams({
+    page: state.params.get("page") || "1",
+    page_size: state.params.get("page_size") || "20",
+    q,
+    filter: JSON.stringify(filter),
+    sorter: JSON.stringify({ field: sortField, order: sortOrder }),
+  });
+  const result = await request(`/paam/import/v1/import_file/list?${query}`);
+  const rows = result.items.map((item) => `<tr class="detail-click-row" tabindex="0" data-import-file-row="${item.id}"><td>${date(item.created_time)}</td><td><button type="button" class="detail-primary" data-action="import-file-detail" data-id="${item.id}"><strong>${esc(item.filename)}</strong><small>Import File #${item.id} · ${esc(item.batch_code || "无批次码")}</small></button></td><td>${esc(sourceLabels[item.source_type] || item.source_type)}</td><td>${esc(item.file_format)}</td><td>${item.success_count} / ${item.total_count}</td><td><span class="badge ${item.status === "IMPORTED" ? "neutral" : "warn"}">${esc(statusLabels[item.status] || item.status)}</span></td><td class="detail-arrow">→</td></tr>`).join("");
+  const sourceOptions = [...new Set(Object.entries(sourceLabels).map(([value, label]) => `<option value="${esc(value)}" ${sourceType === value ? "selected" : ""}>${esc(label)}</option>`))].join("");
+  const toolbar = `<form class="detail-filter" data-form="detail-import-filter"><label class="grow">查找<input name="q" value="${esc(q)}" placeholder="ID、文件名、来源或批次码"></label><label>来源<select name="source_type"><option value="">全部来源</option>${sourceOptions}</select></label><label>状态<select name="status"><option value="">全部状态</option>${["PENDING", "IMPORTED", "FAILED"].map((value) => `<option value="${value}" ${status === value ? "selected" : ""}>${esc(statusLabels[value] || value)}</option>`).join("")}</select></label><label>排序<select name="sort_field"><option value="created_time" ${sortField === "created_time" ? "selected" : ""}>导入时间</option><option value="filename" ${sortField === "filename" ? "selected" : ""}>文件名</option><option value="id" ${sortField === "id" ? "selected" : ""}>ID</option></select></label><label>顺序<select name="sort_order"><option value="desc" ${sortOrder === "desc" ? "selected" : ""}>降序</option><option value="asc" ${sortOrder === "asc" ? "selected" : ""}>升序</option></select></label><button type="button" class="quiet" data-action="detail-clear" data-page-id="ledger-imports">清空</button><button class="primary">查询</button></form>`;
+  return detailListView({ active: "ledger-imports", toolbar, title: "Import File", description: "每行代表一个导入文件 PO；Transaction Fact 是只读的详情子资源。", total: result.total, headers: ["导入时间", "文件", "来源", "格式", "成功 / 总数", "状态", ""], rows, footer: detailPager(result, "ledger-imports") });
+}
+
+async function showImportFileDetail(id) {
+  const factQuery = new URLSearchParams({
+    page: "1",
+    page_size: "20",
+    filter: "{}",
+    sorter: JSON.stringify({ field: "occurred_time", order: "desc" }),
+  });
+  const [detail, facts] = await Promise.all([
+    request(`/paam/import/v1/import_file/${id}`),
+    request(`/paam/import/v1/import_file/${id}/transaction_fact/list?${factQuery}`),
+  ]);
+  const item = detail.import_file;
+  const factRows = facts.items.map((fact) => `<tr><td>#${fact.id}</td><td>${date(fact.occurred_time)}</td><td>${esc(fact.summary || fact.counterparty || "—")}</td><td>${esc(fact.cash_direction)}</td><td class="money">${money(fact)}</td><td>${esc(fact.currency_code)}</td></tr>`);
+  const childTable = factRows.length ? `${table(["Fact", "发生时间", "摘要", "方向", "金额", "币种"], factRows)}<p class="muted">显示 ${facts.items.length} / ${facts.total} 条；完整结果可通过 Transaction Fact 子资源分页查询。</p>` : "";
+  detailDrawer({
+    title: item.filename || `Import File #${item.id}`,
+    kicker: `IMPORT FILE #${item.id}`,
+    subtitle: `${esc(sourceLabels[item.source_type] || item.source_type)} · ${esc(statusLabels[item.status] || item.status)}`,
+    body: `${detailSection("Import File", detailFields([["Batch Code", item.batch_code], ["机构", item.institution_code], ["文件格式", item.file_format], ["SHA-256", item.sha256], ["覆盖期间", `${item.period_start || "—"} – ${item.period_end || "—"}`], ["总行数", item.total_count], ["成功", item.success_count], ["跳过", item.skip_count], ["异常", item.issue_count], ["创建时间", date(item.created_time)], ["更新时间", date(item.updated_time)]]))}${detailSection("Transaction Fact", childTable, "没有关联 Transaction Fact")}`,
+  });
 }
 
 async function ledgerTagsPage() {
@@ -1071,11 +1101,12 @@ function bindPage(root) {
   });
   $$('[data-action="tag-view-detail"]', root).forEach((button) => button.onclick = () => showTagViewDetail(button.dataset.id));
   $$('[data-action="fact-detail"]', root).forEach((button) => button.onclick = () => showFactDetail(button.dataset.id).catch((error) => toast(error.message, true)));
+  $$('[data-action="import-file-detail"]', root).forEach((button) => button.onclick = () => showImportFileDetail(button.dataset.id).catch((error) => toast(error.message, true)));
   $$('[data-action="economic-detail"]', root).forEach((button) => button.onclick = () => showEconomicDetail(button.dataset.id).catch((error) => toast(error.message, true)));
   $$('[data-action="economic-review-detail"]', root).forEach((button) => button.onclick = () => showEconomicReview(button.dataset.id).catch((error) => toast(error.message, true)));
   $$('[data-action="economic-review-transition"]', root).forEach((button) => button.onclick = () => transitionEconomicReview(button).catch((error) => toast(error.message, true)));
   $('[data-action="new-economic-review"]', root)?.addEventListener("click", () => openEconomicReviewEditor().catch((error) => toast(error.message, true)));
-  $$('[data-summary-row],[data-fact-row],[data-economic-row],[data-review-row],[data-import-row],[data-tag-view-row]', root).forEach((row) => {
+  $$('[data-summary-row],[data-fact-row],[data-economic-row],[data-review-row],[data-import-row],[data-import-file-row],[data-tag-view-row]', root).forEach((row) => {
     row.addEventListener("click", (event) => {
       if (event.target.closest("button,input,label,select,a")) return;
       if (row.dataset.summaryRow) showSummaryDetail(row.dataset.summaryRow);
@@ -1083,6 +1114,7 @@ function bindPage(root) {
       if (row.dataset.economicRow) showEconomicDetail(row.dataset.economicRow).catch((error) => toast(error.message, true));
       if (row.dataset.reviewRow) showEconomicReview(row.dataset.reviewRow).catch((error) => toast(error.message, true));
       if (row.dataset.importRow) showImportBatch($("[data-action='batch-rows']", row));
+      if (row.dataset.importFileRow) showImportFileDetail(row.dataset.importFileRow).catch((error) => toast(error.message, true));
       if (row.dataset.tagViewRow) showTagViewDetail(row.dataset.tagViewRow);
     });
   });

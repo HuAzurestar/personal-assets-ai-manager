@@ -202,11 +202,11 @@ def run() -> None:
                 page.locator("dialog[open] [data-close]").first.click()
 
                 page.locator('.detail-tabs [data-page="ledger-imports"]').click()
-                expect(page.locator('[data-action="batch-rows"]')).to_be_visible()
-                page.locator('[data-action="batch-rows"]').first.click()
-                expect(page.locator("dialog.batch-detail-drawer[open]")).to_be_visible()
-                expect(page.locator("dialog.batch-detail-drawer[open]")).to_contain_text(
-                    "浏览器测试商户"
+                expect(page.locator('[data-action="import-file-detail"]')).to_be_visible()
+                page.locator('[data-action="import-file-detail"]').first.click()
+                expect(page.locator("dialog.detail-view-drawer[open]")).to_be_visible()
+                expect(page.locator("dialog.detail-view-drawer[open]")).to_contain_text(
+                    "Transaction Fact"
                 )
                 page.locator("dialog[open] [data-close]").first.click()
 
