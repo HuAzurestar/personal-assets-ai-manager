@@ -204,6 +204,18 @@ class TargetEconomicFlowRead(BaseModel):
     occurred_time: datetime
 
 
+class TargetEconomicReviewFactRead(BaseModel):
+    id: int
+    occurred_time: datetime
+    cash_direction: Literal["IN", "OUT"]
+    amount_value: int
+    amount_scale: int
+    currency_code: str
+    account_code: str
+    counterparty: str
+    summary: str
+
+
 class TargetFlowAllocationRead(BaseModel):
     id: int
     fact_id: int
@@ -220,6 +232,7 @@ class TargetEconomicReviewRead(BaseModel):
     version: int
     title: str
     result: dict[str, Any]
+    facts: list[TargetEconomicReviewFactRead]
     economics: list[TargetEconomicFlowRead]
     allocations: list[TargetFlowAllocationRead]
     history: list[TargetReviewHistoryRead]

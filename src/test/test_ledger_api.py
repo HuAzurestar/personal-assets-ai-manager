@@ -193,6 +193,7 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
     assert response.json()["message"] == "Ledger review created"
     case = response.json()["body"]
     assert case["status"] == "PENDING"
+    assert [fact["id"] for fact in case["facts"]] == fact_ids
     assert len(case["economics"]) == 6
     assert len(case["allocations"]) == 6
     with sessions() as db:

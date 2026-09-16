@@ -20,6 +20,7 @@ from backend.schema.target_review import (
     TargetEconomicFlowRead,
     TargetEconomicReviewRead,
     TargetEconomicReviewFilter,
+    TargetEconomicReviewFactRead,
     TargetEconomicReviewSorter,
     TargetFlowAllocationRead,
     TargetReviewFactVO,
@@ -738,18 +739,19 @@ class TargetEconomicMapper:
             ReviewHistory.version, ReviewHistory.id,
         )).mappings().all()
         economics_by_id = {row["id"]: dict(row) for row in economic_rows}
-        draft_fact_ids = sorted({
-            row["fact_id"] for row in allocation_rows if row["economic_id"] == 0
-        })
-        draft_facts = self.db.execute(select(
+        fact_ids = sorted({row["fact_id"] for row in allocation_rows})
+        fact_rows = self.db.execute(select(
             BillFact.id,
             BillFact.occurred_time,
             BillFact.cash_direction,
+            BillFact.amount_value,
+            BillFact.amount_scale,
+            BillFact.currency_code,
             BillFact.account_code,
             BillFact.counterparty,
             BillFact.summary,
-        ).where(BillFact.id.in_(draft_fact_ids))).mappings().all() if draft_fact_ids else []
-        facts_by_id = {row["id"]: row for row in draft_facts}
+        ).where(BillFact.id.in_(fact_ids)).order_by(BillFact.id)).mappings().all() if fact_ids else []
+        facts_by_id = {row["id"]: row for row in fact_rows}
         plan = next((
             json.loads(row["request_json"])
             for row in reversed(history_rows)
@@ -799,6 +801,7 @@ class TargetEconomicMapper:
             version=case["version"],
             title=case["title"],
             result=json.loads(case["result_json"]),
+            facts=[TargetEconomicReviewFactRead(**row) for row in fact_rows],
             economics=[TargetEconomicFlowRead(
                 id=row["id"],
                 economic_type=ECONOMIC_TYPES[row["entry_type"]],
