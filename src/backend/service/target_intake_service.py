@@ -11,6 +11,7 @@ from backend.core.intake_preview_store import (
     target_intake_preview_store,
 )
 from backend.error import TargetIntakeError
+from backend.mapper.target_import_read_mapper import TargetImportReadMapper
 from backend.mapper.target_intake_mapper import TargetIntakeMapper
 from backend.schema.intake import (
     IntakeConfirmRequest,
@@ -27,6 +28,7 @@ class TargetIntakeService:
 
     def __init__(self, db: Session):
         self.db = db
+        self.read_mapper = TargetImportReadMapper(db)
         self.mapper = TargetIntakeMapper(db)
         self.store = target_intake_preview_store
 
@@ -49,7 +51,10 @@ class TargetIntakeService:
                     "error": str(error),
                     "rows": [],
                 })
-        plan = self.mapper.plan(documents)
+        plan = self.mapper.plan(
+            documents,
+            self.read_mapper.known_accounts(),
+        )
         token = uuid4().hex
         self.store.put(IntakePreviewState(
             token=token,
@@ -65,6 +70,7 @@ class TargetIntakeService:
         try:
             plan = self.mapper.plan(
                 state.documents,
+                self.read_mapper.known_accounts(),
                 payload.accounts,
                 payload.decisions,
             )
@@ -92,6 +98,7 @@ class TargetIntakeService:
                 self.mapper.begin_write()
                 current = self.mapper.plan(
                     state.documents,
+                    self.read_mapper.known_accounts(),
                     state.accounts,
                     state.decisions,
                 )
@@ -126,10 +133,10 @@ class TargetIntakeService:
         q: str = "",
         account_code: str = "",
     ) -> dict[str, object]:
-        return self.mapper.history(page, page_size, q, account_code)
+        return self.read_mapper.history(page, page_size, q, account_code)
 
     def accounts(self, page: int, page_size: int) -> dict[str, object]:
-        return self.mapper.accounts(page, page_size)
+        return self.read_mapper.accounts(page, page_size)
 
     def rows(
         self,
@@ -137,4 +144,4 @@ class TargetIntakeService:
         page: int = 1,
         page_size: int = 20,
     ) -> dict[str, object]:
-        return self.mapper.rows(transaction_import_file_id, page, page_size)
+        return self.read_mapper.rows(transaction_import_file_id, page, page_size)

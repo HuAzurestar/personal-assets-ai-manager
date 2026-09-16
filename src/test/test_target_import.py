@@ -30,6 +30,8 @@ from backend.entity import (
     TransactionImportFile,
     TransactionImportRow,
 )
+from backend.mapper.target_import_read_mapper import TargetImportReadMapper
+from backend.mapper.target_intake_mapper import TargetIntakeMapper
 from backend.parser.statement_parser import parse_statement
 
 
@@ -128,6 +130,12 @@ def _confirm(client, preview):
         f"/paam/import/v1/preview/{preview['token']}/confirm",
         json={"version": preview["version"]},
     )
+
+
+def test_import_read_mapper_owns_public_import_queries():
+    for method_name in ("history", "rows", "accounts"):
+        assert hasattr(TargetImportReadMapper, method_name)
+        assert not hasattr(TargetIntakeMapper, method_name)
 
 
 def test_target_import_writes_fact_evidence_and_hot_projection(target_import_api):
