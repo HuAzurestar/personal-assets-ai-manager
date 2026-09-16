@@ -86,7 +86,7 @@ def restore_case(
 @router.get("/review/list", response_model=TargetEconomicReviewPageResponse)
 def case_page(
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=25, ge=1, le=100),
+    page_size: int = Query(default=20, ge=1, le=100),
     status: str = Query(default="", pattern="^(|PENDING|CONFIRMED|REVOKED)$"),
     db: Session = Depends(get_db),
 ):

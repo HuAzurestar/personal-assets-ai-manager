@@ -27,6 +27,12 @@ from backend.service.target_account_projection_service import TargetAccountProje
 class TargetEconomicService:
     """Strict Fact -> Review -> Economic allocation use cases."""
 
+    ECONOMIC_TYPE_IDS = {
+        "TRANSACTION": 0,
+        "ACCOUNT_TRANSFER": 1,
+        "CLAIM": 2,
+    }
+
     def __init__(self, db: Session):
         self.mapper = TargetEconomicMapper(db)
         self.tags = TargetTagProjectionService(db)
@@ -63,7 +69,7 @@ class TargetEconomicService:
             self.mapper.commit()
 
     def backfill_defaults(self) -> None:
-        """Advance facts from an older database into the strict v2 invariant."""
+        """Advance facts from an older database into the production invariant."""
 
         try:
             self.mapper.begin_write()
@@ -118,7 +124,7 @@ class TargetEconomicService:
             now = datetime.now()
             case_id = self.mapper.create_draft(
                 behavior_code=payload.behavior_code,
-                title=payload.description,
+                title=payload.title,
                 result_json=self._canonical(payload.result),
                 economics=economics,
                 allocations=allocations,
@@ -258,7 +264,7 @@ class TargetEconomicService:
                 case_id,
                 expected_version=payload.expected_version,
                 behavior_code=payload.behavior_code,
-                title=payload.description,
+                title=payload.title,
                 result_json=self._canonical(payload.result),
                 economics=economics,
                 allocations=allocations,
@@ -305,7 +311,7 @@ class TargetEconomicService:
                 raise TargetEconomicError(409, "review version changed; reload before revoking")
             released: dict[int, int] = defaultdict(int)
             for row in case.allocations:
-                released[row.transaction_fact_id] += row.amount_value
+                released[row.fact_id] += row.amount_value
             facts = self.mapper.facts(sorted(released))
             fact_by_id = {fact.id: fact for fact in facts}
             accounts = self.accounts.effective(facts)
@@ -348,17 +354,17 @@ class TargetEconomicService:
         return self._required(case_id)
 
     def _prepare(self, payload: TargetEconomicReviewCreateRequest):
-        keys = [item.client_key for item in payload.entries]
+        keys = [item.client_key for item in payload.economics]
         if len(keys) != len(set(keys)):
             raise ValueError("economic client_key values must be unique")
-        definitions = {item.client_key: item for item in payload.entries}
-        unknown = sorted({row.entry_key for row in payload.allocations} - set(definitions))
+        definitions = {item.client_key: item for item in payload.economics}
+        unknown = sorted({row.economic_key for row in payload.allocations} - set(definitions))
         if unknown:
             raise ValueError(f"unknown economic keys: {unknown}")
-        unused = sorted(set(definitions) - {row.entry_key for row in payload.allocations})
+        unused = sorted(set(definitions) - {row.economic_key for row in payload.allocations})
         if unused:
             raise ValueError(f"economic items require allocations: {unused}")
-        fact_ids = sorted({row.transaction_fact_id for row in payload.allocations})
+        fact_ids = sorted({row.fact_id for row in payload.allocations})
         facts = self.mapper.facts(fact_ids)
         fact_by_id = {fact.id: fact for fact in facts}
         missing = sorted(set(fact_ids) - set(fact_by_id))
@@ -369,12 +375,12 @@ class TargetEconomicService:
         grouped = defaultdict(list)
         allocations = []
         for row in payload.allocations:
-            fact = fact_by_id[row.transaction_fact_id]
+            fact = fact_by_id[row.fact_id]
             fact_totals[fact.id] += row.amount_value
-            grouped[row.entry_key].append((row, fact))
+            grouped[row.economic_key].append((row, fact))
             allocations.append({
                 "fact_id": fact.id,
-                "economic_key": row.entry_key,
+                "economic_key": row.economic_key,
                 "amount_value": row.amount_value,
                 "amount_scale": fact.amount_scale,
                 "currency_code": fact.currency_code,
@@ -398,7 +404,7 @@ class TargetEconomicService:
             row, fact = rows[0]
             economics.append({
                 "client_key": key,
-                "entry_type": definition.entry_type,
+                "entry_type": self.ECONOMIC_TYPE_IDS[definition.economic_type],
                 "direction": fact.cash_direction,
                 "amount_value": row.amount_value,
                 "amount_scale": fact.amount_scale,

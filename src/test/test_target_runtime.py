@@ -67,6 +67,32 @@ def test_openapi_locks_canonical_ledger_v1_contract():
         "ledger_entry_id",
     }.isdisjoint(allocation_properties)
 
+    review_request_properties = set(
+        schemas["TargetEconomicReviewCreateRequest"]["properties"]
+    )
+    assert {"title", "economics", "allocations"} <= review_request_properties
+    assert {"description", "entries"}.isdisjoint(review_request_properties)
+    economic_request_properties = set(
+        schemas["TargetEconomicDefinitionRequest"]["properties"]
+    )
+    assert "economic_type" in economic_request_properties
+    assert "entry_type" not in economic_request_properties
+    review_properties = set(schemas["TargetEconomicReviewRead"]["properties"])
+    assert {"title", "economics"} <= review_properties
+    assert {"description", "ledger_entries"}.isdisjoint(review_properties)
+    review_allocation_properties = set(
+        schemas["TargetFlowAllocationRead"]["properties"]
+    )
+    assert {"fact_id", "economic_id"} <= review_allocation_properties
+    assert {"transaction_fact_id", "ledger_entry_id"}.isdisjoint(
+        review_allocation_properties
+    )
+
+    for path in ("/paam/ledger/v1/flow/list", "/paam/ledger/v1/review/list"):
+        parameters = specification["paths"][path]["get"]["parameters"]
+        page_size = next(item for item in parameters if item["name"] == "page_size")
+        assert page_size["schema"]["default"] == 20
+
 
 def test_importing_target_runtime_does_not_load_legacy_database_module():
     result = subprocess.run(
@@ -245,20 +271,20 @@ def test_target_review_confirm_revoke_restore_rebuilds_projection(
                 "/paam/ledger/v1/review",
                 json={
                     "behavior_code": "TRANSFER",
-                    "description": "零钱转入招行",
-                    "entries": [
-                        {"client_key": "out", "entry_type": 1},
-                        {"client_key": "in", "entry_type": 1},
+                    "title": "零钱转入招行",
+                    "economics": [
+                        {"client_key": "out", "economic_type": "ACCOUNT_TRANSFER"},
+                        {"client_key": "in", "economic_type": "ACCOUNT_TRANSFER"},
                     ],
                     "allocations": [
                         {
-                            "transaction_fact_id": fact_ids[0],
-                            "entry_key": "out",
+                            "fact_id": fact_ids[0],
+                            "economic_key": "out",
                             "amount_value": 1000,
                         },
                         {
-                            "transaction_fact_id": fact_ids[1],
-                            "entry_key": "in",
+                            "fact_id": fact_ids[1],
+                            "economic_key": "in",
                             "amount_value": 999,
                         },
                     ],

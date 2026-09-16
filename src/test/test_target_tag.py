@@ -182,8 +182,8 @@ def test_ledger_tag_assignment_is_direct_versioned_and_idempotent(target_tag_api
     assert _assign(client, ledger_id, 1, "unclassified").status_code == 409
 
     detail = client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]
-    assert detail["entry"]["projection_version"] == 2
-    assert detail["entry"]["tags"][0]["tag_system_name"] == "food"
+    assert detail["flow"]["projection_version"] == 2
+    assert detail["flow"]["tags"][0]["tag_system_name"] == "food"
     assert all(item["review_type"] != "TAG" for item in detail["reviews"])
     with sessions() as db:
         assert db.scalar(select(ReviewCase).where(ReviewCase.review_type == "TAG")) is None

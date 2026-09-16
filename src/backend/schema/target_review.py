@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,21 +121,47 @@ class TargetReviewCasePageResponse(BaseModel):
     body: TargetReviewCasePageRead
 
 
-# V2 review contract.  Scenario names live on Review; LedgerEntry has only the
-# three agreed cash-flow classifications. Direction, currency, account and
-# occurred_time are derived from the single referenced fact.
+# Production v1 review contract. Scenario names live on Review; Economic has
+# only the three agreed cash-flow classifications. Direction, currency,
+# account, and occurred_time are derived from the single referenced Fact.
 class TargetEconomicDefinitionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     client_key: str = Field(min_length=1, max_length=80)
-    entry_type: Literal[0, 1, 2]
+    economic_type: Literal["TRANSACTION", "ACCOUNT_TRANSFER", "CLAIM"] = Field(
+        validation_alias=AliasChoices("economic_type", "entry_type")
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_entry_type(cls, value: object) -> object:
+        if not isinstance(value, dict) or "economic_type" in value:
+            return value
+        entry_type = value.get("entry_type")
+        if entry_type not in {0, 1, 2}:
+            return value
+        normalized = dict(value)
+        normalized.pop("entry_type")
+        normalized["economic_type"] = {
+            0: "TRANSACTION",
+            1: "ACCOUNT_TRANSFER",
+            2: "CLAIM",
+        }[entry_type]
+        return normalized
 
 
 class TargetFlowAllocationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    transaction_fact_id: int = Field(ge=1)
-    entry_key: str = Field(min_length=1, max_length=80)
+    fact_id: int = Field(
+        ge=1,
+        validation_alias=AliasChoices("fact_id", "transaction_fact_id"),
+    )
+    economic_key: str = Field(
+        min_length=1,
+        max_length=80,
+        validation_alias=AliasChoices("economic_key", "entry_key"),
+    )
     amount_value: int = Field(ge=1)
 
 
@@ -143,9 +169,17 @@ class TargetEconomicReviewCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     behavior_code: str = Field(min_length=1, max_length=40)
-    description: str = Field(default="", max_length=2000)
+    title: str = Field(
+        default="",
+        max_length=160,
+        validation_alias=AliasChoices("title", "description"),
+    )
     result: dict[str, Any] = Field(default_factory=dict)
-    entries: list[TargetEconomicDefinitionRequest] = Field(min_length=1, max_length=200)
+    economics: list[TargetEconomicDefinitionRequest] = Field(
+        min_length=1,
+        max_length=200,
+        validation_alias=AliasChoices("economics", "entries"),
+    )
     allocations: list[TargetFlowAllocationRequest] = Field(min_length=1, max_length=500)
     actor: str = Field(default="local-user", min_length=1, max_length=120)
     reason: str = Field(default="", max_length=2000)
@@ -158,8 +192,8 @@ class TargetEconomicReviewUpdateRequest(TargetEconomicReviewCreateRequest):
 
 class TargetEconomicFlowRead(BaseModel):
     id: int
-    entry_type: Literal[0, 1, 2]
-    entry_direction: Literal[1, 2]
+    economic_type: Literal["TRANSACTION", "ACCOUNT_TRANSFER", "CLAIM"]
+    cash_direction: Literal["IN", "OUT"]
     amount_value: int
     amount_scale: int
     currency_code: str
@@ -170,8 +204,8 @@ class TargetEconomicFlowRead(BaseModel):
 
 class TargetFlowAllocationRead(BaseModel):
     id: int
-    transaction_fact_id: int
-    ledger_entry_id: int
+    fact_id: int
+    economic_id: int
     amount_value: int
     amount_scale: int
     currency_code: str
@@ -182,9 +216,9 @@ class TargetEconomicReviewRead(BaseModel):
     behavior_code: str
     status: str
     version: int
-    description: str
+    title: str
     result: dict[str, Any]
-    ledger_entries: list[TargetEconomicFlowRead]
+    economics: list[TargetEconomicFlowRead]
     allocations: list[TargetFlowAllocationRead]
     history: list[TargetReviewHistoryRead]
     created_time: datetime
@@ -202,8 +236,8 @@ class TargetEconomicReviewListItem(BaseModel):
     behavior_code: str
     status: str
     version: int
-    description: str
-    ledger_entry_count: int
+    title: str
+    economic_count: int
     allocation_count: int
     created_time: datetime
     updated_time: datetime

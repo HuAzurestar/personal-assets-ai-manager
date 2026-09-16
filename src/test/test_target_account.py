@@ -100,7 +100,7 @@ def test_account_correction_keeps_fact_immutable_and_rebuilds_default_projection
 
     detail = client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]
     assert detail["facts"][0]["account_code"] == "imported-wallet"
-    assert detail["entry"]["account_code"] == "checked-bank"
+    assert detail["flow"]["account_code"] == "checked-bank"
 
     replay = _set_account(client, fact_id, 0, "checked-bank", "account-first")
     assert replay.status_code == 200
@@ -127,7 +127,7 @@ def test_account_correction_keeps_fact_immutable_and_rebuilds_default_projection
     assert revoked.status_code == 200, revoked.text
     assert revoked.json()["body"]["status"] == "REVOKED"
     reverted_detail = client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]
-    assert reverted_detail["entry"]["account_code"] == "imported-wallet"
+    assert reverted_detail["flow"]["account_code"] == "imported-wallet"
 
     restored = client.post(f"/paam/review/v1/account/restore/{case['id']}", json={
         "expected_version": 3,
@@ -137,7 +137,7 @@ def test_account_correction_keeps_fact_immutable_and_rebuilds_default_projection
     assert restored.status_code == 200, restored.text
     assert restored.json()["body"]["status"] == "CONFIRMED"
     restored_detail = client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]
-    assert restored_detail["entry"]["account_code"] == "second-bank"
+    assert restored_detail["flow"]["account_code"] == "second-bank"
     assert restored.json()["body"]["history"][-1]["reverses_history_id"] > 0
 
 
@@ -151,13 +151,13 @@ def test_account_correction_republishes_connected_financial_entry(
     ])
     created = client.post("/paam/ledger/v1/review", json={
         "behavior_code": "TRANSFER",
-        "entries": [
-            {"client_key": "out", "entry_type": 1},
-            {"client_key": "in", "entry_type": 1},
+        "economics": [
+            {"client_key": "out", "economic_type": "ACCOUNT_TRANSFER"},
+            {"client_key": "in", "economic_type": "ACCOUNT_TRANSFER"},
         ],
         "allocations": [
-            {"transaction_fact_id": out_id, "entry_key": "out", "amount_value": 1000},
-            {"transaction_fact_id": in_id, "entry_key": "in", "amount_value": 1000},
+            {"fact_id": out_id, "economic_key": "out", "amount_value": 1000},
+            {"fact_id": in_id, "economic_key": "in", "amount_value": 1000},
         ],
         "idempotency_key": "financial-create",
     }).json()["body"]
@@ -166,13 +166,13 @@ def test_account_correction_republishes_connected_financial_entry(
         "idempotency_key": "financial-confirm",
     }).status_code == 200
     ledger_id = _ledger_id(sessions, out_id)
-    before = client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]["entry"]
+    before = client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]["flow"]
     assert before["account_code"] == "wallet-a"
 
     corrected = _set_account(client, out_id, 0, "checked-wallet", "merged-account")
     assert corrected.status_code == 200, corrected.text
     after = client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]
-    assert after["entry"]["account_code"] == "checked-wallet"
+    assert after["flow"]["account_code"] == "checked-wallet"
     assert {item["review_type"] for item in after["reviews"]} == {"ACCOUNT", "TRANSFER"}
 
 

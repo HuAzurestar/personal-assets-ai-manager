@@ -25,8 +25,13 @@ from backend.schema.target_review import (
 )
 
 
+ECONOMIC_TYPES = {0: "TRANSACTION", 1: "ACCOUNT_TRANSFER", 2: "CLAIM"}
+ENTRY_TYPE_IDS = {value: key for key, value in ECONOMIC_TYPES.items()}
+CASH_DIRECTIONS = {1: "IN", 2: "OUT"}
+
+
 class TargetEconomicMapper:
-    """Set-oriented persistence for v2 Review/Economic/Allocation commands."""
+    """Set-oriented persistence for production Review/Economic/Allocation commands."""
 
     def __init__(self, db: Session):
         self.db = db
@@ -68,10 +73,10 @@ class TargetEconomicMapper:
             ReviewCase.behavior_code,
             ReviewCase.status,
             ReviewCase.version,
-            ReviewCase.title.label("description"),
+            ReviewCase.title,
             ReviewCase.created_time,
             ReviewCase.updated_time,
-            func.count(ReviewCaseBill.id).label("ledger_entry_count"),
+            func.count(ReviewCaseBill.id).label("economic_count"),
             func.count(ReviewCaseBill.id).label("allocation_count"),
         ).join(
             ReviewCaseBill, ReviewCaseBill.case_id == ReviewCase.id,
@@ -694,7 +699,10 @@ class TargetEconomicMapper:
             for row in reversed(history_rows)
             if row["operation"] in {"CREATE", "UPDATE"}
         ), {})
-        definitions = {item["client_key"]: item for item in plan.get("entries", [])}
+        definitions = {
+            item["client_key"]: item
+            for item in plan.get("economics", plan.get("entries", []))
+        }
         planned_allocations = plan.get("allocations", [])
         materialized_economics = []
         for index, allocation in enumerate(allocation_rows):
@@ -709,10 +717,17 @@ class TargetEconomicMapper:
                 if index < len(planned_allocations)
                 else {}
             )
-            definition = definitions.get(planned.get("entry_key", ""), {})
+            economic_key = planned.get("economic_key", planned.get("entry_key", ""))
+            definition = definitions.get(economic_key, {})
+            entry_type = definition.get("entry_type")
+            if entry_type is None:
+                entry_type = ENTRY_TYPE_IDS.get(
+                    definition.get("economic_type"),
+                    allocation["entry_type"],
+                )
             materialized_economics.append({
                 "id": 0,
-                "entry_type": definition.get("entry_type", allocation["entry_type"]),
+                "entry_type": entry_type,
                 "entry_direction": 1 if fact["cash_direction"] == "IN" else 2,
                 "amount_value": allocation["amount_value"],
                 "amount_scale": allocation["amount_scale"],
@@ -726,14 +741,21 @@ class TargetEconomicMapper:
             behavior_code=case["behavior_code"],
             status=case["status"],
             version=case["version"],
-            description=case["title"],
+            title=case["title"],
             result=json.loads(case["result_json"]),
-            ledger_entries=[TargetEconomicFlowRead(**row) for row in materialized_economics],
+            economics=[TargetEconomicFlowRead(
+                id=row["id"],
+                economic_type=ECONOMIC_TYPES[row["entry_type"]],
+                cash_direction=CASH_DIRECTIONS[row["entry_direction"]],
+                amount_value=row["amount_value"],
+                amount_scale=row["amount_scale"],
+                currency_code=row["currency_code"],
+                account_code=row["account_code"],
+                counterparty_account_ref=row["counterparty_account_ref"],
+                occurred_time=row["occurred_time"],
+            ) for row in materialized_economics],
             allocations=[TargetFlowAllocationRead(**{
-                {
-                    "fact_id": "transaction_fact_id",
-                    "economic_id": "ledger_entry_id",
-                }.get(name, name): value
+                name: value
                 for name, value in row.items()
                 if name not in {"entry_type", "role"}
             }) for row in allocation_rows],
