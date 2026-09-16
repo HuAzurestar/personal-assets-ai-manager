@@ -14,9 +14,15 @@ description: Change PAAM review cases, allocations, duplicate/refund/AA/loan/tra
   amount. A manual Review may consume part of the DEFAULT allocation; its
   residual remains a confirmed DEFAULT TRANSACTION.
 - Review policies execute in the backend service. The frontend never calculates or confirms accounting effects itself.
-- `review_case.version` provides optimistic concurrency. The command supplies `expected_version`.
-- Every successful change appends `review_history` with canonical before/after aggregate snapshots, request, actor, reason, schema version, and idempotency key.
+- The default runtime is single-machine, serialized-write, and low-concurrency.
+  Review commands use one short write transaction rather than optimistic versions.
+- A persisted Review is either CONFIRMED or REVOKED. Drafts stay in the client;
+  creating a Review publishes its Ledger entries and allocations atomically.
+- Every successful change appends `review_revision` with canonical before/after
+  aggregate snapshots, request, actor, reason, schema version, and idempotency key.
 - Undo appends a new reversing event; it never mutates or deletes old history.
+- Revoking a Review retains its Ledger entries and allocations; confirmed-only
+  read predicates decide whether those rows are effective.
 - Batch-load every affected fact and active allocation before validation. Do not query one bill at a time.
 - Review state, replaced DEFAULT allocations, residual DEFAULT coverage, and all
   affected Economic projections update in one transaction.

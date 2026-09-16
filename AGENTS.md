@@ -2,6 +2,18 @@
 
 PAAM uses a layered modular monolith. Keep the trusted ledger transactionally consistent; do not introduce another deployed service or data store without an accepted architecture decision.
 
+## Runtime profile
+
+- The default deployment is one local machine, one application process, one
+  SQLite database, and low write concurrency.
+- Serialize writes. Every mutating Service owns one short transaction and, on
+  SQLite, acquires the write slot before reading data that controls the write.
+- Batch-load and validate all affected rows before mutation. Do not perform
+  network calls, file parsing, or user interaction while a write transaction is open.
+- Idempotency protects command retries. Do not add optimistic version fields
+  solely for hypothetical multi-user or distributed writers; revisit that
+  decision only when the deployment profile changes.
+
 ## Required flow
 
 `Router -> Service -> Data Mapper -> Entity / SQLite`
