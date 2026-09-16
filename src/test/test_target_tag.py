@@ -162,6 +162,25 @@ def test_target_tag_list_query_count_is_fixed(target_tag_api):
     assert len(statements) == 3
     assert all("SELECT *" not in statement.upper() for statement in statements)
 
+    filtered = client.get(
+        "/paam/tag/v1/view/list",
+        params={
+            "q": "View 19",
+            "filter": '{"status":"ACTIVE"}',
+            "sorter": '{"field":"name","order":"desc"}',
+        },
+    ).json()["body"]
+    assert filtered["total"] == 1
+    assert filtered["items"][0]["system_name"] == "view_19"
+    assert filtered["sorter"] == {"field": "name", "order": "desc"}
+
+    rejected = client.get(
+        "/paam/tag/v1/view/list",
+        params={"sorter": '{"field":"view_id","order":"asc"}'},
+    )
+    assert rejected.status_code == 422
+    assert rejected.json()["body"]["code"] == "LIST_QUERY_ERROR"
+
 
 def test_ledger_tag_assignment_is_direct_versioned_and_idempotent(target_tag_api):
     client, sessions, _engine = target_tag_api

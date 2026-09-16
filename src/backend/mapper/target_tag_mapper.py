@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import exists, func, insert, literal, select
+from sqlalchemy import exists, func, insert, literal, or_, select
 from sqlalchemy.orm import Session
 
 from backend.entity import (
@@ -13,8 +13,10 @@ from backend.entity import (
 )
 from backend.schema.target_tag import (
     TargetTagRead,
+    TargetTagViewFilter,
     TargetTagViewPageRead,
     TargetTagViewRead,
+    TargetTagViewSorter,
 )
 
 
@@ -28,10 +30,20 @@ class TargetTagMapper:
         self,
         page: int,
         page_size: int,
-        include_archived: bool = False,
+        q: str,
+        filter_value: TargetTagViewFilter,
+        sorter: TargetTagViewSorter,
     ) -> TargetTagViewPageRead:
         conditions = []
-        if not include_archived:
+        if q:
+            pattern = f"%{q}%"
+            conditions.append(or_(
+                TargetTagView.name.like(pattern),
+                TargetTagView.system_name.like(pattern),
+            ))
+        if filter_value.status:
+            conditions.append(TargetTagView.status == filter_value.status)
+        elif not filter_value.include_archived:
             conditions.append(TargetTagView.status == "ACTIVE")
         total = self.db.scalar(select(func.count(TargetTagView.id)).where(
             *conditions,
@@ -42,8 +54,18 @@ class TargetTagMapper:
             TargetTagView.system_name,
             TargetTagView.status,
         )
+        sort_columns = {
+            "id": TargetTagView.id,
+            "name": TargetTagView.name,
+            "system_name": TargetTagView.system_name,
+            "created_time": TargetTagView.created_time,
+            "updated_time": TargetTagView.updated_time,
+        }
+        column = sort_columns[sorter.field]
+        order = column.asc() if sorter.order == "asc" else column.desc()
+        id_order = TargetTagView.id.asc() if sorter.order == "asc" else TargetTagView.id.desc()
         views = self.db.execute(view_statement.where(*conditions).order_by(
-            TargetTagView.id,
+            order, id_order,
         ).offset((page - 1) * page_size).limit(page_size)).mappings().all()
         view_ids = [row["id"] for row in views]
         tag_statement = select(
@@ -53,7 +75,7 @@ class TargetTagMapper:
             TargetTag.system_name,
             TargetTag.status,
         ).where(TargetTag.view_id.in_(view_ids))
-        if not include_archived:
+        if not filter_value.include_archived and filter_value.status != "ARCHIVED":
             tag_statement = tag_statement.where(TargetTag.status == "ACTIVE")
         tags = self.db.execute(tag_statement.order_by(
             TargetTag.view_id,
@@ -76,6 +98,9 @@ class TargetTagMapper:
             total=int(total),
             page=page,
             page_size=page_size,
+            q=q,
+            filter=filter_value,
+            sorter=sorter,
         )
 
     def view(self, view_id: int) -> TargetTagViewRead | None:

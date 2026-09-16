@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from backend.schema.list_query import ListSorter
+
 
 class TargetTagViewCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -49,11 +51,25 @@ class TargetTagViewRead(BaseModel):
     tags: list[TargetTagRead]
 
 
+class TargetTagViewFilter(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["ACTIVE", "ARCHIVED"] | None = None
+    include_archived: bool = False
+
+
+class TargetTagViewSorter(ListSorter):
+    field: Literal["id", "name", "system_name", "created_time", "updated_time"] = "id"
+
+
 class TargetTagViewPageRead(BaseModel):
     items: list[TargetTagViewRead]
     total: int
     page: int
     page_size: int
+    q: str
+    filter: TargetTagViewFilter
+    sorter: TargetTagViewSorter
 
 
 class TargetTagViewResponse(BaseModel):

@@ -11,8 +11,10 @@ from backend.schema.target_tag import (
     TargetTagCreateRequest,
     TargetTagStatusRequest,
     TargetTagViewCreateRequest,
+    TargetTagViewFilter,
     TargetTagViewPageRead,
     TargetTagViewRead,
+    TargetTagViewSorter,
 )
 from backend.service.target_tag_projection_service import TargetTagProjectionService
 
@@ -26,9 +28,11 @@ class TargetTagService:
         self,
         page: int,
         page_size: int,
-        include_archived: bool = False,
+        q: str,
+        filter_value: TargetTagViewFilter,
+        sorter: TargetTagViewSorter,
     ) -> TargetTagViewPageRead:
-        return self.mapper.list(page, page_size, include_archived)
+        return self.mapper.list(page, page_size, q, filter_value, sorter)
 
     def create_view(self, payload: TargetTagViewCreateRequest) -> TargetTagViewRead:
         try:
