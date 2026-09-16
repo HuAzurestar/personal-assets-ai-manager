@@ -106,8 +106,8 @@ def test_ledger_entry_is_confirmed_single_fact_cash_projection():
             """
             INSERT INTO review_allocation (
                 review_case_id, transaction_fact_id, ledger_entry_id,
-                entry_type, amount_value, currency_code
-            ) VALUES (1, 1, 1, 0, 500000, 'CNY')
+                amount_value, currency_code
+            ) VALUES (1, 1, 1, 500000, 'CNY')
             """
         )
         try:
@@ -115,13 +115,95 @@ def test_ledger_entry_is_confirmed_single_fact_cash_projection():
                 """
                 INSERT INTO review_allocation (
                     review_case_id, transaction_fact_id, ledger_entry_id,
-                    entry_type, amount_value, currency_code
-                ) VALUES (1, 2, 1, 0, 500000, 'CNY')
+                    amount_value, currency_code
+                ) VALUES (1, 2, 1, 500000, 'CNY')
                 """
             )
         except sqlite3.IntegrityError:
             pass
         else:
             raise AssertionError("one ledger entry accepted more than one fact")
+    finally:
+        connection.close()
+
+
+def test_review_case_is_a_minimal_published_lifecycle():
+    connection = _create_target_schema()
+    try:
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(review_case)")
+        }
+        assert columns == {
+            "id",
+            "behavior_type",
+            "status",
+            "title",
+            "created_time",
+            "updated_time",
+        }
+
+        connection.execute("INSERT INTO review_case DEFAULT VALUES")
+        row = connection.execute(
+            "SELECT behavior_type, status, title FROM review_case"
+        ).fetchone()
+        assert row == (0, 0, "")
+
+        for statement in (
+            "INSERT INTO review_case (behavior_type) VALUES (2)",
+            "INSERT INTO review_case (status) VALUES (2)",
+        ):
+            try:
+                connection.execute(statement)
+            except sqlite3.IntegrityError:
+                pass
+            else:
+                raise AssertionError(f"review_case accepted invalid value: {statement}")
+    finally:
+        connection.close()
+
+
+def test_review_allocation_only_stores_published_relationships():
+    connection = _create_target_schema()
+    try:
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(review_allocation)")
+        }
+        assert columns == {
+            "id",
+            "review_case_id",
+            "transaction_fact_id",
+            "ledger_entry_id",
+            "amount_value",
+            "amount_scale",
+            "currency_code",
+            "created_time",
+            "updated_time",
+        }
+
+        for column in (
+            "review_case_id",
+            "transaction_fact_id",
+            "ledger_entry_id",
+            "amount_value",
+        ):
+            try:
+                connection.execute(
+                    f"""
+                    INSERT INTO review_allocation (
+                        review_case_id, transaction_fact_id, ledger_entry_id,
+                        amount_value, currency_code
+                    ) VALUES (
+                        {0 if column == 'review_case_id' else 1},
+                        {0 if column == 'transaction_fact_id' else 1},
+                        {0 if column == 'ledger_entry_id' else 1},
+                        {0 if column == 'amount_value' else 1},
+                        'CNY'
+                    )
+                    """
+                )
+            except sqlite3.IntegrityError:
+                pass
+            else:
+                raise AssertionError(f"review_allocation accepted invalid {column}")
     finally:
         connection.close()
