@@ -9,7 +9,6 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.router.ledger import router as ledger_router
 from backend.router.ledger_fact import router as ledger_fact_router
-from backend.router.ledger_fact_legacy import router as ledger_fact_legacy_router
 from backend.router.ledger_review import router as ledger_review_router
 from backend.router.dependency import get_db
 from backend.entity import BillFact, LedgerEntry, LedgerEntrySource, ReviewCase, ReviewCaseBill
@@ -28,7 +27,6 @@ def economic_api(tmp_path):
     api = FastAPI()
     api.include_router(ledger_review_router)
     api.include_router(ledger_fact_router)
-    api.include_router(ledger_fact_legacy_router)
     api.include_router(ledger_router)
 
     def override_db():

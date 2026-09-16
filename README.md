@@ -15,7 +15,6 @@ powershell -ExecutionPolicy Bypass -File src/script/setup.ps1
 正式接口只使用：
 
 - `/paam/import/v1`
-- `/paam/review/v2`（待分页迁移的 Fact candidate 兼容接口）
 - `/paam/ledger/v1`（事实、Flow、Review 与迁移兼容接口）
 - `/paam/review/v1`（迁移兼容与辅助审查）
 - `/paam/tag/v1`
