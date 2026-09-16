@@ -43,9 +43,7 @@ class TargetTagProjectionMapper:
         return tuple(ActiveTagValue(**row) for row in rows)
 
     def active_ledger_ids(self) -> list[int]:
-        return list(self.db.scalars(select(LedgerEntry.id).where(
-            LedgerEntry.status == "ACTIVE",
-        ).order_by(LedgerEntry.id)).all())
+        return list(self.db.scalars(select(LedgerEntry.id).order_by(LedgerEntry.id)).all())
 
     def current_states(
         self,

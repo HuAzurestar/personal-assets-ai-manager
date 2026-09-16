@@ -35,7 +35,7 @@ PAAM uses a layered modular monolith. Keep the trusted ledger transactionally co
 - Confirmed Review is authoritative input. Pending suggestions never change published economic values.
 - Every accepted Fact has exact confirmed allocation coverage. Import creates a
   confirmed DEFAULT Review and an equal TRANSACTION Economic in the same transaction.
-- Economic projections are rebuildable and may only be written by the projection service.
+- Ledger projections are rebuildable and may only be written by the economic review service.
 - Historical payloads and raw evidence are detail-only data and must not be loaded by list/summary queries.
 - A Review change, its ternary allocations, DEFAULT residuals, and every affected
   economic projection update commit atomically.
@@ -47,4 +47,4 @@ Read the relevant layer or Router skill before changing that area:
 - `.agents/skills/review-layer/SKILL.md`
 - `.agents/skills/ledger-api/SKILL.md`
 
-The authoritative 11-table dictionary and layer boundaries are in `src/doc/data-model.md`.
+The authoritative 10-table dictionary and layer boundaries are in `src/doc/data-model.md`.

@@ -7,13 +7,13 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
-from backend.router.ledger_legacy import router as ledger_legacy_router
-from backend.router.ledger_account import router as ledger_account_router
-from backend.router.ledger_review_legacy import router as ledger_review_legacy_router
 from backend.router.dependency import get_db
+from backend.router.ledger import router as ledger_router
+from backend.router.ledger_account import router as ledger_account_router
+from backend.router.ledger_review import router as ledger_review_router
 from backend.core.target_database import init_target_db
-from backend.entity import BillFact, LedgerEntrySource, ReviewCase, ReviewHistory
-from backend.service.target_projection_service import TargetProjectionService
+from backend.entity import BillFact, ReviewCase, ReviewCaseBill, ReviewHistory
+from backend.service.target_economic_service import TargetEconomicService
 
 
 @pytest.fixture
@@ -25,9 +25,9 @@ def target_account_api(tmp_path):
     sessions = sessionmaker(bind=engine, autoflush=False)
     init_target_db(bind=engine)
     api = FastAPI()
-    api.include_router(ledger_review_legacy_router)
     api.include_router(ledger_account_router)
-    api.include_router(ledger_legacy_router)
+    api.include_router(ledger_review_router)
+    api.include_router(ledger_router)
 
     def override_db():
         with sessions() as db:
@@ -61,23 +61,25 @@ def _facts(sessions, specifications):
             facts.append(fact)
         db.flush()
         fact_ids = [fact.id for fact in facts]
-        TargetProjectionService(db).rebuild_defaults(fact_ids)
-        db.commit()
+        TargetEconomicService(db).ensure_defaults(fact_ids, commit=True)
         return fact_ids
 
 
 def _ledger_id(sessions, fact_id):
     with sessions() as db:
-        return db.scalar(select(LedgerEntrySource.ledger_id).where(
-            LedgerEntrySource.source_kind == "BILL_FACT",
-            LedgerEntrySource.source_id == fact_id,
+        return db.scalar(select(ReviewCaseBill.economic_id).join(
+            ReviewCase, ReviewCase.id == ReviewCaseBill.case_id,
+        ).where(
+            ReviewCaseBill.bill_id == fact_id,
+            ReviewCaseBill.economic_id > 0,
+            ReviewCase.status == "CONFIRMED",
         ))
 
 
-def _set_account(client, fact_id, projection_version, account, key):
+def _set_account(client, fact_id, review_version, account, key):
     return client.put(f"/paam/review/v1/account/set/{fact_id}", json={
         "account_code": account,
-        "expected_projection_version": projection_version,
+        "expected_version": review_version,
         "reason": "account evidence checked",
         "idempotency_key": key,
     })
@@ -89,23 +91,22 @@ def test_account_correction_keeps_fact_immutable_and_rebuilds_default_projection
     client, sessions = target_account_api
     fact_id = _facts(sessions, [("OUT", "imported-wallet")])[0]
     ledger_id = _ledger_id(sessions, fact_id)
-    corrected = _set_account(client, fact_id, 1, "checked-bank", "account-first")
+    corrected = _set_account(client, fact_id, 0, "checked-bank", "account-first")
     assert corrected.status_code == 200, corrected.text
     case = corrected.json()["body"]
     assert case["review_type"] == "ACCOUNT"
     assert case["result"] == {"account_name": "checked-bank"}
     assert case["lines"][0]["role"] == "ACCOUNT"
 
-    detail = client.get(f"/paam/ledger/v1/entry/detail/{ledger_id}").json()
+    detail = client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()
     assert detail["facts"][0]["account_code"] == "imported-wallet"
-    assert detail["entry"]["out_account_code"] == "checked-bank"
-    assert detail["reviews"][0]["is_projection_source"] is True
+    assert detail["entry"]["account_code"] == "checked-bank"
 
-    replay = _set_account(client, fact_id, 1, "checked-bank", "account-first")
+    replay = _set_account(client, fact_id, 0, "checked-bank", "account-first")
     assert replay.status_code == 200
-    assert _set_account(client, fact_id, 1, "other", "account-stale").status_code == 409
+    assert _set_account(client, fact_id, 0, "other", "account-stale").status_code == 409
 
-    updated = _set_account(client, fact_id, 2, "second-bank", "account-second")
+    updated = _set_account(client, fact_id, 1, "second-bank", "account-second")
     assert updated.status_code == 200, updated.text
     assert updated.json()["body"]["version"] == 2
     with sessions() as db:
@@ -125,8 +126,8 @@ def test_account_correction_keeps_fact_immutable_and_rebuilds_default_projection
     })
     assert revoked.status_code == 200, revoked.text
     assert revoked.json()["body"]["status"] == "REVOKED"
-    reverted_detail = client.get(f"/paam/ledger/v1/entry/detail/{ledger_id}").json()
-    assert reverted_detail["entry"]["out_account_code"] == "imported-wallet"
+    reverted_detail = client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()
+    assert reverted_detail["entry"]["account_code"] == "imported-wallet"
 
     restored = client.post(f"/paam/review/v1/account/restore/{case['id']}", json={
         "expected_version": 3,
@@ -135,8 +136,8 @@ def test_account_correction_keeps_fact_immutable_and_rebuilds_default_projection
     })
     assert restored.status_code == 200, restored.text
     assert restored.json()["body"]["status"] == "CONFIRMED"
-    restored_detail = client.get(f"/paam/ledger/v1/entry/detail/{ledger_id}").json()
-    assert restored_detail["entry"]["out_account_code"] == "second-bank"
+    restored_detail = client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()
+    assert restored_detail["entry"]["account_code"] == "second-bank"
     assert restored.json()["body"]["history"][-1]["reverses_history_id"] > 0
 
 
@@ -148,38 +149,39 @@ def test_account_correction_republishes_connected_financial_entry(
         ("OUT", "wallet-a"),
         ("IN", "wallet-b"),
     ])
-    created = client.post("/paam/review/v1/case/create", json={
-        "review_type": "TRANSFER",
-        "title": "Transfer",
-        "result": {},
-        "lines": [
-            {"bill_id": out_id, "role": "TRANSFER_OUT"},
-            {"bill_id": in_id, "role": "TRANSFER_IN"},
+    created = client.post("/paam/review/v2/case/create", json={
+        "behavior_code": "TRANSFER",
+        "entries": [
+            {"client_key": "out", "entry_type": 1},
+            {"client_key": "in", "entry_type": 1},
+        ],
+        "allocations": [
+            {"transaction_fact_id": out_id, "entry_key": "out", "amount_value": 1000},
+            {"transaction_fact_id": in_id, "entry_key": "in", "amount_value": 1000},
         ],
         "idempotency_key": "financial-create",
     }).json()["body"]
-    assert client.post(f"/paam/review/v1/case/confirm/{created['id']}", json={
+    assert client.post(f"/paam/review/v2/case/confirm/{created['id']}", json={
         "expected_version": 1,
         "idempotency_key": "financial-confirm",
     }).status_code == 200
     ledger_id = _ledger_id(sessions, out_id)
-    before = client.get(f"/paam/ledger/v1/entry/detail/{ledger_id}").json()["entry"]
-    assert before["projection_version"] == 2
-    assert before["out_account_code"] == "wallet-a"
+    before = client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["entry"]
+    assert before["account_code"] == "wallet-a"
 
-    corrected = _set_account(client, out_id, 2, "checked-wallet", "merged-account")
+    corrected = _set_account(client, out_id, 0, "checked-wallet", "merged-account")
     assert corrected.status_code == 200, corrected.text
-    after = client.get(f"/paam/ledger/v1/entry/detail/{ledger_id}").json()
-    assert after["entry"]["projection_version"] == 3
-    assert after["entry"]["out_account_code"] == "checked-wallet"
-    assert after["entry"]["in_account_code"] == "wallet-b"
+    after = client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()
+    assert after["entry"]["account_code"] == "checked-wallet"
     assert {item["review_type"] for item in after["reviews"]} == {"ACCOUNT", "TRANSFER"}
 
 
 def test_account_code_rejects_projection_sentinel(target_account_api):
     client, sessions = target_account_api
     fact_id = _facts(sessions, [("OUT", "wallet")])[0]
-    response = _set_account(client, fact_id, 1, "MULTIPLE", "bad-account")
+    response = _set_account(client, fact_id, 0, "MULTIPLE", "bad-account")
     assert response.status_code == 422
     with sessions() as db:
-        assert db.scalar(select(ReviewCase.id)) is None
+        assert db.scalar(select(ReviewCase.id).where(
+            ReviewCase.review_type == "ACCOUNT"
+        )) is None

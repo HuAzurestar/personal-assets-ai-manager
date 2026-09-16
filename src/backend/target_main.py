@@ -12,9 +12,7 @@ from backend.router.import_conflict import router as import_conflict_router
 from backend.router.import_router import router as import_router
 from backend.router.ledger import router as ledger_router
 from backend.router.ledger_account import router as ledger_account_router
-from backend.router.ledger_legacy import router as ledger_legacy_router
 from backend.router.ledger_review import router as ledger_review_router
-from backend.router.ledger_review_legacy import router as ledger_review_legacy_router
 from backend.router.system import router as system_router
 from backend.router.tag import router as tag_router
 from backend.router.tag_assignment import router as tag_assignment_router
@@ -39,9 +37,7 @@ app.mount("/static", StaticFiles(directory=RESOURCE_DIR / "frontend"), name="sta
 app.mount("/asset", StaticFiles(directory=RESOURCE_DIR / "asset"), name="asset")
 app.include_router(import_router)
 app.include_router(import_conflict_router)
-app.include_router(ledger_legacy_router)
 app.include_router(ledger_router)
-app.include_router(ledger_review_legacy_router)
 app.include_router(ledger_review_router)
 app.include_router(ledger_account_router)
 app.include_router(tag_router)

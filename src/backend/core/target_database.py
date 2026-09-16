@@ -1,7 +1,7 @@
 """PIRC-9-only database boundary.
 
 The production application imports only this metadata and cannot register or
-create tables outside the 11-table ledger contract.
+create tables outside the target ledger contract.
 """
 
 from __future__ import annotations
@@ -43,7 +43,6 @@ TARGET_TABLE_NAMES = (
     "review_case_bill",
     "review_history",
     "ledger_entry",
-    "ledger_entry_source",
     "tag_view",
     "tag",
     "ledger_entry_tag",
@@ -66,13 +65,13 @@ TARGET_SQLITE_INDEXES = (
     "ON review_case_bill (case_id, id)",
     "CREATE INDEX IF NOT EXISTS ix_review_case_bill_economic_id "
     "ON review_case_bill (economic_id, id)",
-    "CREATE INDEX IF NOT EXISTS ix_ledger_entry_source_ledger_kind_id "
-    "ON ledger_entry_source (ledger_id, source_kind, source_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ledger_entry_occurred_time_id "
+    "ON ledger_entry (occurred_time, id)",
 )
 
 
 def ensure_target_schema(bind=None) -> None:
-    """Create/advance only the 11 PIRC-9 tables."""
+    """Create or advance only the target ledger tables."""
 
     target_bind = engine if bind is None else bind
     for table_name in TARGET_TABLE_NAMES:
@@ -89,22 +88,23 @@ def ensure_target_schema(bind=None) -> None:
         "review_case_bill": {
             "party": "VARCHAR(120) NOT NULL DEFAULT ''",
             "economic_id": "INTEGER NOT NULL DEFAULT 0",
+            "entry_type": "INTEGER NOT NULL DEFAULT 0",
         },
         "bill_fact": {
             "account_code": "VARCHAR(120) NOT NULL DEFAULT 'UNKNOWN'",
         },
         "ledger_entry": {
-            "in_account_code": "VARCHAR(120) NOT NULL DEFAULT 'UNKNOWN'",
-            "out_account_code": "VARCHAR(120) NOT NULL DEFAULT 'UNKNOWN'",
-            "economic_type": "VARCHAR(40) NOT NULL DEFAULT 'TRANSACTION'",
-            "cash_direction": "VARCHAR(8) NOT NULL DEFAULT 'UNKNOWN'",
+            "entry_type": "INTEGER NOT NULL DEFAULT 0",
+            "entry_direction": "INTEGER NOT NULL DEFAULT 0",
+            "account_code": "VARCHAR(120) NOT NULL DEFAULT 'UNKNOWN'",
+            "counterparty_account_ref": "VARCHAR(200) NOT NULL DEFAULT ''",
+            "projection_version": "INTEGER NOT NULL DEFAULT 1",
+            "occurred_time": "DATETIME",
             "amount_value": "BIGINT NOT NULL DEFAULT 0",
             "amount_scale": "SMALLINT NOT NULL DEFAULT 2",
             "currency_code": "VARCHAR(12) NOT NULL DEFAULT 'CNY'",
-            "claim_key": "VARCHAR(160) NOT NULL DEFAULT ''",
-            "claim_side": "VARCHAR(20) NOT NULL DEFAULT 'UNKNOWN'",
-            "reversal_of_id": "INTEGER NOT NULL DEFAULT 0",
-            "status": "VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'",
+            "created_time": "TEXT NOT NULL DEFAULT ''",
+            "updated_time": "TEXT NOT NULL DEFAULT ''",
         },
     }
     with target_bind.begin() as connection:
@@ -119,6 +119,121 @@ def ensure_target_schema(bind=None) -> None:
                         f"ALTER TABLE {table_name} "
                         f"ADD COLUMN {column_name} {definition}"
                     ))
+        ledger_columns = {
+            item["name"] for item in inspect(connection).get_columns("ledger_entry")
+        }
+        connection.execute(text(
+            "UPDATE ledger_entry SET "
+            "created_time = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') "
+            "WHERE created_time IS NULL OR created_time = ''"
+        ))
+        connection.execute(text(
+            "UPDATE ledger_entry SET "
+            "updated_time = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') "
+            "WHERE updated_time IS NULL OR updated_time = ''"
+        ))
+        old_projection_columns = {
+            "economic_type",
+            "cash_direction",
+            "in_amount_value",
+            "out_amount_value",
+            "in_currency_code",
+            "out_currency_code",
+            "in_account_code",
+            "out_account_code",
+            "start_time",
+        }
+        if old_projection_columns <= ledger_columns:
+            connection.execute(text(
+                "UPDATE ledger_entry SET "
+                "entry_type = CASE economic_type "
+                "WHEN 'ACCOUNT_TRANSFER' THEN 1 WHEN 'CLAIM' THEN 2 ELSE 0 END, "
+                "entry_direction = CASE "
+                "WHEN cash_direction = 'IN' THEN 1 "
+                "WHEN cash_direction = 'OUT' THEN 2 "
+                "WHEN in_amount_value > 0 AND out_amount_value = 0 THEN 1 "
+                "WHEN out_amount_value > 0 AND in_amount_value = 0 THEN 2 "
+                "ELSE entry_direction END, "
+                "amount_value = CASE "
+                "WHEN amount_value > 0 THEN amount_value "
+                "WHEN in_amount_value > 0 AND out_amount_value = 0 THEN in_amount_value "
+                "WHEN out_amount_value > 0 AND in_amount_value = 0 THEN out_amount_value "
+                "ELSE amount_value END, "
+                "currency_code = CASE "
+                "WHEN cash_direction = 'IN' THEN in_currency_code "
+                "WHEN cash_direction = 'OUT' THEN out_currency_code "
+                "WHEN in_amount_value > 0 AND out_amount_value = 0 THEN in_currency_code "
+                "WHEN out_amount_value > 0 AND in_amount_value = 0 THEN out_currency_code "
+                "ELSE currency_code END, "
+                "account_code = CASE "
+                "WHEN cash_direction = 'IN' THEN in_account_code "
+                "WHEN cash_direction = 'OUT' THEN out_account_code "
+                "WHEN in_amount_value > 0 AND out_amount_value = 0 THEN in_account_code "
+                "WHEN out_amount_value > 0 AND in_amount_value = 0 THEN out_account_code "
+                "ELSE account_code END, "
+                "occurred_time = COALESCE(occurred_time, start_time)"
+            ))
+        elif "start_time" in ledger_columns:
+            connection.execute(text(
+                "UPDATE ledger_entry "
+                "SET occurred_time = COALESCE(occurred_time, start_time)"
+            ))
+        target_ledger_columns = {
+            "id",
+            "entry_type",
+            "entry_direction",
+            "amount_value",
+            "amount_scale",
+            "currency_code",
+            "account_code",
+            "counterparty_account_ref",
+            "projection_version",
+            "occurred_time",
+            "created_time",
+            "updated_time",
+        }
+        if ledger_columns != target_ledger_columns:
+            connection.execute(text("DROP TABLE IF EXISTS ledger_entry_contract"))
+            connection.execute(text("""
+                CREATE TABLE ledger_entry_contract (
+                    id INTEGER PRIMARY KEY,
+                    entry_type INTEGER NOT NULL CHECK (entry_type IN (0, 1, 2)),
+                    entry_direction INTEGER NOT NULL CHECK (entry_direction IN (1, 2)),
+                    amount_value INTEGER NOT NULL CHECK (amount_value > 0),
+                    amount_scale INTEGER NOT NULL DEFAULT 2 CHECK (amount_scale BETWEEN 0 AND 8),
+                    currency_code TEXT NOT NULL CHECK (currency_code <> ''),
+                    account_code TEXT NOT NULL CHECK (account_code <> ''),
+                    counterparty_account_ref TEXT NOT NULL DEFAULT '',
+                    projection_version INTEGER NOT NULL DEFAULT 1 CHECK (projection_version >= 1),
+                    occurred_time TEXT NOT NULL CHECK (occurred_time <> ''),
+                    created_time TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                    updated_time TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                )
+            """))
+            connection.execute(text("""
+                INSERT INTO ledger_entry_contract (
+                    id, entry_type, entry_direction, amount_value, amount_scale,
+                    currency_code, account_code, counterparty_account_ref,
+                    projection_version, occurred_time, created_time, updated_time
+                )
+                SELECT
+                    id, entry_type, entry_direction, amount_value, amount_scale,
+                    currency_code, account_code, counterparty_account_ref,
+                    projection_version, occurred_time, created_time, updated_time
+                FROM ledger_entry
+                WHERE entry_type IN (0, 1, 2)
+                  AND entry_direction IN (1, 2)
+                  AND amount_value > 0
+                  AND currency_code <> ''
+                  AND account_code <> ''
+                  AND occurred_time IS NOT NULL
+                  AND occurred_time <> ''
+            """))
+            connection.execute(text("DROP TABLE ledger_entry"))
+            connection.execute(text(
+                "ALTER TABLE ledger_entry_contract RENAME TO ledger_entry"
+            ))
+        connection.execute(text("DROP TABLE IF EXISTS ledger_entry_source"))
         for statement in TARGET_SQLITE_INDEXES:
             connection.execute(text(statement))
 

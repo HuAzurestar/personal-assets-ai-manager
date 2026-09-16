@@ -23,11 +23,11 @@ def test_ledger_page_uses_hot_time_index():
     engine = _target_engine()
     plan = _plan(
         engine,
-        "SELECT id, start_time FROM ledger_entry "
-        "WHERE start_time >= :start ORDER BY start_time, id LIMIT 100",
+        "SELECT id, occurred_time FROM ledger_entry "
+        "WHERE occurred_time >= :start ORDER BY occurred_time, id LIMIT 100",
         {"start": "2025-01-01 00:00:00"},
     )
-    assert "ix_ledger_entry_time_id" in plan
+    assert "ix_ledger_entry_occurred_time_id" in plan
 
 
 def test_fact_period_lookup_uses_time_index():
@@ -60,16 +60,6 @@ def test_raw_reference_lookup_uses_partial_reference_index():
         "WHERE source_reference IN ('A', 'B') AND source_reference <> ''",
     )
     assert "ix_bill_raw_source_reference_bill_id" in plan
-
-
-def test_ledger_detail_source_lookup_uses_implicit_id_index():
-    engine = _target_engine()
-    plan = _plan(
-        engine,
-        "SELECT source_kind, source_id FROM ledger_entry_source "
-        "WHERE ledger_id = 1 ORDER BY source_kind, source_id",
-    )
-    assert "ix_ledger_entry_source_ledger_kind_id" in plan
 
 
 def test_review_lookup_from_bill_uses_implicit_id_index():

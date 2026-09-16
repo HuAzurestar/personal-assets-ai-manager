@@ -169,7 +169,6 @@ class TargetTagMapper:
         self.db.execute(insert(LedgerEntryTag).from_select(
             ["ledger_id", "tag_id"],
             select(LedgerEntry.id, literal(tag_id)).where(
-                LedgerEntry.status == "ACTIVE",
                 ~existing,
             ),
         ))

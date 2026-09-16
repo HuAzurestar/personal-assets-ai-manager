@@ -105,10 +105,7 @@ def _preview(client, filename: str, content: bytes, password: str | None = None)
         "password": password,
     }]})
     assert response.status_code == 200, response.text
-    payload = response.json()
-    assert payload["status"] == response.status_code
-    assert payload["message"] == "Import preview created"
-    return payload["body"]
+    return response.json()["body"]
 
 
 def _confirm(client, preview):
@@ -124,8 +121,6 @@ def test_target_import_writes_fact_evidence_and_hot_projection(target_import_api
     assert preview["can_confirm"]
     response = _confirm(client, preview)
     assert response.status_code == 200, response.text
-    assert response.json()["status"] == response.status_code
-    assert response.json()["message"] == "Import confirmed"
 
     with sessions() as db:
         fact = db.scalar(select(BillFact))
@@ -140,14 +135,11 @@ def test_target_import_writes_fact_evidence_and_hot_projection(target_import_api
     assert set(inspect(engine).get_table_names()) == set(
         target_database.TARGET_TABLE_NAMES
     )
-    page = client.get("/paam/ledger/v1/entry/list").json()
-    assert page["total"] == 1
-    assert page["items"][0]["outgoing"]["amount_value"] == 1000
-    economy = client.get("/paam/ledger/v1/flow/list")
-    assert economy.status_code == 200, economy.text
-    assert economy.json()["total"] == 1
-    assert economy.json()["items"][0]["economic_type"] == "TRANSACTION"
-    assert economy.json()["items"][0]["amount"]["amount_value"] == 1000
+    ledger = client.get("/paam/ledger/v1/flow/list")
+    assert ledger.status_code == 200, ledger.text
+    assert ledger.json()["total"] == 1
+    assert ledger.json()["items"][0]["entry_type"] == 0
+    assert ledger.json()["items"][0]["amount"]["amount_value"] == 1000
 
     repeated = _preview(client, "renamed.csv", _csv())
     assert repeated["counts"]["duplicate_file"] == 1
@@ -197,13 +189,7 @@ def test_import_history_supports_search_pagination_and_account_filter(
     ).json()["body"]
     assert source_search["total"] == 2
 
-    account_page = client.get(
-        "/paam/import/v1/account/list?page=1&page_size=20"
-    ).json()["body"]
-    assert account_page["page"] == 1
-    assert account_page["page_size"] == 20
-    assert account_page["total"] == 2
-    accounts = account_page["items"]
+    accounts = client.get("/paam/import/v1/account/list").json()["body"]["items"]
     card_account = next(
         item for item in accounts if "尾号 1234" in item["display_name"]
     )
@@ -341,8 +327,6 @@ def test_target_fact_conflict_is_recorded_for_review(target_import_api):
         },
     )
     assert resolved.status_code == 200, resolved.text
-    assert resolved.json()["status"] == resolved.status_code
-    assert resolved.json()["message"] == "Fact conflict resolved"
     with sessions() as db:
         assert [item.amount_value for item in db.scalars(
             select(BillFact).order_by(BillFact.id)

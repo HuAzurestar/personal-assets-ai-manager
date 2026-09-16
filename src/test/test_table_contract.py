@@ -4,12 +4,12 @@ from backend.core.target_database import TARGET_TABLE_NAMES, TargetBase, init_ta
 from script.reset_target_database import reset
 
 
-def test_target_metadata_contains_exactly_the_11_pirc9_tables():
-    assert len(TARGET_TABLE_NAMES) == 11
+def test_target_metadata_contains_exactly_the_target_tables():
+    assert len(TARGET_TABLE_NAMES) == 10
     assert set(TargetBase.metadata.tables) == set(TARGET_TABLE_NAMES)
 
 
-def test_empty_target_database_creates_only_the_11_pirc9_tables(tmp_path):
+def test_empty_target_database_creates_only_the_target_tables(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'target-only.db'}")
     try:
         init_target_db(bind=engine)

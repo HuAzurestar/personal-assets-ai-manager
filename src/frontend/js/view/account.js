@@ -85,12 +85,12 @@ export function accountsMarkup({ summary, accounts, accountCode, currency, curso
   const actualActivities = summary.activities
     .filter((item) => item.currency_code === selectedCurrency);
   const visibleActivities = [...actualActivities];
-  const visibleTypes = new Set(visibleActivities.map((item) => item.ledger_type));
-  for (const ledgerType of ["TRANSACTION", "ACCOUNT_TRANSFER", "CLAIM"]) {
+  const visibleTypes = new Set(visibleActivities.map((item) => item.entry_type_code));
+  for (const entryTypeCode of ["TRANSACTION", "ACCOUNT_TRANSFER", "CLAIM"]) {
     if (visibleActivities.length >= 3) break;
-    if (visibleTypes.has(ledgerType)) continue;
+    if (visibleTypes.has(entryTypeCode)) continue;
     visibleActivities.push({
-      ledger_type: ledgerType,
+      entry_type_code: entryTypeCode,
       currency_code: selectedCurrency,
       amount_scale: total.amount_scale,
       in_amount_value: 0,
@@ -99,8 +99,8 @@ export function accountsMarkup({ summary, accounts, accountCode, currency, curso
     });
   }
   const activityCards = visibleActivities
-    .map((item) => `<button type="button" class="activity-card" data-action="account-type" data-value="${esc(item.ledger_type)}">
-      <header><span>${esc(typeNames[item.ledger_type] || item.ledger_type)}</span><small>单方向、单币种经济结果</small></header>
+    .map((item) => `<button type="button" class="activity-card" data-action="account-type" data-value="${esc(item.entry_type_code)}">
+      <header><span>${esc(typeNames[item.entry_type_code] || item.entry_type_code)}</span><small>单方向、单币种经济结果</small></header>
       <div><p><span>流入</span><strong>${amount(item.in_amount_value, item.amount_scale, selectedCurrency)}</strong></p><p><span>流出</span><strong>${amount(item.out_amount_value, item.amount_scale, selectedCurrency)}</strong></p></div>
       <footer>查看相关流水 →</footer>
     </button>`).join("");

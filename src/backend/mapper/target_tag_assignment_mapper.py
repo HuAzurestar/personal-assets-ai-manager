@@ -29,10 +29,7 @@ class TargetTagAssignmentMapper:
         row = self.db.execute(select(
             LedgerEntry.id.label("ledger_id"),
             LedgerEntry.projection_version,
-        ).where(
-            LedgerEntry.id == ledger_id,
-            LedgerEntry.status == "ACTIVE",
-        )).mappings().one_or_none()
+        ).where(LedgerEntry.id == ledger_id)).mappings().one_or_none()
         return TagAssignmentTarget(**row) if row else None
 
     def state(self, ledger_id: int) -> dict[str, str]:

@@ -1,6 +1,6 @@
 # PAAM
 
-PAAM 是一个 SQLite + Python 的分层模块化账本。当前模型按“事实 → 审查 → 经济”分层，Fact 与 Economic 通过 Review 下的 Allocation 三元关系连接；数据库仍固定为 11 张表。
+PAAM 是一个 SQLite + Python 的分层模块化账本。当前模型按“事实 → 审查 → 经济”分层，Fact 与 Economic 通过 Review 下的 Allocation 三元关系连接；数据库固定为 10 张表。
 
 ## 启动
 
@@ -15,9 +15,9 @@ powershell -ExecutionPolicy Bypass -File src/script/setup.ps1
 正式接口只使用：
 
 - `/paam/import/v1`
+- `/paam/ledger/v1`（正式经济流水）
 - `/paam/review/v2`（经济审查）
-- `/paam/ledger/v1`（事实、Flow 与迁移兼容接口）
-- `/paam/review/v1`（迁移兼容与辅助审查）
+- `/paam/review/v1`（账户修正与事实冲突）
 - `/paam/tag/v1`
 
 ## 架构
@@ -29,7 +29,7 @@ powershell -ExecutionPolicy Bypass -File src/script/setup.ps1
 - Router：HTTP 参数、状态码和 DTO 校验。
 - Service：业务规则、事务、幂等和投影更新。
 - Mapper：显式字段 SQL、批量查询和 VO 组装。
-- Entity：按表拆分，只定义 11 张目标表，保留原类名。
+- Entity：按表拆分，只定义 10 张目标表，保留原类名。
 - Parser：文件解析、来源字段解释，返回解析结果，由 Service 编排调用。
 
 ## 文件结构

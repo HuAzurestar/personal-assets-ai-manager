@@ -26,9 +26,9 @@ class TargetEconomicReadService:
         self.mapper = TargetEconomicReadMapper(db)
 
     def page(self, query: EconomicPageQuery) -> EconomicFlowPageRead:
-        invalid = sorted(set(query.economic_type) - {"TRANSACTION", "ACCOUNT_TRANSFER", "CLAIM"})
+        invalid = sorted(set(query.entry_type) - {0, 1, 2})
         if invalid:
-            raise ValueError(f"unknown economic types: {invalid}")
+            raise ValueError(f"unknown ledger entry types: {invalid}")
         rows, total, tags = self.mapper.page(query)
         return EconomicFlowPageRead(
             items=[self._flow(row, tags.get(row["id"], [])) for row in rows],
@@ -38,7 +38,7 @@ class TargetEconomicReadService:
             filters={
                 "date_from": str(query.date_from) if query.date_from else None,
                 "date_to": str(query.date_to) if query.date_to else None,
-                "economic_type": list(query.economic_type),
+                "entry_type": list(query.entry_type),
                 "currency_code": list(query.currency_code),
                 "q": query.q,
             },
@@ -48,15 +48,14 @@ class TargetEconomicReadService:
         data = self.mapper.detail(economic_id)
         if data is None:
             return None
-        flow, allocations, facts, reviews, tags = data
+        flow, allocations, facts, reviews, tags, account_versions = data
         return EconomicFlowDetailRead(
-            flow=self._flow(flow, tags),
+            entry=self._flow(flow, tags),
             allocations=[EconomicAllocationEvidenceRead(
                 id=row["id"],
-                review_id=row["review_id"],
-                fact_id=row["fact_id"],
-                economic_id=row["economic_id"],
-                role=row["role"],
+                review_case_id=row["review_case_id"],
+                transaction_fact_id=row["transaction_fact_id"],
+                ledger_entry_id=row["ledger_entry_id"],
                 amount=EconomicMoneyRead(
                     amount_value=row["amount_value"],
                     amount_scale=row["amount_scale"],
@@ -73,6 +72,7 @@ class TargetEconomicReadService:
                     currency_code=row["currency_code"],
                 ),
                 account_code=row["account_code"],
+                account_review_version=account_versions.get(row["id"], 0),
                 counterparty=row["counterparty"],
                 summary=row["summary"],
             ) for row in facts],
@@ -86,47 +86,30 @@ class TargetEconomicReadService:
             currency = row["currency_code"]
             scales[currency] = max(scales.get(currency, row["amount_scale"]), row["amount_scale"])
         totals = defaultdict(lambda: {
-            "income_value": 0,
-            "expense_value": 0,
-            "reversal_in_value": 0,
-            "reversal_out_value": 0,
+            "transaction_in_value": 0,
+            "transaction_out_value": 0,
             "account_transfer_in_value": 0,
             "account_transfer_out_value": 0,
-            "claim_in_value": 0,
-            "claim_out_value": 0,
-            "receivable_balance_value": 0,
-            "payable_balance_value": 0,
+            "claim_cashflow_in_value": 0,
+            "claim_cashflow_out_value": 0,
         })
         for row in rows:
             currency = row["currency_code"]
             value = row["amount_value"] * (10 ** (scales[currency] - row["amount_scale"]))
-            direction = row["cash_direction"]
+            direction = row["entry_direction"]
             target = totals[currency]
-            if row["economic_type"] == "TRANSACTION":
-                if row["reversal_of_id"]:
-                    target["reversal_in_value" if direction == "IN" else "reversal_out_value"] += value
-                elif direction == "IN":
-                    target["income_value"] += value
-                else:
-                    target["expense_value"] += value
-            elif row["economic_type"] == "ACCOUNT_TRANSFER":
-                target["account_transfer_in_value" if direction == "IN" else "account_transfer_out_value"] += value
-            elif row["economic_type"] == "CLAIM":
-                target["claim_in_value" if direction == "IN" else "claim_out_value"] += value
-                sign = 1 if (
-                    (row["claim_side"] == "RECEIVABLE" and direction == "OUT")
-                    or (row["claim_side"] == "PAYABLE" and direction == "IN")
-                ) else -1
-                key = "receivable_balance_value" if row["claim_side"] == "RECEIVABLE" else "payable_balance_value"
-                target[key] += sign * value
+            suffix = "in_value" if direction == 1 else "out_value"
+            prefix = {
+                0: "transaction",
+                1: "account_transfer",
+                2: "claim_cashflow",
+            }[row["entry_type"]]
+            target[f"{prefix}_{suffix}"] += value
         return EconomicSummaryRead(
             entry_count=len(rows),
             totals=[EconomicCurrencySummaryRead(
                 currency_code=currency,
                 amount_scale=scales[currency],
-                account_transfer_net_value=(
-                    values["account_transfer_in_value"] - values["account_transfer_out_value"]
-                ),
                 **values,
             ) for currency, values in sorted(totals.items())],
         )
@@ -135,19 +118,16 @@ class TargetEconomicReadService:
     def _flow(row, tags=()) -> EconomicFlowListItem:
         return EconomicFlowListItem(
             id=row["id"],
-            economic_type=row["economic_type"],
-            cash_direction=row["cash_direction"],
+            entry_type=row["entry_type"],
+            entry_direction=row["entry_direction"],
             amount=EconomicMoneyRead(
                 amount_value=row["amount_value"],
                 amount_scale=row["amount_scale"],
                 currency_code=row["currency_code"],
             ),
-            title=row["title"],
-            start_time=row["start_time"],
-            end_time=row["end_time"],
-            claim_key=row["claim_key"],
-            claim_side=row["claim_side"],
-            reversal_of_id=row["reversal_of_id"],
+            account_code=row["account_code"],
+            counterparty_account_ref=row["counterparty_account_ref"],
             projection_version=row["projection_version"],
+            occurred_time=row["occurred_time"],
             tags=[EconomicTagRead(**tag) for tag in tags],
         )

@@ -9,22 +9,19 @@ from sqlalchemy.orm import Session
 from backend.entity import (
     BillFact,
     LedgerEntry,
-    LedgerEntrySource,
     ReviewCase,
     ReviewCaseBill,
     ReviewHistory,
 )
-from backend.schema.target_review import FINANCIAL_REVIEW_TYPES
 
 
 @dataclass(frozen=True, slots=True)
 class AccountTarget:
     fact_id: int
-    ledger_id: int
-    projection_version: int
     amount_value: int
     amount_scale: int
     currency_code: str
+    account_code: str
     counterparty: str
 
 
@@ -37,21 +34,31 @@ class TargetAccountMapper:
     def target(self, fact_id: int) -> AccountTarget | None:
         row = self.db.execute(select(
             BillFact.id.label("fact_id"),
-            LedgerEntrySource.ledger_id,
-            LedgerEntry.projection_version,
             BillFact.amount_value,
             BillFact.amount_scale,
             BillFact.currency_code,
+            BillFact.account_code,
             BillFact.counterparty,
-        ).join(
-            LedgerEntrySource,
-            (LedgerEntrySource.source_kind == "BILL_FACT")
-            & (LedgerEntrySource.source_id == BillFact.id),
-        ).join(
-            LedgerEntry,
-            LedgerEntry.id == LedgerEntrySource.ledger_id,
         ).where(BillFact.id == fact_id)).mappings().one_or_none()
         return AccountTarget(**row) if row else None
+
+    def update_confirmed_ledgers(
+        self,
+        fact_id: int,
+        account_code: str,
+        now: datetime,
+    ) -> None:
+        ledger_ids = select(ReviewCaseBill.economic_id).join(
+            ReviewCase,
+            ReviewCase.id == ReviewCaseBill.case_id,
+        ).where(
+            ReviewCaseBill.bill_id == fact_id,
+            ReviewCaseBill.economic_id > 0,
+            ReviewCase.status == "CONFIRMED",
+        )
+        self.db.execute(update(LedgerEntry).where(
+            LedgerEntry.id.in_(ledger_ids)
+        ).values(account_code=account_code, updated_time=now))
 
     def account_case_id(self, fact_id: int) -> int:
         ids = self.db.scalars(select(ReviewCase.id).join(
@@ -63,20 +70,6 @@ class TargetAccountMapper:
         ).order_by(ReviewCase.id)).all()
         if len(ids) > 1:
             raise ValueError(f"fact {fact_id} has more than one ACCOUNT review case")
-        return ids[0] if ids else 0
-
-    def financial_case_id(self, ledger_id: int) -> int:
-        ids = self.db.scalars(select(ReviewCase.id).join(
-            LedgerEntrySource,
-            (LedgerEntrySource.source_kind == "REVIEW_CASE")
-            & (LedgerEntrySource.source_id == ReviewCase.id),
-        ).where(
-            LedgerEntrySource.ledger_id == ledger_id,
-            ReviewCase.status == "CONFIRMED",
-            ReviewCase.review_type.in_(FINANCIAL_REVIEW_TYPES),
-        )).all()
-        if len(ids) > 1:
-            raise ValueError(f"ledger {ledger_id} has multiple financial Review sources")
         return ids[0] if ids else 0
 
     def create_case(

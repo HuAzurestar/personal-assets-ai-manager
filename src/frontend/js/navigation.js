@@ -24,7 +24,6 @@ const pageModules = {
   "ledger-reviews": "details",
   "ledger-imports": "details",
   "ledger-tags": "details",
-  "legacy-ledger": "workbench",
   summary: "accounts",
   reviews: "workbench",
   import: "workbench",

@@ -23,6 +23,12 @@ router = APIRouter(
     route_class=DomainErrorRoute,
 )
 
+ECONOMIC_TYPE_IDS = {
+    "TRANSACTION": 0,
+    "ACCOUNT_TRANSFER": 1,
+    "CLAIM": 2,
+}
+
 
 @router.get("/flow/list", response_model=EconomicFlowPageRead)
 def list_economic_flows(
@@ -38,12 +44,15 @@ def list_economic_flows(
     if date_from and date_to and date_from > date_to:
         raise HTTPException(status_code=422, detail="date_from must be before date_to")
     try:
+        invalid = sorted(set(economic_type) - set(ECONOMIC_TYPE_IDS))
+        if invalid:
+            raise ValueError(f"unknown economic types: {invalid}")
         return TargetEconomicReadService(db).page(EconomicPageQuery(
             page=page,
             page_size=page_size,
             date_from=date_from,
             date_to=date_to,
-            economic_type=tuple(economic_type),
+            entry_type=tuple(ECONOMIC_TYPE_IDS[item] for item in economic_type),
             currency_code=tuple(code.upper() for code in currency_code),
             q=q.strip(),
         ))
