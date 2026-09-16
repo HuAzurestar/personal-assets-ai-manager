@@ -8,6 +8,7 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 
 from backend.router.ledger import router as ledger_router
+from backend.router.ledger_fact import router as ledger_fact_router
 from backend.router.ledger_fact_legacy import router as ledger_fact_legacy_router
 from backend.router.ledger_review import router as ledger_review_router
 from backend.router.dependency import get_db
@@ -26,6 +27,7 @@ def economic_api(tmp_path):
     init_target_db(bind=engine)
     api = FastAPI()
     api.include_router(ledger_review_router)
+    api.include_router(ledger_fact_router)
     api.include_router(ledger_fact_legacy_router)
     api.include_router(ledger_router)
 
@@ -228,7 +230,7 @@ def test_partial_manual_reviews_keep_exact_default_coverage_and_are_idempotent(e
     assert first.status_code == replay.status_code == 200
     assert first.json()["body"] == replay.json()["body"]
 
-    candidates = client.get("/paam/review/v2/fact/candidates").json()["body"]
+    candidates = client.get("/paam/ledger/v1/fact/list").json()["body"]
     assert [(item["id"], item["available_value"]) for item in candidates] == [(fact_id, 6000)]
     cases = client.get("/paam/ledger/v1/review/list").json()["body"]
     assert cases["total"] == 1

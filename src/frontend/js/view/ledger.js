@@ -321,7 +321,7 @@ function detailPager(result, pageId) {
 }
 
 async function ledgerPage() {
-  const facts = await request("/paam/review/v2/fact/candidates?limit=500");
+  const facts = await request("/paam/ledger/v1/fact/list?limit=500");
   const q = (state.params.get("q") || "").trim().toLowerCase();
   const currency = (state.params.get("currency_code") || "").trim().toUpperCase();
   const dateFrom = state.params.get("date_from") || "";
@@ -508,7 +508,7 @@ async function transitionEconomicReview(button) {
 }
 
 async function openEconomicReviewEditor() {
-  const facts = await request("/paam/review/v2/fact/candidates?limit=100");
+  const facts = await request("/paam/ledger/v1/fact/list?limit=100");
   if (!facts.length) throw new Error("当前没有可分配的事实流水");
   const selected = new Set();
   const values = new Map();
