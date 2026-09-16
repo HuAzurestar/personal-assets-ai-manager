@@ -30,6 +30,7 @@ from backend.entity import (
     TransactionImportFile,
     TransactionImportRow,
 )
+from backend.mapper.target_import_match_mapper import TargetImportMatchMapper
 from backend.mapper.target_import_read_mapper import TargetImportReadMapper
 from backend.mapper.target_intake_mapper import TargetIntakeMapper
 from backend.parser.statement_parser import parse_statement
@@ -136,6 +137,12 @@ def test_import_read_mapper_owns_public_import_queries():
     for method_name in ("history", "rows", "accounts"):
         assert hasattr(TargetImportReadMapper, method_name)
         assert not hasattr(TargetIntakeMapper, method_name)
+
+
+def test_import_match_mapper_owns_preview_planning():
+    assert hasattr(TargetImportMatchMapper, "plan")
+    assert hasattr(TargetImportMatchMapper, "load_history")
+    assert not hasattr(TargetIntakeMapper, "plan")
 
 
 def test_target_import_writes_fact_evidence_and_hot_projection(target_import_api):

@@ -11,16 +11,17 @@ from backend.core.intake_preview_store import (
     target_intake_preview_store,
 )
 from backend.error import TargetIntakeError
+from backend.mapper.target_import_match_mapper import TargetImportMatchMapper
 from backend.mapper.target_import_read_mapper import TargetImportReadMapper
 from backend.mapper.target_intake_mapper import TargetIntakeMapper
+from backend.parser.statement_parser import parse_statement
 from backend.schema.intake import (
     IntakeConfirmRequest,
     IntakePreviewRequest,
     IntakeReviseRequest,
 )
-from backend.smart_import import public_plan
-from backend.parser.statement_parser import parse_statement
 from backend.service.target_economic_service import TargetEconomicService
+from backend.smart_import import public_plan
 
 
 class TargetIntakeService:
@@ -28,6 +29,7 @@ class TargetIntakeService:
 
     def __init__(self, db: Session):
         self.db = db
+        self.match_mapper = TargetImportMatchMapper(db)
         self.read_mapper = TargetImportReadMapper(db)
         self.mapper = TargetIntakeMapper(db)
         self.store = target_intake_preview_store
@@ -51,7 +53,7 @@ class TargetIntakeService:
                     "error": str(error),
                     "rows": [],
                 })
-        plan = self.mapper.plan(
+        plan = self.match_mapper.plan(
             documents,
             self.read_mapper.known_accounts(),
         )
@@ -68,7 +70,7 @@ class TargetIntakeService:
         if state is None or state.result is not None or state.expired:
             raise TargetIntakeError(409, "预览已失效，请重新上传")
         try:
-            plan = self.mapper.plan(
+            plan = self.match_mapper.plan(
                 state.documents,
                 self.read_mapper.known_accounts(),
                 payload.accounts,
@@ -96,7 +98,7 @@ class TargetIntakeService:
                 raise TargetIntakeError(409, "预览已变化，请核对最新预览")
             try:
                 self.mapper.begin_write()
-                current = self.mapper.plan(
+                current = self.match_mapper.plan(
                     state.documents,
                     self.read_mapper.known_accounts(),
                     state.accounts,
