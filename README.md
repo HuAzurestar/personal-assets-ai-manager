@@ -73,7 +73,7 @@ Mapper 方法和导入计划的现有调用关系不变。
 
 ## 文档
 
-- [11 表逐字段字典](src/doc/data-model.md)
+- [10 表逐字段字典](src/doc/data-model.md)
 - [SQL 重构清单](src/doc/sql-query-refactor.md)
 - [PIRC-9 验收记录](src/doc/pirc-9-verification.md)
 - [文件迁移清单](src/doc/file-migration.md)

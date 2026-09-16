@@ -240,7 +240,7 @@ def run() -> None:
                 wizard = page.locator('dialog[open] [data-form="economic-review-create"]')
                 expect(wizard).to_be_visible()
                 expect(wizard.get_by_role("heading", name="1. 选择事实流水")).to_be_visible()
-                expect(wizard.get_by_role("heading", name="2. 定义经济流水")).to_be_visible()
+                expect(wizard.get_by_role("heading", name="2. 定义账本流水")).to_be_visible()
                 expect(wizard.get_by_role("heading", name="3. 分配金额")).to_be_visible()
                 wizard.locator('[data-close]').click()
 
@@ -281,7 +281,7 @@ def run() -> None:
                 assert actual == set(TARGET_TABLE_NAMES), actual
             finally:
                 engine.dispose()
-            print("PASS target UI fact, review, economic flow, and 11-table isolation")
+            print("PASS target UI fact, review, economic flow, and 10-table isolation")
         finally:
             server.should_exit = True
             thread.join(timeout=10)

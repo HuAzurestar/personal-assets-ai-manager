@@ -29,10 +29,10 @@ if __name__ == "__main__":
         response.raise_for_status()
         print("Confirmed:", response.json()["body"], flush=True)
         records = client.get(
-            "/paam/ledger/v1/entry/list", params={"page_size": 100}
+            "/paam/ledger/v1/flow/list", params={"page_size": 100}
         )
         records.raise_for_status()
-        assert records.json()["total"] == 803
+        assert records.json()["body"]["total"] == 803
         repeated = client.post(
             f"/paam/import/v1/preview/{plan['token']}/confirm",
             json={"version": plan["version"]},

@@ -1,4 +1,4 @@
-"""PIRC-9 API application backed by exactly the 11 ledger tables."""
+"""PIRC-9 API application backed by exactly the 10 target tables."""
 
 from contextlib import asynccontextmanager
 

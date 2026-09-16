@@ -72,6 +72,12 @@ def test_importing_target_runtime_does_not_load_legacy_database_module():
     assert result.returncode == 0, result.stderr
 
 
+def test_sample_import_script_queries_the_canonical_flow_api():
+    script = (ROOT / "src/script/import_test_sample.py").read_text(encoding="utf-8")
+    assert "/paam/ledger/v1/flow/list" in script
+    assert "/paam/ledger/v1/entry/" not in script
+
+
 def _wechat_csv(rows=None) -> bytes:
     stream = io.StringIO()
     writer = csv.writer(stream)
