@@ -159,7 +159,7 @@ class TargetFlowAllocationRequest(BaseModel):
 class TargetEconomicReviewCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    behavior_code: str = Field(min_length=1, max_length=40)
+    behavior_code: Literal["TRANSACTION", "BORROW_AND_REPAY"]
     title: str = Field(
         default="",
         max_length=160,
@@ -277,6 +277,7 @@ class TargetEconomicReviewPageResponse(BaseModel):
 
 class TargetFactAllocationCandidateRead(BaseModel):
     id: int
+    ledger_id: int
     occurred_time: datetime
     cash_direction: str
     amount_value: int

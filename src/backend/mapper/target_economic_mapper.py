@@ -215,6 +215,7 @@ class TargetEconomicMapper:
                 clauses.append(TransactionFact.account_code == filter_value.account_code)
         return select(
             TransactionFact.id,
+            func.min(ReviewAllocation.ledger_entry_id).label("ledger_id"),
             TransactionFact.occurred_time,
             TransactionFact.cash_direction,
             TransactionFact.amount_value,
@@ -914,7 +915,7 @@ class TargetEconomicMapper:
 
     @staticmethod
     def _behavior_type(behavior_code: str) -> int:
-        return 1 if behavior_code in {"ADVANCE", "LOAN", "BORROW_AND_REPAY"} else 0
+        return 1 if behavior_code == "BORROW_AND_REPAY" else 0
 
     @staticmethod
     def _behavior_code(behavior_type: int) -> str:

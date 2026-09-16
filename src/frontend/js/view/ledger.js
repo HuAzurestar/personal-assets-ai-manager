@@ -233,19 +233,6 @@ function detailListView(options) {
   return detailList({ tabs: detailTabItems, ...options });
 }
 
-async function loadFactCandidates(maxItems) {
-  const items = [];
-  const pageSize = Math.min(maxItems, 100);
-  let page = 1;
-  while (items.length < maxItems) {
-    const result = await request(`/paam/ledger/v1/review_candidate/list?${new URLSearchParams({ page, page_size: pageSize })}`);
-    items.push(...result.items);
-    if (!result.items.length || items.length >= result.total) break;
-    page += 1;
-  }
-  return items.slice(0, maxItems);
-}
-
 async function ledgerPage() {
   const q = (state.params.get("q") || "").trim();
   const currency = (state.params.get("currency_code") || "").trim().toUpperCase();
@@ -281,7 +268,7 @@ async function showFactDetail(id) {
   const fact = detail.transaction_fact;
   const evidence = detailRelationRows(detail.import_evidence, (item) => `<span><strong>${esc(item.filename)}</strong><small>Import File #${item.import_file_id} · 第 ${item.source_row_number} 行 · ${esc(item.source_type)}</small></span><span>${esc(item.parse_status)}</span>`);
   const allocations = detailRelationRows(detail.allocations, (item) => `<span><strong>Allocation #${item.id}</strong><small>Review #${item.review_id} · Fact #${item.fact_id} · Ledger #${item.economic_id || "待确认"}</small></span><strong>${money(item)}</strong>`);
-  const reviews = detailRelationRows(detail.reviews, (item) => `<span><strong>Review #${item.id} · ${esc(item.behavior_code)}</strong><small>${esc(item.title || "未填写标题")} · ${esc(statusNames[item.status] || item.status)}</small></span><span>v${item.version}</span>`);
+  const reviews = detailRelationRows(detail.reviews, (item) => `<span><strong>Review #${item.id} · ${esc(reviewTypeNames[item.behavior_code] || item.behavior_code)}</strong><small>${esc(item.title || "未填写标题")} · ${esc(statusNames[item.status] || item.status)}</small></span><span>v${item.version}</span>`);
   const ledgers = detailRelationRows(detail.ledgers, (item) => `<span><strong>Ledger #${item.id} · ${esc(typeNames[item.economic_type] || item.economic_type)}</strong><small>${date(item.occurred_time)} · ${esc(item.account_code)}</small></span><strong>${money(item)}</strong>`);
   detailDrawer({
     title: fact.summary || fact.counterparty || `事实 #${fact.id}`,
@@ -324,7 +311,7 @@ async function showEconomicDetail(id) {
   const flow = detail.flow;
   const allocations = detail.allocations.map((item) => `<div class="drawer-review-row"><span><strong>Allocation #${item.id}</strong><small>Fact #${item.fact_id} → Ledger #${item.economic_id}</small></span><strong>${money(item.amount)}</strong></div>`).join("");
   const facts = detail.facts.map((item) => `<div class="drawer-review-row"><span><strong>Fact #${item.id} · ${esc(item.summary || item.counterparty)}</strong><small>${date(item.occurred_time)} · Fact 来源账户 ${esc(item.account_code)}</small></span><strong>${money(item.amount)}</strong></div>`).join("");
-  const reviews = detail.reviews.map((item) => `<div class="drawer-review-row"><span><strong>Review #${item.id} · ${esc(item.behavior_code)}</strong><small>${esc(item.title)} · ${esc(statusNames[item.status] || item.status)}</small></span><span>v${item.version}</span></div>`).join("");
+  const reviews = detail.reviews.map((item) => `<div class="drawer-review-row"><span><strong>Review #${item.id} · ${esc(reviewTypeNames[item.behavior_code] || item.behavior_code)}</strong><small>${esc(item.title)} · ${esc(statusNames[item.status] || item.status)}</small></span><span>v${item.version}</span></div>`).join("");
   const typeCode = flow.economic_type;
   detailDrawer({ title: `账本流水 #${flow.id}`, kicker: `${esc(typeNames[typeCode] || typeCode)} · LEDGER #${flow.id}`, subtitle: `${date(flow.occurred_time)} · ${flow.cash_direction === "IN" ? "流入" : "流出"}`, body: `<section class="drawer-record-card"><div><span>已确认账本投影</span><h3>${esc(typeNames[typeCode] || typeCode)}</h3><small>${esc(flow.account_code)} · 单方向、单币种</small></div><strong class="ledger-fact-money ${flow.cash_direction === "IN" ? "plus" : "minus"}">${signedMoney(flow.amount, flow.cash_direction)}</strong></section><section class="drawer-section"><h3>来源事实</h3>${facts || '<p class="muted">没有关联事实</p>'}</section><section class="drawer-section"><h3>审查与分配</h3>${reviews}${allocations}</section>`, footer: `<button type="button" class="quiet" data-action="edit-ledger-account" data-id="${flow.id}">编辑账户</button><button type="button" class="primary" data-action="edit-tags" data-id="${flow.id}">编辑标签</button>` });
 }
@@ -358,7 +345,7 @@ async function ledgerReviewsPage() {
   const result = await request(`/paam/ledger/v1/review/list?${query}`);
   state.detailEconomicReviews = new Map(result.items.map((item) => [item.id, item]));
   const rows = result.items.map((item) => `<tr class="detail-click-row" tabindex="0" data-review-row="${item.id}">
-    <td>${date(item.updated_time)}</td><td><button type="button" class="detail-primary" data-action="economic-review-detail" data-id="${item.id}"><strong>${esc(item.title || item.behavior_code || "未填写说明")}</strong><small>#${item.id} · ${esc(item.behavior_code || "未说明行为")}</small></button></td>
+    <td>${date(item.updated_time)}</td><td><button type="button" class="detail-primary" data-action="economic-review-detail" data-id="${item.id}"><strong>${esc(item.title || reviewTypeNames[item.behavior_code] || item.behavior_code || "未填写说明")}</strong><small>#${item.id} · ${esc(reviewTypeNames[item.behavior_code] || item.behavior_code || "未说明类型")}</small></button></td>
     <td><span class="badge ${item.status === "PENDING" ? "warn" : "neutral"}">${esc(statusNames[item.status] || item.status)}</span></td><td>${item.economic_count} 条账本流水</td><td>${item.allocation_count} 条分配</td><td>v${item.version}</td><td class="detail-arrow">→</td>
   </tr>`).join("");
   const toolbar = `<form class="detail-filter" data-form="detail-review-filter"><label class="grow">查找<input name="q" value="${esc(q)}" placeholder="ID、标题或行为代码"></label><label>状态<select name="status"><option value="">全部状态</option>${["PENDING", "CONFIRMED", "REVOKED"].map((value) => `<option value="${value}" ${status === value ? "selected" : ""}>${esc(statusNames[value] || value)}</option>`).join("")}</select></label><label>排序<select name="sort_field"><option value="updated_time" ${sortField === "updated_time" ? "selected" : ""}>更新时间</option><option value="created_time" ${sortField === "created_time" ? "selected" : ""}>创建时间</option><option value="version" ${sortField === "version" ? "selected" : ""}>版本</option><option value="id" ${sortField === "id" ? "selected" : ""}>ID</option></select></label><label>顺序<select name="sort_order"><option value="desc" ${sortOrder === "desc" ? "selected" : ""}>降序</option><option value="asc" ${sortOrder === "asc" ? "selected" : ""}>升序</option></select></label><button type="button" class="quiet" data-action="detail-clear" data-page-id="ledger-reviews">清空</button><button class="primary">查询</button><button type="button" class="primary" data-action="new-economic-review">新建 Review</button></form>`;
@@ -378,7 +365,7 @@ async function showEconomicReview(id) {
   if (item.status === "PENDING") action = `<button type="button" class="primary" data-action="economic-review-transition" data-kind="confirm" data-id="${item.id}" data-version="${item.version}">确认审查</button>`;
   if (item.status === "CONFIRMED") action = `<button type="button" data-action="economic-review-transition" data-kind="revoke" data-id="${item.id}" data-version="${item.version}">撤销并恢复默认交易</button>`;
   if (item.status === "REVOKED") action = `<button type="button" class="primary" data-action="economic-review-transition" data-kind="restore" data-id="${item.id}" data-version="${item.version}">恢复审查</button>`;
-  detailDrawer({ title: item.title || `审查 #${item.id}`, kicker: `REVIEW #${item.id} · ${item.behavior_code}`, subtitle: `${esc(statusNames[item.status] || item.status)} · 版本 ${item.version}`, body: `<section class="drawer-section"><h3>Transaction Fact</h3>${facts || '<p class="muted">没有关联事实</p>'}</section><section class="drawer-section"><h3>Allocation</h3>${allocations || '<p class="muted">没有分配关系</p>'}</section><section class="drawer-section"><h3>Ledger</h3>${economics || '<p class="muted">待确认，尚未生成账本流水</p>'}</section><section class="drawer-section"><h3>审计历史</h3>${history || '<p class="muted">没有历史记录</p>'}</section>`, footer: action });
+  detailDrawer({ title: item.title || `审查 #${item.id}`, kicker: `REVIEW #${item.id} · ${reviewTypeNames[item.behavior_code] || item.behavior_code}`, subtitle: `${esc(statusNames[item.status] || item.status)} · 版本 ${item.version}`, body: `<section class="drawer-section"><h3>Transaction Fact</h3>${facts || '<p class="muted">没有关联事实</p>'}</section><section class="drawer-section"><h3>Allocation</h3>${allocations || '<p class="muted">没有分配关系</p>'}</section><section class="drawer-section"><h3>Ledger</h3>${economics || '<p class="muted">待确认，尚未生成账本流水</p>'}</section><section class="drawer-section"><h3>审计历史</h3>${history || '<p class="muted">没有历史记录</p>'}</section>`, footer: action });
 }
 
 async function transitionEconomicReview(button) {
@@ -391,88 +378,190 @@ async function transitionEconomicReview(button) {
 }
 
 async function openEconomicReviewEditor() {
-  const facts = await loadFactCandidates(100);
-  if (!facts.length) throw new Error("当前没有可分配的事实流水");
+  const firstPage = await request("/paam/ledger/v1/review_candidate/list?page=1&page_size=20");
+  if (!firstPage.total) throw new Error("当前没有可审查的流水");
+  const facts = new Map(firstPage.items.map((fact) => [fact.id, fact]));
   const selected = new Set();
-  const values = new Map();
-  let sequence = 1;
-  const economics = [{ key: `economic-${sequence}`, type: "TRANSACTION" }];
-  const dialog = modal("新建经济审查", `<form data-form="economic-review-create" class="review-wizard stack"><section><h3>1. 选择事实流水</h3><div data-economic-review-facts class="review-fact-choices"></div></section><section><div class="section-head"><h3>2. 定义账本流水</h3><button type="button" data-action="add-economic">＋ 添加账本流水</button></div><div data-economic-definitions class="stack"></div></section><section><h3>3. 分配金额</h3><p class="muted">每条账本流水只能分配一条事实；一条事实可以拆成多条账本流水。</p><div data-allocation-matrix></div></section><label>行为代码<input name="behavior_code" maxlength="40" placeholder="例如 ADVANCE、LOAN、FX_EXCHANGE" required></label><label>标题<textarea name="title" maxlength="160"></textarea></label><label>操作原因<input name="reason" maxlength="2000"></label><div class="actions"><button type="button" data-close>取消</button><button class="primary">保存为待确认审查</button></div></form>`);
+  const ledgers = [];
+  let candidatePage = firstPage;
+  let behaviorCode = "TRANSACTION";
+  let step = 1;
+  let sequence = 0;
+  const dialog = modal("创建审查", `<form data-form="economic-review-create" class="review-wizard">
+    <nav class="review-stepper" aria-label="审查步骤">
+      <button type="button" class="active" data-review-step="1"><span>1</span><strong>选择范围</strong><small>流水与审查类型</small></button>
+      <button type="button" data-review-step="2"><span>2</span><strong>配置关系</strong><small>Fact → Ledger</small></button>
+      <button type="button" data-review-step="3"><span>3</span><strong>检查并生成</strong><small>预览最终结果</small></button>
+    </nav>
+    <section class="review-step-panel" data-review-panel="1">
+      <h3>选择待审查流水</h3><p>先确定要重新解释的流水，再选择本次审查的业务类型。</p>
+      <div class="review-type-grid" role="radiogroup" aria-label="审查类型">
+        <label><input type="radio" name="behavior_code" value="TRANSACTION" checked><span><strong>事实交易</strong><small>普通收支、拆分和归类调整</small></span></label>
+        <label><input type="radio" name="behavior_code" value="BORROW_AND_REPAY"><span><strong>借款与还款</strong><small>借入、借出、偿还和收回</small></span></label>
+      </div>
+      <div class="review-candidate-toolbar"><label>查找流水<input type="search" data-review-candidate-q placeholder="交易方、摘要、账户或 Fact ID"></label><button type="button" data-action="review-candidate-search">查询</button><span data-review-selection-count></span></div>
+      <div data-economic-review-facts class="review-candidate-list"></div>
+      <div class="review-candidate-pager" data-review-candidate-pager></div>
+    </section>
+    <section class="review-step-panel" data-review-panel="2" hidden>
+      <div class="section-head"><div><h3>配置 Fact → Ledger</h3><p>每条 Ledger 只能来源于一个 Fact；同一个 Fact 可以拆成多条 Ledger。</p></div><button type="button" data-action="add-economic">＋ 添加 Ledger</button></div>
+      <div data-economic-definitions class="review-ledger-list"></div>
+      <div class="review-notice">未分配的剩余金额会继续保留为默认事实交易，不会丢失。</div>
+    </section>
+    <section class="review-step-panel" data-review-panel="3" hidden>
+      <h3>检查并生成</h3><p>确认审查类型、Fact 覆盖和 Ledger 结果；提交后会直接生成最终账本流水。</p>
+      <div data-review-preview class="review-summary-grid"></div>
+      <div class="review-description-grid">
+        <label class="full">审查说明<textarea name="title" maxlength="160" placeholder="例如：将本次付款拆分为两条事实交易"></textarea></label>
+        <label class="full">操作原因<input name="reason" maxlength="2000" placeholder="可选，用于审计记录"></label>
+      </div>
+    </section>
+    <footer class="review-wizard-footer"><button type="button" data-action="review-back" hidden>← 上一步</button><button type="button" data-close>取消</button><div><strong data-review-footer-title>选择范围</strong><small data-review-footer-help>选择至少一条待审查流水</small></div><button type="button" class="primary" data-action="review-next">下一步：配置关系 →</button><button type="submit" class="primary" data-action="review-submit" hidden>确认并生成账本流水</button></footer>
+  </form>`);
+  dialog.classList.add("review-wizard-dialog");
   const form = $('[data-form="economic-review-create"]', dialog);
   const factRoot = $("[data-economic-review-facts]", form);
   const definitionRoot = $("[data-economic-definitions]", form);
-  const matrixRoot = $("[data-allocation-matrix]", form);
-  factRoot.innerHTML = facts.map((fact) => `<label class="review-fact-choice"><input type="checkbox" data-review-fact="${fact.id}"><span><strong>#${fact.id} · ${esc(fact.counterparty || fact.summary || "未命名事实")}</strong><small>${date(fact.occurred_time)} · ${fact.cash_direction} · 可分配 ${money({ amount_value: fact.available_value, amount_scale: fact.amount_scale, currency_code: fact.currency_code })}</small></span></label>`).join("");
-  const preserveMatrix = () => {
-    $$('[data-allocation-value]', matrixRoot).forEach((input) => values.set(`${input.dataset.fact}:${input.dataset.economic}`, input.value));
-  };
-  const renderDefinitions = () => {
-    definitionRoot.innerHTML = economics.map((item) => `<article class="review-fact-choice" data-economic-definition="${item.key}"><div><strong>${esc(item.key)}</strong><small>方向、币种、账户和发生时间由唯一关联的事实推导</small></div><label>类型<select name="type-${item.key}">${["TRANSACTION", "ACCOUNT_TRANSFER", "CLAIM"].map((value) => `<option value="${value}" ${item.type === value ? "selected" : ""}>${typeNames[value]}</option>`).join("")}</select></label>${economics.length > 1 ? `<button type="button" class="quiet" data-action="remove-economic" data-key="${item.key}">移除</button>` : ""}</article>`).join("");
-    $$('[name^="type-"]', definitionRoot).forEach((input) => input.onchange = () => {
-      economics.find((item) => `type-${item.key}` === input.name).type = input.value;
-    });
-    $$('[data-action="remove-economic"]', definitionRoot).forEach((button) => button.onclick = () => {
-      preserveMatrix();
-      economics.splice(economics.findIndex((item) => item.key === button.dataset.key), 1);
-      renderDefinitions();
-      renderMatrix();
-    });
-  };
-  const renderMatrix = () => {
-    preserveMatrix();
-    const selectedFacts = facts.filter((fact) => selected.has(fact.id));
-    if (!selectedFacts.length) {
-      matrixRoot.innerHTML = '<div class="empty-state">先选择至少一条事实流水</div>';
-      return;
-    }
-    const rows = selectedFacts.map((fact) => `<tr><td>#${fact.id}<br><small>${fact.cash_direction} · ${esc(fact.currency_code)}</small></td>${economics.map((item) => `<td><input data-allocation-value data-fact="${fact.id}" data-economic="${item.key}" inputmode="decimal" value="${esc(values.get(`${fact.id}:${item.key}`) || "")}" placeholder="0"></td>`).join("")}<td>${money({ amount_value: fact.available_value, amount_scale: fact.amount_scale, currency_code: fact.currency_code })}</td></tr>`);
-    matrixRoot.innerHTML = table(["事实", ...economics.map((item) => esc(item.key)), "可分配"], rows);
-  };
-  $$('[data-review-fact]', factRoot).forEach((input) => input.onchange = () => {
-    const id = Number(input.dataset.reviewFact);
-    if (input.checked) selected.add(id); else selected.delete(id);
-    renderMatrix();
-  });
-  $('[data-action="add-economic"]', form).onclick = () => {
-    preserveMatrix();
+  const previewRoot = $("[data-review-preview]", form);
+  const defaultEconomicType = () => behaviorCode === "BORROW_AND_REPAY" ? "CLAIM" : "TRANSACTION";
+  const decimalText = (fact) => (Number(fact.available_value) / (10 ** Number(fact.amount_scale))).toFixed(fact.amount_scale);
+  const addLedger = (factId, amount = "") => {
     sequence += 1;
-    economics.push({ key: `economic-${sequence}`, type: "TRANSACTION" });
-    renderDefinitions();
-    renderMatrix();
+    ledgers.push({ key: `ledger-${sequence}`, factId, type: defaultEconomicType(), amount, automaticType: true });
   };
-  renderDefinitions();
-  renderMatrix();
+  const selectedFacts = () => [...selected].map((id) => facts.get(id)).filter(Boolean);
+  const renderCandidatePage = () => {
+    candidatePage.items.forEach((fact) => facts.set(fact.id, fact));
+    factRoot.innerHTML = candidatePage.items.map((fact) => `<label class="review-candidate-card${selected.has(fact.id) ? " selected" : ""}"><input type="checkbox" data-review-fact="${fact.id}" ${selected.has(fact.id) ? "checked" : ""}><span><strong>Ledger #${fact.ledger_id} · ${esc(fact.counterparty || fact.summary || "未命名流水")}</strong><small>Fact #${fact.id} · ${date(fact.occurred_time)} · ${fact.cash_direction === "IN" ? "流入" : "流出"} · ${esc(fact.account_code)}</small></span><b>${money({ amount_value: fact.available_value, amount_scale: fact.amount_scale, currency_code: fact.currency_code })}</b></label>`).join("") || '<div class="empty-state">没有匹配的待审查流水</div>';
+    const pages = Math.max(1, Math.ceil(candidatePage.total / candidatePage.page_size));
+    $("[data-review-candidate-pager]", form).innerHTML = `<span>共 ${candidatePage.total} 条 · 第 ${candidatePage.page}/${pages} 页</span><button type="button" data-candidate-page="${candidatePage.page - 1}" ${candidatePage.page <= 1 ? "disabled" : ""}>上一页</button><button type="button" data-candidate-page="${candidatePage.page + 1}" ${candidatePage.page >= pages ? "disabled" : ""}>下一页</button>`;
+    $("[data-review-selection-count]", form).textContent = `已选择 ${selected.size} 条`;
+    $$('[data-review-fact]', factRoot).forEach((input) => input.onchange = () => {
+      const id = Number(input.dataset.reviewFact);
+      if (input.checked) {
+        selected.add(id);
+        if (!ledgers.some((item) => item.factId === id)) addLedger(id, decimalText(facts.get(id)));
+      } else {
+        selected.delete(id);
+        for (let index = ledgers.length - 1; index >= 0; index -= 1) {
+          if (ledgers[index].factId === id) ledgers.splice(index, 1);
+        }
+      }
+      renderCandidatePage();
+    });
+    $$('[data-candidate-page]', form).forEach((button) => button.onclick = async () => {
+      await loadCandidatePage(Number(button.dataset.candidatePage));
+    });
+  };
+  const loadCandidatePage = async (page = 1) => {
+    const q = $("[data-review-candidate-q]", form).value.trim();
+    candidatePage = await request(`/paam/ledger/v1/review_candidate/list?${new URLSearchParams({ page, page_size: "20", q })}`);
+    renderCandidatePage();
+  };
+  const renderLedgers = () => {
+    const choices = selectedFacts();
+    definitionRoot.innerHTML = ledgers.map((item, index) => `<article class="review-ledger-row" data-ledger-key="${item.key}"><header><span>LEDGER ${String(index + 1).padStart(2, "0")}</span><strong>${esc(typeNames[item.type])}</strong></header><label>来源 Fact<select data-ledger-fact>${choices.map((fact) => `<option value="${fact.id}" ${fact.id === item.factId ? "selected" : ""}>#${fact.id} · ${esc(fact.counterparty || fact.summary || "未命名流水")}</option>`).join("")}</select></label><label>账本类型<select data-ledger-type>${["TRANSACTION", "ACCOUNT_TRANSFER", "CLAIM"].map((value) => `<option value="${value}" ${value === item.type ? "selected" : ""}>${esc(typeNames[value])}</option>`).join("")}</select></label><label>分配金额<input data-ledger-amount inputmode="decimal" value="${esc(item.amount)}" placeholder="0.00"></label><button type="button" class="quiet" data-remove-ledger>移除</button></article>`).join("") || '<div class="empty-state">请返回上一步选择待审查流水</div>';
+    $$('[data-ledger-key]', definitionRoot).forEach((row) => {
+      const item = ledgers.find((value) => value.key === row.dataset.ledgerKey);
+      $("[data-ledger-fact]", row).onchange = (event) => { item.factId = Number(event.target.value); };
+      $("[data-ledger-type]", row).onchange = (event) => { item.type = event.target.value; item.automaticType = false; renderLedgers(); };
+      $("[data-ledger-amount]", row).oninput = (event) => { item.amount = event.target.value; };
+      $("[data-remove-ledger]", row).onclick = () => { ledgers.splice(ledgers.indexOf(item), 1); renderLedgers(); };
+    });
+  };
+  const reviewPlan = () => {
+    if (!selected.size) throw new Error("请选择至少一条待审查流水");
+    if (!ledgers.length) throw new Error("请至少配置一条 Ledger");
+    const totals = new Map();
+    const allocations = ledgers.map((item) => {
+      const fact = facts.get(item.factId);
+      if (!selected.has(item.factId) || !fact) throw new Error("Ledger 必须关联已选择的 Fact");
+      const amountValue = decimalAmount(item.amount, fact.amount_scale);
+      totals.set(fact.id, (totals.get(fact.id) || 0) + amountValue);
+      return { fact_id: fact.id, economic_key: item.key, amount_value: amountValue };
+    });
+    selectedFacts().forEach((fact) => {
+      const allocated = totals.get(fact.id) || 0;
+      if (!allocated) throw new Error(`Fact #${fact.id} 尚未配置 Ledger`);
+      if (allocated > fact.available_value) throw new Error(`Fact #${fact.id} 的分配金额超过可用金额`);
+    });
+    return {
+      allocations,
+      economics: ledgers.map((item) => ({ client_key: item.key, economic_type: item.type })),
+      totals,
+    };
+  };
+  const renderPreview = () => {
+    const plan = reviewPlan();
+    const behaviorName = behaviorCode === "BORROW_AND_REPAY" ? "借款与还款" : "事实交易";
+    previewRoot.innerHTML = `<article><span>审查类型</span><strong>${behaviorName}</strong><small>${selected.size} 条 Fact · ${ledgers.length} 条 Ledger</small></article><article><span>生成方式</span><strong>确认后立即生效</strong><small>同时保留 Review 与 Revision 审计记录</small></article><article class="full"><span>Fact → Ledger 关系</span><div class="review-summary-lines">${ledgers.map((item, index) => { const fact = facts.get(item.factId); return `<div><span>Fact #${fact.id} → Ledger ${String(index + 1).padStart(2, "0")} · ${esc(typeNames[item.type])}</span><strong>${money({ amount_value: plan.allocations[index].amount_value, amount_scale: fact.amount_scale, currency_code: fact.currency_code })}</strong></div>`; }).join("")}</div></article><article class="full"><span>覆盖检查</span><div class="review-summary-lines">${selectedFacts().map((fact) => `<div><span>Fact #${fact.id} 已分配</span><strong>${money({ amount_value: plan.totals.get(fact.id), amount_scale: fact.amount_scale, currency_code: fact.currency_code })} / ${money({ amount_value: fact.available_value, amount_scale: fact.amount_scale, currency_code: fact.currency_code })}</strong></div>`).join("")}</div></article>`;
+  };
+  const setStep = (next) => {
+    if (next === 2 && !selected.size) throw new Error("请选择至少一条待审查流水");
+    if (next === 3) renderPreview();
+    step = next;
+    $$('[data-review-panel]', form).forEach((panel) => { panel.hidden = Number(panel.dataset.reviewPanel) !== step; });
+    $$('[data-review-step]', form).forEach((button) => {
+      const number = Number(button.dataset.reviewStep);
+      button.classList.toggle("active", number === step);
+      button.classList.toggle("complete", number < step);
+    });
+    $('[data-action="review-back"]', form).hidden = step === 1;
+    const nextButton = $('[data-action="review-next"]', form);
+    nextButton.hidden = step === 3;
+    nextButton.textContent = step === 1 ? "下一步：配置关系 →" : "下一步：检查并生成 →";
+    $('[data-action="review-submit"]', form).hidden = step !== 3;
+    const titles = { 1: "选择范围", 2: "配置关系", 3: "检查并生成" };
+    const helps = { 1: "选择至少一条待审查流水", 2: "每条 Ledger 关联一个 Fact", 3: "确认后直接生成账本流水" };
+    $("[data-review-footer-title]", form).textContent = titles[step];
+    $("[data-review-footer-help]", form).textContent = helps[step];
+  };
+  $$('[name="behavior_code"]', form).forEach((input) => input.onchange = () => {
+    behaviorCode = input.value;
+    ledgers.filter((item) => item.automaticType).forEach((item) => { item.type = defaultEconomicType(); });
+  });
+  $('[data-action="review-candidate-search"]', form).onclick = () => loadCandidatePage(1).catch((error) => showFormError(form, error));
+  $('[data-review-candidate-q]', form).onkeydown = (event) => {
+    if (event.key === "Enter") { event.preventDefault(); loadCandidatePage(1).catch((error) => showFormError(form, error)); }
+  };
+  $('[data-action="add-economic"]', form).onclick = () => {
+    const fact = selectedFacts()[0];
+    if (!fact) return;
+    addLedger(fact.id);
+    renderLedgers();
+  };
+  $('[data-action="review-back"]', form).onclick = () => { setStep(step - 1); if (step === 2) renderLedgers(); };
+  $('[data-action="review-next"]', form).onclick = () => {
+    try { setStep(step + 1); if (step === 2) renderLedgers(); } catch (error) { showFormError(form, error); }
+  };
+  renderCandidatePage();
   form.onsubmit = async (event) => {
     event.preventDefault();
     const idempotencyKey = beginSubmit(form);
     if (!idempotencyKey) return;
     try {
       const data = new FormData(form);
-      const allocations = [];
-      $$('[data-allocation-value]', matrixRoot).forEach((input) => {
-        const fact = facts.find((item) => item.id === Number(input.dataset.fact));
-        const amount = decimalAmount(input.value, fact.amount_scale);
-        if (amount > 0) allocations.push({ fact_id: fact.id, economic_key: input.dataset.economic, amount_value: amount });
-      });
-      if (!allocations.length) throw new Error("至少填写一条大于 0 的分配关系");
-      const allocationCounts = allocations.reduce((counts, item) => counts.set(item.economic_key, (counts.get(item.economic_key) || 0) + 1), new Map());
-      if ([...allocationCounts.values()].some((count) => count !== 1)) throw new Error("每条账本流水必须且只能关联一条事实");
-      const used = new Set(allocations.map((item) => item.economic_key));
-      const definitions = economics.filter((item) => used.has(item.key)).map((item) => ({
-        client_key: item.key,
-        economic_type: data.get(`type-${item.key}`),
-      }));
+      const plan = reviewPlan();
       const created = await jsonRequest("/paam/ledger/v1/review", "POST", {
-        behavior_code: data.get("behavior_code"),
+        behavior_code: behaviorCode,
         title: data.get("title") || "",
-        result: {}, economics: definitions, allocations,
+        result: {}, economics: plan.economics, allocations: plan.allocations,
         reason: data.get("reason") || "",
         idempotency_key: idempotencyKey,
       });
+      const confirmed = created.status === "CONFIRMED" ? created : await jsonRequest(
+        `/paam/ledger/v1/review/${created.id}/confirm`,
+        "POST",
+        {
+          expected_version: created.version,
+          reason: data.get("reason") || "通过三步审查向导确认生成",
+          idempotency_key: form.dataset.confirmIdempotencyKey ||= key(),
+        },
+      );
       closeDialogs();
-      toast("待确认经济审查已创建");
+      toast("审查已确认，账本流水已生成");
       await render();
-      await showEconomicReview(created.id);
+      await showEconomicReview(confirmed.id);
     } catch (error) {
       endSubmit(form);
       showFormError(form, error);
@@ -888,7 +977,7 @@ async function reviewsPage() {
     request(`/paam/ledger/v1/review/list?${new URLSearchParams({ page: "1", page_size: "1", filter: JSON.stringify({ status: "PENDING", exclude_behavior_code: "DEFAULT" }) })}`),
     request(`/paam/import/v1/fact_conflict/list?${conflictQuery}`),
   ]);
-  const rows = result.items.map((item) => `<tr><td>${item.id}</td><td><strong>${esc(item.behavior_code || "未说明行为")}</strong><br><small>${esc(item.title || "未填写说明")}</small></td><td><span class="badge ${item.status === "PENDING" ? "warn" : "neutral"}">${esc(statusNames[item.status] || item.status)}</span></td><td>${item.economic_count}</td><td>${item.allocation_count}</td><td>v${item.version}</td><td><button data-action="economic-review-detail" data-id="${item.id}">处理 / 详情</button></td></tr>`);
+  const rows = result.items.map((item) => `<tr><td>${item.id}</td><td><strong>${esc(reviewTypeNames[item.behavior_code] || item.behavior_code || "未说明类型")}</strong><br><small>${esc(item.title || "未填写说明")}</small></td><td><span class="badge ${item.status === "PENDING" ? "warn" : "neutral"}">${esc(statusNames[item.status] || item.status)}</span></td><td>${item.economic_count}</td><td>${item.allocation_count}</td><td>v${item.version}</td><td><button data-action="economic-review-detail" data-id="${item.id}">处理 / 详情</button></td></tr>`);
   const pages = Math.max(1, Math.ceil(result.total / result.page_size));
   const paging = `<div class="pagination"><span>共 ${result.total} 条 · 第 ${result.page}/${pages} 页</span><button data-action="review-page" data-param="review_page" data-value="${result.page - 1}" ${result.page <= 1 ? "disabled" : ""}>上一页</button><button data-action="review-page" data-param="review_page" data-value="${result.page + 1}" ${result.page >= pages ? "disabled" : ""}>下一页</button></div>`;
   const conflictRows = conflicts.items.map((item) => `<tr><td>${item.id}</td><td><strong>${esc(item.title || "事实冲突")}</strong><br><small>${item.lines.length} 条候选事实</small></td><td><span class="badge ${item.status === "PENDING" ? "warn" : "neutral"}">${esc(statusNames[item.status] || item.status)}</span></td><td>v${item.version}</td><td><button data-action="fact-conflict-detail" data-id="${item.id}">处理 / 详情</button></td></tr>`);
@@ -896,10 +985,10 @@ async function reviewsPage() {
   const conflictPaging = `<div class="pagination"><span>共 ${conflicts.total} 条 · 第 ${conflicts.page}/${conflictPages} 页</span><button data-action="review-page" data-param="conflict_page" data-value="${conflicts.page - 1}" ${conflicts.page <= 1 ? "disabled" : ""}>上一页</button><button data-action="review-page" data-param="conflict_page" data-value="${conflicts.page + 1}" ${conflicts.page >= conflictPages ? "disabled" : ""}>下一页</button></div>`;
   const launchers = `<section class="task-launchers" aria-label="常用工作">
     <article><span class="task-number">01</span><div><span class="eyebrow">IMPORT</span><h2>账单导入</h2><p>上传文件、核对预览，再写入不可变的账单事实。</p></div><div class="task-meta"><span>${candidatePage.total} 条可分配事实</span><span>支持 CSV / XLSX / PDF / ZIP</span></div><button type="button" class="primary" data-page="import">进入账单导入</button></article>
-    <article><span class="task-number">02</span><div><span class="eyebrow">REVIEW</span><h2>创建经济审查</h2><p>用明确的 Allocation 描述事实如何形成最终账本流水。</p></div><div class="task-meta"><span>${pending.total} 个待确认审查</span><span>确认后才生成账本流水</span></div><button type="button" class="primary" data-action="new-economic-review">新建经济审查</button></article>
+    <article><span class="task-number">02</span><div><span class="eyebrow">REVIEW</span><h2>创建审查</h2><p>选择待审查流水，配置 Fact → Ledger 关系，检查后直接生成。</p></div><div class="task-meta"><span>${pending.total} 个待处理审查</span><span>支持事实交易、借款与还款</span></div><button type="button" class="primary" data-action="new-economic-review">开始审查</button></article>
   </section>`;
   return `<div class="review-dashboard">${launchers}<section class="review-metrics"><div><span>可分配事实</span><strong>${candidatePage.total}</strong><small>每条 Ledger 只关联一个 Fact</small></div><div><span>待确认 Review</span><strong>${pending.total}</strong><small>确认前不会生成账本流水</small></div><div><span>事实冲突</span><strong>${conflicts.total}</strong><small>继续使用独立冲突处理流程</small></div></section>
-  <section class="panel"><div class="section-head"><div><h2>经济审查</h2><p>Review 解释行为，Allocation 明确 Fact 与 LedgerEntry 的金额关系。</p></div><button class="primary" data-action="new-economic-review">新建经济审查</button></div><form class="toolbar review-toolbar" data-form="review-filter"><label>状态<select name="status"><option value="">全部状态</option>${["PENDING","CONFIRMED","REVOKED"].map((value) => `<option value="${value}" ${state.params.get("status") === value ? "selected" : ""}>${esc(statusNames[value] || value)}</option>`).join("")}</select></label><button>筛选</button></form>${rows.length ? table(["ID", "行为", "状态", "Ledger 数", "Allocation 数", "版本", ""], rows) : '<div class="empty-state">没有符合条件的经济审查。</div>'}${paging}</section>
+  <section class="panel"><div class="section-head"><div><h2>审查记录</h2><p>Review 解释业务类型，Allocation 明确 Fact 与 Ledger 的金额关系。</p></div><button class="primary" data-action="new-economic-review">创建审查</button></div><form class="toolbar review-toolbar" data-form="review-filter"><label>状态<select name="status"><option value="">全部状态</option>${["PENDING","CONFIRMED","REVOKED"].map((value) => `<option value="${value}" ${state.params.get("status") === value ? "selected" : ""}>${esc(statusNames[value] || value)}</option>`).join("")}</select></label><button>筛选</button></form>${rows.length ? table(["ID", "类型", "状态", "Ledger 数", "Allocation 数", "版本", ""], rows) : '<div class="empty-state">没有符合条件的审查。</div>'}${paging}</section>
   <section class="panel"><div class="section-head"><div><h2>事实冲突</h2><p>导入去重无法自动裁决的事实，仍在专用流程中解决。</p></div></div>${conflictRows.length ? table(["ID", "冲突", "状态", "版本", ""], conflictRows) : '<div class="empty-state">没有事实冲突。</div>'}${conflictPaging}</section></div>`;
 }
 
