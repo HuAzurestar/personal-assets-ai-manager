@@ -55,8 +55,15 @@ class TransactionFactMapper:
         q: str,
         filter_value: TransactionFactFilter,
         sorter: TransactionFactSorter,
+        import_file_id: int | None = None,
     ) -> tuple[list[dict], int]:
         clauses = []
+        if import_file_id is not None:
+            imported_fact_ids = select(BillRaw.bill_id).where(
+                BillRaw.import_file_id == import_file_id,
+                BillRaw.bill_id > 0,
+            ).distinct()
+            clauses.append(BillFact.id.in_(imported_fact_ids))
         if q:
             pattern = f"%{q}%"
             clauses.append(or_(

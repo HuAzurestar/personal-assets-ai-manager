@@ -1,0 +1,158 @@
+from datetime import datetime, timedelta
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from backend.core.target_database import init_target_db
+from backend.entity import BillFact, BillRaw, ImportFile
+from backend.router.dependency import get_db
+from backend.router.import_file import router
+
+
+@pytest.fixture
+def import_file_api(tmp_path):
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'import-file-api.db'}",
+        connect_args={"check_same_thread": False},
+    )
+    sessions = sessionmaker(bind=engine, autoflush=False)
+    init_target_db(bind=engine)
+    api = FastAPI()
+    api.include_router(router)
+
+    def override_db():
+        with sessions() as db:
+            yield db
+
+    api.dependency_overrides[get_db] = override_db
+    with TestClient(api) as client:
+        yield client, sessions
+    engine.dispose()
+
+
+def _seed(sessions):
+    now = datetime(2026, 9, 16, 8)
+    with sessions() as db:
+        files = [
+            ImportFile(
+                batch_code=f"batch-{index}",
+                source_type=source,
+                institution_code=source,
+                filename=filename,
+                file_format="CSV",
+                sha256=str(index) * 64,
+                period_start="2026-09-01",
+                period_end="2026-09-30",
+                total_count=1,
+                success_count=1,
+                skip_count=0,
+                issue_count=0,
+                status="IMPORTED",
+                created_time=now + timedelta(minutes=index),
+                updated_time=now + timedelta(minutes=index),
+            )
+            for index, source, filename in (
+                (1, "wechat", "wechat-september.csv"),
+                (2, "alipay", "alipay-september.csv"),
+            )
+        ]
+        fact = BillFact(
+            fact_key="shared-import-fact",
+            occurred_time=now,
+            cash_direction="OUT",
+            amount_value=880,
+            amount_scale=2,
+            currency_code="CNY",
+            account_code="wallet",
+            counterparty="Merchant",
+            summary="Lunch",
+            created_time=now,
+            updated_time=now,
+        )
+        db.add_all([*files, fact])
+        db.flush()
+        db.add_all([
+            BillRaw(
+                bill_id=fact.id,
+                import_file_id=file.id,
+                source_row_number=1,
+                source_reference=f"ref-{file.id}",
+                raw_payload="{}",
+                raw_hash=str(file.id) * 64,
+                parse_status="ACCEPTED",
+                issue_code="",
+                issue_message="",
+                created_time=now,
+                updated_time=now,
+            )
+            for file in files
+        ])
+        db.commit()
+        return [file.id for file in files], fact.id
+
+
+def test_import_file_list_is_a_pure_filterable_po_list(import_file_api):
+    client, sessions = import_file_api
+    _seed(sessions)
+
+    response = client.get(
+        "/paam/import/v1/import_file/list",
+        params={
+            "q": "september",
+            "filter": '{"source_type":"wechat","status":"IMPORTED"}',
+            "sorter": '{"field":"filename","order":"asc"}',
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()["body"]
+    assert body["total"] == 1
+    assert body["items"][0]["filename"] == "wechat-september.csv"
+    assert "account_codes" not in body["items"][0]
+    assert set(body["items"][0]) >= {
+        "batch_code", "sha256", "period_start", "period_end", "issue_count"
+    }
+
+
+def test_import_file_detail_has_a_paged_transaction_fact_subresource(
+    import_file_api,
+):
+    client, sessions = import_file_api
+    file_ids, fact_id = _seed(sessions)
+
+    detail = client.get(f"/paam/import/v1/import_file/{file_ids[0]}")
+    facts = client.get(
+        f"/paam/import/v1/import_file/{file_ids[0]}/transaction_fact/list",
+        params={"page": 1, "page_size": 10},
+    )
+
+    assert detail.status_code == 200
+    assert detail.json()["body"]["import_file"]["id"] == file_ids[0]
+    assert facts.status_code == 200
+    assert facts.json()["body"]["total"] == 1
+    assert facts.json()["body"]["items"][0]["id"] == fact_id
+
+
+def test_import_file_query_validates_generic_objects(import_file_api):
+    client, _sessions = import_file_api
+
+    response = client.get(
+        "/paam/import/v1/import_file/list",
+        params={"filter": '{"account_code":"not-owned-by-import-file"}'},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["body"]["code"] == "LIST_QUERY_ERROR"
+
+
+def test_import_file_detail_returns_not_found(import_file_api):
+    client, _sessions = import_file_api
+
+    response = client.get("/paam/import/v1/import_file/999")
+
+    assert response.status_code == 404
+    assert response.json()["status"] == 404
+    assert response.json()["body"]["code"] == "INTAKE_ERROR"

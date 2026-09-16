@@ -9,6 +9,7 @@ from backend.core import target_database
 from backend.core.config import APP_DISPLAY_NAME, RESOURCE_DIR
 from backend.router.error import register_error_handlers
 from backend.router.import_conflict import router as import_conflict_router
+from backend.router.import_file import router as import_file_router
 from backend.router.import_router import router as import_router
 from backend.router.ledger import router as ledger_router
 from backend.router.ledger_account import router as ledger_account_router
@@ -40,6 +41,7 @@ app.mount("/static", StaticFiles(directory=RESOURCE_DIR / "frontend"), name="sta
 app.mount("/asset", StaticFiles(directory=RESOURCE_DIR / "asset"), name="asset")
 app.include_router(import_router)
 app.include_router(import_conflict_router)
+app.include_router(import_file_router)
 app.include_router(ledger_router)
 app.include_router(ledger_review_router)
 app.include_router(ledger_review_legacy_router)
