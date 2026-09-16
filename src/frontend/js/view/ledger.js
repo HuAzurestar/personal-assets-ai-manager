@@ -882,9 +882,9 @@ async function reviewsPage() {
     page: state.params.get("conflict_page") || "1",
     page_size: "25",
   });
-  const [result, candidates, pending, conflicts] = await Promise.all([
+  const [result, candidatePage, pending, conflicts] = await Promise.all([
     request(`/paam/ledger/v1/review/list?${reviewQuery}`),
-    loadFactCandidates(500),
+    request("/paam/ledger/v1/review_candidate/list?page=1&page_size=1"),
     request(`/paam/ledger/v1/review/list?${new URLSearchParams({ page: "1", page_size: "1", filter: JSON.stringify({ status: "PENDING", exclude_behavior_code: "DEFAULT" }) })}`),
     request(`/paam/import/v1/fact_conflict/list?${conflictQuery}`),
   ]);
@@ -895,10 +895,10 @@ async function reviewsPage() {
   const conflictPages = Math.max(1, Math.ceil(conflicts.total / conflicts.page_size));
   const conflictPaging = `<div class="pagination"><span>共 ${conflicts.total} 条 · 第 ${conflicts.page}/${conflictPages} 页</span><button data-action="review-page" data-param="conflict_page" data-value="${conflicts.page - 1}" ${conflicts.page <= 1 ? "disabled" : ""}>上一页</button><button data-action="review-page" data-param="conflict_page" data-value="${conflicts.page + 1}" ${conflicts.page >= conflictPages ? "disabled" : ""}>下一页</button></div>`;
   const launchers = `<section class="task-launchers" aria-label="常用工作">
-    <article><span class="task-number">01</span><div><span class="eyebrow">IMPORT</span><h2>账单导入</h2><p>上传文件、核对预览，再写入不可变的账单事实。</p></div><div class="task-meta"><span>${candidates.length} 条可分配事实</span><span>支持 CSV / XLSX / PDF / ZIP</span></div><button type="button" class="primary" data-page="import">进入账单导入</button></article>
+    <article><span class="task-number">01</span><div><span class="eyebrow">IMPORT</span><h2>账单导入</h2><p>上传文件、核对预览，再写入不可变的账单事实。</p></div><div class="task-meta"><span>${candidatePage.total} 条可分配事实</span><span>支持 CSV / XLSX / PDF / ZIP</span></div><button type="button" class="primary" data-page="import">进入账单导入</button></article>
     <article><span class="task-number">02</span><div><span class="eyebrow">REVIEW</span><h2>创建经济审查</h2><p>用明确的 Allocation 描述事实如何形成最终账本流水。</p></div><div class="task-meta"><span>${pending.total} 个待确认审查</span><span>确认后才生成账本流水</span></div><button type="button" class="primary" data-action="new-economic-review">新建经济审查</button></article>
   </section>`;
-  return `<div class="review-dashboard">${launchers}<section class="review-metrics"><div><span>可分配事实</span><strong>${candidates.length}</strong><small>每条 Ledger 只关联一个 Fact</small></div><div><span>待确认 Review</span><strong>${pending.total}</strong><small>确认前不会生成账本流水</small></div><div><span>事实冲突</span><strong>${conflicts.total}</strong><small>继续使用独立冲突处理流程</small></div></section>
+  return `<div class="review-dashboard">${launchers}<section class="review-metrics"><div><span>可分配事实</span><strong>${candidatePage.total}</strong><small>每条 Ledger 只关联一个 Fact</small></div><div><span>待确认 Review</span><strong>${pending.total}</strong><small>确认前不会生成账本流水</small></div><div><span>事实冲突</span><strong>${conflicts.total}</strong><small>继续使用独立冲突处理流程</small></div></section>
   <section class="panel"><div class="section-head"><div><h2>经济审查</h2><p>Review 解释行为，Allocation 明确 Fact 与 LedgerEntry 的金额关系。</p></div><button class="primary" data-action="new-economic-review">新建经济审查</button></div><form class="toolbar review-toolbar" data-form="review-filter"><label>状态<select name="status"><option value="">全部状态</option>${["PENDING","CONFIRMED","REVOKED"].map((value) => `<option value="${value}" ${state.params.get("status") === value ? "selected" : ""}>${esc(statusNames[value] || value)}</option>`).join("")}</select></label><button>筛选</button></form>${rows.length ? table(["ID", "行为", "状态", "Ledger 数", "Allocation 数", "版本", ""], rows) : '<div class="empty-state">没有符合条件的经济审查。</div>'}${paging}</section>
   <section class="panel"><div class="section-head"><div><h2>事实冲突</h2><p>导入去重无法自动裁决的事实，仍在专用流程中解决。</p></div></div>${conflictRows.length ? table(["ID", "冲突", "状态", "版本", ""], conflictRows) : '<div class="empty-state">没有事实冲突。</div>'}${conflictPaging}</section></div>`;
 }

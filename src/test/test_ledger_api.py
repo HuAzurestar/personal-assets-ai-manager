@@ -415,6 +415,40 @@ def test_review_candidate_list_is_paged_with_fixed_query_count(economic_api):
     assert len(second["items"]) == 1
 
 
+def test_review_list_is_database_paged_with_fixed_query_count(economic_api):
+    client, sessions = economic_api
+    fact_ids = _facts(sessions, [
+        ("OUT", 1000 + index, "CNY") for index in range(30)
+    ])
+    with sessions() as db:
+        TargetEconomicService(db).ensure_defaults(fact_ids, commit=True)
+
+    statements = []
+
+    def count_selects(_connection, _cursor, statement, _parameters, _context, _many):
+        if statement.lstrip().upper().startswith("SELECT"):
+            statements.append(statement)
+
+    engine = sessions.kw["bind"]
+    event.listen(engine, "before_cursor_execute", count_selects)
+    try:
+        response = client.get(
+            "/paam/ledger/v1/review/list",
+            params={
+                "page": 2,
+                "page_size": 10,
+                "filter": '{"behavior_code":"DEFAULT"}',
+            },
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", count_selects)
+    assert response.status_code == 200, response.text
+    page = response.json()["body"]
+    assert page["total"] == 30
+    assert len(page["items"]) == 10
+    assert len(statements) == 2
+
+
 def test_review_candidate_list_supports_shared_query_contract(economic_api):
     client, sessions = economic_api
     fact_ids = _facts(sessions, [
@@ -529,6 +563,7 @@ def test_tag_sync_uses_allocations_for_every_split_ledger_entry(economic_api):
     detail = client.get(f"/paam/ledger/v1/flow/{ledger_ids[0]}").json()["body"]
     assigned = client.put(f"/paam/tag/v1/assignment/{ledger_ids[0]}", json={
         "tag_state": {"category": "food"},
+        "expected_projection_version": detail["flow"]["projection_version"],
     })
     assert assigned.status_code == 200, assigned.text
     assert assigned.json()["body"]["tag_state"] == {"category": "food"}

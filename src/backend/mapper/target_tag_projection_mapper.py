@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from backend.entity import (
@@ -96,12 +97,36 @@ class TargetTagProjectionMapper:
         ledger_ids = list(ledger_tags)
         if not ledger_ids:
             return
-        self.db.execute(delete(LedgerEntryTag).where(
+        rows = self.db.execute(select(
+            LedgerEntryTag.ledger_id,
+            LedgerEntryTag.tag_id,
+        ).where(
             LedgerEntryTag.ledger_id.in_(ledger_ids)
+        ).order_by(
+            LedgerEntryTag.ledger_id,
+            LedgerEntryTag.tag_id,
+        )).all()
+        current = {ledger_id: [] for ledger_id in ledger_ids}
+        for ledger_id, tag_id in rows:
+            current[ledger_id].append(tag_id)
+        changed = [
+            ledger_id
+            for ledger_id, tag_ids in ledger_tags.items()
+            if tuple(current[ledger_id]) != tuple(sorted(tag_ids))
+        ]
+        if not changed:
+            return
+        changed_ids = set(changed)
+        self.db.execute(delete(LedgerEntryTag).where(
+            LedgerEntryTag.ledger_id.in_(changed)
         ))
         self.db.add_all([
             LedgerEntryTag(ledger_id=ledger_id, tag_id=tag_id)
             for ledger_id, tag_ids in ledger_tags.items()
+            if ledger_id in changed_ids
             for tag_id in tag_ids
         ])
+        self.db.execute(update(LedgerEntry).where(
+            LedgerEntry.id.in_(changed)
+        ).values(updated_time=datetime.now()))
         self.db.flush()

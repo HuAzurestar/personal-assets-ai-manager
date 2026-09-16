@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from sqlalchemy import delete, select, text
+from datetime import datetime
+
+from sqlalchemy import delete, select, text, update
 from sqlalchemy.orm import Session
 
 from backend.entity import (
@@ -23,8 +25,11 @@ class TargetTagAssignmentMapper:
         if self.db.bind is not None and self.db.bind.dialect.name == "sqlite":
             self.db.execute(text("BEGIN IMMEDIATE"))
 
-    def active_ledger_exists(self, ledger_id: int) -> bool:
-        return self.db.scalar(select(LedgerEntry.id).join(
+    def active_ledger(self, ledger_id: int) -> dict | None:
+        row = self.db.execute(select(
+            LedgerEntry.id,
+            LedgerEntry.updated_time,
+        ).join(
             ReviewAllocation,
             ReviewAllocation.ledger_entry_id == LedgerEntry.id,
         ).join(
@@ -33,7 +38,8 @@ class TargetTagAssignmentMapper:
         ).where(
             LedgerEntry.id == ledger_id,
             ReviewCase.status == 0,
-        )) is not None
+        )).mappings().one_or_none()
+        return dict(row) if row is not None else None
 
     def tag_ids(self, state: dict[str, str]) -> list[int]:
         rows = self.db.execute(select(
@@ -55,6 +61,23 @@ class TargetTagAssignmentMapper:
             LedgerEntryTag(ledger_id=ledger_id, tag_id=tag_id)
             for tag_id in tag_ids
         ])
+
+    def current_tag_ids(self, ledger_id: int) -> tuple[int, ...]:
+        return tuple(self.db.scalars(select(LedgerEntryTag.tag_id).where(
+            LedgerEntryTag.ledger_id == ledger_id
+        ).order_by(LedgerEntryTag.tag_id)).all())
+
+    def touch(
+        self,
+        ledger_id: int,
+        expected_updated_time: datetime,
+        now: datetime,
+    ) -> bool:
+        result = self.db.execute(update(LedgerEntry).where(
+            LedgerEntry.id == ledger_id,
+            LedgerEntry.updated_time == expected_updated_time,
+        ).values(updated_time=now))
+        return result.rowcount == 1
 
     def commit(self) -> None:
         self.db.commit()

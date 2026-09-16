@@ -33,6 +33,7 @@ class TargetTagAssignmentRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     tag_state: dict[str, str]
+    expected_projection_version: int = Field(ge=1)
 
 
 class TargetTagRead(BaseModel):

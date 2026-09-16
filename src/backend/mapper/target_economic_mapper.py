@@ -5,7 +5,7 @@ import json
 from collections import defaultdict
 from datetime import datetime
 
-from sqlalchemy import String, cast, delete, exists, func, or_, select, text
+from sqlalchemy import String, case, cast, delete, exists, func, or_, select, text
 from sqlalchemy.orm import Session
 
 from backend.entity import (
@@ -103,64 +103,93 @@ class TargetEconomicMapper:
         filter_value,
         sorter,
     ) -> tuple[list[dict], int]:
-        grouped = select(
-            ReviewCase.id,
-            ReviewCase.behavior_type,
-            ReviewCase.status,
-            ReviewCase.title,
-            ReviewCase.created_time,
-            ReviewCase.updated_time,
+        allocations = select(
+            ReviewAllocation.review_case_id.label("case_id"),
             func.count(func.distinct(ReviewAllocation.ledger_entry_id)).label(
                 "allocation_count"
             ),
-            func.count(func.distinct(ReviewRevision.id)).label("version"),
-        ).outerjoin(
-            ReviewAllocation,
-            ReviewAllocation.review_case_id == ReviewCase.id,
-        ).outerjoin(
-            ReviewRevision,
+        ).group_by(ReviewAllocation.review_case_id).subquery()
+        revisions = select(
+            ReviewRevision.review_case_id.label("case_id"),
+            func.count(ReviewRevision.id).label("version"),
+        ).group_by(ReviewRevision.review_case_id).subquery()
+        latest_behavior = select(
+            func.json_extract(ReviewRevision.request_json, "$.behavior_code")
+        ).where(
             ReviewRevision.review_case_id == ReviewCase.id,
-        ).group_by(ReviewCase.id)
-        rows = [dict(row) for row in self.db.execute(grouped).mappings().all()]
-        request_by_case = self._latest_plan_requests([row["id"] for row in rows])
-        items = []
-        for row in rows:
-            request = request_by_case.get(row["id"], {})
-            item = {
-                **row,
-                "behavior_code": request.get(
-                    "behavior_code", self._behavior_code(row["behavior_type"])
-                ),
-                "status": self._status_name(row["status"], row["allocation_count"]),
-                "economic_count": row["allocation_count"],
-                "version": max(1, int(row["version"])),
-            }
-            if q:
-                needle = q.casefold()
-                if (
-                    needle not in str(item["id"])
-                    and needle not in item["title"].casefold()
-                    and needle not in item["behavior_code"].casefold()
-                ):
-                    continue
-            if filter_value.status and item["status"] != filter_value.status:
-                continue
-            if (
-                filter_value.behavior_code
-                and item["behavior_code"] != filter_value.behavior_code
-            ):
-                continue
-            if (
-                filter_value.exclude_behavior_code
-                and item["behavior_code"] == filter_value.exclude_behavior_code
-            ):
-                continue
-            items.append(item)
-        reverse = sorter.order == "desc"
-        items.sort(key=lambda item: (item[sorter.field], item["id"]), reverse=reverse)
-        total = len(items)
-        offset = (page - 1) * page_size
-        return items[offset:offset + page_size], total
+            func.json_extract(
+                ReviewRevision.request_json, "$.behavior_code"
+            ).is_not(None),
+        ).order_by(
+            ReviewRevision.id.desc()
+        ).limit(1).correlate(ReviewCase).scalar_subquery()
+        allocation_count = func.coalesce(allocations.c.allocation_count, 0)
+        version = case(
+            (func.coalesce(revisions.c.version, 0) > 0, revisions.c.version),
+            else_=1,
+        )
+        behavior_code = func.coalesce(
+            latest_behavior,
+            case(
+                (ReviewCase.behavior_type == 1, "BORROW_AND_REPAY"),
+                else_="TRANSACTION",
+            ),
+        )
+        status = case(
+            (ReviewCase.status == 0, "CONFIRMED"),
+            (allocation_count > 0, "REVOKED"),
+            else_="PENDING",
+        )
+        query = select(
+            ReviewCase.id,
+            behavior_code.label("behavior_code"),
+            status.label("status"),
+            version.label("version"),
+            ReviewCase.title,
+            ReviewCase.created_time,
+            ReviewCase.updated_time,
+            allocation_count.label("economic_count"),
+            allocation_count.label("allocation_count"),
+        ).outerjoin(
+            allocations, allocations.c.case_id == ReviewCase.id
+        ).outerjoin(
+            revisions, revisions.c.case_id == ReviewCase.id
+        )
+        clauses = []
+        if q:
+            pattern = f"%{q}%"
+            clauses.append(or_(
+                cast(ReviewCase.id, String).like(pattern),
+                ReviewCase.title.ilike(pattern),
+                behavior_code.ilike(pattern),
+            ))
+        if filter_value.status:
+            clauses.append(status == filter_value.status)
+        if filter_value.behavior_code:
+            clauses.append(behavior_code == filter_value.behavior_code)
+        if filter_value.exclude_behavior_code:
+            clauses.append(behavior_code != filter_value.exclude_behavior_code)
+        query = query.where(*clauses)
+        total = int(self.db.scalar(
+            select(func.count()).select_from(query.order_by(None).subquery())
+        ) or 0)
+        columns = {
+            "id": ReviewCase.id,
+            "created_time": ReviewCase.created_time,
+            "updated_time": ReviewCase.updated_time,
+            "version": version,
+        }
+        column = columns[sorter.field]
+        order = column.asc() if sorter.order == "asc" else column.desc()
+        id_order = (
+            ReviewCase.id.asc()
+            if sorter.order == "asc"
+            else ReviewCase.id.desc()
+        )
+        rows = self.db.execute(query.order_by(order, id_order).offset(
+            (page - 1) * page_size
+        ).limit(page_size)).mappings().all()
+        return [dict(row) for row in rows], total
 
     def _fact_candidate_query(self, q: str = "", filter_value=None):
         clauses = [ReviewCase.status == 0, self._system_case_exists()]
