@@ -320,25 +320,41 @@ def test_target_fact_conflict_is_recorded_for_review(target_import_api):
         assert case.status == "PENDING"
 
     conflict_page_response = client.get(
-        "/paam/review/v1/case/page",
-        params={"page": 1, "page_size": 25, "review_type": "FACT_CONFLICT"},
+        "/paam/import/v1/fact_conflict/list",
+        params={
+            "page": 1,
+            "page_size": 25,
+            "filter": '{"status":"PENDING"}',
+            "sorter": '{"field":"id","order":"asc"}',
+        },
     )
     assert conflict_page_response.status_code == 200, conflict_page_response.text
+    assert conflict_page_response.json()["status"] == 200
     conflict_page = conflict_page_response.json()["body"]
     assert (conflict_page["total"], conflict_page["page"]) == (1, 1)
     assert [item["id"] for item in conflict_page["items"]] == [case.id]
+    assert conflict_page["filter"] == {"status": "PENDING"}
+    assert conflict_page["sorter"] == {"field": "id", "order": "asc"}
 
     conflict_detail_response = client.get(
-        f"/paam/review/v1/case/detail/{case.id}"
+        f"/paam/import/v1/fact_conflict/{case.id}"
     )
     assert conflict_detail_response.status_code == 200, conflict_detail_response.text
     conflict_detail = conflict_detail_response.json()["body"]
     assert conflict_detail["review_type"] == "FACT_CONFLICT"
     assert conflict_detail["status"] == "PENDING"
     assert conflict_detail["history"][0]["operation"] == "CREATE"
+    assert client.get("/paam/review/v1/case/page").status_code == 404
+    assert client.get(
+        f"/paam/review/v1/case/detail/{case.id}"
+    ).status_code == 404
+    assert client.post(
+        f"/paam/import/v1/fact-conflict/{case.id}/resolve",
+        json={},
+    ).status_code == 404
 
     resolved = client.post(
-        f"/paam/import/v1/fact-conflict/{case.id}/resolve",
+        f"/paam/import/v1/fact_conflict/{case.id}/resolve",
         json={
             "resolution_type": "CREATE_NEW",
             "expected_version": 1,

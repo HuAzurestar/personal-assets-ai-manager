@@ -108,19 +108,24 @@ class TargetReviewCaseResponse(BaseModel):
     body: TargetReviewCaseRead
 
 
-class TargetReviewCasePageRead(BaseModel):
+class TargetFactConflictFilter(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["PENDING", "REJECTED", "CONFIRMED"] | None = None
+
+
+class TargetFactConflictSorter(ListSorter):
+    field: Literal["id", "created_time", "updated_time", "version"] = "updated_time"
+
+
+class TargetFactConflictPageRead(BaseModel):
     items: list[TargetReviewCaseRead]
     total: int
     page: int
     page_size: int
-    status: str
-    review_type: str
-
-
-class TargetReviewCasePageResponse(BaseModel):
-    status: Literal["success"] = "success"
-    message: str = "ok"
-    body: TargetReviewCasePageRead
+    q: str
+    filter: TargetFactConflictFilter
+    sorter: TargetFactConflictSorter
 
 
 # Production v1 review contract. Scenario names live on Review; Economic has

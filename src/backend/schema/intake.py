@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from backend.schema.target_review import TargetReviewCaseRead
+from backend.schema.target_review import TargetFactConflictPageRead, TargetReviewCaseRead
 
 
 class IntakeUploadFileRequest(BaseModel):
@@ -38,3 +38,9 @@ class ImportFactConflictResponse(BaseModel):
     status: Literal[200] = 200
     message: str = "ok"
     body: TargetReviewCaseRead
+
+
+class ImportFactConflictPageResponse(BaseModel):
+    status: Literal[200] = 200
+    message: str = "ok"
+    body: TargetFactConflictPageRead

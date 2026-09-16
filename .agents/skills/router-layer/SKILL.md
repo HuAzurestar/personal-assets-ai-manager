@@ -57,6 +57,21 @@ description: Change PAAM FastAPI routers, URL modules or versions, HTTP endpoint
   remains a separate migration decision until a Ledger-owned replacement is
   designed; do not hide that redesign inside a path rename.
 
+## Import API migration
+
+- Fact Conflict is an Import-owned object even though its persisted workflow
+  uses Review records internally. Do not expose it through a generic
+  `/paam/review/v1/case/*` API.
+- Canonical Fact Conflict reads are `GET /fact_conflict/list` and
+  `GET /fact_conflict/{conflict_id}` under `/paam/import/v1`.
+- Conflict commands use
+  `POST /fact_conflict/{conflict_id}/{resolve|dismiss|reopen}`. Keep the custom
+  object name in underscore form; do not restore the retired `fact-conflict`
+  spelling.
+- Fact Conflict list and detail services must constrain reads to
+  `review_type == FACT_CONFLICT`; an Import endpoint must never become a
+  generic back door to Account or Ledger Review records.
+
 ## Caller migration safety
 
 - A route path change and every in-repository frontend path replacement belong

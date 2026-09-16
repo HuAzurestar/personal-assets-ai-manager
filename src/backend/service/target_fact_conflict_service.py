@@ -12,6 +12,9 @@ from backend.mapper.target_fact_conflict_mapper import TargetFactConflictMapper
 from backend.mapper.target_review_mapper import TargetReviewMapper
 from backend.schema.target_review import (
     TargetFactConflictResolveRequest,
+    TargetFactConflictFilter,
+    TargetFactConflictPageRead,
+    TargetFactConflictSorter,
     TargetReviewCaseRead,
     TargetReviewTransitionRequest,
 )
@@ -25,6 +28,36 @@ class TargetFactConflictService:
         self.mapper = TargetFactConflictMapper(db)
         self.review = TargetReviewMapper(db)
         self.economic = TargetEconomicService(db)
+
+    def page(
+        self,
+        page: int,
+        page_size: int,
+        q: str,
+        filter_value: TargetFactConflictFilter,
+        sorter: TargetFactConflictSorter,
+    ) -> TargetFactConflictPageRead:
+        items, total = self.review.page(
+            page,
+            page_size,
+            q,
+            filter_value.status,
+            review_type="FACT_CONFLICT",
+            sort_field=sorter.field,
+            sort_order=sorter.order,
+        )
+        return TargetFactConflictPageRead(
+            items=items,
+            total=total,
+            page=page,
+            page_size=page_size,
+            q=q,
+            filter=filter_value,
+            sorter=sorter,
+        )
+
+    def detail(self, case_id: int) -> TargetReviewCaseRead:
+        return self._required_conflict(case_id)
 
     def resolve(
         self,
@@ -61,12 +94,10 @@ class TargetFactConflictService:
                     raise TargetReviewError(
                         409, "idempotency key was already used by another command"
                     )
-                result = self._required(replay.case_id)
+                result = self._required_conflict(replay.case_id)
                 self.review.commit()
                 return result
-            before = self._required(case_id)
-            if before.review_type != "FACT_CONFLICT":
-                raise TargetReviewError(422, "case is not a FACT_CONFLICT Review")
+            before = self._required_conflict(case_id)
             expected_status = "REJECTED" if operation == "REOPEN" else "PENDING"
             if before.status != expected_status:
                 raise TargetReviewError(
@@ -131,7 +162,7 @@ class TargetFactConflictService:
                     now=now,
                 )
                 affected_fact_id = 0
-            after = self._required(case_id)
+            after = self._required_conflict(case_id)
             after_json = self._snapshot(after)
             self.review.add_history(
                 case_id=case_id,
@@ -150,7 +181,7 @@ class TargetFactConflictService:
             if affected_fact_id:
                 self.economic.ensure_defaults([affected_fact_id])
             self.review.commit()
-            return self._required(case_id)
+            return self._required_conflict(case_id)
         except TargetReviewError:
             self.review.rollback()
             raise
@@ -196,10 +227,10 @@ class TargetFactConflictService:
         }, now)
         return self.mapper.fact(fact_id)
 
-    def _required(self, case_id: int) -> TargetReviewCaseRead:
+    def _required_conflict(self, case_id: int) -> TargetReviewCaseRead:
         case = self.review.detail(case_id)
-        if case is None:
-            raise TargetReviewError(404, "Review case not found")
+        if case is None or case.review_type != "FACT_CONFLICT":
+            raise TargetReviewError(404, "Fact conflict not found")
         return case
 
     @classmethod

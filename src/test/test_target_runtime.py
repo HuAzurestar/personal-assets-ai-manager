@@ -35,10 +35,16 @@ def test_openapi_locks_canonical_ledger_v1_contract():
     assert not any(path.startswith("/paam/economy/") for path in paths)
     assert not any(path.startswith("/paam/review/v2") for path in paths)
     assert {
-        "/paam/review/v1/case/page",
-        "/paam/review/v1/case/detail/{case_id}",
+        "/paam/import/v1/fact_conflict/list",
+        "/paam/import/v1/fact_conflict/{conflict_id}",
+        "/paam/import/v1/fact_conflict/{conflict_id}/resolve",
+        "/paam/import/v1/fact_conflict/{conflict_id}/dismiss",
+        "/paam/import/v1/fact_conflict/{conflict_id}/reopen",
         "/paam/review/v1/account/set/{fact_id}",
     } <= paths
+    assert "/paam/review/v1/case/page" not in paths
+    assert "/paam/review/v1/case/detail/{case_id}" not in paths
+    assert not any("fact-conflict" in path for path in paths)
     assert "/paam/ledger/v1/entry/list" not in paths
     assert "/paam/review/v1/case/create" not in paths
 
@@ -50,6 +56,8 @@ def test_openapi_locks_canonical_ledger_v1_contract():
         "TargetEconomicReviewResponse",
         "TargetEconomicReviewPageResponse",
         "TargetFactAllocationCandidatePageResponse",
+        "ImportFactConflictResponse",
+        "ImportFactConflictPageResponse",
     ):
         assert schemas[name]["properties"]["status"]["const"] == 200
 

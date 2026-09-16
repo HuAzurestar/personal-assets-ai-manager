@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
-from sqlalchemy import func, select, text
+from sqlalchemy import String, cast, func, or_, select, text
 from sqlalchemy.orm import Session
 
 from backend.entity import ReviewCase, ReviewCaseBill, ReviewHistory
@@ -108,15 +108,33 @@ class TargetReviewMapper:
         self,
         page: int,
         page_size: int,
-        status: str = "",
-        review_type: str = "",
+        q: str,
+        status: str | None,
+        review_type: str,
+        sort_field: str,
+        sort_order: str,
     ) -> tuple[list[TargetReviewCaseRead], int]:
         clauses = [ReviewCase.behavior_code != "DEFAULT"]
+        if q:
+            pattern = f"%{q}%"
+            clauses.append(or_(
+                cast(ReviewCase.id, String).like(pattern),
+                ReviewCase.title.like(pattern),
+            ))
         if status:
             clauses.append(ReviewCase.status == status)
         if review_type:
             clauses.append(ReviewCase.review_type == review_type)
         total = self.db.scalar(select(func.count(ReviewCase.id)).where(*clauses)) or 0
+        sort_columns = {
+            "id": ReviewCase.id,
+            "created_time": ReviewCase.created_time,
+            "updated_time": ReviewCase.updated_time,
+            "version": ReviewCase.version,
+        }
+        column = sort_columns[sort_field]
+        order = column.asc() if sort_order == "asc" else column.desc()
+        id_order = ReviewCase.id.asc() if sort_order == "asc" else ReviewCase.id.desc()
         cases = self.db.execute(select(
             ReviewCase.id,
             ReviewCase.review_type,
@@ -127,7 +145,7 @@ class TargetReviewMapper:
             ReviewCase.result_json,
             ReviewCase.created_time,
             ReviewCase.updated_time,
-        ).where(*clauses).order_by(ReviewCase.id.desc()).offset(
+        ).where(*clauses).order_by(order, id_order).offset(
             (page - 1) * page_size
         ).limit(page_size)).mappings().all()
         case_ids = [row["id"] for row in cases]
