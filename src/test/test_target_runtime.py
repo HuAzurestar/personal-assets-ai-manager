@@ -204,6 +204,10 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
             assert "/paam/review/v1/account" not in script.text
             assert "/paam/review/v2" not in script.text
             assert "/paam/ledger/v1/entry/" not in script.text
+            core_script = client.get("/static/js/util/core.js")
+            assert core_script.status_code == 200
+            assert "export const reviewTypeNames" in core_script.text
+            assert "export const roleNames" in core_script.text
             for path in (
                 "/static/js/util/core.js", "/static/js/navigation.js",
                 "/static/js/view/account.js", "/static/js/api/client.js",

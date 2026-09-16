@@ -9,10 +9,37 @@ export const key = () => crypto.randomUUID();
 export const date = (value) => String(value || "").replace("T", " ").slice(0, 16);
 
 export const typeNames = {
+  TRANSACTION: "事实交易", ACCOUNT_TRANSFER: "账户流转", CLAIM: "债权关系",
   INCOME_AND_EXPENSE: "收入与支出", INTERNAL_TRANSFER: "内部转账", ASSET_AND_LIABILITY: "资产与负债",
   INCOME: "收入", EXPENSE: "支出", AA: "AA", LOAN_BORROW: "借入",
   LOAN_LEND: "借出", REFUND: "退款", TRANSFER: "转账",
   FX_EXCHANGE: "换汇", UNRESOLVED: "待核验",
+};
+
+export const reviewTypeNames = {
+  CLASSIFICATION: "确认普通收支",
+  AA: "AA 分摊",
+  LOAN_BORROW: "借入与还款",
+  LOAN_LEND: "借出与收回",
+  REFUND: "退款关联",
+  TRANSFER: "本人账户转账",
+  FX_EXCHANGE: "换汇",
+  DUPLICATE: "重复交易",
+  TAG: "标签修改",
+  ACCOUNT: "账户修正",
+  FACT_CONFLICT: "事实冲突",
+};
+
+export const roleNames = {
+  CLASSIFIED_INCOME: "确认为普通收入",
+  CLASSIFIED_EXPENSE: "确认为普通支出",
+  AA_PAID: "我先支付", AA_RECEIVED: "收到分摊",
+  LOAN_RECEIVED: "收到借款", LOAN_REPAID: "偿还借款",
+  LOAN_LENT: "借出款项", LOAN_RECOVERED: "收回借款",
+  REFUND_RECEIVED: "收到退款", REFUND_EXPENSE: "原支出",
+  TRANSFER_OUT: "转出", TRANSFER_IN: "转入", TRANSFER_FEE: "手续费",
+  FX_OUT: "换出", FX_IN: "换入", FX_FEE: "换汇费用",
+  DUPLICATE_RETAINED: "保留", DUPLICATE_EXCLUDED: "排除",
 };
 
 export const statusNames = {
