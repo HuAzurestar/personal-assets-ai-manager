@@ -316,6 +316,19 @@ class TargetFactAllocationCandidateRead(BaseModel):
     available_value: int
 
 
+class TargetFactAllocationCandidatePageRead(BaseModel):
+    items: list[TargetFactAllocationCandidateRead]
+    total: int
+    page: int
+    page_size: int
+
+
+class TargetFactAllocationCandidatePageResponse(BaseModel):
+    status: Literal["success"] = "success"
+    message: str = "ok"
+    body: TargetFactAllocationCandidatePageRead
+
+
 class TargetFactAllocationCandidateResponse(BaseModel):
     status: Literal["success"] = "success"
     message: str = "ok"

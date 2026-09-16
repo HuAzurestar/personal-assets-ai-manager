@@ -320,8 +320,21 @@ function detailPager(result, pageId) {
   return `<div class="pagination ledger-pagination"><span class="range">${start}–${end} / ${result.total}</span><div class="page-buttons"><button data-action="detail-page" data-page-id="${pageId}" data-value="${result.page - 1}" ${result.page <= 1 ? "disabled" : ""}>上一页</button><span>第 ${result.page} / ${pages} 页</span><button data-action="detail-page" data-page-id="${pageId}" data-value="${result.page + 1}" ${result.page >= pages ? "disabled" : ""}>下一页</button></div></div>`;
 }
 
+async function loadFactCandidates(maxItems) {
+  const items = [];
+  const pageSize = Math.min(maxItems, 100);
+  let page = 1;
+  while (items.length < maxItems) {
+    const result = await request(`/paam/ledger/v1/fact/list?${new URLSearchParams({ page, page_size: pageSize })}`);
+    items.push(...result.items);
+    if (!result.items.length || items.length >= result.total) break;
+    page += 1;
+  }
+  return items.slice(0, maxItems);
+}
+
 async function ledgerPage() {
-  const facts = await request("/paam/ledger/v1/fact/list?limit=500");
+  const facts = await loadFactCandidates(500);
   const q = (state.params.get("q") || "").trim().toLowerCase();
   const currency = (state.params.get("currency_code") || "").trim().toUpperCase();
   const dateFrom = state.params.get("date_from") || "";
@@ -508,7 +521,7 @@ async function transitionEconomicReview(button) {
 }
 
 async function openEconomicReviewEditor() {
-  const facts = await request("/paam/ledger/v1/fact/list?limit=100");
+  const facts = await loadFactCandidates(100);
   if (!facts.length) throw new Error("当前没有可分配的事实流水");
   const selected = new Set();
   const values = new Map();

@@ -4,7 +4,7 @@ from uuid import uuid4
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, event, func, select
 from sqlalchemy.orm import sessionmaker
 
 from backend.router.ledger import router as ledger_router
@@ -230,7 +230,11 @@ def test_partial_manual_reviews_keep_exact_default_coverage_and_are_idempotent(e
     assert first.status_code == replay.status_code == 200
     assert first.json()["body"] == replay.json()["body"]
 
-    candidates = client.get("/paam/ledger/v1/fact/list").json()["body"]
+    candidate_page = client.get("/paam/ledger/v1/fact/list").json()["body"]
+    candidates = candidate_page["items"]
+    assert candidate_page["total"] == 1
+    assert candidate_page["page"] == 1
+    assert candidate_page["page_size"] == 20
     assert [(item["id"], item["available_value"]) for item in candidates] == [(fact_id, 6000)]
     cases = client.get("/paam/ledger/v1/review/list").json()["body"]
     assert cases["total"] == 1
@@ -248,6 +252,41 @@ def test_partial_manual_reviews_keep_exact_default_coverage_and_are_idempotent(e
             LedgerEntry.status == "ACTIVE",
         ))
         assert coverage == 10000
+
+
+def test_fact_candidate_list_is_paged_with_fixed_query_count(economic_api):
+    client, sessions = economic_api
+    fact_ids = _facts(sessions, [
+        ("OUT", 1000, "CNY"),
+        ("OUT", 2000, "CNY"),
+        ("OUT", 3000, "CNY"),
+    ])
+    with sessions() as db:
+        TargetEconomicService(db).ensure_defaults(fact_ids, commit=True)
+
+    statements = []
+
+    def count_selects(_connection, _cursor, statement, _parameters, _context, _many):
+        if statement.lstrip().upper().startswith("SELECT"):
+            statements.append(statement)
+
+    engine = sessions.kw["bind"]
+    event.listen(engine, "before_cursor_execute", count_selects)
+    try:
+        first = client.get("/paam/ledger/v1/fact/list?page=1&page_size=2")
+    finally:
+        event.remove(engine, "before_cursor_execute", count_selects)
+    assert first.status_code == 200, first.text
+    page = first.json()["body"]
+    assert page["total"] == 3
+    assert page["page"] == 1
+    assert page["page_size"] == 2
+    assert len(page["items"]) == 2
+    assert len(statements) == 2
+
+    second = client.get("/paam/ledger/v1/fact/list?page=2&page_size=2").json()["body"]
+    assert second["total"] == 3
+    assert len(second["items"]) == 1
 
 
 def test_fx_review_uses_two_single_currency_account_transfers(economic_api):

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from backend.router.dependency import get_db
 from backend.router.error import DomainErrorRoute
-from backend.schema.target_review import TargetFactAllocationCandidateResponse
+from backend.schema.target_review import TargetFactAllocationCandidatePageResponse
 from backend.service.target_economic_service import TargetEconomicService
 
 
@@ -18,11 +18,12 @@ router = APIRouter(
 )
 
 
-@router.get("/fact/list", response_model=TargetFactAllocationCandidateResponse)
+@router.get("/fact/list", response_model=TargetFactAllocationCandidatePageResponse)
 def fact_list(
-    limit: int = Query(default=100, ge=1, le=500),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
-    return TargetFactAllocationCandidateResponse(
-        body=TargetEconomicService(db).fact_candidates(limit)
+    return TargetFactAllocationCandidatePageResponse(
+        body=TargetEconomicService(db).fact_candidate_page(page, page_size)
     )
