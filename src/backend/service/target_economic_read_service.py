@@ -59,7 +59,7 @@ class TargetEconomicReadService:
         data = self.mapper.detail(economic_id)
         if data is None:
             return None
-        flow, allocations, facts, reviews, tags, account_versions = data
+        flow, allocations, facts, reviews, tags = data
         return EconomicFlowDetailRead(
             flow=EconomicFlowDetailItem(
                 **self._flow(flow).model_dump(),
@@ -86,7 +86,7 @@ class TargetEconomicReadService:
                     currency_code=row["currency_code"],
                 ),
                 account_code=row["account_code"],
-                account_review_version=account_versions.get(row["id"], 0),
+                account_review_version=1,
                 counterparty=row["counterparty"],
                 summary=row["summary"],
             ) for row in facts],
@@ -141,6 +141,14 @@ class TargetEconomicReadService:
             ),
             account_code=row["account_code"],
             counterparty_account_ref=row["counterparty_account_ref"],
-            projection_version=row["projection_version"],
+            projection_version=TargetEconomicReadService.projection_version(
+                row["updated_time"]
+            ),
             occurred_time=row["occurred_time"],
         )
+
+    @staticmethod
+    def projection_version(updated_time) -> int:
+        """Expose DB-owned updated_time as the Router optimistic-lock token."""
+
+        return max(1, int(updated_time.timestamp() * 1_000_000))

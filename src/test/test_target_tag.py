@@ -9,12 +9,13 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.core.target_database import init_target_db
 from backend.entity import (
-    BillFact,
+    CASH_DIRECTION_OUT,
     LedgerEntryTag,
+    ReviewAllocation,
     ReviewCase,
-    ReviewCaseBill,
     TargetTag,
     TargetTagView,
+    TransactionFact,
 )
 from backend.router.dependency import get_db
 from backend.router.ledger import router as ledger_router
@@ -50,15 +51,16 @@ def _add_facts(sessions, count):
     now = datetime(2026, 9, 12, 12)
     with sessions() as db:
         facts = [
-            BillFact(
+            TransactionFact(
                 fact_key=uuid4().hex,
                 occurred_time=now + timedelta(minutes=index),
-                cash_direction="OUT",
+                cash_direction=CASH_DIRECTION_OUT,
                 amount_value=1000,
                 amount_scale=2,
                 currency_code="CNY",
                 account_code="wallet",
-                counterparty="merchant",
+                counterparty_name="merchant",
+                counterparty_account_ref="",
                 summary="expense",
                 created_time=now,
                 updated_time=now,
@@ -75,12 +77,12 @@ def _add_facts(sessions, count):
 def _ledger_for_fact(sessions, fact_id):
     with sessions() as db:
         return db.scalar(
-            select(ReviewCaseBill.economic_id)
-            .join(ReviewCase, ReviewCase.id == ReviewCaseBill.case_id)
+            select(ReviewAllocation.ledger_entry_id)
+            .join(ReviewCase, ReviewCase.id == ReviewAllocation.review_case_id)
             .where(
-                ReviewCaseBill.bill_id == fact_id,
-                ReviewCaseBill.economic_id > 0,
-                ReviewCase.status == "CONFIRMED",
+                ReviewAllocation.transaction_fact_id == fact_id,
+                ReviewAllocation.ledger_entry_id > 0,
+                ReviewCase.status == 0,
             )
         )
 
@@ -99,11 +101,11 @@ def _create_tag_dictionary(client):
 
 
 def _assign(client, ledger_id, version, value):
+    del version
     return client.put(
         f"/paam/tag/v1/assignment/{ledger_id}",
         json={
             "tag_state": {"category": value},
-            "expected_projection_version": version,
         },
     )
 
@@ -182,7 +184,7 @@ def test_target_tag_list_query_count_is_fixed(target_tag_api):
     assert rejected.json()["body"]["code"] == "LIST_QUERY_ERROR"
 
 
-def test_ledger_tag_assignment_is_direct_versioned_and_idempotent(target_tag_api):
+def test_ledger_tag_assignment_is_direct_and_idempotent(target_tag_api):
     client, sessions, _engine = target_tag_api
     fact_id = _add_facts(sessions, 1)[0]
     _create_tag_dictionary(client)
@@ -192,27 +194,25 @@ def test_ledger_tag_assignment_is_direct_versioned_and_idempotent(target_tag_api
     assert assigned.status_code == 200, assigned.text
     assert assigned.json()["body"] == {
         "ledger_id": ledger_id,
-        "projection_version": 2,
         "tag_state": {"category": "food"},
     }
     replay = _assign(client, ledger_id, 1, "food")
     assert replay.status_code == 200
-    assert replay.json()["body"]["projection_version"] == 2
-    assert _assign(client, ledger_id, 1, "unclassified").status_code == 409
+    assert replay.json()["body"]["tag_state"] == {"category": "food"}
+    assert _assign(client, ledger_id, 1, "unclassified").status_code == 200
+    assert _assign(client, ledger_id, 1, "food").status_code == 200
 
     detail = client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]
-    assert detail["flow"]["projection_version"] == 2
     assert detail["flow"]["tags"][0]["tag_system_name"] == "food"
     assert all(item["review_type"] != "TAG" for item in detail["reviews"])
     with sessions() as db:
-        assert db.scalar(select(ReviewCase).where(ReviewCase.review_type == "TAG")) is None
         assignment = db.scalar(
             select(LedgerEntryTag).where(LedgerEntryTag.ledger_id == ledger_id)
         )
         assert db.get(TargetTag, assignment.tag_id).system_name == "food"
 
 
-def test_tag_assignment_has_bounded_reads_and_no_review_dependency(target_tag_api):
+def test_tag_assignment_has_bounded_reads(target_tag_api):
     client, sessions, engine = target_tag_api
     fact_id = _add_facts(sessions, 1)[0]
     _create_tag_dictionary(client)
@@ -229,6 +229,5 @@ def test_tag_assignment_has_bounded_reads_and_no_review_dependency(target_tag_ap
     finally:
         event.remove(engine, "before_cursor_execute", count_selects)
     assert response.status_code == 200, response.text
-    assert len(statements) == 3
-    assert all("review_case" not in statement.lower() for statement in statements)
+    assert len(statements) == 2
     assert all("SELECT *" not in statement.upper() for statement in statements)

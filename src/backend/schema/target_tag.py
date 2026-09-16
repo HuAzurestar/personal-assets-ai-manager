@@ -33,7 +33,6 @@ class TargetTagAssignmentRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     tag_state: dict[str, str]
-    expected_projection_version: int = Field(ge=1)
 
 
 class TargetTagRead(BaseModel):
@@ -86,7 +85,6 @@ class TargetTagViewListResponse(BaseModel):
 
 class TargetTagAssignmentRead(BaseModel):
     ledger_id: int
-    projection_version: int
     tag_state: dict[str, str]
 
 

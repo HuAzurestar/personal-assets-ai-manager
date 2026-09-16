@@ -1,34 +1,31 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, time
 
-from sqlalchemy import exists, func, or_, select
+from sqlalchemy import case, exists, func, literal, or_, select
 from sqlalchemy.orm import Session
 
 from backend.entity import (
-    BillFact,
+    CASH_DIRECTION_IN,
+    CASH_DIRECTION_OUT,
     LedgerEntry,
     LedgerEntryTag,
+    ReviewAllocation,
     ReviewCase,
-    ReviewCaseBill,
+    ReviewRevision,
     TargetTag,
     TargetTagView,
+    TransactionFact,
 )
 from backend.schema.target_economic import EconomicPageQuery, EconomicSummaryQuery
 
 
 class TargetEconomicReadMapper:
-    """Explicit-column reads for the active Economic projection."""
+    """Explicit-column reads for confirmed Ledger entries."""
 
     def __init__(self, db: Session):
         self.db = db
-
-    _SORT_COLUMNS = {
-        "id": LedgerEntry.id,
-        "occurred_time": LedgerEntry.occurred_time,
-        "amount_value": LedgerEntry.amount_value,
-        "projection_version": LedgerEntry.projection_version,
-    }
 
     @staticmethod
     def _flow_columns():
@@ -41,98 +38,123 @@ class TargetEconomicReadMapper:
             LedgerEntry.currency_code,
             LedgerEntry.account_code,
             LedgerEntry.counterparty_account_ref,
-            LedgerEntry.projection_version,
             LedgerEntry.occurred_time,
+            LedgerEntry.updated_time,
         )
 
     def page(self, query: EconomicPageQuery):
         clauses = self._clauses(query)
         total = self.db.scalar(select(func.count(LedgerEntry.id)).where(*clauses)) or 0
-        column = self._SORT_COLUMNS[query.sort_field]
+        sort_columns = {
+            "id": LedgerEntry.id,
+            "occurred_time": LedgerEntry.occurred_time,
+            "amount_value": LedgerEntry.amount_value,
+            "projection_version": LedgerEntry.updated_time,
+        }
+        column = sort_columns[query.sort_field]
         order = column.asc() if query.sort_order == "asc" else column.desc()
         id_order = LedgerEntry.id.asc() if query.sort_order == "asc" else LedgerEntry.id.desc()
         rows = self.db.execute(select(*self._flow_columns()).where(*clauses).order_by(
-            order, id_order,
+            order,
+            id_order,
         ).offset((query.page - 1) * query.page_size).limit(query.page_size)).mappings().all()
         return rows, total
 
-    def detail(self, economic_id: int):
+    def detail(self, ledger_id: int):
         flow = self.db.execute(select(*self._flow_columns()).where(
-            LedgerEntry.id == economic_id,
+            LedgerEntry.id == ledger_id,
             *self._active_clauses(),
         )).mappings().one_or_none()
         if flow is None:
             return None
         allocations = self.db.execute(select(
-            ReviewCaseBill.id,
-            ReviewCaseBill.case_id.label("review_id"),
-            ReviewCaseBill.bill_id.label("fact_id"),
-            ReviewCaseBill.economic_id.label("economic_id"),
-            ReviewCaseBill.amount_value,
-            ReviewCaseBill.amount_scale,
-            ReviewCaseBill.currency_code,
-        ).join(
-            ReviewCase, ReviewCase.id == ReviewCaseBill.case_id,
-        ).where(
-            ReviewCaseBill.economic_id == economic_id,
-            ReviewCase.status == "CONFIRMED",
-        ).order_by(ReviewCaseBill.id)).mappings().all()
-        fact_ids = sorted({row["fact_id"] for row in allocations})
-        facts = self.db.execute(select(
-            BillFact.id,
-            BillFact.occurred_time,
-            BillFact.cash_direction,
-            BillFact.amount_value,
-            BillFact.amount_scale,
-            BillFact.currency_code,
-            BillFact.account_code,
-            BillFact.counterparty,
-            BillFact.summary,
-        ).where(BillFact.id.in_(fact_ids)).order_by(BillFact.id)).mappings().all() if fact_ids else []
-        reviews = self.db.execute(select(
-            ReviewCase.id,
-            ReviewCase.review_type,
-            ReviewCase.behavior_code,
-            ReviewCase.status,
-            ReviewCase.version,
-            ReviewCase.title,
-        ).join(
-            ReviewCaseBill,
-            ReviewCaseBill.case_id == ReviewCase.id,
-        ).where(
-            ReviewCaseBill.bill_id.in_(fact_ids),
-            or_(
-                ReviewCaseBill.economic_id == economic_id,
-                ReviewCase.review_type.in_(("ACCOUNT", "TAG")),
-            ),
-        ).distinct().order_by(ReviewCase.id)).mappings().all() if fact_ids else []
-        account_version_rows = self.db.execute(select(
-            ReviewCaseBill.bill_id,
-            ReviewCase.version,
+            ReviewAllocation.id,
+            ReviewAllocation.review_case_id.label("review_id"),
+            ReviewAllocation.transaction_fact_id.label("fact_id"),
+            ReviewAllocation.ledger_entry_id.label("economic_id"),
+            ReviewAllocation.amount_value,
+            ReviewAllocation.amount_scale,
+            ReviewAllocation.currency_code,
         ).join(
             ReviewCase,
-            ReviewCase.id == ReviewCaseBill.case_id,
+            ReviewCase.id == ReviewAllocation.review_case_id,
         ).where(
-            ReviewCaseBill.bill_id.in_(fact_ids),
-            ReviewCase.review_type == "ACCOUNT",
-        ).order_by(ReviewCaseBill.bill_id, ReviewCase.id)).mappings().all() if fact_ids else []
-        account_versions: dict[int, int] = {}
-        for row in account_version_rows:
-            fact_id = row["bill_id"]
-            if fact_id in account_versions:
-                raise ValueError(f"fact {fact_id} has multiple ACCOUNT reviews")
-            account_versions[fact_id] = row["version"]
+            ReviewAllocation.ledger_entry_id == ledger_id,
+            ReviewCase.status == 0,
+        ).order_by(ReviewAllocation.id)).mappings().all()
+        fact_ids = sorted({row["fact_id"] for row in allocations})
+        facts = self.db.execute(select(
+            TransactionFact.id,
+            TransactionFact.occurred_time,
+            TransactionFact.cash_direction,
+            TransactionFact.amount_value,
+            TransactionFact.amount_scale,
+            TransactionFact.currency_code,
+            TransactionFact.account_code,
+            TransactionFact.counterparty_name.label("counterparty"),
+            TransactionFact.summary,
+        ).where(
+            TransactionFact.id.in_(fact_ids)
+        ).order_by(TransactionFact.id)).mappings().all() if fact_ids else []
+        facts = [self._fact_values(row) for row in facts]
+        review_ids = sorted({row["review_id"] for row in allocations})
+        reviews = self.db.execute(select(
+            ReviewCase.id,
+            literal("ECONOMIC").label("review_type"),
+            case(
+                (ReviewCase.behavior_type == 0, "DEFAULT"),
+                (ReviewCase.behavior_type == 1, "BORROW_AND_REPAY"),
+                else_="UNKNOWN",
+            ).label("behavior_code"),
+            case(
+                (ReviewCase.status == 0, "CONFIRMED"),
+                (ReviewCase.status == 1, "REVOKED"),
+                else_="UNKNOWN",
+            ).label("status"),
+            ReviewCase.title,
+        ).where(
+            ReviewCase.id.in_(review_ids),
+        ).order_by(ReviewCase.id)).mappings().all() if review_ids else []
+        review_versions = dict(self.db.execute(select(
+            ReviewRevision.review_case_id,
+            func.count(ReviewRevision.id),
+        ).where(
+            ReviewRevision.review_case_id.in_(review_ids),
+        ).group_by(ReviewRevision.review_case_id)).all()) if review_ids else {}
+        behavior_codes = {}
+        if review_ids:
+            revision_rows = self.db.execute(select(
+                ReviewRevision.review_case_id,
+                ReviewRevision.request_json,
+            ).where(
+                ReviewRevision.review_case_id.in_(review_ids),
+            ).order_by(ReviewRevision.id.desc())).mappings().all()
+            for revision in revision_rows:
+                payload = json.loads(revision["request_json"] or "{}")
+                if (
+                    revision["review_case_id"] not in behavior_codes
+                    and payload.get("behavior_code")
+                ):
+                    behavior_codes[revision["review_case_id"]] = payload["behavior_code"]
+        reviews = [
+            {
+                **dict(row),
+                "review_type": behavior_codes.get(row["id"], row["behavior_code"]),
+                "behavior_code": behavior_codes.get(row["id"], row["behavior_code"]),
+                "version": max(1, int(review_versions.get(row["id"], 0))),
+            }
+            for row in reviews
+        ]
         return (
             flow,
             allocations,
             facts,
             reviews,
-            self.tags([economic_id]).get(economic_id, []),
-            account_versions,
+            self.tags([ledger_id]).get(ledger_id, []),
         )
 
-    def tags(self, economic_ids: list[int]) -> dict[int, list[dict]]:
-        if not economic_ids:
+    def tags(self, ledger_ids: list[int]) -> dict[int, list[dict]]:
+        if not ledger_ids:
             return {}
         rows = self.db.execute(select(
             LedgerEntryTag.ledger_id,
@@ -141,15 +163,19 @@ class TargetEconomicReadMapper:
             TargetTag.name.label("tag_name"),
             TargetTag.system_name.label("tag_system_name"),
         ).join(
-            TargetTag, TargetTag.id == LedgerEntryTag.tag_id,
+            TargetTag,
+            TargetTag.id == LedgerEntryTag.tag_id,
         ).join(
-            TargetTagView, TargetTagView.id == TargetTag.view_id,
+            TargetTagView,
+            TargetTagView.id == TargetTag.view_id,
         ).where(
-            LedgerEntryTag.ledger_id.in_(economic_ids),
+            LedgerEntryTag.ledger_id.in_(ledger_ids),
             TargetTagView.status == "ACTIVE",
             TargetTag.status == "ACTIVE",
         ).order_by(
-            LedgerEntryTag.ledger_id, TargetTagView.id, TargetTag.id,
+            LedgerEntryTag.ledger_id,
+            TargetTagView.id,
+            TargetTag.id,
         )).mappings().all()
         result: dict[int, list[dict]] = {}
         for row in rows:
@@ -161,10 +187,14 @@ class TargetEconomicReadMapper:
     def summary(self, query: EconomicSummaryQuery):
         clauses = self._active_clauses()
         if query.date_from:
-            clauses.append(LedgerEntry.occurred_time >= datetime.combine(query.date_from, time.min))
+            clauses.append(
+                LedgerEntry.occurred_time >= datetime.combine(query.date_from, time.min)
+            )
         if query.date_to:
-            clauses.append(LedgerEntry.occurred_time <= datetime.combine(query.date_to, time.max))
-        rows = self.db.execute(select(
+            clauses.append(
+                LedgerEntry.occurred_time <= datetime.combine(query.date_to, time.max)
+            )
+        return self.db.execute(select(
             LedgerEntry.id,
             LedgerEntry.entry_type,
             LedgerEntry.entry_direction,
@@ -172,15 +202,18 @@ class TargetEconomicReadMapper:
             LedgerEntry.amount_scale,
             LedgerEntry.currency_code,
         ).where(*clauses)).mappings().all()
-        return rows
 
     @staticmethod
     def _clauses(query: EconomicPageQuery) -> list:
         clauses = TargetEconomicReadMapper._active_clauses()
         if query.date_from:
-            clauses.append(LedgerEntry.occurred_time >= datetime.combine(query.date_from, time.min))
+            clauses.append(
+                LedgerEntry.occurred_time >= datetime.combine(query.date_from, time.min)
+            )
         if query.date_to:
-            clauses.append(LedgerEntry.occurred_time <= datetime.combine(query.date_to, time.max))
+            clauses.append(
+                LedgerEntry.occurred_time <= datetime.combine(query.date_to, time.max)
+            )
         if query.entry_type:
             clauses.append(LedgerEntry.entry_type.in_(query.entry_type))
         if query.currency_code:
@@ -190,17 +223,19 @@ class TargetEconomicReadMapper:
         if query.account_code:
             clauses.append(LedgerEntry.account_code == query.account_code)
         if query.q:
-            clauses.append(exists(select(ReviewCaseBill.id).join(
-                ReviewCase, ReviewCase.id == ReviewCaseBill.case_id,
+            clauses.append(exists(select(ReviewAllocation.id).join(
+                ReviewCase,
+                ReviewCase.id == ReviewAllocation.review_case_id,
             ).join(
-                BillFact, BillFact.id == ReviewCaseBill.bill_id,
+                TransactionFact,
+                TransactionFact.id == ReviewAllocation.transaction_fact_id,
             ).where(
-                ReviewCaseBill.economic_id == LedgerEntry.id,
-                ReviewCase.status == "CONFIRMED",
+                ReviewAllocation.ledger_entry_id == LedgerEntry.id,
+                ReviewCase.status == 0,
                 or_(
                     ReviewCase.title.ilike(f"%{query.q}%"),
-                    BillFact.counterparty.ilike(f"%{query.q}%"),
-                    BillFact.summary.ilike(f"%{query.q}%"),
+                    TransactionFact.counterparty_name.ilike(f"%{query.q}%"),
+                    TransactionFact.summary.ilike(f"%{query.q}%"),
                 ),
             )))
         return clauses
@@ -212,10 +247,26 @@ class TargetEconomicReadMapper:
             LedgerEntry.entry_direction.in_((1, 2)),
             LedgerEntry.amount_value > 0,
             LedgerEntry.occurred_time.is_not(None),
-            exists(select(ReviewCaseBill.id).join(
-                ReviewCase, ReviewCase.id == ReviewCaseBill.case_id,
+            exists(select(ReviewAllocation.id).join(
+                ReviewCase,
+                ReviewCase.id == ReviewAllocation.review_case_id,
             ).where(
-                ReviewCaseBill.economic_id == LedgerEntry.id,
-                ReviewCase.status == "CONFIRMED",
+                ReviewAllocation.ledger_entry_id == LedgerEntry.id,
+                ReviewCase.status == 0,
             )),
         ]
+
+    @staticmethod
+    def _fact_values(row) -> dict:
+        values = dict(row)
+        direction = {
+            CASH_DIRECTION_IN: "IN",
+            CASH_DIRECTION_OUT: "OUT",
+        }.get(values["cash_direction"])
+        if direction is None:
+            raise ValueError(
+                f"unknown transaction_fact cash_direction: "
+                f"{values['cash_direction']}"
+            )
+        values["cash_direction"] = direction
+        return values

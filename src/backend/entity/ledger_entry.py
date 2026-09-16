@@ -23,7 +23,6 @@ class LedgerEntry(TargetTable, TargetBase):
     counterparty_account_ref: Mapped[str] = mapped_column(
         String(200), nullable=False, default=""
     )
-    projection_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     occurred_time: Mapped[datetime] = mapped_column(
         DateTime(timezone=False), nullable=False
     )

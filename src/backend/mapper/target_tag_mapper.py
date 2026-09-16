@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 from backend.entity import (
     LedgerEntry,
     LedgerEntryTag,
+    ReviewAllocation,
+    ReviewCase,
     TargetTag,
     TargetTagView,
 )
@@ -193,9 +195,16 @@ class TargetTagMapper:
         ))
         self.db.execute(insert(LedgerEntryTag).from_select(
             ["ledger_id", "tag_id"],
-            select(LedgerEntry.id, literal(tag_id)).where(
+            select(LedgerEntry.id, literal(tag_id)).join(
+                ReviewAllocation,
+                ReviewAllocation.ledger_entry_id == LedgerEntry.id,
+            ).join(
+                ReviewCase,
+                ReviewCase.id == ReviewAllocation.review_case_id,
+            ).where(
+                ReviewCase.status == 0,
                 ~existing,
-            ),
+            ).distinct(),
         ))
 
     def commit(self) -> None:

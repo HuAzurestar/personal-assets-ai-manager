@@ -16,7 +16,6 @@ powershell -ExecutionPolicy Bypass -File src/script/setup.ps1
 
 - `/paam/import/v1`
 - `/paam/ledger/v1`（事实、Flow 与经济审查）
-- `/paam/review/v1`（账户修正、事实冲突与迁移兼容查询）
 - `/paam/tag/v1`
 
 ## 架构
@@ -28,7 +27,7 @@ powershell -ExecutionPolicy Bypass -File src/script/setup.ps1
 - Router：HTTP 参数、状态码和 DTO 校验。
 - Service：业务规则、事务、幂等和投影更新。
 - Mapper：显式字段 SQL、批量查询和 VO 组装。
-- Entity：按表拆分，只定义 10 张目标表，保留原类名。
+- Entity：按表拆分，只定义 10 张目标表并使用当前物理表名。
 - Parser：文件解析、来源字段解释，返回解析结果，由 Service 编排调用。
 
 ## 文件结构
@@ -69,7 +68,7 @@ Mapper 方法和导入计划的现有调用关系不变。
 `data/`；`PAAM_DATA_DIR` 和 `PAAM_DATABASE_URL` 仍可覆盖默认值。
 前端通过 `/static/` 提供，图片通过 `/asset/` 提供。
 
-不存在 Repository 层、显式 SQL 外键、DTO 内 SQL、循环 `get(id)` 或列表 `SELECT *`。金额使用整数值、精度与币种；经济层只允许 `TRANSACTION`、`ACCOUNT_TRANSFER`、`CLAIM`，不保存汇率，也不跨币种汇总。
+不存在 Repository 层、显式 SQL 外键、DTO 内 SQL、循环 `get(id)` 或列表 `SELECT *`。金额使用整数值、精度与币种；经济层只允许 `INCOME_AND_EXPENSE`、`INTERNAL_TRANSFER`、`ASSET_AND_LIABILITY`，不保存汇率，也不跨币种汇总。
 
 ## 文档
 

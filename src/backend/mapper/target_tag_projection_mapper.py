@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 from backend.entity import (
     LedgerEntry,
     LedgerEntryTag,
+    ReviewAllocation,
+    ReviewCase,
     TargetTag,
     TargetTagView,
 )
@@ -43,7 +45,15 @@ class TargetTagProjectionMapper:
         return tuple(ActiveTagValue(**row) for row in rows)
 
     def active_ledger_ids(self) -> list[int]:
-        return list(self.db.scalars(select(LedgerEntry.id).order_by(LedgerEntry.id)).all())
+        return list(self.db.scalars(select(LedgerEntry.id).join(
+            ReviewAllocation,
+            ReviewAllocation.ledger_entry_id == LedgerEntry.id,
+        ).join(
+            ReviewCase,
+            ReviewCase.id == ReviewAllocation.review_case_id,
+        ).where(
+            ReviewCase.status == 0,
+        ).distinct().order_by(LedgerEntry.id)).all())
 
     def current_states(
         self,

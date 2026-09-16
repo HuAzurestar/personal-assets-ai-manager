@@ -7,7 +7,17 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from backend.core.target_database import init_target_db
-from backend.entity import BillFact, BillRaw, ImportFile
+from backend.entity import (
+    CASH_DIRECTION_OUT,
+    IMPORT_FILE_FORMAT_CSV,
+    IMPORT_FILE_STATUS_IMPORTED,
+    IMPORT_ROW_STATUS_ACCEPTED,
+    IMPORT_SOURCE_ALIPAY,
+    IMPORT_SOURCE_WECHAT,
+    TransactionFact,
+    TransactionImportFile,
+    TransactionImportRow,
+)
 from backend.router.dependency import get_db
 from backend.router.import_file import router
 
@@ -37,12 +47,11 @@ def _seed(sessions):
     now = datetime(2026, 9, 16, 8)
     with sessions() as db:
         files = [
-            ImportFile(
+            TransactionImportFile(
                 batch_code=f"batch-{index}",
                 source_type=source,
-                institution_code=source,
                 filename=filename,
-                file_format="CSV",
+                file_format=IMPORT_FILE_FORMAT_CSV,
                 sha256=str(index) * 64,
                 period_start="2026-09-01",
                 period_end="2026-09-30",
@@ -50,24 +59,25 @@ def _seed(sessions):
                 success_count=1,
                 skip_count=0,
                 issue_count=0,
-                status="IMPORTED",
+                status=IMPORT_FILE_STATUS_IMPORTED,
                 created_time=now + timedelta(minutes=index),
                 updated_time=now + timedelta(minutes=index),
             )
             for index, source, filename in (
-                (1, "wechat", "wechat-september.csv"),
-                (2, "alipay", "alipay-september.csv"),
+                (1, IMPORT_SOURCE_WECHAT, "wechat-september.csv"),
+                (2, IMPORT_SOURCE_ALIPAY, "alipay-september.csv"),
             )
         ]
-        fact = BillFact(
+        fact = TransactionFact(
             fact_key="shared-import-fact",
             occurred_time=now,
-            cash_direction="OUT",
+            cash_direction=CASH_DIRECTION_OUT,
             amount_value=880,
             amount_scale=2,
             currency_code="CNY",
             account_code="wallet",
-            counterparty="Merchant",
+            counterparty_name="Merchant",
+            counterparty_account_ref="",
             summary="Lunch",
             created_time=now,
             updated_time=now,
@@ -75,14 +85,14 @@ def _seed(sessions):
         db.add_all([*files, fact])
         db.flush()
         db.add_all([
-            BillRaw(
-                bill_id=fact.id,
-                import_file_id=file.id,
+            TransactionImportRow(
+                transaction_fact_id=fact.id,
+                transaction_import_file_id=file.id,
                 source_row_number=1,
                 source_reference=f"ref-{file.id}",
                 raw_payload="{}",
                 raw_hash=str(file.id) * 64,
-                parse_status="ACCEPTED",
+                row_status=IMPORT_ROW_STATUS_ACCEPTED,
                 issue_code="",
                 issue_message="",
                 created_time=now,

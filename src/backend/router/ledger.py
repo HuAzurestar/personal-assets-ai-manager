@@ -27,9 +27,9 @@ router = APIRouter(
 )
 
 ECONOMIC_TYPE_IDS = {
-    "TRANSACTION": 0,
-    "ACCOUNT_TRANSFER": 1,
-    "CLAIM": 2,
+    "INCOME_AND_EXPENSE": 0,
+    "INTERNAL_TRANSFER": 1,
+    "ASSET_AND_LIABILITY": 2,
 }
 
 

@@ -7,7 +7,17 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from backend.core.target_database import init_target_db
-from backend.entity import BillFact, BillRaw, ImportFile
+from backend.entity import (
+    CASH_DIRECTION_IN,
+    CASH_DIRECTION_OUT,
+    IMPORT_FILE_FORMAT_CSV,
+    IMPORT_FILE_STATUS_IMPORTED,
+    IMPORT_ROW_STATUS_ACCEPTED,
+    IMPORT_SOURCE_ALIPAY,
+    TransactionFact,
+    TransactionImportFile,
+    TransactionImportRow,
+)
 from backend.mapper.target_economic_mapper import TargetEconomicMapper
 from backend.router.dependency import get_db
 from backend.router.ledger_transaction_fact import router
@@ -38,12 +48,11 @@ def transaction_fact_api(tmp_path):
 def _seed(sessions):
     now = datetime(2026, 9, 16, 9)
     with sessions() as db:
-        imported = ImportFile(
+        imported = TransactionImportFile(
             batch_code="batch-1",
-            source_type="ALIPAY",
-            institution_code="ALIPAY",
+            source_type=IMPORT_SOURCE_ALIPAY,
             filename="september.csv",
-            file_format="CSV",
+            file_format=IMPORT_FILE_FORMAT_CSV,
             sha256="a" * 64,
             period_start="2026-09-01",
             period_end="2026-09-30",
@@ -51,20 +60,21 @@ def _seed(sessions):
             success_count=2,
             skip_count=0,
             issue_count=0,
-            status="CONFIRMED",
+            status=IMPORT_FILE_STATUS_IMPORTED,
             created_time=now,
             updated_time=now,
         )
         facts = [
-            BillFact(
+            TransactionFact(
                 fact_key=f"fact-{index}",
                 occurred_time=now + timedelta(days=index),
-                cash_direction=direction,
+                cash_direction={"IN": CASH_DIRECTION_IN, "OUT": CASH_DIRECTION_OUT}[direction],
                 amount_value=amount,
                 amount_scale=2,
                 currency_code=currency,
                 account_code=f"account-{index}",
-                counterparty=counterparty,
+                counterparty_name=counterparty,
+                counterparty_account_ref="",
                 summary=summary,
                 created_time=now,
                 updated_time=now,
@@ -78,14 +88,14 @@ def _seed(sessions):
         db.add_all(facts)
         db.flush()
         db.add_all([
-            BillRaw(
-                bill_id=fact.id,
-                import_file_id=imported.id,
+            TransactionImportRow(
+                transaction_fact_id=fact.id,
+                transaction_import_file_id=imported.id,
                 source_row_number=index,
                 source_reference=f"source-{index}",
                 raw_payload="{}",
                 raw_hash=str(index) * 64,
-                parse_status="ACCEPTED",
+                row_status=IMPORT_ROW_STATUS_ACCEPTED,
                 issue_code="",
                 issue_message="",
                 created_time=now,

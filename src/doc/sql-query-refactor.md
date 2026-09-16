@@ -6,7 +6,7 @@
 
 - [x] 数据分为事实层、审查层、经济层。
 - [x] Review 下的三元 Allocation 连接 Fact 与 Economic，并维持严格 Fact 金额守恒。
-- [x] Economic Type 收敛为 TRANSACTION、ACCOUNT_TRANSFER、CLAIM；场景名称保留在 Review。
+- [x] Ledger Entry Type 收敛为 INCOME_AND_EXPENSE、INTERNAL_TRANSFER、ASSET_AND_LIABILITY；Review 行为独立表达。
 - [x] 旧 23 表与 5 张过渡兼容表从开发数据库移除。
 - [x] 旧 Controller、Service、Mapper、ORM、影子迁移器、接口与页面物理删除。
 - [x] 运行入口只初始化 10 张目标表。
@@ -40,11 +40,11 @@
 | 索引 | 用途 |
 | --- | --- |
 | `ix_ledger_entry_occurred_time_id` | 流水按发生时间和 ID 稳定分页 |
-| `ix_bill_fact_occurred_time_id` | 导入候选的时间窗和事实排序 |
-| `ix_bill_raw_bill_id_id` | 详情批量取原始证据 |
-| `ix_bill_raw_source_reference_bill_id` | 来源引用去重；非空部分索引 |
-| `ix_review_case_bill_bill_case` | 从 Fact 反查相关 Review |
-| `ix_review_case_bill_case_id` | 批量读取一个/多个 Case 明细 |
+| `ix_transaction_fact_occurred_time_id` | 导入候选的时间窗和事实排序 |
+| `ix_transaction_import_row_fact_id` | 详情批量取原始证据 |
+| `ix_transaction_import_row_reference_fact` | 来源引用去重；非空部分索引 |
+| `ix_review_allocation_fact_case` | 从 Fact 反查相关 Review |
+| `ix_review_allocation_case_id` | 批量读取一个/多个 Case 明细 |
 
 唯一索引另用于文件 SHA、Fact key、Review 版本/幂等键、投影来源和标签关系。没有为低频文本、状态枚举或未证实路径提前堆索引。
 

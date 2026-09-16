@@ -34,48 +34,50 @@ def test_fact_period_lookup_uses_time_index():
     engine = _target_engine()
     plan = _plan(
         engine,
-        "SELECT id, occurred_time FROM bill_fact "
+        "SELECT id, occurred_time FROM transaction_fact "
         "WHERE occurred_time >= :start AND occurred_time < :end "
         "ORDER BY occurred_time, id",
         {"start": "2025-01-01 00:00:00", "end": "2025-02-01 00:00:00"},
     )
-    assert "ix_bill_fact_occurred_time_id" in plan
+    assert "ix_transaction_fact_occurred_time_id" in plan
 
 
-def test_raw_evidence_batch_lookup_uses_bill_index():
+def test_import_row_batch_lookup_uses_fact_index():
     engine = _target_engine()
     plan = _plan(
         engine,
-        "SELECT id, bill_id, raw_payload FROM bill_raw "
-        "WHERE bill_id IN (1, 2, 3) ORDER BY bill_id, id",
+        "SELECT id, transaction_fact_id, raw_payload FROM transaction_import_row "
+        "WHERE transaction_fact_id IN (1, 2, 3) "
+        "ORDER BY transaction_fact_id, id",
     )
-    assert "ix_bill_raw_bill_id_id" in plan
+    assert "ix_transaction_import_row_fact_id" in plan
 
 
 def test_raw_reference_lookup_uses_partial_reference_index():
     engine = _target_engine()
     plan = _plan(
         engine,
-        "SELECT bill_id, source_reference FROM bill_raw "
+        "SELECT transaction_fact_id, source_reference FROM transaction_import_row "
         "WHERE source_reference IN ('A', 'B') AND source_reference <> ''",
     )
-    assert "ix_bill_raw_source_reference_bill_id" in plan
+    assert "ix_transaction_import_row_reference_fact" in plan
 
 
-def test_review_lookup_from_bill_uses_implicit_id_index():
+def test_review_lookup_from_fact_uses_implicit_id_index():
     engine = _target_engine()
     plan = _plan(
         engine,
-        "SELECT case_id FROM review_case_bill WHERE bill_id IN (1, 2, 3)",
+        "SELECT review_case_id FROM review_allocation "
+        "WHERE transaction_fact_id IN (1, 2, 3)",
     )
-    assert "ix_review_case_bill_bill_case" in plan
+    assert "ix_review_allocation_fact_case" in plan
 
 
 def test_review_lines_batch_lookup_uses_case_index():
     engine = _target_engine()
     plan = _plan(
         engine,
-        "SELECT id, case_id, bill_id FROM review_case_bill "
-        "WHERE case_id IN (1, 2, 3) ORDER BY case_id, id",
+        "SELECT id, review_case_id, transaction_fact_id FROM review_allocation "
+        "WHERE review_case_id IN (1, 2, 3) ORDER BY review_case_id, id",
     )
-    assert "ix_review_case_bill_case_id" in plan
+    assert "ix_review_allocation_case_id" in plan

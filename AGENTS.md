@@ -2,6 +2,18 @@
 
 PAAM uses a layered modular monolith. Keep the trusted ledger transactionally consistent; do not introduce another deployed service or data store without an accepted architecture decision.
 
+## Runtime profile
+
+- The default deployment is one local machine, one application process, one
+  SQLite database, and low write concurrency.
+- Serialize writes. Every mutating Service owns one short transaction and, on
+  SQLite, acquires the write slot before reading data that controls the write.
+- Batch-load and validate all affected rows before mutation. Do not perform
+  network calls, file parsing, or user interaction while a write transaction is open.
+- Idempotency protects command retries. Do not add optimistic version fields
+  solely for hypothetical multi-user or distributed writers; revisit that
+  decision only when the deployment profile changes.
+
 ## Required flow
 
 `Router -> Service -> Data Mapper -> Entity / SQLite`
@@ -34,7 +46,7 @@ PAAM uses a layered modular monolith. Keep the trusted ledger transactionally co
 - Fact source fields are immutable after acceptance. Raw payloads are append-only; only their processing/link status may change.
 - Confirmed Review is authoritative input. Pending suggestions never change published economic values.
 - Every accepted Fact has exact confirmed allocation coverage. Import creates a
-  confirmed DEFAULT Review and an equal TRANSACTION Economic in the same transaction.
+  confirmed DEFAULT Review and an equal INCOME_AND_EXPENSE entry in the same transaction.
 - Ledger projections are rebuildable and may only be written by the economic review service.
 - Historical payloads and raw evidence are detail-only data and must not be loaded by list/summary queries.
 - A Review change, its ternary allocations, DEFAULT residuals, and every affected

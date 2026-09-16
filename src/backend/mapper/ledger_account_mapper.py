@@ -18,7 +18,6 @@ class LedgerAccountMapper:
         row = self.db.execute(select(
             LedgerEntry.id.label("ledger_id"),
             LedgerEntry.account_code,
-            LedgerEntry.projection_version,
             LedgerEntry.updated_time,
         ).where(LedgerEntry.id == ledger_id)).mappings().one_or_none()
         return dict(row) if row is not None else None
@@ -27,15 +26,14 @@ class LedgerAccountMapper:
         self,
         ledger_id: int,
         account_code: str,
-        expected_projection_version: int,
+        expected_updated_time: datetime,
         now: datetime,
     ) -> bool:
         result = self.db.execute(update(LedgerEntry).where(
             LedgerEntry.id == ledger_id,
-            LedgerEntry.projection_version == expected_projection_version,
+            LedgerEntry.updated_time == expected_updated_time,
         ).values(
             account_code=account_code,
-            projection_version=expected_projection_version + 1,
             updated_time=now,
         ))
         return result.rowcount == 1

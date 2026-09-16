@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from backend.error import TargetEconomicError
 from backend.mapper.ledger_account_mapper import LedgerAccountMapper
 from backend.schema.ledger_account import LedgerAccountRead, LedgerAccountUpdateRequest
+from backend.service.target_economic_read_service import TargetEconomicReadService
 
 
 class LedgerAccountService:
@@ -20,7 +21,12 @@ class LedgerAccountService:
         row = self.mapper.get(ledger_id)
         if row is None:
             raise TargetEconomicError(404, f"ledger {ledger_id} not found")
-        return LedgerAccountRead(**row)
+        return LedgerAccountRead(
+            **row,
+            projection_version=TargetEconomicReadService.projection_version(
+                row["updated_time"]
+            ),
+        )
 
     def update(
         self,
@@ -34,7 +40,10 @@ class LedgerAccountService:
             current = self.mapper.get(ledger_id)
             if current is None:
                 raise TargetEconomicError(404, f"ledger {ledger_id} not found")
-            if current["projection_version"] != payload.expected_projection_version:
+            if (
+                TargetEconomicReadService.projection_version(current["updated_time"])
+                != payload.expected_projection_version
+            ):
                 raise TargetEconomicError(
                     409,
                     "Ledger projection version changed; reload before updating account",
@@ -42,7 +51,7 @@ class LedgerAccountService:
             if not self.mapper.update(
                 ledger_id,
                 account_code,
-                payload.expected_projection_version,
+                current["updated_time"],
                 datetime.now(),
             ):
                 raise TargetEconomicError(

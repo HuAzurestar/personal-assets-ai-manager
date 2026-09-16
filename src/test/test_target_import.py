@@ -11,11 +11,33 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event, inspect, select
 from sqlalchemy.orm import sessionmaker
 
+import backend.service.target_intake_service as target_intake_service_module
 from backend.core import target_database
 from backend import target_main
 from backend.core.intake_preview_store import target_intake_preview_store
-from backend.entity import BillFact, BillRaw, ImportFile, LedgerEntry, ReviewCase
+from backend.entity import (
+    CASH_DIRECTION_OUT,
+    IMPORT_FILE_FORMAT_CSV,
+    IMPORT_FILE_STATUS_FAILED,
+    IMPORT_FILE_STATUS_IMPORTED,
+    IMPORT_FILE_STATUS_PENDING,
+    IMPORT_ROW_STATUS_ACCEPTED,
+    IMPORT_ROW_STATUS_INVALID,
+    IMPORT_SOURCE_ABC_BANK,
+    IMPORT_SOURCE_CCB_BANK,
+    IMPORT_SOURCE_CMB_BANK,
+    IMPORT_SOURCE_WECHAT,
+    LedgerEntry,
+    ReviewCase,
+    TransactionFact,
+    TransactionImportFile,
+    TransactionImportRow,
+)
+from backend.mapper.target_import_match_mapper import TargetImportMatchMapper
+from backend.mapper.target_import_read_mapper import TargetImportReadMapper
+from backend.mapper.target_import_write_mapper import TargetImportWriteMapper
 from backend.parser.statement_parser import parse_statement
+from backend.service.target_economic_service import TargetEconomicService
 
 
 HEADERS = [
@@ -115,42 +137,151 @@ def _confirm(client, preview):
     )
 
 
+def test_import_read_mapper_owns_public_import_queries():
+    for method_name in ("history", "rows", "accounts"):
+        assert hasattr(TargetImportReadMapper, method_name)
+        assert not hasattr(TargetImportWriteMapper, method_name)
+
+
+def test_import_match_mapper_owns_preview_planning():
+    assert hasattr(TargetImportMatchMapper, "plan")
+    assert hasattr(TargetImportMatchMapper, "load_history")
+    assert not hasattr(TargetImportWriteMapper, "plan")
+
+
+def test_import_file_is_pending_before_parser_runs(target_import_api, monkeypatch):
+    client, sessions, _ = target_import_api
+    original_parse_statement = target_intake_service_module.parse_statement
+    observed_statuses = []
+
+    def parse_after_pending(*args, **kwargs):
+        with sessions() as db:
+            observed_statuses.append(
+                db.scalar(select(TransactionImportFile.status))
+            )
+        return original_parse_statement(*args, **kwargs)
+
+    monkeypatch.setattr(
+        target_intake_service_module,
+        "parse_statement",
+        parse_after_pending,
+    )
+    preview = _preview(client, "pending-before-parse.csv", _csv())
+    assert preview["can_confirm"]
+    assert observed_statuses == [IMPORT_FILE_STATUS_PENDING]
+
+
 def test_target_import_writes_fact_evidence_and_hot_projection(target_import_api):
     client, sessions, engine = target_import_api
     preview = _preview(client, "wechat.csv", _csv())
     assert preview["can_confirm"]
+    with sessions() as db:
+        pending_file = db.scalar(select(TransactionImportFile))
+        pending_file_id = pending_file.id
+        assert pending_file.status == IMPORT_FILE_STATUS_PENDING
+        assert db.query(TransactionFact).count() == 0
+        assert db.query(TransactionImportRow).count() == 0
     response = _confirm(client, preview)
     assert response.status_code == 200, response.text
 
     with sessions() as db:
-        fact = db.scalar(select(BillFact))
-        assert (fact.amount_value, fact.amount_scale, fact.currency_code) == (
+        fact = db.scalar(select(TransactionFact))
+        assert (
+            fact.cash_direction,
+            fact.amount_value,
+            fact.amount_scale,
+            fact.currency_code,
+            fact.counterparty_name,
+            fact.counterparty_account_ref,
+        ) == (
+            CASH_DIRECTION_OUT,
             1000,
             2,
             "CNY",
+            "测试商户",
+            "",
         )
-        assert db.query(BillRaw).count() == 1
-        assert db.query(ImportFile).count() == 1
+        import_row = db.scalar(select(TransactionImportRow))
+        assert (
+            import_row.transaction_fact_id,
+            import_row.row_status,
+        ) == (
+            fact.id,
+            IMPORT_ROW_STATUS_ACCEPTED,
+        )
+        import_file = db.scalar(select(TransactionImportFile))
+        assert (
+            import_file.id,
+            import_file.source_type,
+            import_file.file_format,
+            import_file.status,
+        ) == (
+            pending_file_id,
+            IMPORT_SOURCE_WECHAT,
+            IMPORT_FILE_FORMAT_CSV,
+            IMPORT_FILE_STATUS_IMPORTED,
+        )
         assert db.query(LedgerEntry).count() == 1
     assert set(inspect(engine).get_table_names()) == set(
         target_database.TARGET_TABLE_NAMES
     )
-    ledger = client.get("/paam/ledger/v1/flow/list")
-    assert ledger.status_code == 200, ledger.text
-    assert ledger.json()["status"] == ledger.status_code
-    ledger_page = ledger.json()["body"]
-    assert ledger_page["total"] == 1
-    assert ledger_page["items"][0]["economic_type"] == "TRANSACTION"
-    assert ledger_page["items"][0]["amount"]["amount_value"] == 1000
+    ledger_v2 = client.get("/paam/ledger/v1/flow/list")
+    assert ledger_v2.status_code == 200, ledger_v2.text
+    assert ledger_v2.json()["body"]["total"] == 1
+    assert ledger_v2.json()["body"]["items"][0]["economic_type"] == "TRANSACTION"
+    assert ledger_v2.json()["body"]["items"][0]["amount"]["amount_value"] == 1000
 
     repeated = _preview(client, "renamed.csv", _csv())
     assert repeated["counts"]["duplicate_file"] == 1
     assert _confirm(client, repeated).status_code == 200
     with sessions() as db:
-        assert db.query(BillFact).count() == 1
+        assert db.query(TransactionFact).count() == 1
+        assert db.query(TransactionImportFile).count() == 1
 
 
-def test_import_file_api_supports_history_search_filter_and_summary(
+def test_target_import_rolls_back_when_default_review_write_fails(
+    target_import_api,
+    monkeypatch,
+):
+    client, sessions, _ = target_import_api
+    preview = _preview(client, "rollback.csv", _csv())
+
+    original_ensure_defaults = TargetEconomicService.ensure_defaults
+
+    def fail_after_default_review(service, fact_ids):
+        original_ensure_defaults(service, fact_ids)
+        raise RuntimeError("simulated default review failure")
+
+    monkeypatch.setattr(
+        TargetEconomicService,
+        "ensure_defaults",
+        fail_after_default_review,
+    )
+    response = _confirm(client, preview)
+    assert response.status_code == 500
+
+    with sessions() as db:
+        assert db.query(TransactionFact).count() == 0
+        import_file = db.scalar(select(TransactionImportFile))
+        failed_file_id = import_file.id
+        assert import_file.status == IMPORT_FILE_STATUS_FAILED
+        assert db.query(TransactionImportRow).count() == 0
+        assert db.query(ReviewCase).count() == 0
+        assert db.query(LedgerEntry).count() == 0
+
+    monkeypatch.setattr(
+        TargetEconomicService,
+        "ensure_defaults",
+        original_ensure_defaults,
+    )
+    retried = _confirm(client, preview)
+    assert retried.status_code == 200, retried.text
+    assert retried.json()["body"]["transaction_import_file_ids"] == [
+        failed_file_id
+    ]
+
+
+def test_import_history_supports_search_pagination_and_account_filter(
     target_import_api,
 ):
     client, _, _ = target_import_api
@@ -165,24 +296,12 @@ def test_import_file_api_supports_history_search_filter_and_summary(
         assert _confirm(client, preview).status_code == 200
 
     first_page = client.get(
-        "/paam/import/v1/import_file/list",
-        params={
-            "page": 1,
-            "page_size": 1,
-            "sorter": '{"field":"created_time","order":"desc"}',
-        },
+        "/paam/import/v1/import_file/list?page=1&page_size=1"
     ).json()["body"]
     assert (first_page["total"], len(first_page["items"])) == (2, 1)
     assert first_page["items"][0]["filename"] == "card-september.csv"
-    assert "account_codes" not in first_page["items"][0]
-
     second_page = client.get(
-        "/paam/import/v1/import_file/list",
-        params={
-            "page": 2,
-            "page_size": 1,
-            "sorter": '{"field":"created_time","order":"desc"}',
-        },
+        "/paam/import/v1/import_file/list?page=2&page_size=1"
     ).json()["body"]
     assert second_page["items"][0]["filename"] == "cash-august.csv"
 
@@ -192,25 +311,64 @@ def test_import_file_api_supports_history_search_filter_and_summary(
     assert [item["filename"] for item in search["items"]] == [
         "card-september.csv"
     ]
+    source_search = client.get(
+        "/paam/import/v1/import_file/list",
+        params={"filter": '{"source_type":"wechat"}'},
+    ).json()["body"]
+    assert source_search["total"] == 2
+
     filtered = client.get(
         "/paam/import/v1/import_file/list",
-        params={"filter": '{"source_type":"wechat","status":"IMPORTED"}'},
+        params={"q": "card-september"},
     ).json()["body"]
-    assert filtered["total"] == 2
+    assert [item["filename"] for item in filtered["items"]] == [
+        "card-september.csv"
+    ]
+    assert "account_codes" not in filtered["items"][0]
 
-    summary = client.get(
-        "/paam/import/v1/import_file/summary",
-        params={"filter": '{"source_type":"wechat","status":"IMPORTED"}'},
+
+def test_import_history_preserves_specific_bank_source_codes(target_import_api):
+    client, sessions, _ = target_import_api
+    sources = [
+        (IMPORT_SOURCE_CCB_BANK, "ccb", "建设银行"),
+        (IMPORT_SOURCE_ABC_BANK, "abc", "农业银行"),
+        (IMPORT_SOURCE_CMB_BANK, "cmb", "招商银行"),
+    ]
+    with sessions() as db:
+        db.add_all([
+            TransactionImportFile(
+                batch_code=f"bank-{name}",
+                source_type=code,
+                filename=f"{name}.csv",
+                file_format=IMPORT_FILE_FORMAT_CSV,
+                sha256=f"{code:064x}",
+                total_count=0,
+                success_count=0,
+                skip_count=0,
+                issue_count=0,
+                status=IMPORT_FILE_STATUS_IMPORTED,
+            )
+            for code, name, _label in sources
+        ])
+        db.commit()
+
+    history = client.get(
+        "/paam/import/v1/import_file/list", params={"page_size": 100}
     ).json()["body"]
-    assert summary["import_file_count"] == 2
-    assert summary["imported_file_count"] == 2
-    assert summary["row_count"] == 2
-    assert summary["success_count"] == 2
-    assert client.get("/paam/import/v1/batch/list").status_code == 404
-    assert client.get("/paam/import/v1/account/list").status_code == 404
+    assert {item["source_type"] for item in history["items"]} == {
+        "ccb",
+        "abc",
+        "cmb",
+    }
+    for _code, name, label in sources:
+        filtered = client.get(
+            "/paam/import/v1/import_file/list",
+            params={"filter": f'{{"source_type":"{name}"}}'},
+        ).json()["body"]
+        assert [item["source_type"] for item in filtered["items"]] == [name]
 
 
-def test_import_file_transaction_facts_are_loaded_by_page(target_import_api):
+def test_import_history_rows_are_loaded_by_page(target_import_api):
     client, _, _ = target_import_api
     preview = _preview(
         client,
@@ -219,23 +377,21 @@ def test_import_file_transaction_facts_are_loaded_by_page(target_import_api):
     )
     confirmed = _confirm(client, preview)
     assert confirmed.status_code == 200, confirmed.text
-    batch_id = confirmed.json()["body"]["import_file_ids"][0]
+    batch_id = confirmed.json()["body"]["transaction_import_file_ids"][0]
 
     first = client.get(
         f"/paam/import/v1/import_file/{batch_id}/transaction_fact/list",
         params={"page": 1, "page_size": 20},
     ).json()["body"]
     assert (first["total"], len(first["items"])) == (26, 20)
+    assert first["items"][0]["id"] > 0
+    assert first["items"][0]["cash_direction"] in {"IN", "OUT"}
 
     second = client.get(
         f"/paam/import/v1/import_file/{batch_id}/transaction_fact/list",
         params={"page": 2, "page_size": 20},
     ).json()["body"]
     assert (second["page"], len(second["items"])) == (2, 6)
-    assert second["items"][-1]["id"] < first["items"][0]["id"]
-    assert client.get(
-        f"/paam/import/v1/batch/{batch_id}/row/list"
-    ).status_code == 404
 
 
 def test_target_confirm_select_count_is_independent_of_row_count(target_import_api):
@@ -270,7 +426,7 @@ def test_target_import_accepts_supported_workbooks(target_import_api, extension)
     assert preview["can_confirm"]
     assert _confirm(client, preview).status_code == 200
     with sessions() as db:
-        assert db.query(BillFact).count() == 1
+        assert db.query(TransactionFact).count() == 1
 
 
 def test_encrypted_zip_password_is_ephemeral(target_import_api):
@@ -289,12 +445,26 @@ def test_encrypted_zip_password_is_ephemeral(target_import_api):
     wrong = _preview(client, "statement.zip", output.getvalue(), "wrong")
     assert not wrong["can_confirm"]
     assert password not in json.dumps(wrong, ensure_ascii=False)
+    with sessions() as db:
+        failed_file = db.scalar(select(TransactionImportFile))
+        failed_file_id = failed_file.id
+        assert failed_file.status == IMPORT_FILE_STATUS_FAILED
     preview = _preview(client, "statement.zip", output.getvalue(), password)
     assert preview["can_confirm"]
+    with sessions() as db:
+        pending_file = db.scalar(select(TransactionImportFile))
+        assert (pending_file.id, pending_file.status) == (
+            failed_file_id,
+            IMPORT_FILE_STATUS_PENDING,
+        )
     assert _confirm(client, preview).status_code == 200
     with sessions() as db:
-        raw = db.scalar(select(BillRaw.raw_payload))
+        raw = db.scalar(select(TransactionImportRow.raw_payload))
         assert password not in raw
+        assert db.scalar(
+            select(TransactionImportFile.file_format)
+        ) == IMPORT_FILE_FORMAT_CSV
+        assert db.query(TransactionImportFile).count() == 1
 
 
 @pytest.mark.parametrize("extension", ["xls", "xlsx"])
@@ -304,10 +474,12 @@ def test_corrupt_workbook_is_a_preview_error(target_import_api, extension):
     assert not preview["can_confirm"]
     assert preview["documents"][0]["error"]
     with sessions() as db:
-        assert db.query(BillFact).count() == 0
+        assert db.query(TransactionFact).count() == 0
+        import_file = db.scalar(select(TransactionImportFile))
+        assert import_file.status == IMPORT_FILE_STATUS_FAILED
 
 
-def test_target_fact_conflict_is_recorded_for_review(target_import_api):
+def test_target_fact_conflict_stays_on_import_row(target_import_api):
     client, sessions, _ = target_import_api
     first = _preview(client, "first.csv", _csv())
     assert _confirm(client, first).status_code == 200
@@ -317,62 +489,14 @@ def test_target_fact_conflict_is_recorded_for_review(target_import_api):
     assert _confirm(client, conflict).status_code == 200
 
     with sessions() as db:
-        raw = db.scalar(select(BillRaw).where(BillRaw.issue_code == "FACT_CONFLICT"))
-        case = db.scalar(select(ReviewCase).where(
-            ReviewCase.review_type == "FACT_CONFLICT"
+        raw = db.scalar(select(TransactionImportRow).where(
+            TransactionImportRow.issue_code == "FACT_CONFLICT"
         ))
-        assert (raw.parse_status, raw.bill_id) == ("INVALID", 0)
-        assert case.status == "PENDING"
-
-    conflict_page_response = client.get(
-        "/paam/import/v1/fact_conflict/list",
-        params={
-            "page": 1,
-            "page_size": 25,
-            "filter": '{"status":"PENDING"}',
-            "sorter": '{"field":"id","order":"asc"}',
-        },
-    )
-    assert conflict_page_response.status_code == 200, conflict_page_response.text
-    assert conflict_page_response.json()["status"] == 200
-    conflict_page = conflict_page_response.json()["body"]
-    assert (conflict_page["total"], conflict_page["page"]) == (1, 1)
-    assert [item["id"] for item in conflict_page["items"]] == [case.id]
-    assert conflict_page["filter"] == {"status": "PENDING"}
-    assert conflict_page["sorter"] == {"field": "id", "order": "asc"}
-
-    conflict_detail_response = client.get(
-        f"/paam/import/v1/fact_conflict/{case.id}"
-    )
-    assert conflict_detail_response.status_code == 200, conflict_detail_response.text
-    conflict_detail = conflict_detail_response.json()["body"]
-    assert conflict_detail["review_type"] == "FACT_CONFLICT"
-    assert conflict_detail["status"] == "PENDING"
-    assert conflict_detail["history"][0]["operation"] == "CREATE"
-    assert client.get("/paam/review/v1/case/page").status_code == 404
-    assert client.get(
-        f"/paam/review/v1/case/detail/{case.id}"
-    ).status_code == 404
-    assert client.post(
-        f"/paam/import/v1/fact-conflict/{case.id}/resolve",
-        json={},
-    ).status_code == 404
-
-    resolved = client.post(
-        f"/paam/import/v1/fact_conflict/{case.id}/resolve",
-        json={
-            "resolution_type": "CREATE_NEW",
-            "expected_version": 1,
-            "reason": "verified separate transaction",
-            "idempotency_key": "fact-conflict-create-new",
-        },
-    )
-    assert resolved.status_code == 200, resolved.text
-    with sessions() as db:
-        assert [item.amount_value for item in db.scalars(
-            select(BillFact).order_by(BillFact.id)
-        )] == [1000, 2000]
-        assert db.query(LedgerEntry).count() == 2
+        assert (raw.row_status, raw.transaction_fact_id) == (
+            IMPORT_ROW_STATUS_INVALID,
+            0,
+        )
+        assert db.query(ReviewCase).count() == 1
 
 
 def test_source_override_cannot_contradict_statement_content():

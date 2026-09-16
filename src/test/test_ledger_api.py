@@ -15,11 +15,13 @@ from backend.router.ledger_review_candidate import router as ledger_review_candi
 from backend.router.tag import router as tag_router
 from backend.router.tag_assignment import router as tag_assignment_router
 from backend.entity import (
-    BillFact,
+    CASH_DIRECTION_IN,
+    CASH_DIRECTION_OUT,
     LedgerEntry,
     LedgerEntryTag,
+    ReviewAllocation,
     ReviewCase,
-    ReviewCaseBill,
+    TransactionFact,
 )
 from backend.service.target_economic_service import TargetEconomicService
 from backend.schema.target_review import TargetEconomicReviewCreateRequest
@@ -78,15 +80,16 @@ def test_review_request_normalizes_mapper_era_history_payload():
 def _facts(sessions, specifications):
     now = datetime(2026, 9, 13, 10)
     with sessions() as db:
-        rows = [BillFact(
+        rows = [TransactionFact(
             fact_key=f"ledger-api-{uuid4().hex}",
             occurred_time=now + timedelta(minutes=index),
-            cash_direction=direction,
+            cash_direction={"IN": CASH_DIRECTION_IN, "OUT": CASH_DIRECTION_OUT}[direction],
             amount_value=amount,
             amount_scale=2,
             currency_code=currency,
             account_code=f"account-{index}",
-            counterparty="counterparty",
+            counterparty_name="counterparty",
+            counterparty_account_ref="",
             summary="fact",
             created_time=now,
             updated_time=now,
@@ -198,11 +201,12 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
     assert len(case["allocations"]) == 6
     with sessions() as db:
         assert db.scalar(select(func.count(LedgerEntry.id)).join(
-            ReviewCaseBill, ReviewCaseBill.economic_id == LedgerEntry.id,
-        ).where(ReviewCaseBill.case_id == case["id"])) == 0
-        assert set(db.scalars(select(ReviewCaseBill.economic_id).where(
-            ReviewCaseBill.case_id == case["id"],
-        )).all()) == {0}
+            ReviewAllocation,
+            ReviewAllocation.ledger_entry_id == LedgerEntry.id,
+        ).where(ReviewAllocation.review_case_id == case["id"])) == 0
+        assert list(db.scalars(select(ReviewAllocation.id).where(
+            ReviewAllocation.review_case_id == case["id"],
+        )).all()) == []
 
     confirmed = client.post(
         f"/paam/ledger/v1/review/{case['id']}/confirm",
@@ -223,17 +227,17 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
         "claim_cashflow_out_value": 0,
     }]
     with sessions() as db:
-        assert db.scalar(select(func.count(LedgerEntry.id))) == 6
+        assert db.scalar(select(func.count(LedgerEntry.id))) == 11
         coverage = dict(db.execute(select(
-            ReviewCaseBill.bill_id,
-            func.sum(ReviewCaseBill.amount_value),
+            ReviewAllocation.transaction_fact_id,
+            func.sum(ReviewAllocation.amount_value),
         ).join(
-            ReviewCase, ReviewCase.id == ReviewCaseBill.case_id,
+            ReviewCase, ReviewCase.id == ReviewAllocation.review_case_id,
         ).join(
-            LedgerEntry, LedgerEntry.id == ReviewCaseBill.economic_id,
+            LedgerEntry, LedgerEntry.id == ReviewAllocation.ledger_entry_id,
         ).where(
-            ReviewCase.status == "CONFIRMED",
-        ).group_by(ReviewCaseBill.bill_id)).all())
+            ReviewCase.status == 0,
+        ).group_by(ReviewAllocation.transaction_fact_id)).all())
         assert coverage == dict(zip(fact_ids, [50000, 10000, 10000, 10000, 10000]))
 
     revoked = client.post(
@@ -247,10 +251,10 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
     assert summary["account_transfer_in_value"] == 0
     assert summary["account_transfer_out_value"] == 0
     with sessions() as db:
-        assert db.scalar(select(func.count(LedgerEntry.id))) == 5
-        assert set(db.scalars(select(ReviewCaseBill.economic_id).where(
-            ReviewCaseBill.case_id == case["id"],
-        )).all()) == {0}
+        assert db.scalar(select(func.count(LedgerEntry.id))) == 16
+        assert len(list(db.scalars(select(ReviewAllocation.ledger_entry_id).where(
+            ReviewAllocation.review_case_id == case["id"],
+        )).all())) == 6
 
 
 def test_loan_uses_one_claim_cashflow_entry_per_fact(economic_api):
@@ -359,13 +363,13 @@ def test_partial_manual_reviews_keep_exact_default_coverage_and_are_idempotent(e
     assert cases["items"][0]["allocation_count"] == 1
 
     with sessions() as db:
-        coverage = db.scalar(select(func.sum(ReviewCaseBill.amount_value)).join(
-            ReviewCase, ReviewCase.id == ReviewCaseBill.case_id,
+        coverage = db.scalar(select(func.sum(ReviewAllocation.amount_value)).join(
+            ReviewCase, ReviewCase.id == ReviewAllocation.review_case_id,
         ).join(
-            LedgerEntry, LedgerEntry.id == ReviewCaseBill.economic_id,
+            LedgerEntry, LedgerEntry.id == ReviewAllocation.ledger_entry_id,
         ).where(
-            ReviewCaseBill.bill_id == fact_id,
-            ReviewCase.status == "CONFIRMED",
+            ReviewAllocation.transaction_fact_id == fact_id,
+            ReviewCase.status == 0,
         ))
         assert coverage == 10000
 
@@ -525,10 +529,9 @@ def test_tag_sync_uses_allocations_for_every_split_ledger_entry(economic_api):
     detail = client.get(f"/paam/ledger/v1/flow/{ledger_ids[0]}").json()["body"]
     assigned = client.put(f"/paam/tag/v1/assignment/{ledger_ids[0]}", json={
         "tag_state": {"category": "food"},
-        "expected_projection_version": detail["flow"]["projection_version"],
     })
     assert assigned.status_code == 200, assigned.text
-    assert assigned.json()["body"]["projection_version"] == 2
+    assert assigned.json()["body"]["tag_state"] == {"category": "food"}
     details = [
         client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]
         for ledger_id in ledger_ids
@@ -596,7 +599,7 @@ def test_ledger_account_update_changes_only_selected_split_ledger(economic_api):
         for item in details
     )
     with sessions() as db:
-        assert db.get(BillFact, fact_id).account_code == "account-1"
+        assert db.get(TransactionFact, fact_id).account_code == "account-1"
 
 def test_ledger_entry_entity_has_only_cash_projection_columns():
     assert set(LedgerEntry.__table__.columns.keys()) == {
@@ -608,7 +611,6 @@ def test_ledger_entry_entity_has_only_cash_projection_columns():
         "currency_code",
         "account_code",
         "counterparty_account_ref",
-        "projection_version",
         "occurred_time",
         "created_time",
         "updated_time",

@@ -8,7 +8,13 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from backend.core.target_database import init_target_db
-from backend.entity import BillFact, ReviewCase, ReviewCaseBill
+from backend.entity import (
+    CASH_DIRECTION_IN,
+    CASH_DIRECTION_OUT,
+    ReviewAllocation,
+    ReviewCase,
+    TransactionFact,
+)
 from backend.router.dependency import get_db
 from backend.router.ledger import router as ledger_router
 from backend.router.ledger_account import router as ledger_account_router
@@ -42,15 +48,16 @@ def _facts(sessions, specifications):
     with sessions() as db:
         facts = []
         for index, (direction, account) in enumerate(specifications):
-            fact = BillFact(
+            fact = TransactionFact(
                 fact_key=uuid4().hex,
                 occurred_time=now + timedelta(minutes=index),
-                cash_direction=direction,
+                cash_direction={"IN": CASH_DIRECTION_IN, "OUT": CASH_DIRECTION_OUT}[direction],
                 amount_value=1000,
                 amount_scale=2,
                 currency_code="CNY",
                 account_code=account,
-                counterparty="counterparty",
+                counterparty_name="counterparty",
+                counterparty_account_ref="",
                 summary="transaction",
                 created_time=now,
                 updated_time=now,
@@ -65,12 +72,12 @@ def _facts(sessions, specifications):
 
 def _ledger_id(sessions, fact_id):
     with sessions() as db:
-        return db.scalar(select(ReviewCaseBill.economic_id).join(
-            ReviewCase, ReviewCase.id == ReviewCaseBill.case_id,
+        return db.scalar(select(ReviewAllocation.ledger_entry_id).join(
+            ReviewCase, ReviewCase.id == ReviewAllocation.review_case_id,
         ).where(
-            ReviewCaseBill.bill_id == fact_id,
-            ReviewCaseBill.economic_id > 0,
-            ReviewCase.status == "CONFIRMED",
+            ReviewAllocation.transaction_fact_id == fact_id,
+            ReviewAllocation.ledger_entry_id > 0,
+            ReviewCase.status == 0,
         ))
 
 
@@ -90,10 +97,10 @@ def test_ledger_account_is_independent_from_transaction_fact(target_account_api)
     })
     assert updated.status_code == 200, updated.text
     assert updated.json()["body"]["account_code"] == "ledger-wallet"
-    assert updated.json()["body"]["projection_version"] == 2
+    assert updated.json()["body"]["projection_version"] > account.json()["body"]["projection_version"]
 
     with sessions() as db:
-        assert db.get(BillFact, fact_id).account_code == "fact-wallet"
+        assert db.get(TransactionFact, fact_id).account_code == "fact-wallet"
     detail = client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]
     assert detail["flow"]["account_code"] == "ledger-wallet"
     assert detail["facts"][0]["account_code"] == "fact-wallet"
@@ -108,13 +115,17 @@ def test_ledger_account_rejects_stale_version_and_projection_sentinel(
 
     invalid = client.put(f"/paam/ledger/v1/flow/{ledger_id}/account", json={
         "account_code": "MULTIPLE",
-        "expected_projection_version": 1,
+        "expected_projection_version": client.get(
+            f"/paam/ledger/v1/flow/{ledger_id}/account"
+        ).json()["body"]["projection_version"],
     })
     assert invalid.status_code == 422
 
     first = client.put(f"/paam/ledger/v1/flow/{ledger_id}/account", json={
         "account_code": "checked-wallet",
-        "expected_projection_version": 1,
+        "expected_projection_version": client.get(
+            f"/paam/ledger/v1/flow/{ledger_id}/account"
+        ).json()["body"]["projection_version"],
     })
     assert first.status_code == 200, first.text
     stale = client.put(f"/paam/ledger/v1/flow/{ledger_id}/account", json={
