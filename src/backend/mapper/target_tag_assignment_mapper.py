@@ -32,7 +32,7 @@ class TargetTagAssignmentMapper:
             ReviewCase.id == ReviewAllocation.review_case_id,
         ).where(
             LedgerEntry.id == ledger_id,
-            ReviewCase.status == "CONFIRMED",
+            ReviewCase.status == 0,
         )) is not None
 
     def tag_ids(self, state: dict[str, str]) -> list[int]:

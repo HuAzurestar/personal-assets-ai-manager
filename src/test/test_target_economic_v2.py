@@ -17,8 +17,9 @@ from backend.entity import (
     BillFact,
     LedgerEntry,
     LedgerEntryTag,
+    ReviewAllocation,
     ReviewCase,
-    ReviewCaseBill,
+    ReviewRevision,
 )
 from backend.service.target_economic_service import TargetEconomicService
 from backend.core.target_database import init_target_db
@@ -149,10 +150,11 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
     assert len(case["allocations"]) == 6
     with sessions() as db:
         assert db.scalar(select(func.count(LedgerEntry.id)).join(
-            ReviewCaseBill, ReviewCaseBill.economic_id == LedgerEntry.id,
-        ).where(ReviewCaseBill.case_id == case["id"])) == 6
-        original_ledger_ids = set(db.scalars(select(ReviewCaseBill.economic_id).where(
-            ReviewCaseBill.case_id == case["id"],
+            ReviewAllocation,
+            ReviewAllocation.ledger_entry_id == LedgerEntry.id,
+        ).where(ReviewAllocation.review_case_id == case["id"])) == 6
+        original_ledger_ids = set(db.scalars(select(ReviewAllocation.ledger_entry_id).where(
+            ReviewAllocation.review_case_id == case["id"],
         )).all())
         assert 0 not in original_ledger_ids
     summary = client.get("/paam/ledger/v1/flow/summary").json()["body"]
@@ -169,15 +171,17 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
     with sessions() as db:
         assert db.scalar(select(func.count(LedgerEntry.id))) == 11
         coverage = dict(db.execute(select(
-            ReviewCaseBill.bill_id,
-            func.sum(ReviewCaseBill.amount_value),
+            ReviewAllocation.transaction_fact_id,
+            func.sum(ReviewAllocation.amount_value),
         ).join(
-            ReviewCase, ReviewCase.id == ReviewCaseBill.case_id,
+            ReviewCase,
+            ReviewCase.id == ReviewAllocation.review_case_id,
         ).join(
-            LedgerEntry, LedgerEntry.id == ReviewCaseBill.economic_id,
+            LedgerEntry,
+            LedgerEntry.id == ReviewAllocation.ledger_entry_id,
         ).where(
-            ReviewCase.status == "CONFIRMED",
-        ).group_by(ReviewCaseBill.bill_id)).all())
+            ReviewCase.status == 0,
+        ).group_by(ReviewAllocation.transaction_fact_id)).all())
         assert coverage == dict(zip(fact_ids, [50000, 10000, 10000, 10000, 10000]))
 
     revoked = client.post(
@@ -192,8 +196,8 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
     assert summary["internal_transfer_out_value"] == 0
     with sessions() as db:
         assert db.scalar(select(func.count(LedgerEntry.id))) == 16
-        assert set(db.scalars(select(ReviewCaseBill.economic_id).where(
-            ReviewCaseBill.case_id == case["id"],
+        assert set(db.scalars(select(ReviewAllocation.ledger_entry_id).where(
+            ReviewAllocation.review_case_id == case["id"],
         )).all()) == original_ledger_ids
 
 
@@ -295,13 +299,15 @@ def test_partial_manual_reviews_keep_exact_default_coverage_and_are_idempotent(e
     assert cases["items"][0]["allocation_count"] == 1
 
     with sessions() as db:
-        coverage = db.scalar(select(func.sum(ReviewCaseBill.amount_value)).join(
-            ReviewCase, ReviewCase.id == ReviewCaseBill.case_id,
+        coverage = db.scalar(select(func.sum(ReviewAllocation.amount_value)).join(
+            ReviewCase,
+            ReviewCase.id == ReviewAllocation.review_case_id,
         ).join(
-            LedgerEntry, LedgerEntry.id == ReviewCaseBill.economic_id,
+            LedgerEntry,
+            LedgerEntry.id == ReviewAllocation.ledger_entry_id,
         ).where(
-            ReviewCaseBill.bill_id == fact_id,
-            ReviewCase.status == "CONFIRMED",
+            ReviewAllocation.transaction_fact_id == fact_id,
+            ReviewCase.status == 0,
         ))
         assert coverage == 10000
 
@@ -413,61 +419,15 @@ def test_tag_sync_uses_allocations_for_every_split_ledger_entry(economic_api):
         assert db.query(LedgerEntryTag).count() == 3
 
 
-def test_account_review_updates_every_split_ledger_and_survives_rebuild(economic_api):
+def test_removed_account_review_route_is_not_exposed(economic_api):
     client, sessions = economic_api
     fact_id = _facts(sessions, [("OUT", 10000, "CNY")])[0]
-    with sessions() as db:
-        TargetEconomicService(db).ensure_defaults([fact_id], commit=True)
-    case = client.post("/paam/ledger/v1/review", json={
-        "behavior_type": 0,
-        "entries": [
-            {"client_key": "goods", "entry_type": 0},
-            {"client_key": "service", "entry_type": 0},
-        ],
-        "allocations": [
-            {"transaction_fact_id": fact_id, "entry_key": "goods", "amount_value": 6000},
-            {"transaction_fact_id": fact_id, "entry_key": "service", "amount_value": 4000},
-        ],
-        "idempotency_key": "split-account-create",
-    }).json()["body"]
-    ledger_ids = [row["id"] for row in case["ledger_entries"]]
     corrected = client.put(f"/paam/review/v1/account/set/{fact_id}", json={
         "account_code": "checked-bank",
         "expected_version": 0,
         "idempotency_key": "split-account-set",
     })
     assert corrected.status_code == 404
-    return
-    details = [
-        client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]
-        for ledger_id in ledger_ids
-    ]
-    assert all(item["entry"]["account_code"] == "checked-bank" for item in details)
-    assert all(item["facts"][0]["account_review_version"] == 1 for item in details)
-    assert all(
-        {review["review_type"] for review in item["reviews"]}
-        == {"LEDGER", "ACCOUNT"}
-        for item in details
-    )
-    with sessions() as db:
-        assert db.get(BillFact, fact_id).account_code == "account-1"
-
-    revoked = client.post(f"/paam/ledger/v1/review/{case['id']}/revoke", json={
-        "idempotency_key": "split-account-review-revoke",
-    })
-    assert revoked.status_code == 200, revoked.text
-    rebuilt = client.get("/paam/ledger/v1/flow/list").json()["body"]["items"]
-    assert len(rebuilt) == 1
-    assert rebuilt[0]["account_code"] == "checked-bank"
-
-    restored = client.post(f"/paam/ledger/v1/review/{case['id']}/restore", json={
-        "idempotency_key": "split-account-review-restore",
-    })
-    assert restored.status_code == 200, restored.text
-    assert {
-        item["account_code"]
-        for item in client.get("/paam/ledger/v1/flow/list").json()["body"]["items"]
-    } == {"checked-bank"}
 
 def test_ledger_entry_entity_has_only_cash_projection_columns():
     assert set(LedgerEntry.__table__.columns.keys()) == {
@@ -480,6 +440,41 @@ def test_ledger_entry_entity_has_only_cash_projection_columns():
         "account_code",
         "counterparty_account_ref",
         "occurred_time",
+        "created_time",
+        "updated_time",
+    }
+
+
+def test_review_entities_expose_only_current_physical_columns():
+    assert set(ReviewCase.__table__.columns.keys()) == {
+        "id",
+        "behavior_type",
+        "status",
+        "title",
+        "created_time",
+        "updated_time",
+    }
+    assert set(ReviewAllocation.__table__.columns.keys()) == {
+        "id",
+        "review_case_id",
+        "transaction_fact_id",
+        "ledger_entry_id",
+        "amount_value",
+        "amount_scale",
+        "currency_code",
+        "created_time",
+        "updated_time",
+    }
+    assert set(ReviewRevision.__table__.columns.keys()) == {
+        "id",
+        "review_case_id",
+        "operation",
+        "request_json",
+        "before_json",
+        "after_json",
+        "actor",
+        "reason",
+        "idempotency_key",
         "created_time",
         "updated_time",
     }

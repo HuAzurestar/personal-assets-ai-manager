@@ -4,9 +4,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from backend.schema.target_review import TargetReviewCaseRead
-
-
 class IntakeUploadFileRequest(BaseModel):
     filename: str = Field(min_length=1, max_length=255)
     content_base64: str = Field(min_length=1, max_length=35_000_000)
@@ -32,9 +29,3 @@ class ImportResponse(BaseModel):
     status: Literal[200] = 200
     message: str = "ok"
     body: dict[str, object] | list[dict[str, object]]
-
-
-class ImportFactConflictResponse(BaseModel):
-    status: Literal[200] = 200
-    message: str = "ok"
-    body: TargetReviewCaseRead

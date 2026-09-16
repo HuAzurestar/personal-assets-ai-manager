@@ -136,6 +136,9 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
                 assert client.get(legacy_path).status_code == 404
             assert client.get("/paam/review/v1/case/list").status_code == 404
             assert client.post("/paam/review/v1/case/create", json={}).status_code == 404
+            paths = client.get("/openapi.json").json()["paths"]
+            assert not any(path.startswith("/paam/review/v1") for path in paths)
+            assert not any("/fact-conflict/" in path for path in paths)
             assert client.get("/api/intake/history").status_code == 404
             assert client.get("/api/shadow/v1/ledger/status").status_code == 404
 
@@ -223,7 +226,7 @@ def test_target_review_confirm_revoke_restore_rebuilds_projection(
             assert len(detail["facts"]) == 1
             assert len(detail["allocations"]) == 1
             assert detail["reviews"][0]["id"] == case["id"]
-            assert detail["reviews"][0]["review_type"] == "LEDGER"
+            assert detail["reviews"][0]["behavior_type"] == 0
             summary = client.get("/paam/ledger/v1/flow/summary").json()["body"]
             assert summary["totals"][0]["internal_transfer_in_value"] == 999
             assert summary["totals"][0]["internal_transfer_out_value"] == 1000

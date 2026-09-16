@@ -48,7 +48,7 @@ class TargetEconomicReadService:
         data = self.mapper.detail(economic_id)
         if data is None:
             return None
-        flow, allocations, facts, reviews, tags, account_versions = data
+        flow, allocations, facts, reviews, tags = data
         return EconomicFlowDetailRead(
             entry=self._flow(flow, tags),
             allocations=[EconomicAllocationEvidenceRead(
@@ -72,7 +72,6 @@ class TargetEconomicReadService:
                     currency_code=row["currency_code"],
                 ),
                 account_code=row["account_code"],
-                account_review_version=account_versions.get(row["id"], 0),
                 counterparty=row["counterparty"],
                 summary=row["summary"],
             ) for row in facts],

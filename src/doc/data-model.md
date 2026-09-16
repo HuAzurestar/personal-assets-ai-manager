@@ -100,7 +100,7 @@ ASSET_AND_LIABILITY 目前仅表示资产与负债相关的现金流水分类，
 | `counterparty` | VARCHAR(200) | `''` | 不可变的规范交易对手 |
 | `summary` | TEXT | `''` | 不可变的规范摘要 |
 
-Fact 只放跨来源稳定、计算必须的核心字段。客户详情、完整账户文本、追溯文本和 SHA 等只保留在 Raw/File，点开详情时再查。账户修正通过 ACCOUNT Review 覆盖投影，不更新 `bill_fact.account_code`。
+Fact 只放跨来源稳定、计算必须的核心字段。客户详情、完整账户文本、追溯文本和 SHA 等只保留在 Raw/File，点开详情时再查。当前不提供独立的账户修正 Review；LedgerEntry 直接采用 Fact 的不可变 `account_code`，后续账户管理能力需另行设计。
 
 ## 二、审查层
 

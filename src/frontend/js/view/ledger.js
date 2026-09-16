@@ -4,7 +4,7 @@ import { table } from "../component/table.js";
 import { now, state } from "../state/ledger.js";
 import {
   $, $$, date, esc, key, money,
-  reviewTypeNames, roleNames, statusNames, typeNames,
+  statusNames, typeNames,
 } from "../util/core.js";
 import {
   canonicalHash, pageModule, parseHash, shellMarkup, syncNavigation,
@@ -327,8 +327,8 @@ async function showEconomicDetail(id) {
   const detail = await request(`/paam/ledger/v1/flow/${id}`);
   const flow = detail.entry;
   const allocations = detail.allocations.map((item) => `<div class="drawer-review-row"><span><strong>Allocation #${item.id}</strong><small>Fact #${item.transaction_fact_id} → Ledger #${item.ledger_entry_id}</small></span><strong>${money(item.amount)}</strong></div>`).join("");
-  const facts = detail.facts.map((item) => `<div class="drawer-review-row"><span><strong>Fact #${item.id} · ${esc(item.summary || item.counterparty)}</strong><small>${date(item.occurred_time)} · 导入账户 ${esc(item.account_code)}</small></span><strong>${money(item.amount)}</strong><button type="button" class="quiet" data-action="account" data-fact="${item.id}" data-ledger="${flow.id}" data-version="${item.account_review_version}" data-account="${esc(flow.account_code)}">修正账户</button></div>`).join("");
-  const reviews = detail.reviews.map((item) => `<button type="button" class="drawer-review-row" data-action="${["ACCOUNT", "TAG"].includes(item.review_type) ? "review-detail" : "economic-review-detail"}" data-id="${item.id}"><span><strong>Review #${item.id} · ${esc(item.behavior_code)}</strong><small>${esc(item.description)} · ${esc(statusNames[item.status] || item.status)}</small></span><span>查看审查 →</span></button>`).join("");
+  const facts = detail.facts.map((item) => `<div class="drawer-review-row"><span><strong>Fact #${item.id} · ${esc(item.summary || item.counterparty)}</strong><small>${date(item.occurred_time)} · 导入账户 ${esc(item.account_code)}</small></span><strong>${money(item.amount)}</strong></div>`).join("");
+  const reviews = detail.reviews.map((item) => `<button type="button" class="drawer-review-row" data-action="economic-review-detail" data-id="${item.id}"><span><strong>Review #${item.id} · ${item.behavior_type === 1 ? "借钱 / 还钱" : "正常交易"}</strong><small>${esc(item.title || "未填写标题")} · ${esc(statusNames[item.status] || item.status)}</small></span><span>查看审查 →</span></button>`).join("");
   const typeCode = entryTypeCodes[flow.entry_type];
   detailDrawer({ title: `账本流水 #${flow.id}`, kicker: `${esc(typeNames[typeCode] || typeCode)} · LEDGER #${flow.id}`, subtitle: `${date(flow.occurred_time)} · ${flow.entry_direction === 1 ? "流入" : "流出"}`, body: `<section class="drawer-record-card"><div><span>已确认账本投影</span><h3>${esc(typeNames[typeCode] || typeCode)}</h3><small>${esc(flow.account_code)} · 单方向、单币种</small></div><strong class="ledger-fact-money ${flow.entry_direction === 1 ? "plus" : "minus"}">${signedMoney(flow.amount, entryDirection(flow.entry_direction))}</strong></section><section class="drawer-section"><h3>来源事实</h3>${facts || '<p class="muted">没有关联事实</p>'}</section><section class="drawer-section"><h3>审查与分配</h3>${reviews}${allocations}</section>`, footer: `<button type="button" class="primary" data-action="edit-tags" data-id="${flow.id}">编辑标签</button>` });
 }
@@ -516,11 +516,6 @@ async function editTags(ledgerId) {
   if (!views.length) return toast("请先创建标签维度", true);
   const current = Object.fromEntries(detail.entry.tags.map((item) => [item.view_system_name, item.tag_system_name]));
   const dialog = modal("编辑最终流水标签", `<form data-form="tag-assignment" data-ledger="${ledgerId}" class="stack">${views.map((view) => `<label>${esc(view.name)}<select name="${esc(view.system_name)}">${view.tags.map((tag) => `<option value="${esc(tag.system_name)}" ${(current[view.system_name] || "unclassified") === tag.system_name ? "selected" : ""}>${esc(tag.name)}</option>`).join("")}</select></label>`).join("")}<div class="actions"><button class="primary">保存标签</button></div></form>`);
-  bindPage(dialog);
-}
-
-async function editAccount(button) {
-  const dialog = modal("修正事实账户", `<form data-form="account" data-fact="${button.dataset.fact}" data-ledger="${button.dataset.ledger}" data-version="${button.dataset.version}" class="stack"><label>账户代码<input name="account_code" value="${esc(button.dataset.account)}" required maxlength="120"></label><label>修正原因<input name="reason" value="人工核对原始证据"></label><div class="actions"><button class="primary">保存账户修正</button></div></form>`, false);
   bindPage(dialog);
 }
 
@@ -916,49 +911,20 @@ async function reviewsPage() {
     page_size: "25",
   });
   if (state.params.get("status")) reviewQuery.set("status", state.params.get("status"));
-  const conflictQuery = new URLSearchParams({
-    page: state.params.get("conflict_page") || "1",
-    page_size: "25",
-    review_type: "FACT_CONFLICT",
-  });
-  const [result, candidates, pending, conflicts] = await Promise.all([
+  const [result, candidates] = await Promise.all([
     request(`/paam/ledger/v1/review/list?${reviewQuery}`),
     loadFactCandidates(500),
-    Promise.resolve({ total: 0 }),
-    request(`/paam/review/v1/case/page?${conflictQuery}`),
   ]);
   const rows = result.items.map((item) => `<tr><td>${item.id}</td><td><strong>${item.behavior_type === 1 ? "借钱 / 还钱" : "正常交易"}</strong><br><small>${esc(item.title || "未填写标题")}</small></td><td><span class="badge neutral">${esc(statusNames[item.status] || item.status)}</span></td><td>${item.ledger_entry_count}</td><td>${item.allocation_count}</td><td><button data-action="economic-review-detail" data-id="${item.id}">处理 / 详情</button></td></tr>`);
   const pages = Math.max(1, Math.ceil(result.total / result.page_size));
   const paging = `<div class="pagination"><span>共 ${result.total} 条 · 第 ${result.page}/${pages} 页</span><button data-action="review-page" data-param="review_page" data-value="${result.page - 1}" ${result.page <= 1 ? "disabled" : ""}>上一页</button><button data-action="review-page" data-param="review_page" data-value="${result.page + 1}" ${result.page >= pages ? "disabled" : ""}>下一页</button></div>`;
-  const conflictRows = conflicts.items.map((item) => `<tr><td>${item.id}</td><td><strong>${esc(item.title || "事实冲突")}</strong><br><small>${item.lines.length} 条候选事实</small></td><td><span class="badge ${item.status === "PENDING" ? "warn" : "neutral"}">${esc(statusNames[item.status] || item.status)}</span></td><td>v${item.version}</td><td><button data-action="review-detail" data-id="${item.id}">处理 / 详情</button></td></tr>`);
-  const conflictPages = Math.max(1, Math.ceil(conflicts.total / conflicts.page_size));
-  const conflictPaging = `<div class="pagination"><span>共 ${conflicts.total} 条 · 第 ${conflicts.page}/${conflictPages} 页</span><button data-action="review-page" data-param="conflict_page" data-value="${conflicts.page - 1}" ${conflicts.page <= 1 ? "disabled" : ""}>上一页</button><button data-action="review-page" data-param="conflict_page" data-value="${conflicts.page + 1}" ${conflicts.page >= conflictPages ? "disabled" : ""}>下一页</button></div>`;
   const launchers = `<section class="task-launchers" aria-label="常用工作">
     <article><span class="task-number">01</span><div><span class="eyebrow">IMPORT</span><h2>账单导入</h2><p>上传文件、核对预览，再写入不可变的账单事实。</p></div><div class="task-meta"><span>${candidates.length} 条可分配事实</span><span>支持 CSV / XLSX / PDF / ZIP</span></div><button type="button" class="primary" data-page="import">进入账单导入</button></article>
-    <article><span class="task-number">02</span><div><span class="eyebrow">REVIEW</span><h2>创建经济审查</h2><p>用明确的 Allocation 描述事实如何形成最终账本流水。</p></div><div class="task-meta"><span>${pending.total} 个待确认审查</span><span>确认后才生成账本流水</span></div><button type="button" class="primary" data-action="new-economic-review">新建经济审查</button></article>
+    <article><span class="task-number">02</span><div><span class="eyebrow">REVIEW</span><h2>创建经济审查</h2><p>用明确的 Allocation 描述事实如何形成最终账本流水。</p></div><div class="task-meta"><span>${result.total} 条审查记录</span><span>创建即发布为已确认状态</span></div><button type="button" class="primary" data-action="new-economic-review">新建经济审查</button></article>
   </section>`;
-  return `<div class="review-dashboard">${launchers}<section class="review-metrics"><div><span>可分配事实</span><strong>${candidates.length}</strong><small>每条 Ledger 只关联一个 Fact</small></div><div><span>待确认 Review</span><strong>${pending.total}</strong><small>确认前不会生成账本流水</small></div><div><span>事实冲突</span><strong>${conflicts.total}</strong><small>继续使用独立冲突处理流程</small></div></section>
+  return `<div class="review-dashboard">${launchers}<section class="review-metrics"><div><span>可分配事实</span><strong>${candidates.length}</strong><small>每条 Ledger 只关联一个 Fact</small></div><div><span>Review 总数</span><strong>${result.total}</strong><small>Review 只保留已确认和已撤销两种状态</small></div></section>
   <section class="panel"><div class="section-head"><div><h2>经济审查</h2><p>Review 解释行为，Allocation 明确 Fact 与 LedgerEntry 的金额关系。</p></div><button class="primary" data-action="new-economic-review">新建经济审查</button></div><form class="toolbar review-toolbar" data-form="review-filter"><label>状态<select name="status"><option value="">全部状态</option>${[0,1].map((value) => `<option value="${value}" ${state.params.get("status") === String(value) ? "selected" : ""}>${esc(statusNames[value])}</option>`).join("")}</select></label><button>筛选</button></form>${rows.length ? table(["ID", "行为", "状态", "Ledger 数", "Allocation 数", ""], rows) : '<div class="empty-state">没有符合条件的经济审查。</div>'}${paging}</section>
-  <section class="panel"><div class="section-head"><div><h2>事实冲突</h2><p>导入去重无法自动裁决的事实，仍在专用流程中解决。</p></div></div>${conflictRows.length ? table(["ID", "冲突", "状态", "版本", ""], conflictRows) : '<div class="empty-state">没有事实冲突。</div>'}${conflictPaging}</section></div>`;
-}
-
-async function showReview(id) {
-  const renderVersion = state.renderVersion;
-  const item = await request(`/paam/review/v1/case/detail/${id}`);
-  if (renderVersion !== state.renderVersion) return;
-  const lines = item.lines.map((line) => `<tr><td>#${line.bill_id}</td><td><strong>${esc(roleNames[line.role] || line.role)}</strong><br><small>${esc(line.role)}</small></td><td>${money({amount_value:line.amount_value,amount_scale:line.amount_scale,currency_code:line.currency_code})}</td><td>${esc(line.party || "—")}</td></tr>`);
-  const operationNames = { CREATE: "创建", UPDATE: "修订", CONFIRM: "确认", REVOKE: "撤销", RESTORE: "恢复", DISMISS: "忽略", REOPEN: "重新打开", ASSIGN: "分配标签", ACCOUNT_SET: "修正账户", RESOLVE: "解决冲突" };
-  const history = item.history.map((event) => `<details class="review-history-event"><summary><span>v${event.version} · ${esc(operationNames[event.operation] || event.operation)}</span><small>${date(event.created_time)}</small></summary><p>${esc(event.reason || "无说明")}</p><details><summary>查看技术快照</summary><pre>${esc(JSON.stringify({request:event.request,before:event.before,after:event.after}, null, 2))}</pre></details></details>`).join("");
-  let actions = "";
-  if (item.review_type === "ACCOUNT") {
-    if (item.status === "CONFIRMED") actions = `<button data-action="account-transition" data-kind="revoke" data-id="${item.id}" data-version="${item.version}">撤销账户修正</button>`;
-    if (item.status === "REVOKED") actions = `<button data-action="account-transition" data-kind="restore" data-id="${item.id}" data-version="${item.version}">恢复账户修正</button>`;
-  } else if (item.review_type === "FACT_CONFLICT") {
-    if (item.status === "PENDING") actions = `<button data-action="conflict-resolve" data-id="${item.id}" data-version="${item.version}">解决冲突</button><button data-action="conflict-transition" data-kind="dismiss" data-id="${item.id}" data-version="${item.version}">忽略</button>`;
-    if (item.status === "REJECTED") actions = `<button data-action="conflict-transition" data-kind="reopen" data-id="${item.id}" data-version="${item.version}">重新打开</button>`;
-  }
-  const dialog = modal(`Review #${item.id}`, `<div class="review-detail-head"><div><span class="review-type-kicker">${esc(reviewTypeNames[item.review_type] || item.review_type)}</span><h3>${esc(item.title || "未填写标题")}</h3><small>${esc(statusNames[item.status] || item.status)} · ${esc(statusNames[item.allocation_status] || item.allocation_status)} · 版本 ${item.version}</small></div><div class="actions">${actions}</div></div><section><h3>涉及的账单事实</h3>${lines.length ? table(["Fact", "业务角色", "分配金额", "对象"], lines) : '<p class="muted">当前没有已接受的 Fact。</p>'}</section>${Object.keys(item.result || {}).length ? `<section><h3>类型结果</h3><pre>${esc(JSON.stringify(item.result, null, 2))}</pre></section>` : ""}<section><h3>操作历史</h3><div class="review-history">${history || '<p class="muted">没有历史。</p>'}</div></section>`);
-  bindPage(dialog);
+  </div>`;
 }
 
 function decimalAmount(value, scale) {
@@ -1155,18 +1121,13 @@ function bindPage(root) {
     const form = $('[data-form="history-filter"]');
     if (form) refreshHistoryResults(form, Number(button.dataset.value));
   });
-  $$('[data-action="review-detail"]', root).forEach((button) => button.onclick = () => showReview(button.dataset.id).catch((error) => toast(error.message, true)));
   $$('[data-action="edit-tags"]', root).forEach((button) => button.onclick = () => editTags(button.dataset.id).catch((error) => toast(error.message, true)));
-  $$('[data-action="account"]', root).forEach((button) => button.onclick = () => editAccount(button));
   $('[data-action="new-view"]', root)?.addEventListener("click", () => simpleDictionaryDialog("view"));
   $$('[data-action="new-tag"]', root).forEach((button) => button.onclick = () => openInlineTag(button));
   $$('[data-action="new-tag-inline"]', root).forEach((button) => button.onclick = () => openInlineTag(button));
   $$('[data-action="cancel-tag"]', root).forEach((button) => button.onclick = () => closeInlineTag(button.closest("form")));
   $$('[data-action="view-status"]', root).forEach((button) => button.onclick = () => dictionaryStatus("view", button).catch((error) => toast(error.message, true)));
   $$('[data-action="tag-status"]', root).forEach((button) => button.onclick = () => dictionaryStatus("tag", button).catch((error) => toast(error.message, true)));
-  $$('[data-action="account-transition"]', root).forEach((button) => button.onclick = () => transitionAccount(button).catch((error) => toast(error.message, true)));
-  $$('[data-action="conflict-transition"]', root).forEach((button) => button.onclick = () => transitionConflict(button).catch((error) => toast(error.message, true)));
-  $$('[data-action="conflict-resolve"]', root).forEach((button) => button.onclick = () => conflictDialog(button));
   $$('[data-action="batch-rows"]', root).forEach((button) => button.onclick = () => showImportBatch(button));
   const importForm = $('[data-form="import-preview"]', root);
   if (importForm) {
@@ -1261,9 +1222,7 @@ function bindPage(root) {
     });
     form.addEventListener("submit", submitInlineTag);
   });
-  $('[data-form="account"]', root)?.addEventListener("submit", submitAccount);
   $('[data-form="dictionary"]', root)?.addEventListener("submit", submitDictionary);
-  $('[data-form="conflict"]', root)?.addEventListener("submit", submitConflict);
   $$('form[data-form]', root).forEach(bindCommandForm);
 }
 
@@ -1273,14 +1232,6 @@ async function submitTags(event) {
   try {
     await jsonRequest(`/paam/tag/v1/assignment/${form.dataset.ledger}`, "PUT", { tag_state: Object.fromEntries(data) });
     closeDialogs(); toast("标签已保存"); await render();
-  } catch (error) { endSubmit(form); showFormError(form, error); }
-}
-async function submitAccount(event) {
-  event.preventDefault(); const form = event.currentTarget; const data = Object.fromEntries(new FormData(form));
-  const idempotencyKey = beginSubmit(form); if (!idempotencyKey) return;
-  try {
-    await jsonRequest(`/paam/review/v1/account/set/${form.dataset.fact}`, "PUT", { ...data, expected_version: Number(form.dataset.version), idempotency_key: idempotencyKey });
-    closeDialogs(); toast("账户修正已保存"); await render();
   } catch (error) { endSubmit(form); showFormError(form, error); }
 }
 async function confirmImport() {
@@ -1321,31 +1272,5 @@ async function dictionaryStatus(kind, button) {
   try { await jsonRequest(url, "PUT", { status: button.dataset.status }); toast("状态已更新"); await render(); }
   catch (error) { button.disabled = false; throw error; }
 }
-async function transitionAccount(button) {
-  if (button.disabled) return;
-  button.disabled = true;
-  try {
-    await jsonRequest(`/paam/review/v1/account/${button.dataset.kind}/${button.dataset.id}`, "POST", { expected_version: Number(button.dataset.version), reason: "用户更新账户修正", idempotency_key: key() });
-    closeDialogs(); toast("账户 Review 已更新"); await render();
-  } catch (error) { button.disabled = false; throw error; }
-}
-async function transitionConflict(button) {
-  if (button.disabled) return;
-  button.disabled = true;
-  try {
-    await jsonRequest(`/paam/import/v1/fact-conflict/${button.dataset.id}/${button.dataset.kind}`, "POST", { expected_version: Number(button.dataset.version), reason: "用户处理事实冲突", idempotency_key: key() });
-    closeDialogs(); toast("冲突状态已更新"); await render();
-  } catch (error) { button.disabled = false; throw error; }
-}
-function conflictDialog(button) {
-  const dialog = modal("解决事实冲突", `<form data-form="conflict" data-id="${button.dataset.id}" data-version="${button.dataset.version}" class="stack"><label>处理方式<select name="resolution_type"><option value="LINK_EXISTING">关联已有 Fact</option><option value="CREATE_NEW">确认为新 Fact</option></select></label><label>已有 Fact ID（创建新 Fact 时留空）<input type="number" min="1" name="existing_bill_id"></label><label>说明<input name="reason" value="人工核对事实冲突"></label><div class="actions"><button class="primary">确认解决</button></div></form>`, false); bindPage(dialog);
-}
-async function submitConflict(event) {
-  event.preventDefault(); const form = event.currentTarget; const data = Object.fromEntries(new FormData(form));
-  const idempotencyKey = beginSubmit(form); if (!idempotencyKey) return;
-  data.existing_bill_id = data.existing_bill_id ? Number(data.existing_bill_id) : 0;
-  try { await jsonRequest(`/paam/import/v1/fact-conflict/${form.dataset.id}/resolve`, "POST", { ...data, expected_version: Number(form.dataset.version), idempotency_key: idempotencyKey }); closeDialogs(); toast("事实冲突已解决"); await render(); } catch (error) { endSubmit(form); showFormError(form, error); }
-}
-
 $$('[data-page]').forEach((button) => button.onclick = () => route(button.dataset.page));
 if (!location.hash) route("ledger"); else readRoute();

@@ -11,9 +11,3 @@ from backend.entity.ledger_entry import LedgerEntry
 from backend.entity.tag_view import TargetTagView
 from backend.entity.tag import TargetTag
 from backend.entity.ledger_entry_tag import LedgerEntryTag
-
-# Existing domain aliases retain the same mapped classes.
-EconomicFlow = LedgerEntry
-FlowAllocation = ReviewAllocation
-ReviewCaseBill = ReviewAllocation
-ReviewHistory = ReviewRevision

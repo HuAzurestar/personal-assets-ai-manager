@@ -76,18 +76,15 @@ class EconomicFactBriefRead(BaseModel):
     cash_direction: str
     amount: EconomicMoneyRead
     account_code: str
-    account_review_version: int
     counterparty: str
     summary: str
 
 
 class EconomicReviewBriefRead(BaseModel):
     id: int
-    review_type: str
-    behavior_code: str
-    status: str
-    version: int
-    description: str
+    behavior_type: Literal[0, 1]
+    status: Literal[0, 1]
+    title: str
 
 
 class EconomicFlowDetailRead(BaseModel):
