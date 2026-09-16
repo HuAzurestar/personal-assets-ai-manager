@@ -14,8 +14,8 @@ Allocation；已发布的 LedgerEntry 只拥有一条 Allocation，因此只对�
 一个 Fact。一次完整审查由事实集合、账本集合和分配矩阵组成。
 
 Ledger Entry Type 仅允许 `INCOME_AND_EXPENSE`、`INTERNAL_TRANSFER`、`ASSET_AND_LIABILITY`。
-AA、垫付、借款、退款、转账和换汇是 `review_case.behavior_code`，不参与
-Economic Type 汇总。
+Review 行为当前只区分 `NORMAL_TRANSACTION` 与 `BORROW_AND_REPAY`，不参与
+Ledger Entry Type 汇总。
 
 对每条已接受 Fact，所有 CONFIRMED Review 的 Allocation 金额之和必须
 严格等于 Fact 金额。每条 LedgerEntry 的有效 Allocation 之和也必须严格
@@ -104,55 +104,45 @@ Fact 只放跨来源稳定、计算必须的核心字段。客户详情、完整
 
 ## 二、审查层
 
-审查层保存用户对事实的解释。AA、借贷、退款、转账、换汇等共用一套表，用类型与角色实现多态，不按业务类型拆表。
+审查层保存用户对事实的解释。当前只持久化已发布或已撤销的核心流水审查；草稿留在客户端。
 
 ### 4. `review_case`：当前审查聚合
 
 | 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `review_type` | VARCHAR(40) | `UNKNOWN` | v1 兼容字段；V2 财务审查与 `behavior_code` 同值 |
-| `behavior_code` | VARCHAR(40) | `UNKNOWN` | V2 行为说明；DEFAULT/AA/ADVANCE/LOAN/REFUND/TRANSFER/FX_EXCHANGE 等 |
-| `status` | VARCHAR(20) | `PENDING` | PENDING/CONFIRMED/REJECTED/REVOKED |
-| `allocation_status` | VARCHAR(20) | `PARTIAL` | PARTIAL/COMPLETE/CONFLICT |
-| `version` | INTEGER | `1` | 乐观并发版本 |
-| `title` | VARCHAR(160) | `''` | 简短展示标题 |
-| `result_json` | TEXT | `'{}'` | 少量类型专属状态；禁止塞成员 ID 数组 |
+| `behavior_type` | INTEGER | `0` | 0=NORMAL_TRANSACTION，1=BORROW_AND_REPAY |
+| `status` | INTEGER | `0` | 0=CONFIRMED，1=REVOKED |
+| `title` | TEXT | `''` | 简短展示标题 |
 
-客户端更新、确认、撤销和恢复操作必须携带 `expected_version`。只有 CONFIRMED 的财务 Review 能改变经济层；待审建议不能占用正式金额。
+创建命令在一个串行写事务内同时发布 Review、LedgerEntry 与 Allocation，不存在单独确认步骤。撤销保留 LedgerEntry 和 Allocation；有效性由 Review 状态决定。命令使用幂等键处理重试，不使用乐观版本。
 
-### 5. `review_case_bill`：一个 Case 的多个账单与分配
+### 5. `review_allocation`：Review、Fact 与 LedgerEntry 的分配
 
 | 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `case_id` | INTEGER | `0` | 隐式 Case ID |
-| `bill_id` | INTEGER | `0` | 隐式 Fact ID |
-| `economic_id` | INTEGER | `0` | V2 流水分配指向的隐式 Economic ID；非财务 Review 目标为 0 |
-| `role` | VARCHAR(40) | `UNKNOWN` | 该 Fact 在当前类型中的作用 |
-| `party` | VARCHAR(120) | `''` | AA/借贷等需要的对方；不需要时空串 |
+| `review_case_id` | INTEGER | `0` | 必须为正数的逻辑 Review ID |
+| `transaction_fact_id` | INTEGER | `0` | 必须为正数的逻辑 Fact ID |
+| `ledger_entry_id` | INTEGER | `0` | 必须为正数且唯一的逻辑 LedgerEntry ID |
 | `amount_value` | BIGINT | `0` | 明确保存的本次分配整数金额 |
 | `amount_scale` | SMALLINT | `2` | 分配金额精度 |
-| `currency_code` | VARCHAR(12) | `CNY` | 分配币种，必须与 Fact 一致 |
+| `currency_code` | TEXT | `''` | 分配币种，必须与 Fact 和 LedgerEntry 一致 |
 
-`role` 只描述该分配在本次行为中的作用，不决定 Economic Type。每行必须显式提交正整数金额；后端不按“剩余全额”猜测。排序使用 `(case_id, id)`，不设 `position` 字段。
+草稿不写表，因此不存在 `ledger_entry_id=0` 哨兵。每行必须显式提交正整数金额；后端不按“剩余全额”猜测。
 
-### 6. `review_history`：只追加的确定性审计
+### 6. `review_revision`：只追加的确定性审计
 
 | 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `case_id` | INTEGER | `0` | 隐式 Case ID |
-| `version` | INTEGER | `1` | 本操作完成后的 Case 版本 |
-| `operation` | VARCHAR(20) | `CREATE` | CREATE/UPDATE/CONFIRM/REVOKE/RESTORE/ASSIGN/ACCOUNT_SET/RESOLVE/DISMISS/REOPEN |
-| `schema_version` | INTEGER | `1` | 快照结构版本 |
-| `request_json` | TEXT | `'{}'` | 规范化命令内容 |
-| `before_json` | TEXT | `'{}'` | 操作前完整聚合快照 |
-| `after_json` | TEXT | `'{}'` | 操作后完整聚合快照 |
-| `snapshot_hash` | VARCHAR(64) | `''` | `after_json` 的完整性指纹 |
-| `reverses_history_id` | INTEGER | `0` | 本操作反向对应的历史 ID |
-| `actor` | VARCHAR(120) | `local-user` | 操作者 |
+| `review_case_id` | INTEGER | `0` | 必须为正数的逻辑 Review ID |
+| `operation` | INTEGER | `0` | 0=CREATE，1=UPDATE，2=REVOKE，3=RESTORE |
+| `request_json` | TEXT | `NULL` | 规范化命令内容 |
+| `before_json` | TEXT | `NULL` | 操作前完整聚合快照 |
+| `after_json` | TEXT | `NULL` | 操作后完整聚合快照 |
+| `actor` | TEXT | `''` | 操作者 |
 | `reason` | TEXT | `''` | 操作原因 |
-| `idempotency_key` | VARCHAR(120) | `''` | 非空时全局唯一的命令幂等键 |
+| `idempotency_key` | TEXT | `''` | 非空时全局唯一的命令幂等键 |
 
-唯一约束为 `(case_id, version)` 和非空 `idempotency_key`。历史不 UPDATE、不 DELETE；撤销/恢复追加新记录。request + before + after + hash 足以确定性重放和核对具体字段变化。
+修订按自增 `id` 排序；非空 `idempotency_key` 唯一。记录不 UPDATE、不 DELETE；撤销和恢复只追加新记录。
 
 ## 三、经济层
 

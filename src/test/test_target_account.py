@@ -149,7 +149,7 @@ def test_account_correction_republishes_connected_financial_entry(
         ("IN", "wallet-b"),
     ])
     created = client.post("/paam/review/v2/case/create", json={
-        "behavior_code": "TRANSFER",
+        "behavior_type": 0,
         "entries": [
             {"client_key": "out", "entry_type": 1},
             {"client_key": "in", "entry_type": 1},
@@ -160,10 +160,6 @@ def test_account_correction_republishes_connected_financial_entry(
         ],
         "idempotency_key": "financial-create",
     }).json()["body"]
-    assert client.post(f"/paam/review/v2/case/confirm/{created['id']}", json={
-        "expected_version": 1,
-        "idempotency_key": "financial-confirm",
-    }).status_code == 200
     ledger_id = _ledger_id(sessions, out_id)
     before = client.get(f"/paam/ledger/v2/entry/detail/{ledger_id}").json()["entry"]
     assert before["account_code"] == "wallet-a"
@@ -172,7 +168,7 @@ def test_account_correction_republishes_connected_financial_entry(
     assert corrected.status_code == 200, corrected.text
     after = client.get(f"/paam/ledger/v2/entry/detail/{ledger_id}").json()
     assert after["entry"]["account_code"] == "checked-wallet"
-    assert {item["review_type"] for item in after["reviews"]} == {"ACCOUNT", "TRANSFER"}
+    assert {item["review_type"] for item in after["reviews"]} == {"ACCOUNT", "LEDGER"}
 
 
 def test_account_code_rejects_projection_sentinel(target_account_api):

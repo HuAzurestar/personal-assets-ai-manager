@@ -13,6 +13,7 @@ from backend.schema.target_review import (
     TargetEconomicReviewListItem,
     TargetEconomicReviewPageRead,
     TargetEconomicReviewRead,
+    TargetEconomicReviewTransitionRequest,
     TargetEconomicReviewUpdateRequest,
     TargetFactAllocationCandidateRead,
     TargetReviewFactVO,
@@ -81,7 +82,7 @@ class TargetEconomicService:
             self.mapper.rollback()
             raise
 
-    def page(self, page: int, page_size: int, status: str = "") -> TargetEconomicReviewPageRead:
+    def page(self, page: int, page_size: int, status: int | None = None) -> TargetEconomicReviewPageRead:
         rows, total = self.mapper.review_page(page, page_size, status)
         return TargetEconomicReviewPageRead(
             items=[TargetEconomicReviewListItem(**row) for row in rows],
@@ -108,9 +109,8 @@ class TargetEconomicService:
             self.ensure_defaults([fact.id for fact in facts])
             now = datetime.now()
             case_id = self.mapper.create_draft(
-                behavior_code=payload.behavior_code,
-                title=payload.description,
-                result_json=self._canonical(payload.result),
+                behavior_type=payload.behavior_type,
+                title=payload.title,
                 economics=economics,
                 allocations=allocations,
                 request_json=request_json,
@@ -118,7 +118,48 @@ class TargetEconomicService:
                 reason=payload.reason,
                 idempotency_key=payload.idempotency_key,
                 now=now,
+                record_history=False,
             )
+            fact_ids = sorted({row["fact_id"] for row in allocations})
+            fact_by_id = {fact.id: fact for fact in facts}
+            defaults = self.mapper.default_allocations(fact_ids)
+            default_by_fact: dict[int, int] = defaultdict(int)
+            for row in defaults:
+                default_by_fact[row["bill_id"]] += row["amount_value"]
+            requested: dict[int, int] = defaultdict(int)
+            for row in allocations:
+                requested[row["fact_id"]] += row["amount_value"]
+            unavailable = {
+                fact_id: {"requested": amount, "default_available": default_by_fact.get(fact_id, 0)}
+                for fact_id, amount in requested.items()
+                if amount > default_by_fact.get(fact_id, 0)
+            }
+            if unavailable:
+                raise TargetEconomicError(409, f"allocations are no longer available: {unavailable}")
+            accounts = self.accounts.effective(facts)
+            residuals = [
+                (fact_by_id[fact_id], default_by_fact[fact_id] - amount, accounts[fact_id].account_code)
+                for fact_id, amount in requested.items()
+                if default_by_fact[fact_id] > amount
+            ]
+            if not self.mapper.activate_case(
+                case_id,
+                1,
+                defaults,
+                residuals,
+                fact_by_id,
+                economics,
+                allocations,
+                operation="CREATE",
+                request_json=request_json,
+                actor=payload.actor,
+                reason=payload.reason,
+                idempotency_key=payload.idempotency_key,
+                now=now,
+            ):
+                raise TargetEconomicError(409, "review changed while it was being published")
+            self._assert_exact(facts)
+            self.tags.sync_economics(self.mapper.active_economic_facts(fact_ids))
             self.mapper.commit()
             return self._required(case_id)
         except TargetEconomicError:
@@ -275,7 +316,11 @@ class TargetEconomicService:
             self.mapper.rollback()
             raise
 
-    def revoke(self, case_id: int, payload: TargetReviewTransitionRequest) -> TargetEconomicReviewRead:
+    def revoke(
+        self,
+        case_id: int,
+        payload: TargetEconomicReviewTransitionRequest,
+    ) -> TargetEconomicReviewRead:
         request_json = self._canonical({
             "operation": "REVOKE",
             "case_id": case_id,
@@ -288,12 +333,11 @@ class TargetEconomicService:
                 self.mapper.commit()
                 return replay
             case = self._required(case_id)
-            if case.behavior_code == "DEFAULT":
+            if self.mapper.is_default(case_id):
                 raise TargetEconomicError(409, "default coverage cannot be revoked directly")
-            if case.status != "CONFIRMED":
-                raise TargetEconomicError(409, f"case status is {case.status}; expected CONFIRMED")
-            if case.version != payload.expected_version:
-                raise TargetEconomicError(409, "review version changed; reload before revoking")
+            if case.status != 0:
+                raise TargetEconomicError(409, "review is already revoked")
+            current_version = self.mapper.case_version(case_id)
             released: dict[int, int] = defaultdict(int)
             for row in case.allocations:
                 released[row.transaction_fact_id] += row.amount_value
@@ -302,7 +346,7 @@ class TargetEconomicService:
             accounts = self.accounts.effective(facts)
             if not self.mapper.revoke_case(
                 case_id,
-                payload.expected_version,
+                current_version,
                 fact_by_id,
                 {
                     fact_id: account.account_code
@@ -326,6 +370,76 @@ class TargetEconomicService:
         except ValueError as error:
             self.mapper.rollback()
             raise TargetEconomicError(422, str(error)) from error
+        except (IntegrityError, OperationalError) as error:
+            self.mapper.rollback()
+            raise TargetEconomicError(409, "economic review write conflict; retry") from error
+        except Exception:
+            self.mapper.rollback()
+            raise
+
+    def restore(
+        self,
+        case_id: int,
+        payload: TargetEconomicReviewTransitionRequest,
+    ) -> TargetEconomicReviewRead:
+        request_json = self._canonical({
+            "operation": "RESTORE",
+            "case_id": case_id,
+            **payload.model_dump(mode="json"),
+        })
+        try:
+            self.mapper.begin_write()
+            replay = self._replay(payload.idempotency_key, "RESTORE", request_json)
+            if replay is not None:
+                self.mapper.commit()
+                return replay
+            case = self._required(case_id)
+            if self.mapper.is_default(case_id):
+                raise TargetEconomicError(409, "default coverage cannot be restored directly")
+            if case.status != 1:
+                raise TargetEconomicError(409, "review is already confirmed")
+            requested: dict[int, int] = defaultdict(int)
+            for row in case.allocations:
+                requested[row.transaction_fact_id] += row.amount_value
+            fact_ids = sorted(requested)
+            facts = self.mapper.facts(fact_ids)
+            fact_by_id = {fact.id: fact for fact in facts}
+            accounts = self.accounts.effective(facts)
+            defaults = self.mapper.default_allocations(fact_ids)
+            default_by_fact: dict[int, int] = defaultdict(int)
+            for row in defaults:
+                default_by_fact[row["bill_id"]] += row["amount_value"]
+            unavailable = {
+                fact_id: {"requested": amount, "default_available": default_by_fact.get(fact_id, 0)}
+                for fact_id, amount in requested.items()
+                if amount > default_by_fact.get(fact_id, 0)
+            }
+            if unavailable:
+                raise TargetEconomicError(409, f"allocations are no longer available: {unavailable}")
+            residuals = [
+                (fact_by_id[fact_id], default_by_fact[fact_id] - amount, accounts[fact_id].account_code)
+                for fact_id, amount in requested.items()
+                if default_by_fact[fact_id] > amount
+            ]
+            if not self.mapper.restore_case(
+                case_id,
+                self.mapper.case_version(case_id),
+                defaults,
+                residuals,
+                request_json=request_json,
+                actor=payload.actor,
+                reason=payload.reason,
+                idempotency_key=payload.idempotency_key,
+                now=datetime.now(),
+            ):
+                raise TargetEconomicError(409, "review changed while it was being restored")
+            self._assert_exact(facts)
+            self.tags.sync_economics(self.mapper.active_economic_facts(fact_ids))
+            self.mapper.commit()
+            return self._required(case_id)
+        except TargetEconomicError:
+            self.mapper.rollback()
+            raise
         except (IntegrityError, OperationalError) as error:
             self.mapper.rollback()
             raise TargetEconomicError(409, "economic review write conflict; retry") from error

@@ -11,7 +11,7 @@ from backend.schema.target_review import (
     TargetEconomicReviewCreateRequest,
     TargetEconomicReviewPageResponse,
     TargetEconomicReviewResponse,
-    TargetEconomicReviewUpdateRequest,
+    TargetEconomicReviewTransitionRequest,
     TargetFactAllocationCandidateResponse,
     TargetFactConflictResolveRequest,
     TargetReviewCasePageResponse,
@@ -52,32 +52,10 @@ def create_economic_case(
     ))
 
 
-@v2_router.post("/case/confirm/{case_id}", response_model=TargetEconomicReviewResponse)
-def confirm_economic_case(
-    case_id: int,
-    payload: TargetReviewTransitionRequest,
-    db: Session = Depends(get_target_db),
-):
-    return TargetEconomicReviewResponse(body=_run_v2(
-        lambda: TargetEconomicService(db).confirm(case_id, payload)
-    ))
-
-
-@v2_router.put("/case/update/{case_id}", response_model=TargetEconomicReviewResponse)
-def update_economic_case(
-    case_id: int,
-    payload: TargetEconomicReviewUpdateRequest,
-    db: Session = Depends(get_target_db),
-):
-    return TargetEconomicReviewResponse(body=_run_v2(
-        lambda: TargetEconomicService(db).update(case_id, payload)
-    ))
-
-
 @v2_router.post("/case/revoke/{case_id}", response_model=TargetEconomicReviewResponse)
 def revoke_economic_case(
     case_id: int,
-    payload: TargetReviewTransitionRequest,
+    payload: TargetEconomicReviewTransitionRequest,
     db: Session = Depends(get_target_db),
 ):
     return TargetEconomicReviewResponse(body=_run_v2(
@@ -88,11 +66,11 @@ def revoke_economic_case(
 @v2_router.post("/case/restore/{case_id}", response_model=TargetEconomicReviewResponse)
 def restore_economic_case(
     case_id: int,
-    payload: TargetReviewTransitionRequest,
+    payload: TargetEconomicReviewTransitionRequest,
     db: Session = Depends(get_target_db),
 ):
     return TargetEconomicReviewResponse(body=_run_v2(
-        lambda: TargetEconomicService(db).confirm(case_id, payload, restore=True)
+        lambda: TargetEconomicService(db).restore(case_id, payload)
     ))
 
 
@@ -107,7 +85,7 @@ def economic_case_detail(case_id: int, db: Session = Depends(get_target_db)):
 def economic_case_page(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=100),
-    status: str = Query(default="", pattern="^(|PENDING|CONFIRMED|REVOKED)$"),
+    status: int | None = Query(default=None, ge=0, le=1),
     db: Session = Depends(get_target_db),
 ):
     return TargetEconomicReviewPageResponse(body=_run_v2(

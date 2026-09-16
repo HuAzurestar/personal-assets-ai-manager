@@ -253,7 +253,7 @@ def test_tag_assignment_select_count_is_independent_of_split_count(target_tag_ap
 
     split_fact = _add_facts(sessions, 1)[0]
     created = client.post("/paam/review/v2/case/create", json={
-        "behavior_code": "TWENTY_WAY_SPLIT",
+        "behavior_type": 0,
         "entries": [
             {"client_key": f"part-{index}", "entry_type": 0}
             for index in range(20)
@@ -268,10 +268,5 @@ def test_tag_assignment_select_count_is_independent_of_split_count(target_tag_ap
         ],
         "idempotency_key": "many-create",
     }).json()["body"]
-    confirmed = client.post(f"/paam/review/v2/case/confirm/{created['id']}", json={
-        "expected_version": 1,
-        "idempotency_key": "many-confirm",
-    })
-    assert confirmed.status_code == 200, confirmed.text
     many_count = assign_and_count(_ledger_for_fact(sessions, split_fact), 0, "many-tag")
     assert many_count == one_count

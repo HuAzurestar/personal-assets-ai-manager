@@ -142,9 +142,8 @@ class TargetFlowAllocationRequest(BaseModel):
 class TargetEconomicReviewCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    behavior_code: str = Field(min_length=1, max_length=40)
-    description: str = Field(default="", max_length=2000)
-    result: dict[str, Any] = Field(default_factory=dict)
+    behavior_type: Literal[0, 1] = 0
+    title: str = Field(default="", max_length=160)
     entries: list[TargetEconomicDefinitionRequest] = Field(min_length=1, max_length=200)
     allocations: list[TargetFlowAllocationRequest] = Field(min_length=1, max_length=500)
     actor: str = Field(default="local-user", min_length=1, max_length=120)
@@ -153,7 +152,27 @@ class TargetEconomicReviewCreateRequest(BaseModel):
 
 
 class TargetEconomicReviewUpdateRequest(TargetEconomicReviewCreateRequest):
-    expected_version: int = Field(ge=1)
+    pass
+
+
+class TargetEconomicReviewTransitionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    actor: str = Field(default="local-user", min_length=1, max_length=120)
+    reason: str = Field(default="", max_length=2000)
+    idempotency_key: str = Field(min_length=1, max_length=120)
+
+
+class TargetReviewRevisionRead(BaseModel):
+    id: int
+    operation: Literal[0, 1, 2, 3]
+    request: dict[str, Any]
+    before: dict[str, Any]
+    after: dict[str, Any]
+    actor: str
+    reason: str
+    idempotency_key: str
+    created_time: datetime
 
 
 class TargetEconomicFlowRead(BaseModel):
@@ -179,14 +198,12 @@ class TargetFlowAllocationRead(BaseModel):
 
 class TargetEconomicReviewRead(BaseModel):
     id: int
-    behavior_code: str
-    status: str
-    version: int
-    description: str
-    result: dict[str, Any]
+    behavior_type: Literal[0, 1]
+    status: Literal[0, 1]
+    title: str
     ledger_entries: list[TargetEconomicFlowRead]
     allocations: list[TargetFlowAllocationRead]
-    history: list[TargetReviewHistoryRead]
+    history: list[TargetReviewRevisionRead]
     created_time: datetime
     updated_time: datetime
 
@@ -199,10 +216,9 @@ class TargetEconomicReviewResponse(BaseModel):
 
 class TargetEconomicReviewListItem(BaseModel):
     id: int
-    behavior_code: str
-    status: str
-    version: int
-    description: str
+    behavior_type: Literal[0, 1]
+    status: Literal[0, 1]
+    title: str
     ledger_entry_count: int
     allocation_count: int
     created_time: datetime

@@ -18,9 +18,10 @@ description: Change PAAM review cases, allocations, duplicate/refund/AA/loan/tra
   Review commands use one short write transaction rather than optimistic versions.
 - A persisted Review is either CONFIRMED or REVOKED. Drafts stay in the client;
   creating a Review publishes its Ledger entries and allocations atomically.
-- Every successful change appends `review_revision` with canonical before/after
-  aggregate snapshots, request, actor, reason, schema version, and idempotency key.
-- Undo appends a new reversing event; it never mutates or deletes old history.
+- Every successful change appends `review_revision` with operation CREATE,
+  UPDATE, REVOKE, or RESTORE plus canonical before/after snapshots, request,
+  actor, reason, and idempotency key.
+- Undo appends REVOKE or RESTORE; it never mutates or deletes old history.
 - Revoking a Review retains its Ledger entries and allocations; confirmed-only
   read predicates decide whether those rows are effective.
 - Batch-load every affected fact and active allocation before validation. Do not query one bill at a time.
