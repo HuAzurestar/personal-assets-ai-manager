@@ -70,7 +70,7 @@ Mapper 方法和导入计划的现有调用关系不变。
 `data/`；`PAAM_DATA_DIR` 和 `PAAM_DATABASE_URL` 仍可覆盖默认值。
 前端通过 `/static/` 提供，图片通过 `/asset/` 提供。
 
-不存在 Repository 层、显式 SQL 外键、DTO 内 SQL、循环 `get(id)` 或列表 `SELECT *`。金额使用整数值、精度与币种；经济层只允许 `TRANSACTION`、`ACCOUNT_TRANSFER`、`CLAIM`，不保存汇率，也不跨币种汇总。
+不存在 Repository 层、显式 SQL 外键、DTO 内 SQL、循环 `get(id)` 或列表 `SELECT *`。金额使用整数值、精度与币种；经济层只允许 `INCOME_AND_EXPENSE`、`INTERNAL_TRANSFER`、`ASSET_AND_LIABILITY`，不保存汇率，也不跨币种汇总。
 
 ## 文档
 

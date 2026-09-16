@@ -6,7 +6,7 @@
 
 - [x] 数据分为事实层、审查层、经济层。
 - [x] Review 下的三元 Allocation 连接 Fact 与 Economic，并维持严格 Fact 金额守恒。
-- [x] Economic Type 收敛为 TRANSACTION、ACCOUNT_TRANSFER、CLAIM；场景名称保留在 Review。
+- [x] Ledger Entry Type 收敛为 INCOME_AND_EXPENSE、INTERNAL_TRANSFER、ASSET_AND_LIABILITY；Review 行为独立表达。
 - [x] 旧 23 表与 5 张过渡兼容表从开发数据库移除。
 - [x] 旧 Controller、Service、Mapper、ORM、影子迁移器、接口与页面物理删除。
 - [x] 运行入口只初始化 10 张目标表。

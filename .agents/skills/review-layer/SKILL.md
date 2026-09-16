@@ -12,7 +12,7 @@ description: Change PAAM review cases, allocations, duplicate/refund/AA/loan/tra
 - Fact, allocation, and Economic values have equal direction and currency.
 - The effective allocations of every accepted Fact sum exactly to the Fact
   amount. A manual Review may consume part of the DEFAULT allocation; its
-  residual remains a confirmed DEFAULT TRANSACTION.
+  residual remains a confirmed DEFAULT INCOME_AND_EXPENSE entry.
 - Review policies execute in the backend service. The frontend never calculates or confirms accounting effects itself.
 - The default runtime is single-machine, serialized-write, and low-concurrency.
   Review commands use one short write transaction rather than optimistic versions.

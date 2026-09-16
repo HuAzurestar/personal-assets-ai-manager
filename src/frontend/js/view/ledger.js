@@ -13,8 +13,8 @@ import {
   accountsMarkup, cursorFromParam, monthBounds,
 } from "./account.js";
 
-const entryTypeCodes = { 0: "TRANSACTION", 1: "ACCOUNT_TRANSFER", 2: "CLAIM" };
-const entryTypeValues = { TRANSACTION: 0, ACCOUNT_TRANSFER: 1, CLAIM: 2 };
+const entryTypeCodes = { 0: "INCOME_AND_EXPENSE", 1: "INTERNAL_TRANSFER", 2: "ASSET_AND_LIABILITY" };
+const entryTypeValues = { INCOME_AND_EXPENSE: 0, INTERNAL_TRANSFER: 1, ASSET_AND_LIABILITY: 2 };
 
 function entryDirection(direction) {
   return Number(direction) === 1 ? "IN" : "OUT";
@@ -197,10 +197,10 @@ async function summaryPage() {
     provisional_count: 0,
     totals: economicSummary.totals.map((item) => ({
       ...item,
-      income_value: item.transaction_in_value,
-      expense_value: item.transaction_out_value,
+      income_value: item.income_and_expense_in_value,
+      expense_value: item.income_and_expense_out_value,
       refund_offset_value: 0,
-      net_value: item.transaction_in_value - item.transaction_out_value,
+      net_value: item.income_and_expense_in_value - item.income_and_expense_out_value,
     })),
     trend: [...trendMap.values()],
     activities: [...activityMap.values()],
@@ -376,7 +376,7 @@ async function openEconomicReviewEditor() {
   const selected = new Set();
   const values = new Map();
   let sequence = 1;
-  const economics = [{ key: `economic-${sequence}`, type: "TRANSACTION" }];
+  const economics = [{ key: `economic-${sequence}`, type: "INCOME_AND_EXPENSE" }];
   const dialog = modal("新建经济审查", `<form data-form="economic-review-create" class="review-wizard stack"><section><h3>1. 选择事实流水</h3><div data-economic-review-facts class="review-fact-choices"></div></section><section><div class="section-head"><h3>2. 定义账本流水</h3><button type="button" data-action="add-economic">＋ 添加账本流水</button></div><div data-economic-definitions class="stack"></div></section><section><h3>3. 分配金额</h3><p class="muted">每条账本流水只能分配一条事实；一条事实可以拆成多条账本流水。</p><div data-allocation-matrix></div></section><label>行为代码<input name="behavior_code" maxlength="40" placeholder="例如 ADVANCE、LOAN、FX_EXCHANGE" required></label><label>行为解释<textarea name="description" maxlength="2000"></textarea></label><label>操作原因<input name="reason" maxlength="2000"></label><div class="actions"><button type="button" data-close>取消</button><button class="primary">保存为待确认审查</button></div></form>`);
   const form = $('[data-form="economic-review-create"]', dialog);
   const factRoot = $("[data-economic-review-facts]", form);
@@ -387,7 +387,7 @@ async function openEconomicReviewEditor() {
     $$('[data-allocation-value]', matrixRoot).forEach((input) => values.set(`${input.dataset.fact}:${input.dataset.economic}`, input.value));
   };
   const renderDefinitions = () => {
-    definitionRoot.innerHTML = economics.map((item) => `<article class="review-fact-choice" data-economic-definition="${item.key}"><div><strong>${esc(item.key)}</strong><small>方向、币种、账户和发生时间由唯一关联的事实推导</small></div><label>类型<select name="type-${item.key}">${["TRANSACTION", "ACCOUNT_TRANSFER", "CLAIM"].map((value) => `<option value="${value}" ${item.type === value ? "selected" : ""}>${typeNames[value]}</option>`).join("")}</select></label>${economics.length > 1 ? `<button type="button" class="quiet" data-action="remove-economic" data-key="${item.key}">移除</button>` : ""}</article>`).join("");
+    definitionRoot.innerHTML = economics.map((item) => `<article class="review-fact-choice" data-economic-definition="${item.key}"><div><strong>${esc(item.key)}</strong><small>方向、币种、账户和发生时间由唯一关联的事实推导</small></div><label>类型<select name="type-${item.key}">${["INCOME_AND_EXPENSE", "INTERNAL_TRANSFER", "ASSET_AND_LIABILITY"].map((value) => `<option value="${value}" ${item.type === value ? "selected" : ""}>${typeNames[value]}</option>`).join("")}</select></label>${economics.length > 1 ? `<button type="button" class="quiet" data-action="remove-economic" data-key="${item.key}">移除</button>` : ""}</article>`).join("");
     $$('[name^="type-"]', definitionRoot).forEach((input) => input.onchange = () => {
       economics.find((item) => `type-${item.key}` === input.name).type = input.value;
     });
@@ -416,7 +416,7 @@ async function openEconomicReviewEditor() {
   $('[data-action="add-economic"]', form).onclick = () => {
     preserveMatrix();
     sequence += 1;
-    economics.push({ key: `economic-${sequence}`, type: "TRANSACTION" });
+    economics.push({ key: `economic-${sequence}`, type: "INCOME_AND_EXPENSE" });
     renderDefinitions();
     renderMatrix();
   };

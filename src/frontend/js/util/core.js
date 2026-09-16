@@ -9,7 +9,7 @@ export const key = () => crypto.randomUUID();
 export const date = (value) => String(value || "").replace("T", " ").slice(0, 16);
 
 export const typeNames = {
-  TRANSACTION: "事实交易", ACCOUNT_TRANSFER: "账户流转", CLAIM: "债权关系",
+  INCOME_AND_EXPENSE: "收入与支出", INTERNAL_TRANSFER: "内部转账", ASSET_AND_LIABILITY: "资产与负债",
   INCOME: "收入", EXPENSE: "支出", AA: "AA", LOAN_BORROW: "借入",
   LOAN_LEND: "借出", REFUND: "退款", TRANSFER: "转账",
   FX_EXCHANGE: "换汇", UNRESOLVED: "待核验",

@@ -95,12 +95,12 @@ class EconomicFlowDetailRead(BaseModel):
 class EconomicCurrencySummaryRead(BaseModel):
     currency_code: str
     amount_scale: int
-    transaction_in_value: int
-    transaction_out_value: int
-    account_transfer_in_value: int
-    account_transfer_out_value: int
-    claim_cashflow_in_value: int
-    claim_cashflow_out_value: int
+    income_and_expense_in_value: int
+    income_and_expense_out_value: int
+    internal_transfer_in_value: int
+    internal_transfer_out_value: int
+    asset_and_liability_in_value: int
+    asset_and_liability_out_value: int
 
 
 class EconomicSummaryRead(BaseModel):

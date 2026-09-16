@@ -2,7 +2,7 @@ PRAGMA encoding = 'UTF-8';
 
 CREATE TABLE IF NOT EXISTS ledger_entry /* 已确认 Review 发布的单方向、单币种现金流水投影 */ (
     id INTEGER PRIMARY KEY /* 隐式主键，由 SQLite rowid 自动生成 */,
-    entry_type INTEGER NOT NULL /* 账本类型：0=TRANSACTION，1=ACCOUNT_TRANSFER，2=CLAIM_CASHFLOW */ CHECK (entry_type IN (0, 1, 2)),
+    entry_type INTEGER NOT NULL /* 账本类型：0=INCOME_AND_EXPENSE，1=INTERNAL_TRANSFER，2=ASSET_AND_LIABILITY */ CHECK (entry_type IN (0, 1, 2)),
     entry_direction INTEGER NOT NULL /* 资金方向：1=IN，2=OUT */ CHECK (entry_direction IN (1, 2)),
     amount_value INTEGER NOT NULL /* 按 amount_scale 表示的正整数金额 */ CHECK (amount_value > 0),
     amount_scale INTEGER NOT NULL DEFAULT 2 /* 金额小数位数 */ CHECK (amount_scale BETWEEN 0 AND 8),

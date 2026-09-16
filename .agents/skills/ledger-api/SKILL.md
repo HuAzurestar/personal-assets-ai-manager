@@ -10,8 +10,9 @@ description: Change PAAM ledger projections, summaries, tags, Controllers, DTOs/
 - Do not add SQL to a DTO/VO, Service, Controller, serializer, or frontend module.
 - The hot Economic projection is the normal list/summary source. During the
   coordinated migration it remains physically stored in `ledger_entry`.
-- Economic Type is exactly TRANSACTION, ACCOUNT_TRANSFER, or CLAIM. AA, loan,
-  refund, and FX are Review behavior codes, not Economic Types.
+- Ledger entry type is exactly INCOME_AND_EXPENSE, INTERNAL_TRANSFER, or
+  ASSET_AND_LIABILITY. The last type classifies cash flow only; it does not
+  maintain asset units, valuations, or balances. Review behavior is separate.
 - `review_case_bill` is the physical v2 ternary Allocation during migration:
   one row maps one Review, one Fact, and one Economic.
 - A single Economic never mixes direction or currency. Never store an exchange

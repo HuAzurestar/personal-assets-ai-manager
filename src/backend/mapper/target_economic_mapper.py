@@ -200,7 +200,7 @@ class TargetEconomicMapper:
             bill_id=fact.id,
             economic_id=entry.id,
             entry_type=0,
-            role="DEFAULT_TRANSACTION",
+            role="DEFAULT_INCOME_AND_EXPENSE",
             party="",
             amount_value=amount_value,
             amount_scale=fact.amount_scale,

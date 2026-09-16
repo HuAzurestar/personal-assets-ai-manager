@@ -151,12 +151,12 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
     assert summary["totals"] == [{
         "currency_code": "CNY",
         "amount_scale": 2,
-        "transaction_in_value": 0,
-        "transaction_out_value": 10000,
-        "account_transfer_in_value": 40000,
-        "account_transfer_out_value": 40000,
-        "claim_cashflow_in_value": 0,
-        "claim_cashflow_out_value": 0,
+        "income_and_expense_in_value": 0,
+        "income_and_expense_out_value": 10000,
+        "internal_transfer_in_value": 40000,
+        "internal_transfer_out_value": 40000,
+        "asset_and_liability_in_value": 0,
+        "asset_and_liability_out_value": 0,
     }]
     with sessions() as db:
         assert db.scalar(select(func.count(LedgerEntry.id))) == 6
@@ -178,10 +178,10 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
     )
     assert revoked.status_code == 200, revoked.text
     summary = client.get("/paam/ledger/v2/summary").json()["totals"][0]
-    assert summary["transaction_in_value"] == 40000
-    assert summary["transaction_out_value"] == 50000
-    assert summary["account_transfer_in_value"] == 0
-    assert summary["account_transfer_out_value"] == 0
+    assert summary["income_and_expense_in_value"] == 40000
+    assert summary["income_and_expense_out_value"] == 50000
+    assert summary["internal_transfer_in_value"] == 0
+    assert summary["internal_transfer_out_value"] == 0
     with sessions() as db:
         assert db.scalar(select(func.count(LedgerEntry.id))) == 5
         assert set(db.scalars(select(ReviewCaseBill.economic_id).where(
@@ -189,7 +189,7 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
         )).all()) == {0}
 
 
-def test_loan_uses_one_claim_cashflow_entry_per_fact(economic_api):
+def test_loan_uses_one_asset_and_liability_entry_per_fact(economic_api):
     client, sessions = economic_api
     fact_ids = _facts(sessions, [
         ("OUT", 500000, "CNY"),
@@ -237,8 +237,8 @@ def test_loan_uses_one_claim_cashflow_entry_per_fact(economic_api):
         300000, 300000, 400000, 500000, 500000,
     ]
     summary = client.get("/paam/ledger/v2/summary").json()["totals"][0]
-    assert summary["claim_cashflow_out_value"] == 1000000
-    assert summary["claim_cashflow_in_value"] == 1000000
+    assert summary["asset_and_liability_out_value"] == 1000000
+    assert summary["asset_and_liability_in_value"] == 1000000
 
 
 def test_one_economic_cannot_allocate_multiple_facts(economic_api):
@@ -294,7 +294,7 @@ def test_partial_manual_reviews_keep_exact_default_coverage_and_are_idempotent(e
         assert coverage == 10000
 
 
-def test_fx_review_uses_two_single_currency_account_transfers(economic_api):
+def test_fx_review_uses_two_single_currency_internal_transfers(economic_api):
     client, sessions = economic_api
     cny_id, usd_id = _facts(sessions, [("OUT", 12000, "CNY"), ("IN", 2000, "USD")])
     case = client.post("/paam/review/v2/case/create", json={
@@ -320,7 +320,7 @@ def test_fx_review_uses_two_single_currency_account_transfers(economic_api):
         (1, 2000, "USD"),
     }
     totals = client.get("/paam/ledger/v2/summary").json()["totals"]
-    assert {(item["currency_code"], item["account_transfer_in_value"], item["account_transfer_out_value"]) for item in totals} == {
+    assert {(item["currency_code"], item["internal_transfer_in_value"], item["internal_transfer_out_value"]) for item in totals} == {
         ("CNY", 0, 12000),
         ("USD", 2000, 0),
     }

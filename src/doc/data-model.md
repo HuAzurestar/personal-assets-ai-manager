@@ -13,21 +13,21 @@ Allocation 是三元关系：每行同时保存 `case_id`、`bill_id`、
 Allocation；已发布的 LedgerEntry 只拥有一条 Allocation，因此只对应
 一个 Fact。一次完整审查由事实集合、账本集合和分配矩阵组成。
 
-Economic Type 仅允许 `TRANSACTION`、`ACCOUNT_TRANSFER`、`CLAIM`。
+Ledger Entry Type 仅允许 `INCOME_AND_EXPENSE`、`INTERNAL_TRANSFER`、`ASSET_AND_LIABILITY`。
 AA、垫付、借款、退款、转账和换汇是 `review_case.behavior_code`，不参与
 Economic Type 汇总。
 
 对每条已接受 Fact，所有 CONFIRMED Review 的 Allocation 金额之和必须
 严格等于 Fact 金额。每条 LedgerEntry 的有效 Allocation 之和也必须严格
 等于 LedgerEntry 金额。Pending 建议不占用
-正式金额；导入通过 CONFIRMED DEFAULT Review 生成等额 TRANSACTION。
+正式金额；导入通过 CONFIRMED DEFAULT Review 生成等额 INCOME_AND_EXPENSE。
 取消人工 Review 时，释放金额立即通过新的 DEFAULT Review 恢复为
-TRANSACTION，因此正式经济层不存在 PARTIAL 或 UNRESOLVED 金额。
+INCOME_AND_EXPENSE，因此正式经济层不存在 PARTIAL 或 UNRESOLVED 金额。
 
 Fact、Allocation 和 Economic 必须同方向、同币种。换汇由不同币种的
-多个 ACCOUNT_TRANSFER Economic 表达，不保存汇率、不跨币种求净额。
-CLAIM 目前仅表示债类现金流水分类，不在 LedgerEntry 中维护资产、负债、
-债权余额或估值；这些能力以后由独立资产管理模型承接。
+多个 INTERNAL_TRANSFER LedgerEntry 表达，不保存汇率、不跨币种求净额。
+ASSET_AND_LIABILITY 目前仅表示资产与负债相关的现金流水分类，不在 LedgerEntry 中维护资产单位、负债、
+余额或估值；这些能力以后由独立资产管理模型承接。
 
 原始文件、Raw、Review 历史和标签表仍然保留；“四个核心对象”不表示
 删除证据与审计辅助表。
@@ -165,7 +165,7 @@ Fact 只放跨来源稳定、计算必须的核心字段。客户详情、完整
 
 | 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `entry_type` | INTEGER | 无伪造默认 | 0=TRANSACTION，1=ACCOUNT_TRANSFER，2=CLAIM_CASHFLOW |
+| `entry_type` | INTEGER | 无伪造默认 | 0=INCOME_AND_EXPENSE，1=INTERNAL_TRANSFER，2=ASSET_AND_LIABILITY |
 | `entry_direction` | INTEGER | 无伪造默认 | 1=IN，2=OUT |
 | `amount_value` | BIGINT | 无伪造默认 | 单方向 LedgerEntry 的正整数金额 |
 | `amount_scale` | SMALLINT | `2` | 金额精度 |
@@ -174,7 +174,7 @@ Fact 只放跨来源稳定、计算必须的核心字段。客户详情、完整
 | `counterparty_account_ref` | VARCHAR(200) | `''` | 对手方账户引用；未知时为空串 |
 | `occurred_time` | TEXT | 无伪造默认 | 来源 Fact 的 ISO-8601 发生时间 |
 
-普通 Fact 导入后默认生成同方向、同币种、等额的 TRANSACTION。人工 Review 可以把事实金额重新分配为 TRANSACTION、ACCOUNT_TRANSFER 或 CLAIM；AA、借贷、退款、转账和换汇只保存在 Review 行为说明中。每条 Economic 只有一个方向和币种，跨币种行为必须拆成多条 Economic，并且永不折算汇率。
+普通 Fact 导入后默认生成同方向、同币种、等额的 INCOME_AND_EXPENSE。人工 Review 可以把事实金额重新分配为 INCOME_AND_EXPENSE、INTERNAL_TRANSFER 或 ASSET_AND_LIABILITY。每条 LedgerEntry 只有一个方向和币种，跨币种行为必须拆成多条 LedgerEntry，并且永不折算汇率。
 
 ### 8. `tag_view`：标签维度
 
@@ -225,4 +225,4 @@ Fact 只放跨来源稳定、计算必须的核心字段。客户详情、完整
 - AA/垫付/借贷/退款/转账/换汇等行为：统一 Review 三表。
 - 正式经济结果：`ledger_entry`、三元 `review_case_bill` 与标签表。
 
-启动时为历史 Fact 补建 CONFIRMED DEFAULT Review 与等额 TRANSACTION。旧 Ledger 列会折叠为 11 字段物理结构，旧来源表和旧读取 API 均被删除；追溯统一通过 `review_case_bill` 完成。
+启动时为历史 Fact 补建 CONFIRMED DEFAULT Review 与等额 INCOME_AND_EXPENSE。旧 Ledger 列会折叠为 11 字段物理结构，旧来源表和旧读取 API 均被删除；追溯统一通过 `review_case_bill` 完成。

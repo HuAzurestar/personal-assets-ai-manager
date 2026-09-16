@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS review_allocation /* Review、Transaction Fact 与 Le
     review_case_id INTEGER NOT NULL /* review_case.id，逻辑外键；由 Service 批量校验 */,
     transaction_fact_id INTEGER NOT NULL /* transaction_fact.id，逻辑外键；由 Service 批量校验 */,
     ledger_entry_id INTEGER NOT NULL DEFAULT 0 /* ledger_entry.id；0=草稿尚未发布，正数由 Service 批量校验 */ CHECK (ledger_entry_id >= 0),
-    entry_type INTEGER NOT NULL /* 待发布或已发布账本类型：0=TRANSACTION，1=ACCOUNT_TRANSFER，2=CLAIM_CASHFLOW */ CHECK (entry_type IN (0, 1, 2)),
+    entry_type INTEGER NOT NULL /* 待发布或已发布账本类型：0=INCOME_AND_EXPENSE，1=INTERNAL_TRANSFER，2=ASSET_AND_LIABILITY */ CHECK (entry_type IN (0, 1, 2)),
     amount_value INTEGER NOT NULL /* 本次分配的正整数金额 */ CHECK (amount_value > 0),
     amount_scale INTEGER NOT NULL DEFAULT 2 /* 分配金额小数位数 */ CHECK (amount_scale BETWEEN 0 AND 8),
     currency_code TEXT NOT NULL /* 分配币种，必须与 Fact 和 Ledger Entry 一致 */ CHECK (currency_code <> ''),

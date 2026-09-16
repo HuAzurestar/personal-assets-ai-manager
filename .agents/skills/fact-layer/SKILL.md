@@ -25,6 +25,6 @@ Use `src/doc/data-model.md` as the target schema contract.
   ledger table. Never read previews, raw payloads, or verbose account details in
   ledger list/summary paths.
 - Multi-source import writes `import_file`, `bill_raw`, and `bill_fact` in the
-  Fact layer, then creates exact DEFAULT Review/TRANSACTION/Allocation coverage
+  Fact layer, then creates exact DEFAULT Review/INCOME_AND_EXPENSE/Allocation coverage
   before the same transaction commits.
 - Missing required accounting fields do not receive fabricated defaults and do not produce a fact until resolved.

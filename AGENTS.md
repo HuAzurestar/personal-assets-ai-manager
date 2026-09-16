@@ -46,7 +46,7 @@ PAAM uses a layered modular monolith. Keep the trusted ledger transactionally co
 - Fact source fields are immutable after acceptance. Raw payloads are append-only; only their processing/link status may change.
 - Confirmed Review is authoritative input. Pending suggestions never change published economic values.
 - Every accepted Fact has exact confirmed allocation coverage. Import creates a
-  confirmed DEFAULT Review and an equal TRANSACTION Economic in the same transaction.
+  confirmed DEFAULT Review and an equal INCOME_AND_EXPENSE entry in the same transaction.
 - Ledger projections are rebuildable and may only be written by the economic review service.
 - Historical payloads and raw evidence are detail-only data and must not be loaded by list/summary queries.
 - A Review change, its ternary allocations, DEFAULT residuals, and every affected

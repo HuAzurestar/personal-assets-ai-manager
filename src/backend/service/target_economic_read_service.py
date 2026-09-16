@@ -90,12 +90,12 @@ class TargetEconomicReadService:
             currency = row["currency_code"]
             scales[currency] = max(scales.get(currency, row["amount_scale"]), row["amount_scale"])
         totals = defaultdict(lambda: {
-            "transaction_in_value": 0,
-            "transaction_out_value": 0,
-            "account_transfer_in_value": 0,
-            "account_transfer_out_value": 0,
-            "claim_cashflow_in_value": 0,
-            "claim_cashflow_out_value": 0,
+            "income_and_expense_in_value": 0,
+            "income_and_expense_out_value": 0,
+            "internal_transfer_in_value": 0,
+            "internal_transfer_out_value": 0,
+            "asset_and_liability_in_value": 0,
+            "asset_and_liability_out_value": 0,
         })
         for row in rows:
             currency = row["currency_code"]
@@ -104,9 +104,9 @@ class TargetEconomicReadService:
             target = totals[currency]
             suffix = "in_value" if direction == 1 else "out_value"
             prefix = {
-                0: "transaction",
-                1: "account_transfer",
-                2: "claim_cashflow",
+                0: "income_and_expense",
+                1: "internal_transfer",
+                2: "asset_and_liability",
             }[row["entry_type"]]
             target[f"{prefix}_{suffix}"] += value
         return EconomicSummaryRead(

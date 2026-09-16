@@ -86,7 +86,7 @@ export function accountsMarkup({ summary, accounts, accountCode, currency, curso
     .filter((item) => item.currency_code === selectedCurrency);
   const visibleActivities = [...actualActivities];
   const visibleTypes = new Set(visibleActivities.map((item) => item.entry_type_code));
-  for (const entryTypeCode of ["TRANSACTION", "ACCOUNT_TRANSFER", "CLAIM"]) {
+  for (const entryTypeCode of ["INCOME_AND_EXPENSE", "INTERNAL_TRANSFER", "ASSET_AND_LIABILITY"]) {
     if (visibleActivities.length >= 3) break;
     if (visibleTypes.has(entryTypeCode)) continue;
     visibleActivities.push({

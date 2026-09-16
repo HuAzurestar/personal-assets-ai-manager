@@ -37,7 +37,7 @@ class TargetEconomicService:
         self.accounts = TargetAccountProjectionService(db)
 
     def ensure_defaults(self, fact_ids: list[int], *, commit: bool = False) -> None:
-        """Give every accepted fact exact confirmed TRANSACTION coverage."""
+        """Give every accepted fact exact confirmed INCOME_AND_EXPENSE coverage."""
 
         fact_ids = sorted(set(fact_ids))
         if not fact_ids:

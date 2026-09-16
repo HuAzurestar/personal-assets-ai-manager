@@ -240,8 +240,8 @@ def test_target_review_confirm_revoke_restore_rebuilds_projection(
             assert detail["reviews"][0]["id"] == case["id"]
             assert detail["reviews"][0]["review_type"] == "TRANSFER"
             summary = client.get("/paam/ledger/v2/summary").json()
-            assert summary["totals"][0]["account_transfer_in_value"] == 999
-            assert summary["totals"][0]["account_transfer_out_value"] == 1000
+            assert summary["totals"][0]["internal_transfer_in_value"] == 999
+            assert summary["totals"][0]["internal_transfer_out_value"] == 1000
 
             replay = client.post(
                 f"/paam/review/v2/case/confirm/{case['id']}",
