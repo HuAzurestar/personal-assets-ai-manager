@@ -57,6 +57,12 @@ class EconomicFlowPageRead(BaseModel):
     filters: dict[str, object]
 
 
+class EconomicFlowPageResponse(BaseModel):
+    status: Literal[200] = 200
+    message: str = "ok"
+    body: EconomicFlowPageRead
+
+
 class EconomicAllocationEvidenceRead(BaseModel):
     id: int
     review_case_id: int
@@ -92,6 +98,12 @@ class EconomicFlowDetailRead(BaseModel):
     reviews: list[EconomicReviewBriefRead]
 
 
+class EconomicFlowDetailResponse(BaseModel):
+    status: Literal[200] = 200
+    message: str = "ok"
+    body: EconomicFlowDetailRead
+
+
 class EconomicCurrencySummaryRead(BaseModel):
     currency_code: str
     amount_scale: int
@@ -107,3 +119,9 @@ class EconomicSummaryRead(BaseModel):
     entry_count: int
     totals: list[EconomicCurrencySummaryRead]
     basis_version: str = "ledger-entry-v2"
+
+
+class EconomicSummaryResponse(BaseModel):
+    status: Literal[200] = 200
+    message: str = "ok"
+    body: EconomicSummaryRead

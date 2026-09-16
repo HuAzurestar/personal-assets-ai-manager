@@ -12,77 +12,78 @@ from backend.schema.target_review import (
     TargetEconomicReviewPageResponse,
     TargetEconomicReviewResponse,
     TargetEconomicReviewUpdateRequest,
-    TargetFactAllocationCandidateResponse,
     TargetReviewTransitionRequest,
 )
 from backend.service.target_economic_service import TargetEconomicService
 
 
 router = APIRouter(
-    prefix="/paam/review/v2",
+    prefix="/paam/ledger/v1",
     tags=["economic-review"],
     route_class=DomainErrorRoute,
 )
 
 
-@router.post("/case/create", response_model=TargetEconomicReviewResponse)
+@router.post("/review", response_model=TargetEconomicReviewResponse)
 def create_case(
     payload: TargetEconomicReviewCreateRequest,
     db: Session = Depends(get_db),
 ):
-    return TargetEconomicReviewResponse(body=TargetEconomicService(db).create(payload))
+    return TargetEconomicReviewResponse(
+        message="Ledger review created",
+        body=TargetEconomicService(db).create(payload),
+    )
 
 
-@router.post("/case/confirm/{case_id}", response_model=TargetEconomicReviewResponse)
+@router.post("/review/{review_id}/confirm", response_model=TargetEconomicReviewResponse)
 def confirm_case(
-    case_id: int,
+    review_id: int,
     payload: TargetReviewTransitionRequest,
     db: Session = Depends(get_db),
 ):
     return TargetEconomicReviewResponse(
-        body=TargetEconomicService(db).confirm(case_id, payload)
+        message="Ledger review confirmed",
+        body=TargetEconomicService(db).confirm(review_id, payload)
     )
 
 
-@router.put("/case/update/{case_id}", response_model=TargetEconomicReviewResponse)
+@router.put("/review/{review_id}", response_model=TargetEconomicReviewResponse)
 def update_case(
-    case_id: int,
+    review_id: int,
     payload: TargetEconomicReviewUpdateRequest,
     db: Session = Depends(get_db),
 ):
     return TargetEconomicReviewResponse(
-        body=TargetEconomicService(db).update(case_id, payload)
+        message="Ledger review updated",
+        body=TargetEconomicService(db).update(review_id, payload)
     )
 
 
-@router.post("/case/revoke/{case_id}", response_model=TargetEconomicReviewResponse)
+@router.post("/review/{review_id}/revoke", response_model=TargetEconomicReviewResponse)
 def revoke_case(
-    case_id: int,
+    review_id: int,
     payload: TargetReviewTransitionRequest,
     db: Session = Depends(get_db),
 ):
     return TargetEconomicReviewResponse(
-        body=TargetEconomicService(db).revoke(case_id, payload)
+        message="Ledger review revoked",
+        body=TargetEconomicService(db).revoke(review_id, payload)
     )
 
 
-@router.post("/case/restore/{case_id}", response_model=TargetEconomicReviewResponse)
+@router.post("/review/{review_id}/restore", response_model=TargetEconomicReviewResponse)
 def restore_case(
-    case_id: int,
+    review_id: int,
     payload: TargetReviewTransitionRequest,
     db: Session = Depends(get_db),
 ):
     return TargetEconomicReviewResponse(
-        body=TargetEconomicService(db).confirm(case_id, payload, restore=True)
+        message="Ledger review restored",
+        body=TargetEconomicService(db).confirm(review_id, payload, restore=True)
     )
 
 
-@router.get("/case/detail/{case_id}", response_model=TargetEconomicReviewResponse)
-def case_detail(case_id: int, db: Session = Depends(get_db)):
-    return TargetEconomicReviewResponse(body=TargetEconomicService(db).detail(case_id))
-
-
-@router.get("/case/page", response_model=TargetEconomicReviewPageResponse)
+@router.get("/review/list", response_model=TargetEconomicReviewPageResponse)
 def case_page(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=100),
@@ -90,15 +91,14 @@ def case_page(
     db: Session = Depends(get_db),
 ):
     return TargetEconomicReviewPageResponse(
+        message="Ledger reviews listed",
         body=TargetEconomicService(db).page(page, page_size, status)
     )
 
 
-@router.get("/fact/candidates", response_model=TargetFactAllocationCandidateResponse)
-def fact_candidates(
-    limit: int = Query(default=100, ge=1, le=500),
-    db: Session = Depends(get_db),
-):
-    return TargetFactAllocationCandidateResponse(
-        body=TargetEconomicService(db).fact_candidates(limit)
+@router.get("/review/{review_id}", response_model=TargetEconomicReviewResponse)
+def case_detail(review_id: int, db: Session = Depends(get_db)):
+    return TargetEconomicReviewResponse(
+        message="Ledger review returned",
+        body=TargetEconomicService(db).detail(review_id)
     )

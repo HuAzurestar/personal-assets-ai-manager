@@ -82,8 +82,8 @@ class TargetEconomicMapper:
         ).offset((page - 1) * page_size).limit(page_size)).mappings().all()
         return [dict(row) for row in rows], total
 
-    def fact_candidates(self, limit: int) -> list[dict]:
-        rows = self.db.execute(select(
+    def _fact_candidate_query(self):
+        return select(
             BillFact.id,
             BillFact.occurred_time,
             BillFact.cash_direction,
@@ -105,7 +105,26 @@ class TargetEconomicMapper:
             ReviewCase.status == "CONFIRMED",
         ).group_by(BillFact.id).order_by(
             BillFact.occurred_time.desc(), BillFact.id.desc(),
-        ).limit(limit)).mappings().all()
+        )
+
+    def fact_candidate_page(
+        self,
+        page: int,
+        page_size: int,
+    ) -> tuple[list[dict], int]:
+        query = self._fact_candidate_query()
+        total = self.db.scalar(select(func.count()).select_from(
+            query.order_by(None).subquery()
+        )) or 0
+        rows = self.db.execute(query.offset(
+            (page - 1) * page_size
+        ).limit(page_size)).mappings().all()
+        return [dict(row) for row in rows], total
+
+    def fact_candidates(self, limit: int) -> list[dict]:
+        rows = self.db.execute(
+            self._fact_candidate_query().limit(limit)
+        ).mappings().all()
         return [dict(row) for row in rows]
 
     def idempotency(self, key: str):

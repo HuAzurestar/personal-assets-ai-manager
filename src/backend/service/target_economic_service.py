@@ -16,6 +16,7 @@ from backend.schema.target_review import (
     TargetEconomicReviewRead,
     TargetEconomicReviewUpdateRequest,
     TargetFactAllocationCandidateRead,
+    TargetFactAllocationCandidatePageRead,
     TargetReviewFactVO,
     TargetReviewTransitionRequest,
 )
@@ -90,6 +91,19 @@ class TargetEconomicService:
             TargetFactAllocationCandidateRead(**row)
             for row in self.mapper.fact_candidates(limit)
         ]
+
+    def fact_candidate_page(
+        self,
+        page: int,
+        page_size: int,
+    ) -> TargetFactAllocationCandidatePageRead:
+        rows, total = self.mapper.fact_candidate_page(page, page_size)
+        return TargetFactAllocationCandidatePageRead(
+            items=[TargetFactAllocationCandidateRead(**row) for row in rows],
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
 
     def create(self, payload: TargetEconomicReviewCreateRequest) -> TargetEconomicReviewRead:
         request_json = self._canonical({"operation": "CREATE", **payload.model_dump(mode="json")})
