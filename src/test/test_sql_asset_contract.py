@@ -207,3 +207,47 @@ def test_review_allocation_only_stores_published_relationships():
                 raise AssertionError(f"review_allocation accepted invalid {column}")
     finally:
         connection.close()
+
+
+def test_review_revision_is_append_only_audit_without_business_version():
+    connection = _create_target_schema()
+    try:
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(review_revision)")
+        }
+        assert columns == {
+            "id",
+            "review_case_id",
+            "operation",
+            "request_json",
+            "before_json",
+            "after_json",
+            "actor",
+            "reason",
+            "idempotency_key",
+            "created_time",
+            "updated_time",
+        }
+
+        connection.execute(
+            """
+            INSERT INTO review_revision (
+                review_case_id, operation, request_json, after_json,
+                idempotency_key
+            ) VALUES (1, 0, '{"behavior_type":0}', '{"status":0}', 'create:1')
+            """
+        )
+        for statement in (
+            "INSERT INTO review_revision (review_case_id) VALUES (0)",
+            "INSERT INTO review_revision (review_case_id, operation) VALUES (1, 4)",
+            "INSERT INTO review_revision (review_case_id, request_json) VALUES (1, 'bad json')",
+            "INSERT INTO review_revision (review_case_id, idempotency_key) VALUES (1, 'create:1')",
+        ):
+            try:
+                connection.execute(statement)
+            except sqlite3.IntegrityError:
+                pass
+            else:
+                raise AssertionError(f"review_revision accepted invalid row: {statement}")
+    finally:
+        connection.close()
