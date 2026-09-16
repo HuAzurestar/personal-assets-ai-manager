@@ -28,3 +28,12 @@ Use `src/doc/data-model.md` as the target schema contract.
   Fact layer, then creates exact DEFAULT Review/TRANSACTION/Allocation coverage
   before the same transaction commits.
 - Missing required accounting fields do not receive fabricated defaults and do not produce a fact until resolved.
+- Transaction Fact and Import File Details lists are PO inspections, not import
+  workflow or Review candidate lists. Their queries run server-side with the
+  shared search/filter/sorter/page contract.
+- Transaction Fact detail may read its Import File evidence, Allocations,
+  Reviews, and Ledgers as relationships. Those relationships are read-only and
+  must be reached through persisted identifiers rather than inferred joins.
+- Import File detail may expose its Transaction Facts as a related subtable.
+  Raw source payload JSON is evidence for an individual imported row, not a
+  separate top-level Details object and not list data.

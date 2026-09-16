@@ -24,5 +24,11 @@ description: Change PAAM review cases, allocations, duplicate/refund/AA/loan/tra
 - Every successful change appends `review_history` with canonical before/after aggregate snapshots, request, actor, reason, schema version, and idempotency key.
 - Undo appends a new reversing event; it never mutates or deletes old history.
 - Batch-load every affected fact and active allocation before validation. Do not query one bill at a time.
+- Allocation read queries support filtering by each member of the ternary
+  relation: `review_id`, `fact_id`, and `economic_id`. Review detail derives
+  related Facts and Ledgers through Allocation; it must not imply a direct
+  Review-to-Fact or Review-to-Ledger relationship.
+- Review detail relationships are read-only. Creating a Review is a separate
+  explicit page action, not an edit hidden inside a relation section.
 - Review state, replaced DEFAULT allocations, residual DEFAULT coverage, and all
   affected Economic projections update in one transaction.

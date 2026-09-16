@@ -158,3 +158,39 @@ description: Change PAAM FastAPI routers, URL modules or versions, HTTP endpoint
   `page`, and `page_size`.
 - Compatibility routes retain their existing request defaults and response
   shapes until their callers migrate.
+
+## Detail workspace contract
+
+- The Details workspace is a permanent, read-oriented inspection surface for
+  core persisted objects. Do not remove it as redundant with task/workbench
+  screens.
+- A Details list represents exactly one primary persisted object. The standard
+  objects are Transaction Fact, Import File, Ledger, Review, and Tag. Do not
+  substitute a command candidate set, workflow projection, or cross-object
+  aggregate for a PO list.
+- A list row contains fields owned by that PO. A deliberately small derived
+  count may be exposed only when labeled as a summary; related object data
+  belongs in detail.
+- Every standard `GET /{object}/list` supports server-side search, filtering,
+  sorting, and pagination. Use the shared `q`, `filter`, `sorter`, `page`, and
+  `page_size` contract; never fetch an arbitrary large page and implement the
+  canonical list query only in the browser.
+- `filter` and `sorter` are JSON query objects. Each object API must whitelist
+  supported filter fields, sorter fields, value types, and sort directions at
+  its boundary. Unknown fields or malformed objects fail with `422`; never
+  interpolate client-supplied field names into SQL.
+- A PO detail response contains the complete public PO record plus only the
+  relationships needed to understand it. Relationship sections are read-only
+  unless the owning domain explicitly permits a command.
+- Relationship navigation from one detail drawer into another is not part of
+  the current contract. A related subtable is optional and must be justified by
+  a real relationship and a concrete inspection need.
+- Detail permissions are object-specific: Transaction Fact relations are
+  read-only; Import File relations are read-only; Ledger relations are
+  read-only while Tag assignment is editable; Review relations are read-only
+  while creating a Review remains an explicit page action; Tag is an editable
+  management view and does not require a standard detail drawer.
+- Prefer reusable UI structures for list surfaces, filters, sort controls,
+  pagination, drawer shells, field groups, and relationship sections. Object
+  modules still define their own labels, formatting, fields, and allowed
+  actions; do not auto-render arbitrary JSON as a business UI.

@@ -40,4 +40,8 @@ description: Change PAAM ledger projections, summaries, tags, DTOs/VOs, Services
   concurrency. Repeating the already-effective complete state is an idempotent
   success and does not advance the version again.
 - Add query-count tests for list endpoints. Returned row count must not increase SQL statement count.
+- The Ledger Details list represents Ledger projection rows only. Ledger detail
+  may include the Allocation, Review, Transaction Fact, and Tag relationships
+  needed to explain the projection. Those relationships are read-only except
+  for Ledger-owned Tag assignment.
 - Keep the current hot-path backlog and measured results in `src/doc/sql-query-refactor.md`.
