@@ -66,8 +66,8 @@ def _import_file_format_code(name: str) -> int:
         raise ValueError(f"unknown import content format: {name}") from error
 
 
-class TargetIntakeMapper:
-    """Set-oriented persistence for the PIRC-9 Fact-layer import path."""
+class TargetImportWriteMapper:
+    """Batch-write one confirmed import plan inside a caller-owned transaction."""
 
     def __init__(self, db: Session):
         self.db = db
@@ -76,7 +76,7 @@ class TargetIntakeMapper:
         if self.db.bind is not None and self.db.bind.dialect.name == "sqlite":
             self.db.execute(text("BEGIN IMMEDIATE"))
 
-    def commit_plan(
+    def write_plan(
         self,
         plan: dict[str, object],
         batch_code: str,

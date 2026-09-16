@@ -32,8 +32,9 @@ from backend.entity import (
 )
 from backend.mapper.target_import_match_mapper import TargetImportMatchMapper
 from backend.mapper.target_import_read_mapper import TargetImportReadMapper
-from backend.mapper.target_intake_mapper import TargetIntakeMapper
+from backend.mapper.target_import_write_mapper import TargetImportWriteMapper
 from backend.parser.statement_parser import parse_statement
+from backend.service.target_economic_service import TargetEconomicService
 
 
 HEADERS = [
@@ -136,13 +137,13 @@ def _confirm(client, preview):
 def test_import_read_mapper_owns_public_import_queries():
     for method_name in ("history", "rows", "accounts"):
         assert hasattr(TargetImportReadMapper, method_name)
-        assert not hasattr(TargetIntakeMapper, method_name)
+        assert not hasattr(TargetImportWriteMapper, method_name)
 
 
 def test_import_match_mapper_owns_preview_planning():
     assert hasattr(TargetImportMatchMapper, "plan")
     assert hasattr(TargetImportMatchMapper, "load_history")
-    assert not hasattr(TargetIntakeMapper, "plan")
+    assert not hasattr(TargetImportWriteMapper, "plan")
 
 
 def test_target_import_writes_fact_evidence_and_hot_projection(target_import_api):
@@ -202,6 +203,35 @@ def test_target_import_writes_fact_evidence_and_hot_projection(target_import_api
     assert _confirm(client, repeated).status_code == 200
     with sessions() as db:
         assert db.query(TransactionFact).count() == 1
+
+
+def test_target_import_rolls_back_when_default_review_write_fails(
+    target_import_api,
+    monkeypatch,
+):
+    client, sessions, _ = target_import_api
+    preview = _preview(client, "rollback.csv", _csv())
+
+    original_ensure_defaults = TargetEconomicService.ensure_defaults
+
+    def fail_after_default_review(service, fact_ids):
+        original_ensure_defaults(service, fact_ids)
+        raise RuntimeError("simulated default review failure")
+
+    monkeypatch.setattr(
+        TargetEconomicService,
+        "ensure_defaults",
+        fail_after_default_review,
+    )
+    response = _confirm(client, preview)
+    assert response.status_code == 500
+
+    with sessions() as db:
+        assert db.query(TransactionFact).count() == 0
+        assert db.query(TransactionImportFile).count() == 0
+        assert db.query(TransactionImportRow).count() == 0
+        assert db.query(ReviewCase).count() == 0
+        assert db.query(LedgerEntry).count() == 0
 
 
 def test_import_history_supports_search_pagination_and_account_filter(

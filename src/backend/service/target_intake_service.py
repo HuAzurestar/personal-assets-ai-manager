@@ -13,7 +13,7 @@ from backend.core.intake_preview_store import (
 from backend.error import TargetIntakeError
 from backend.mapper.target_import_match_mapper import TargetImportMatchMapper
 from backend.mapper.target_import_read_mapper import TargetImportReadMapper
-from backend.mapper.target_intake_mapper import TargetIntakeMapper
+from backend.mapper.target_import_write_mapper import TargetImportWriteMapper
 from backend.parser.statement_parser import parse_statement
 from backend.schema.intake import (
     IntakeConfirmRequest,
@@ -31,7 +31,7 @@ class TargetIntakeService:
         self.db = db
         self.match_mapper = TargetImportMatchMapper(db)
         self.read_mapper = TargetImportReadMapper(db)
-        self.mapper = TargetIntakeMapper(db)
+        self.write_mapper = TargetImportWriteMapper(db)
         self.store = target_intake_preview_store
 
     def preview(self, payload: IntakePreviewRequest) -> dict[str, object]:
@@ -97,7 +97,7 @@ class TargetIntakeService:
             if payload.version != state.plan["version"]:
                 raise TargetIntakeError(409, "预览已变化，请核对最新预览")
             try:
-                self.mapper.begin_write()
+                self.write_mapper.begin_write()
                 current = self.match_mapper.plan(
                     state.documents,
                     self.read_mapper.known_accounts(),
@@ -108,24 +108,24 @@ class TargetIntakeService:
                     raise TargetIntakeError(409, "账本已变化，请刷新预览后确认")
                 if not current["can_confirm"]:
                     raise TargetIntakeError(422, "请先处理预览中标出的错误或歧义")
-                result = self.mapper.commit_plan(current, batch_code=token)
+                result = self.write_mapper.write_plan(current, batch_code=token)
                 TargetEconomicService(self.db).ensure_defaults(
                     result["affected_fact_ids"]
                 )
-                self.mapper.commit()
+                self.write_mapper.commit()
                 state.result = result
                 return result
             except TargetIntakeError:
-                self.mapper.rollback()
+                self.write_mapper.rollback()
                 raise
             except (IntegrityError, OperationalError) as error:
-                self.mapper.rollback()
+                self.write_mapper.rollback()
                 raise TargetIntakeError(
                     409,
                     "账本正在写入，请重试；本次未部分导入",
                 ) from error
             except Exception:
-                self.mapper.rollback()
+                self.write_mapper.rollback()
                 raise
 
     def history(

@@ -26,7 +26,7 @@
 | `app/mappers/target_economic_mapper.py` | `src/backend/mapper/target_economic_mapper.py` |
 | `app/mappers/target_economic_read_mapper.py` | `src/backend/mapper/target_economic_read_mapper.py` |
 | `app/mappers/target_fact_conflict_mapper.py` | `src/backend/mapper/target_fact_conflict_mapper.py` |
-| `app/mappers/target_intake_mapper.py` | `src/backend/mapper/target_intake_mapper.py` |
+| `app/mappers/target_intake_mapper.py` | `src/backend/mapper/target_import_{read,match,write}_mapper.py` |
 | `app/mappers/target_ledger_mapper.py` | `src/backend/mapper/target_ledger_mapper.py` |
 | `app/mappers/target_projection_mapper.py` | `src/backend/mapper/target_projection_mapper.py` |
 | `app/mappers/target_review_mapper.py` | `src/backend/mapper/target_review_mapper.py` |
