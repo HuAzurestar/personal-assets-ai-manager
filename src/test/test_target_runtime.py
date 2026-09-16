@@ -17,6 +17,44 @@ from backend.core.intake_preview_store import target_intake_preview_store
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_openapi_locks_canonical_ledger_v1_contract():
+    specification = target_main.app.openapi()
+    paths = set(specification["paths"])
+    assert {
+        "/paam/ledger/v1/flow/list",
+        "/paam/ledger/v1/flow/summary",
+        "/paam/ledger/v1/flow/{ledger_id}",
+        "/paam/ledger/v1/review",
+        "/paam/ledger/v1/review/list",
+        "/paam/ledger/v1/review/{review_id}",
+        "/paam/ledger/v1/review/{review_id}/confirm",
+        "/paam/ledger/v1/review/{review_id}/revoke",
+        "/paam/ledger/v1/review/{review_id}/restore",
+        "/paam/ledger/v1/fact/list",
+    } <= paths
+    assert not any(path.startswith("/paam/economy/") for path in paths)
+    assert not any(path.startswith("/paam/review/v2") for path in paths)
+    assert {
+        "/paam/ledger/v1/entry/list",
+        "/paam/ledger/v1/entry/detail/{ledger_id}",
+        "/paam/ledger/v1/summary",
+        "/paam/review/v1/case/create",
+        "/paam/review/v1/case/page",
+        "/paam/review/v1/account/set/{fact_id}",
+    } <= paths
+
+    schemas = specification["components"]["schemas"]
+    for name in (
+        "EconomicFlowPageResponse",
+        "EconomicFlowDetailResponse",
+        "EconomicSummaryResponse",
+        "TargetEconomicReviewResponse",
+        "TargetEconomicReviewPageResponse",
+        "TargetFactAllocationCandidatePageResponse",
+    ):
+        assert schemas[name]["properties"]["status"]["const"] == 200
+
+
 def test_importing_target_runtime_does_not_load_legacy_database_module():
     result = subprocess.run(
         [
