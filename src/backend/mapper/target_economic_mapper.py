@@ -62,6 +62,35 @@ class TargetEconomicMapper:
     def all_fact_ids(self) -> list[int]:
         return list(self.db.scalars(select(BillFact.id).order_by(BillFact.id)).all())
 
+    def allocations_by_relation(
+        self,
+        *,
+        review_ids: list[int] | None = None,
+        fact_ids: list[int] | None = None,
+        economic_ids: list[int] | None = None,
+    ) -> list[dict]:
+        """Read ternary Allocations through any supplied member identifiers."""
+
+        clauses = []
+        if review_ids:
+            clauses.append(ReviewCaseBill.case_id.in_(review_ids))
+        if fact_ids:
+            clauses.append(ReviewCaseBill.bill_id.in_(fact_ids))
+        if economic_ids:
+            clauses.append(ReviewCaseBill.economic_id.in_(economic_ids))
+        if not clauses:
+            return []
+        rows = self.db.execute(select(
+            ReviewCaseBill.id,
+            ReviewCaseBill.case_id.label("review_id"),
+            ReviewCaseBill.bill_id.label("fact_id"),
+            ReviewCaseBill.economic_id,
+            ReviewCaseBill.amount_value,
+            ReviewCaseBill.amount_scale,
+            ReviewCaseBill.currency_code,
+        ).where(*clauses).order_by(ReviewCaseBill.id)).mappings().all()
+        return [dict(row) for row in rows]
+
     def review_page(self, page: int, page_size: int, status: str = "") -> tuple[list[dict], int]:
         clauses = [
             ReviewCase.behavior_code != "DEFAULT",

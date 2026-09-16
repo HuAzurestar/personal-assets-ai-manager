@@ -2,8 +2,10 @@
 
 from backend.error.domain import (
     DomainError,
+    ListQueryError,
     MultipleTagsForView,
     TargetEconomicError,
+    TargetFactError,
     TargetIntakeError,
     TargetReviewError,
     TargetTagError,
@@ -12,8 +14,10 @@ from backend.error.domain import (
 
 __all__ = [
     "DomainError",
+    "ListQueryError",
     "MultipleTagsForView",
     "TargetEconomicError",
+    "TargetFactError",
     "TargetIntakeError",
     "TargetReviewError",
     "TargetTagError",

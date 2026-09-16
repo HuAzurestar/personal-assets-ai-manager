@@ -15,6 +15,7 @@ from backend.router.ledger_account import router as ledger_account_router
 from backend.router.ledger_fact import router as ledger_fact_router
 from backend.router.ledger_review import router as ledger_review_router
 from backend.router.ledger_review_legacy import router as ledger_review_legacy_router
+from backend.router.ledger_transaction_fact import router as ledger_transaction_fact_router
 from backend.router.system import router as system_router
 from backend.router.tag import router as tag_router
 from backend.router.tag_assignment import router as tag_assignment_router
@@ -43,6 +44,7 @@ app.include_router(ledger_router)
 app.include_router(ledger_review_router)
 app.include_router(ledger_review_legacy_router)
 app.include_router(ledger_fact_router)
+app.include_router(ledger_transaction_fact_router)
 app.include_router(ledger_account_router)
 app.include_router(tag_router)
 app.include_router(tag_assignment_router)

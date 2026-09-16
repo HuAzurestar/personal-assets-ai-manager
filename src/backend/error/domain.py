@@ -30,6 +30,22 @@ class TargetEconomicError(DomainError):
     default_code = "ECONOMIC_ERROR"
 
 
+class TargetFactError(DomainError):
+    default_code = "FACT_ERROR"
+
+
+class ListQueryError(DomainError):
+    default_code = "LIST_QUERY_ERROR"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        details: dict[str, Any] | None = None,
+    ):
+        super().__init__(422, message, details=details)
+
+
 class TargetReviewError(DomainError):
     default_code = "REVIEW_ERROR"
 
