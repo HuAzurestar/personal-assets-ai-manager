@@ -98,7 +98,9 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
         json={"expected_version": 1, "idempotency_key": "advance-confirm"},
     )
     assert confirmed.status_code == 200, confirmed.text
-    summary = client.get("/paam/ledger/v1/flow/summary").json()
+    summary_response = client.get("/paam/ledger/v1/flow/summary")
+    assert summary_response.json()["status"] == summary_response.status_code
+    summary = summary_response.json()["body"]
     assert summary["totals"] == [{
         "currency_code": "CNY",
         "amount_scale": 2,
@@ -133,7 +135,9 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
         json={"expected_version": 2, "idempotency_key": "advance-revoke"},
     )
     assert revoked.status_code == 200, revoked.text
-    summary = client.get("/paam/ledger/v1/flow/summary").json()["totals"][0]
+    summary = client.get(
+        "/paam/ledger/v1/flow/summary"
+    ).json()["body"]["totals"][0]
     assert summary["income_value"] == 40000
     assert summary["expense_value"] == 50000
     assert summary["account_transfer_in_value"] == 0
@@ -188,7 +192,9 @@ def test_loan_many_facts_compose_claim_and_balance_to_zero(economic_api):
     assert sorted(item["amount_value"] for item in body["economics"]) == [
         300000, 300000, 400000, 1000000,
     ]
-    summary = client.get("/paam/ledger/v1/flow/summary").json()["totals"][0]
+    summary = client.get(
+        "/paam/ledger/v1/flow/summary"
+    ).json()["body"]["totals"][0]
     assert summary["claim_out_value"] == 1000000
     assert summary["claim_in_value"] == 1000000
     assert summary["receivable_balance_value"] == 0
@@ -312,7 +318,9 @@ def test_fx_review_uses_two_single_currency_account_transfers(economic_api):
         ("OUT", 12000, "CNY"),
         ("IN", 2000, "USD"),
     }
-    totals = client.get("/paam/ledger/v1/flow/summary").json()["totals"]
+    totals = client.get(
+        "/paam/ledger/v1/flow/summary"
+    ).json()["body"]["totals"]
     assert {(item["currency_code"], item["account_transfer_in_value"], item["account_transfer_out_value"]) for item in totals} == {
         ("CNY", 0, 12000),
         ("USD", 2000, 0),
@@ -335,7 +343,7 @@ def test_transaction_reversal_is_linked_and_cannot_exceed_original(economic_api)
     assert seed.status_code == 200
     original_economic_id = client.get(
         "/paam/ledger/v1/flow/list?economic_type=TRANSACTION"
-    ).json()["items"][0]["id"]
+    ).json()["body"]["items"][0]["id"]
 
     def reversal(fact_id, amount, suffix):
         return client.post("/paam/ledger/v1/review", json={
@@ -407,7 +415,7 @@ def test_backfill_does_not_reuse_a_legacy_aggregate_for_multiple_facts(economic_
 
     with sessions() as db:
         TargetEconomicService(db).backfill_defaults()
-    flows = client.get("/paam/ledger/v1/flow/list").json()
+    flows = client.get("/paam/ledger/v1/flow/list").json()["body"]
     assert flows["total"] == 2
     assert legacy_id not in {item["id"] for item in flows["items"]}
     assert sorted(item["amount"]["amount_value"] for item in flows["items"]) == [3000, 7000]

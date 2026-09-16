@@ -8,11 +8,11 @@ from sqlalchemy.orm import Session
 from backend.router.dependency import get_db
 from backend.router.error import DomainErrorRoute
 from backend.schema.target_economic import (
-    EconomicFlowDetailRead,
-    EconomicFlowPageRead,
+    EconomicFlowDetailResponse,
+    EconomicFlowPageResponse,
     EconomicPageQuery,
     EconomicSummaryQuery,
-    EconomicSummaryRead,
+    EconomicSummaryResponse,
 )
 from backend.service.target_economic_read_service import TargetEconomicReadService
 
@@ -24,7 +24,7 @@ router = APIRouter(
 )
 
 
-@router.get("/flow/list", response_model=EconomicFlowPageRead)
+@router.get("/flow/list", response_model=EconomicFlowPageResponse)
 def list_economic_flows(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=100),
@@ -38,20 +38,23 @@ def list_economic_flows(
     if date_from and date_to and date_from > date_to:
         raise HTTPException(status_code=422, detail="date_from must be before date_to")
     try:
-        return TargetEconomicReadService(db).page(EconomicPageQuery(
-            page=page,
-            page_size=page_size,
-            date_from=date_from,
-            date_to=date_to,
-            economic_type=tuple(economic_type),
-            currency_code=tuple(code.upper() for code in currency_code),
-            q=q.strip(),
-        ))
+        return EconomicFlowPageResponse(
+            message="Ledger flows listed",
+            body=TargetEconomicReadService(db).page(EconomicPageQuery(
+                page=page,
+                page_size=page_size,
+                date_from=date_from,
+                date_to=date_to,
+                economic_type=tuple(economic_type),
+                currency_code=tuple(code.upper() for code in currency_code),
+                q=q.strip(),
+            )),
+        )
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
 
-@router.get("/flow/summary", response_model=EconomicSummaryRead)
+@router.get("/flow/summary", response_model=EconomicSummaryResponse)
 def economic_summary(
     date_from: date | None = None,
     date_to: date | None = None,
@@ -59,15 +62,21 @@ def economic_summary(
 ):
     if date_from and date_to and date_from > date_to:
         raise HTTPException(status_code=422, detail="date_from must be before date_to")
-    return TargetEconomicReadService(db).summary(EconomicSummaryQuery(
-        date_from=date_from,
-        date_to=date_to,
-    ))
+    return EconomicSummaryResponse(
+        message="Ledger flow summary returned",
+        body=TargetEconomicReadService(db).summary(EconomicSummaryQuery(
+            date_from=date_from,
+            date_to=date_to,
+        )),
+    )
 
 
-@router.get("/flow/{ledger_id}", response_model=EconomicFlowDetailRead)
+@router.get("/flow/{ledger_id}", response_model=EconomicFlowDetailResponse)
 def economic_flow_detail(ledger_id: int, db: Session = Depends(get_db)):
     result = TargetEconomicReadService(db).detail(ledger_id)
     if result is None:
         raise HTTPException(status_code=404, detail="Economic flow not found")
-    return result
+    return EconomicFlowDetailResponse(
+        message="Ledger flow returned",
+        body=result,
+    )
