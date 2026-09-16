@@ -50,25 +50,24 @@ ASSET_AND_LIABILITY 目前仅表示资产与负债相关的现金流水分类，
 
 事实层保存外部来源、原始证据和接受后的规范事实。列表和汇总不读取这一层；只有导入、校验和单条详情读取。
 
-### 1. `import_file`：一次导入的来源文件
+### 1. `transaction_import_file`：一次导入的来源文件
 
 | 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
 | `batch_code` | VARCHAR(64) | `''` | 同一次提交的批次标识 |
-| `source_type` | VARCHAR(40) | `UNKNOWN` | 支付宝、微信、银行、手工等来源 |
-| `institution_code` | VARCHAR(40) | `UNKNOWN` | 银行或平台代码 |
-| `filename` | VARCHAR(255) | `''` | 用户看到的原文件名 |
-| `file_format` | VARCHAR(12) | `UNKNOWN` | CSV/XLS/XLSX/PDF/ZIP |
-| `sha256` | VARCHAR(64) | `''` | 整个文件指纹 |
-| `period_start` | VARCHAR(32) | `''` | 文件中最早有效流水时间 |
-| `period_end` | VARCHAR(32) | `''` | 文件中最晚有效流水时间 |
+| `source_type` | INTEGER | `0` | 0=UNKNOWN，1=MANUAL，101=ALIPAY，102=WECHAT，201=CCB_BANK，202=ABC_BANK，203=CMB_BANK |
+| `filename` | TEXT | 无伪造默认 | 用户看到的原始上传文件名 |
+| `file_format` | INTEGER | `0` | 实际解析内容格式：0=UNKNOWN，1=CSV，2=XLS，3=XLSX，4=PDF |
+| `sha256` | TEXT | 无伪造默认 | 原始上传文件的 SHA-256 指纹 |
+| `period_start` | TEXT | `''` | 文件中最早有效流水时间，ISO-8601 |
+| `period_end` | TEXT | `''` | 文件中最晚有效流水时间，ISO-8601 |
 | `total_count` | INTEGER | `0` | 来源行总数 |
 | `success_count` | INTEGER | `0` | 接受或成功关联的行数 |
 | `skip_count` | INTEGER | `0` | 重复或明确跳过的行数 |
 | `issue_count` | INTEGER | `0` | 解析失败或冲突行数 |
-| `status` | VARCHAR(20) | `PENDING` | PENDING/IMPORTED/PARTIAL/FAILED |
+| `status` | INTEGER | `0` | 0=PENDING，1=IMPORTED，2=PARTIAL，3=FAILED |
 
-非空 SHA 使用 `(source_type, sha256)` 唯一索引。`total_count = success_count + skip_count + issue_count`。
+`sha256` 全局唯一。ZIP 是传输容器；例如 ZIP 内实际解析 CSV 时，`file_format=1`。`total_count = success_count + skip_count + issue_count`。
 
 ### 2. `bill_raw`：来源行与原始证据
 
@@ -203,7 +202,7 @@ Fact 只放跨来源稳定、计算必须的核心字段。客户详情、完整
 | `ledger_entry_tag`、`tag`、`tag_view` | 热/温 | 列表按 ID 批量取；字典独立取 |
 | `transaction_fact` | 温 | 导入核对、审查、单条详情 |
 | `review_case`、`review_allocation` | 温 | 审查工作台与单条详情 |
-| `import_file`、`bill_raw`、`review_revision` | 冷 | 来源追溯、问题核查、审计详情 |
+| `transaction_import_file`、`bill_raw`、`review_revision` | 冷 | 来源追溯、问题核查、审计详情 |
 
 流水列表禁止读取 Raw、文件元数据、Review 明细和历史；这些详细文本只在用户点开一条记录时按 ID 批量取。SHA 前端可以短显示，但后端保留完整值。
 
@@ -211,7 +210,7 @@ Fact 只放跨来源稳定、计算必须的核心字段。客户详情、完整
 
 旧业务表和过渡表已经从模型和运行时删除。新数据库直接创建 10 张目标表；不提供旧数据库原位迁移。必要语义分别进入：
 
-- 文件/批次/来源/异常：`import_file + bill_raw`。
+- 文件/批次/来源/异常：`transaction_import_file + bill_raw`。
 - 规范流水：`transaction_fact`。
 - 正常交易与借钱/还钱行为：统一 Review 三表。
 - 正式经济结果：`ledger_entry`、三元 `review_allocation` 与标签表。

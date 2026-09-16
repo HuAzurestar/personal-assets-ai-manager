@@ -9,7 +9,11 @@ from sqlalchemy.orm import Session
 
 from backend.entity import (
     CASH_DIRECTION_OUT,
+    IMPORT_FILE_FORMAT_CSV,
+    IMPORT_FILE_STATUS_IMPORTED,
+    IMPORT_SOURCE_CCB_BANK,
     TransactionFact,
+    TransactionImportFile,
 )
 from backend.mapper.target_economic_mapper import TargetEconomicMapper
 
@@ -322,6 +326,72 @@ def test_transaction_fact_entity_has_only_current_physical_columns():
         "counterparty_name",
         "counterparty_account_ref",
         "summary",
+        "created_time",
+        "updated_time",
+    }
+
+
+def test_transaction_import_file_sql_asset_matches_entity(tmp_path):
+    database_path = tmp_path / "transaction-import-file.db"
+    connection = sqlite3.connect(database_path)
+    try:
+        connection.executescript(
+            (SQL_DIR / "transaction_import_file.sql").read_text(encoding="utf-8")
+        )
+    finally:
+        connection.close()
+
+    engine = create_engine(f"sqlite:///{database_path}")
+    try:
+        with Session(engine) as db:
+            import_file = TransactionImportFile(
+                batch_code="batch-1",
+                source_type=IMPORT_SOURCE_CCB_BANK,
+                filename="ccb.zip",
+                file_format=IMPORT_FILE_FORMAT_CSV,
+                sha256="a" * 64,
+                period_start="2026-09-01T00:00:00.000Z",
+                period_end="2026-09-15T23:59:59.999Z",
+                total_count=2,
+                success_count=2,
+                skip_count=0,
+                issue_count=0,
+                status=IMPORT_FILE_STATUS_IMPORTED,
+            )
+            db.add(import_file)
+            db.commit()
+            import_file_id = import_file.id
+
+        with engine.connect() as connection:
+            stored = connection.execute(text(
+                "SELECT source_type, file_format, status, filename "
+                "FROM transaction_import_file WHERE id = :import_file_id"
+            ), {"import_file_id": import_file_id}).mappings().one()
+            assert dict(stored) == {
+                "source_type": IMPORT_SOURCE_CCB_BANK,
+                "file_format": IMPORT_FILE_FORMAT_CSV,
+                "status": IMPORT_FILE_STATUS_IMPORTED,
+                "filename": "ccb.zip",
+            }
+    finally:
+        engine.dispose()
+
+
+def test_transaction_import_file_entity_has_only_current_physical_columns():
+    assert set(TransactionImportFile.__table__.columns.keys()) == {
+        "id",
+        "batch_code",
+        "source_type",
+        "filename",
+        "file_format",
+        "sha256",
+        "period_start",
+        "period_end",
+        "total_count",
+        "success_count",
+        "skip_count",
+        "issue_count",
+        "status",
         "created_time",
         "updated_time",
     }

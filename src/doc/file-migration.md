@@ -138,7 +138,7 @@
 | 原类名 | 新文件（相对 src/backend/entity） |
 | --- | --- |
 | TargetTable | `base.py` |
-| ImportFile | `import_file.py` |
+| TransactionImportFile | `transaction_import_file.py` |
 | BillRaw | `bill_raw.py` |
 | TransactionFact | `transaction_fact.py` |
 | ReviewCase | `review_case.py` |

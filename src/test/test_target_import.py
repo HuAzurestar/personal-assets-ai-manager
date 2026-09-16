@@ -16,11 +16,17 @@ from backend import target_main
 from backend.core.intake_preview_store import target_intake_preview_store
 from backend.entity import (
     CASH_DIRECTION_OUT,
+    IMPORT_FILE_FORMAT_CSV,
+    IMPORT_FILE_STATUS_IMPORTED,
+    IMPORT_SOURCE_ABC_BANK,
+    IMPORT_SOURCE_CCB_BANK,
+    IMPORT_SOURCE_CMB_BANK,
+    IMPORT_SOURCE_WECHAT,
     BillRaw,
-    ImportFile,
     LedgerEntry,
     ReviewCase,
     TransactionFact,
+    TransactionImportFile,
 )
 from backend.parser.statement_parser import parse_statement
 
@@ -147,7 +153,16 @@ def test_target_import_writes_fact_evidence_and_hot_projection(target_import_api
             "",
         )
         assert db.query(BillRaw).count() == 1
-        assert db.query(ImportFile).count() == 1
+        import_file = db.scalar(select(TransactionImportFile))
+        assert (
+            import_file.source_type,
+            import_file.file_format,
+            import_file.status,
+        ) == (
+            IMPORT_SOURCE_WECHAT,
+            IMPORT_FILE_FORMAT_CSV,
+            IMPORT_FILE_STATUS_IMPORTED,
+        )
         assert db.query(LedgerEntry).count() == 1
     assert set(inspect(engine).get_table_names()) == set(
         target_database.TARGET_TABLE_NAMES
@@ -222,6 +237,46 @@ def test_import_history_supports_search_pagination_and_account_filter(
     ]
 
 
+def test_import_history_preserves_specific_bank_source_codes(target_import_api):
+    client, sessions, _ = target_import_api
+    sources = [
+        (IMPORT_SOURCE_CCB_BANK, "ccb", "建设银行"),
+        (IMPORT_SOURCE_ABC_BANK, "abc", "农业银行"),
+        (IMPORT_SOURCE_CMB_BANK, "cmb", "招商银行"),
+    ]
+    with sessions() as db:
+        db.add_all([
+            TransactionImportFile(
+                batch_code=f"bank-{name}",
+                source_type=code,
+                filename=f"{name}.csv",
+                file_format=IMPORT_FILE_FORMAT_CSV,
+                sha256=f"{code:064x}",
+                total_count=0,
+                success_count=0,
+                skip_count=0,
+                issue_count=0,
+                status=IMPORT_FILE_STATUS_IMPORTED,
+            )
+            for code, name, _label in sources
+        ])
+        db.commit()
+
+    history = client.get(
+        "/paam/import/v1/batch/list", params={"page_size": 100}
+    ).json()["body"]
+    assert {item["source_type"] for item in history["items"]} == {
+        "ccb",
+        "abc",
+        "cmb",
+    }
+    for _code, name, label in sources:
+        filtered = client.get(
+            "/paam/import/v1/batch/list", params={"q": label}
+        ).json()["body"]
+        assert [item["source_type"] for item in filtered["items"]] == [name]
+
+
 def test_import_history_rows_are_loaded_by_page(target_import_api):
     client, _, _ = target_import_api
     preview = _preview(
@@ -231,7 +286,7 @@ def test_import_history_rows_are_loaded_by_page(target_import_api):
     )
     confirmed = _confirm(client, preview)
     assert confirmed.status_code == 200, confirmed.text
-    batch_id = confirmed.json()["body"]["import_file_ids"][0]
+    batch_id = confirmed.json()["body"]["transaction_import_file_ids"][0]
 
     first = client.get(
         f"/paam/import/v1/batch/{batch_id}/row/list",
@@ -305,6 +360,9 @@ def test_encrypted_zip_password_is_ephemeral(target_import_api):
     with sessions() as db:
         raw = db.scalar(select(BillRaw.raw_payload))
         assert password not in raw
+        assert db.scalar(
+            select(TransactionImportFile.file_format)
+        ) == IMPORT_FILE_FORMAT_CSV
 
 
 @pytest.mark.parametrize("extension", ["xls", "xlsx"])

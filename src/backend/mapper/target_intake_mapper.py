@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import hashlib
 from collections import defaultdict
 from datetime import datetime, time, timedelta
 from decimal import Decimal
@@ -12,12 +11,91 @@ from sqlalchemy.orm import Session
 from backend.entity import (
     CASH_DIRECTION_IN,
     CASH_DIRECTION_OUT,
+    IMPORT_FILE_FORMAT_CSV,
+    IMPORT_FILE_FORMAT_PDF,
+    IMPORT_FILE_FORMAT_UNKNOWN,
+    IMPORT_FILE_FORMAT_XLS,
+    IMPORT_FILE_FORMAT_XLSX,
+    IMPORT_FILE_STATUS_FAILED,
+    IMPORT_FILE_STATUS_IMPORTED,
+    IMPORT_FILE_STATUS_PARTIAL,
+    IMPORT_FILE_STATUS_PENDING,
+    IMPORT_SOURCE_ABC_BANK,
+    IMPORT_SOURCE_ALIPAY,
+    IMPORT_SOURCE_CCB_BANK,
+    IMPORT_SOURCE_CMB_BANK,
+    IMPORT_SOURCE_MANUAL,
+    IMPORT_SOURCE_UNKNOWN,
+    IMPORT_SOURCE_WECHAT,
     BillRaw,
-    ImportFile,
     TransactionFact,
+    TransactionImportFile,
 )
 from backend.smart_import import build_plan, dump
 from backend.parser.statement_parser import digest
+
+
+_IMPORT_SOURCE_BY_NAME = {
+    "unknown": IMPORT_SOURCE_UNKNOWN,
+    "manual": IMPORT_SOURCE_MANUAL,
+    "alipay": IMPORT_SOURCE_ALIPAY,
+    "wechat": IMPORT_SOURCE_WECHAT,
+    "ccb": IMPORT_SOURCE_CCB_BANK,
+    "abc": IMPORT_SOURCE_ABC_BANK,
+    "cmb": IMPORT_SOURCE_CMB_BANK,
+}
+_IMPORT_SOURCE_NAME_BY_CODE = {
+    code: name for name, code in _IMPORT_SOURCE_BY_NAME.items()
+}
+_IMPORT_SOURCE_SEARCH_TERMS = {
+    IMPORT_SOURCE_MANUAL: ("manual", "手工"),
+    IMPORT_SOURCE_ALIPAY: ("alipay", "支付宝"),
+    IMPORT_SOURCE_WECHAT: ("wechat", "微信", "微信支付"),
+    IMPORT_SOURCE_CCB_BANK: ("ccb", "建设银行", "建行"),
+    IMPORT_SOURCE_ABC_BANK: ("abc", "农业银行", "农行"),
+    IMPORT_SOURCE_CMB_BANK: ("cmb", "招商银行", "招行"),
+}
+_IMPORT_FILE_FORMAT_BY_NAME = {
+    "unknown": IMPORT_FILE_FORMAT_UNKNOWN,
+    "csv": IMPORT_FILE_FORMAT_CSV,
+    "xls": IMPORT_FILE_FORMAT_XLS,
+    "xlsx": IMPORT_FILE_FORMAT_XLSX,
+    "pdf": IMPORT_FILE_FORMAT_PDF,
+}
+_IMPORT_FILE_STATUS_NAME_BY_CODE = {
+    IMPORT_FILE_STATUS_PENDING: "PENDING",
+    IMPORT_FILE_STATUS_IMPORTED: "IMPORTED",
+    IMPORT_FILE_STATUS_PARTIAL: "PARTIAL",
+    IMPORT_FILE_STATUS_FAILED: "FAILED",
+}
+
+
+def _import_source_code(name: str) -> int:
+    try:
+        return _IMPORT_SOURCE_BY_NAME[name.casefold()]
+    except KeyError as error:
+        raise ValueError(f"unknown import source: {name}") from error
+
+
+def _import_source_name(code: int) -> str:
+    try:
+        return _IMPORT_SOURCE_NAME_BY_CODE[code]
+    except KeyError as error:
+        raise ValueError(f"unknown persisted import source: {code}") from error
+
+
+def _import_file_format_code(name: str) -> int:
+    try:
+        return _IMPORT_FILE_FORMAT_BY_NAME[name.casefold()]
+    except KeyError as error:
+        raise ValueError(f"unknown import content format: {name}") from error
+
+
+def _import_file_status_name(code: int) -> str:
+    try:
+        return _IMPORT_FILE_STATUS_NAME_BY_CODE[code]
+    except KeyError as error:
+        raise ValueError(f"unknown persisted import file status: {code}") from error
 
 
 class TargetIntakeMapper:
@@ -165,26 +243,28 @@ class TargetIntakeMapper:
         reference_query = select(
             BillRaw.bill_id,
             BillRaw.source_reference,
-            ImportFile.source_type,
+            TransactionImportFile.source_type,
         ).join(
-            ImportFile,
-            BillRaw.import_file_id == ImportFile.id,
+            TransactionImportFile,
+            BillRaw.import_file_id == TransactionImportFile.id,
         )
         if source_types and references:
+            source_codes = [_import_source_code(value) for value in source_types]
             reference_query = reference_query.where(
-                ImportFile.source_type.in_(source_types),
+                TransactionImportFile.source_type.in_(source_codes),
                 BillRaw.source_reference.in_(references),
                 BillRaw.bill_id > 0,
             )
         else:
             reference_query = reference_query.where(False)
         for row in self.db.execute(reference_query).mappings().all():
-            matched_references[(row["source_type"], row["source_reference"])].append(
+            source_name = _import_source_name(row["source_type"])
+            matched_references[(source_name, row["source_reference"])].append(
                 row["bill_id"]
             )
 
-        seen_files = set(self.db.scalars(select(ImportFile.sha256).where(
-            ImportFile.sha256.in_(upload_hashes)
+        seen_files = set(self.db.scalars(select(TransactionImportFile.sha256).where(
+            TransactionImportFile.sha256.in_(upload_hashes)
         )).all())
         return {
             "identities": identities,
@@ -257,13 +337,18 @@ class TargetIntakeMapper:
             )
             skip_count = sum(row["action"] == "record" for row in doc["rows"])
             issue_count = sum(row["action"] == "error" for row in doc["rows"])
-            status = "FAILED" if issue_count and not success_count else "PARTIAL" if issue_count else "IMPORTED"
-            item = ImportFile(
+            status = (
+                IMPORT_FILE_STATUS_FAILED
+                if issue_count and not success_count
+                else IMPORT_FILE_STATUS_PARTIAL
+                if issue_count
+                else IMPORT_FILE_STATUS_IMPORTED
+            )
+            item = TransactionImportFile(
                 batch_code=batch_code,
-                source_type=doc["source_type"],
-                institution_code=doc["source_type"].upper(),
+                source_type=_import_source_code(doc["source_type"]),
                 filename=doc["filename"],
-                file_format=doc["format"].upper(),
+                file_format=_import_file_format_code(doc["format"]),
                 sha256=doc["sha256"],
                 period_start=dated[0] if dated else "",
                 period_end=dated[-1] if dated else "",
@@ -330,7 +415,9 @@ class TargetIntakeMapper:
         })
         return {
             "counts": plan["counts"],
-            "import_file_ids": [item.id for _doc, item in import_files],
+            "transaction_import_file_ids": [
+                item.id for _doc, item in import_files
+            ],
             "transaction_fact_ids": sorted(new_targets.values()),
             "affected_fact_ids": affected_fact_ids,
         }
@@ -346,25 +433,19 @@ class TargetIntakeMapper:
         if q:
             pattern = f"%{q}%"
             search = [
-                ImportFile.filename.ilike(pattern),
-                ImportFile.source_type.ilike(pattern),
-                ImportFile.institution_code.ilike(pattern),
+                TransactionImportFile.filename.ilike(pattern),
             ]
-            source_labels = {
-                "支付宝": "alipay",
-                "微信支付": "wechat",
-                "建设银行": "ccb",
-                "农业银行": "abc",
-                "招商银行": "cmb",
-            }
-            search.extend(
-                ImportFile.source_type == source_type
-                for label, source_type in source_labels.items()
-                if q.casefold() in label.casefold()
-            )
+            query_text = q.casefold()
+            source_codes = [
+                code
+                for code, terms in _IMPORT_SOURCE_SEARCH_TERMS.items()
+                if any(query_text in term.casefold() for term in terms)
+            ]
+            if source_codes:
+                search.append(TransactionImportFile.source_type.in_(source_codes))
             numeric_query = q.removeprefix("#")
             if numeric_query.isdigit():
-                search.append(ImportFile.id == int(numeric_query))
+                search.append(TransactionImportFile.id == int(numeric_query))
             clauses.append(or_(*search))
         if account_code:
             matching_files = select(BillRaw.import_file_id).join(
@@ -373,27 +454,28 @@ class TargetIntakeMapper:
             ).where(
                 TransactionFact.account_code == account_code,
             ).distinct()
-            clauses.append(ImportFile.id.in_(matching_files))
+            clauses.append(TransactionImportFile.id.in_(matching_files))
 
         summary = self.db.execute(select(
-            func.count(ImportFile.id).label("batch_count"),
+            func.count(TransactionImportFile.id).label("batch_count"),
             func.coalesce(func.sum(case(
-                (ImportFile.status == "IMPORTED", 1), else_=0
+                (TransactionImportFile.status == IMPORT_FILE_STATUS_IMPORTED, 1),
+                else_=0,
             )), 0).label("complete_count"),
-            func.coalesce(func.sum(ImportFile.success_count), 0).label(
+            func.coalesce(func.sum(TransactionImportFile.success_count), 0).label(
                 "imported_count"
             ),
         ).where(*clauses)).mappings().one()
         total = int(summary["batch_count"])
         rows = self.db.execute(select(
-            ImportFile.id,
-            ImportFile.filename,
-            ImportFile.source_type,
-            ImportFile.total_count,
-            ImportFile.success_count,
-            ImportFile.status,
-            ImportFile.created_time,
-        ).where(*clauses).order_by(ImportFile.id.desc()).offset(
+            TransactionImportFile.id,
+            TransactionImportFile.filename,
+            TransactionImportFile.source_type,
+            TransactionImportFile.total_count,
+            TransactionImportFile.success_count,
+            TransactionImportFile.status,
+            TransactionImportFile.created_time,
+        ).where(*clauses).order_by(TransactionImportFile.id.desc()).offset(
             (page - 1) * page_size
         ).limit(page_size)).mappings().all()
         file_ids = [row["id"] for row in rows]
@@ -416,11 +498,11 @@ class TargetIntakeMapper:
         items = [{
             "id": row["id"],
             "filename": row["filename"],
-            "source_type": row["source_type"],
+            "source_type": _import_source_name(row["source_type"]),
             "account_codes": account_codes[row["id"]],
             "row_count": row["total_count"],
             "imported_count": row["success_count"],
-            "status": row["status"],
+            "status": _import_file_status_name(row["status"]),
             "imported_at": row["created_time"].isoformat(),
         } for row in rows]
         return {
@@ -443,11 +525,13 @@ class TargetIntakeMapper:
         page_size: int = 20,
     ) -> dict[str, object]:
         batch = self.db.execute(select(
-            ImportFile.total_count,
-            ImportFile.success_count,
-            ImportFile.skip_count,
-            ImportFile.issue_count,
-        ).where(ImportFile.id == import_file_id)).mappings().one_or_none()
+            TransactionImportFile.total_count,
+            TransactionImportFile.success_count,
+            TransactionImportFile.skip_count,
+            TransactionImportFile.issue_count,
+        ).where(
+            TransactionImportFile.id == import_file_id
+        )).mappings().one_or_none()
         if batch is None:
             return {
                 "items": [],
