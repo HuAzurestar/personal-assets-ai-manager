@@ -21,11 +21,6 @@ const entryTypeValues = { TRANSACTION: 0, ACCOUNT_TRANSFER: 1, CLAIM: 2 };
 function closeDialogs() {
   $$('dialog[open]').forEach((dialog) => dialog.close());
 }
-function tags(entry) {
-  return `<div class="tag-list">${entry.tags.length
-    ? entry.tags.map((item) => `<span class="tag" title="${esc(item.view_name)}">${esc(item.tag_name)}</span>`).join("")
-    : '<span class="muted">无标签维度</span>'}</div>`;
-}
 function amountValue(item) {
   return Number(item?.amount_value || 0);
 }
@@ -296,21 +291,31 @@ async function showFactDetail(id) {
 }
 
 async function economicPage() {
-  const query = new URLSearchParams();
-  for (const name of ["page", "page_size", "q", "currency_code", "date_from", "date_to"]) {
-    for (const value of state.params.getAll(name)) if (value) query.append(name, value);
-  }
+  const q = (state.params.get("q") || "").trim();
   const selectedType = state.params.get("economic_type") || "";
-  if (selectedType in entryTypeValues) query.set("economic_type", selectedType);
-  if (!query.has("page")) query.set("page", "1");
-  if (!query.has("page_size")) query.set("page_size", "20");
+  const currency = (state.params.get("currency_code") || "").trim().toUpperCase();
+  const sortField = state.params.get("sort_field") || "occurred_time";
+  const sortOrder = state.params.get("sort_order") || "desc";
+  const filter = Object.fromEntries(Object.entries({
+    economic_type: selectedType in entryTypeValues ? [selectedType] : [],
+    currency_code: currency ? [currency] : [],
+    date_from: state.params.get("date_from") || "",
+    date_to: state.params.get("date_to") || "",
+  }).filter(([, value]) => Array.isArray(value) ? value.length : value));
+  const query = new URLSearchParams({
+    page: state.params.get("page") || "1",
+    page_size: state.params.get("page_size") || "20",
+    q,
+    filter: JSON.stringify(filter),
+    sorter: JSON.stringify({ field: sortField, order: sortOrder }),
+  });
   const result = await request(`/paam/ledger/v1/flow/list?${query}`);
   state.detailEconomics = new Map(result.items.map((item) => [item.id, item]));
   const rows = result.items.map((item) => `<tr class="detail-click-row" tabindex="0" data-economic-row="${item.id}">
-    <td>${date(item.occurred_time)}</td><td><button type="button" class="detail-primary" data-action="economic-detail" data-id="${item.id}"><strong>账本流水 #${item.id}</strong><small>${esc(item.account_code)}</small></button></td><td>${esc(typeNames[item.economic_type] || item.economic_type)}</td><td>${item.cash_direction === "IN" ? "流入" : "流出"}</td><td class="money ${item.cash_direction === "IN" ? "income" : "expense"}">${signedMoney(item.amount, item.cash_direction)}</td><td>${tags(item)}</td><td class="detail-arrow">→</td>
+    <td>${date(item.occurred_time)}</td><td><button type="button" class="detail-primary" data-action="economic-detail" data-id="${item.id}"><strong>账本流水 #${item.id}</strong><small>${esc(item.account_code)}</small></button></td><td>${esc(typeNames[item.economic_type] || item.economic_type)}</td><td>${item.cash_direction === "IN" ? "流入" : "流出"}</td><td class="money ${item.cash_direction === "IN" ? "income" : "expense"}">${signedMoney(item.amount, item.cash_direction)}</td><td>v${item.projection_version}</td><td class="detail-arrow">→</td>
   </tr>`).join("");
-  const toolbar = `<form class="detail-filter" data-form="economic-filter"><label class="grow">搜索<input name="q" value="${esc(state.params.get("q") || "")}" placeholder="审查说明、交易方或摘要"></label><label>账本类型<select name="economic_type"><option value="">全部类型</option>${Object.keys(entryTypeValues).map((value) => `<option value="${value}" ${selectedType === value ? "selected" : ""}>${esc(typeNames[value] || value)}</option>`).join("")}</select></label><label>币种<input name="currency_code" maxlength="12" value="${esc(state.params.get("currency_code") || "")}" placeholder="全部币种"></label><button type="button" class="quiet" data-action="detail-clear" data-page-id="economy">清空</button><button class="primary">筛选</button></form>`;
-  return detailListView({ active: "economy", toolbar, title: "Ledger", description: "已生效的最终账本 PO；详情展示必要的 Review、Allocation、Transaction Fact 与 Tag 关系。", total: result.total, headers: ["发生时间", "账本", "类型", "方向", "金额", "标签", ""], rows, footer: detailPager(result, "economy") });
+  const toolbar = `<form class="detail-filter" data-form="economic-filter"><label class="grow">查找<input name="q" value="${esc(q)}" placeholder="审查说明、交易方或摘要"></label><label>账本类型<select name="economic_type"><option value="">全部类型</option>${Object.keys(entryTypeValues).map((value) => `<option value="${value}" ${selectedType === value ? "selected" : ""}>${esc(typeNames[value] || value)}</option>`).join("")}</select></label><label>币种<input name="currency_code" maxlength="12" value="${esc(currency)}" placeholder="全部币种"></label><label>排序<select name="sort_field"><option value="occurred_time" ${sortField === "occurred_time" ? "selected" : ""}>发生时间</option><option value="amount_value" ${sortField === "amount_value" ? "selected" : ""}>金额</option><option value="projection_version" ${sortField === "projection_version" ? "selected" : ""}>投影版本</option><option value="id" ${sortField === "id" ? "selected" : ""}>ID</option></select></label><label>顺序<select name="sort_order"><option value="desc" ${sortOrder === "desc" ? "selected" : ""}>降序</option><option value="asc" ${sortOrder === "asc" ? "selected" : ""}>升序</option></select></label><button type="button" class="quiet" data-action="detail-clear" data-page-id="economy">清空</button><button class="primary">查询</button></form>`;
+  return detailListView({ active: "economy", toolbar, title: "Ledger", description: "已生效的最终账本 PO；Tag 等关系仅在详情中显示。", total: result.total, headers: ["发生时间", "账本", "类型", "方向", "金额", "投影版本", ""], rows, footer: detailPager(result, "economy") });
 }
 
 async function showEconomicDetail(id) {
@@ -338,15 +343,24 @@ function showSummaryDetail(type) {
 }
 
 async function ledgerReviewsPage() {
-  const query = new URLSearchParams({ page: state.params.get("page") || "1", page_size: state.params.get("page_size") || "20" });
-  if (state.params.get("status")) query.set("status", state.params.get("status"));
+  const q = (state.params.get("q") || "").trim();
+  const status = state.params.get("status") || "";
+  const sortField = state.params.get("sort_field") || "updated_time";
+  const sortOrder = state.params.get("sort_order") || "desc";
+  const query = new URLSearchParams({
+    page: state.params.get("page") || "1",
+    page_size: state.params.get("page_size") || "20",
+    q,
+    filter: JSON.stringify(status ? { status } : {}),
+    sorter: JSON.stringify({ field: sortField, order: sortOrder }),
+  });
   const result = await request(`/paam/ledger/v1/review/list?${query}`);
   state.detailEconomicReviews = new Map(result.items.map((item) => [item.id, item]));
   const rows = result.items.map((item) => `<tr class="detail-click-row" tabindex="0" data-review-row="${item.id}">
     <td>${date(item.updated_time)}</td><td><button type="button" class="detail-primary" data-action="economic-review-detail" data-id="${item.id}"><strong>${esc(item.title || item.behavior_code || "未填写说明")}</strong><small>#${item.id} · ${esc(item.behavior_code || "未说明行为")}</small></button></td>
     <td><span class="badge ${item.status === "PENDING" ? "warn" : "neutral"}">${esc(statusNames[item.status] || item.status)}</span></td><td>${item.economic_count} 条账本流水</td><td>${item.allocation_count} 条分配</td><td>v${item.version}</td><td class="detail-arrow">→</td>
   </tr>`).join("");
-  const toolbar = `<form class="detail-filter" data-form="detail-review-filter"><label>状态<select name="status"><option value="">全部状态</option>${["PENDING", "CONFIRMED", "REVOKED"].map((value) => `<option value="${value}" ${state.params.get("status") === value ? "selected" : ""}>${esc(statusNames[value] || value)}</option>`).join("")}</select></label><button type="button" class="quiet" data-action="detail-clear" data-page-id="ledger-reviews">清空</button><button class="primary">筛选</button><button type="button" class="primary" data-action="new-economic-review">新建经济审查</button></form>`;
+  const toolbar = `<form class="detail-filter" data-form="detail-review-filter"><label class="grow">查找<input name="q" value="${esc(q)}" placeholder="ID、标题或行为代码"></label><label>状态<select name="status"><option value="">全部状态</option>${["PENDING", "CONFIRMED", "REVOKED"].map((value) => `<option value="${value}" ${status === value ? "selected" : ""}>${esc(statusNames[value] || value)}</option>`).join("")}</select></label><label>排序<select name="sort_field"><option value="updated_time" ${sortField === "updated_time" ? "selected" : ""}>更新时间</option><option value="created_time" ${sortField === "created_time" ? "selected" : ""}>创建时间</option><option value="version" ${sortField === "version" ? "selected" : ""}>版本</option><option value="id" ${sortField === "id" ? "selected" : ""}>ID</option></select></label><label>顺序<select name="sort_order"><option value="desc" ${sortOrder === "desc" ? "selected" : ""}>降序</option><option value="asc" ${sortOrder === "asc" ? "selected" : ""}>升序</option></select></label><button type="button" class="quiet" data-action="detail-clear" data-page-id="ledger-reviews">清空</button><button class="primary">查询</button><button type="button" class="primary" data-action="new-economic-review">新建 Review</button></form>`;
   return detailListView({ active: "ledger-reviews", toolbar, title: "Review", description: "Review 是 Allocation 的集合；Fact 与 Ledger 关系必须通过 Allocation 解释。", total: result.total, headers: ["更新时间", "审查", "状态", "账本数量", "分配数量", "版本", ""], rows, footer: detailPager(result, "ledger-reviews") });
 }
 
@@ -935,7 +949,10 @@ async function reviewsPage() {
     page: state.params.get("review_page") || "1",
     page_size: "25",
   });
-  if (state.params.get("status")) reviewQuery.set("status", state.params.get("status"));
+  reviewQuery.set("filter", JSON.stringify({
+    exclude_behavior_code: "DEFAULT",
+    ...(state.params.get("status") ? { status: state.params.get("status") } : {}),
+  }));
   const conflictQuery = new URLSearchParams({
     page: state.params.get("conflict_page") || "1",
     page_size: "25",
@@ -944,7 +961,7 @@ async function reviewsPage() {
   const [result, candidates, pending, conflicts] = await Promise.all([
     request(`/paam/ledger/v1/review/list?${reviewQuery}`),
     loadFactCandidates(500),
-    request("/paam/ledger/v1/review/list?page=1&page_size=1&status=PENDING"),
+    request(`/paam/ledger/v1/review/list?${new URLSearchParams({ page: "1", page_size: "1", filter: JSON.stringify({ status: "PENDING", exclude_behavior_code: "DEFAULT" }) })}`),
     request(`/paam/review/v1/case/page?${conflictQuery}`),
   ]);
   const rows = result.items.map((item) => `<tr><td>${item.id}</td><td><strong>${esc(item.behavior_code || "未说明行为")}</strong><br><small>${esc(item.title || "未填写说明")}</small></td><td><span class="badge ${item.status === "PENDING" ? "warn" : "neutral"}">${esc(statusNames[item.status] || item.status)}</span></td><td>${item.economic_count}</td><td>${item.allocation_count}</td><td>v${item.version}</td><td><button data-action="economic-review-detail" data-id="${item.id}">处理 / 详情</button></td></tr>`);
