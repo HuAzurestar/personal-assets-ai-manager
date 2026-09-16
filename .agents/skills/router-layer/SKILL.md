@@ -71,6 +71,11 @@ description: Change PAAM FastAPI routers, URL modules or versions, HTTP endpoint
 - Fact Conflict list and detail services must constrain reads to
   `review_type == FACT_CONFLICT`; an Import endpoint must never become a
   generic back door to Account or Ledger Review records.
+- Canonical Import File inspection uses `GET /import_file/list`,
+  `GET /import_file/{import_file_id}`, and
+  `GET /import_file/{import_file_id}/transaction_fact/list`. The optional
+  filtered aggregate is `GET /import_file/summary`; keep summary counts out of
+  individual PO rows.
 
 ## Caller migration safety
 

@@ -117,6 +117,39 @@ def test_import_file_list_is_a_pure_filterable_po_list(import_file_api):
     }
 
 
+def test_import_file_summary_uses_the_same_search_and_filter_contract(
+    import_file_api,
+):
+    client, sessions = import_file_api
+    _seed(sessions)
+
+    response = client.get(
+        "/paam/import/v1/import_file/summary",
+        params={
+            "q": "september",
+            "filter": '{"source_type":"wechat","status":"IMPORTED"}',
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == 200
+    assert response.json()["body"] == {
+        "import_file_count": 1,
+        "imported_file_count": 1,
+        "row_count": 1,
+        "success_count": 1,
+        "skip_count": 0,
+        "issue_count": 0,
+        "q": "september",
+        "filter": {
+            "source_type": "wechat",
+            "institution_code": None,
+            "file_format": None,
+            "status": "IMPORTED",
+        },
+    }
+
+
 def test_import_file_detail_has_a_paged_transaction_fact_subresource(
     import_file_api,
 ):

@@ -12,6 +12,7 @@ from backend.schema.import_file import (
     ImportFileFilter,
     ImportFilePageResponse,
     ImportFileSorter,
+    ImportFileSummaryResponse,
     ImportFileTransactionFactPageResponse,
 )
 from backend.schema.list_query import parse_query_object
@@ -45,6 +46,22 @@ def import_file_list(
             q=q.strip(),
             filter_value=filter_value,
             sorter=sorter_value,
+        ),
+    )
+
+
+@router.get("/import_file/summary", response_model=ImportFileSummaryResponse)
+def import_file_summary(
+    q: str = Query(default="", max_length=200),
+    filter: str = Query(default="{}"),
+    db: Session = Depends(get_db),
+):
+    filter_value = parse_query_object(filter, ImportFileFilter, "filter")
+    return ImportFileSummaryResponse(
+        message="Import file summary returned",
+        body=ImportFileService(db).summary(
+            q=q.strip(),
+            filter_value=filter_value,
         ),
     )
 

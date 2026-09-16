@@ -40,6 +40,7 @@ def test_openapi_locks_canonical_ledger_v1_contract():
         "/paam/import/v1/fact_conflict/{conflict_id}/resolve",
         "/paam/import/v1/fact_conflict/{conflict_id}/dismiss",
         "/paam/import/v1/fact_conflict/{conflict_id}/reopen",
+        "/paam/import/v1/import_file/summary",
         "/paam/review/v1/account/set/{fact_id}",
     } <= paths
     assert "/paam/review/v1/case/page" not in paths
@@ -58,6 +59,7 @@ def test_openapi_locks_canonical_ledger_v1_contract():
         "TargetFactAllocationCandidatePageResponse",
         "ImportFactConflictResponse",
         "ImportFactConflictPageResponse",
+        "ImportFileSummaryResponse",
     ):
         assert schemas[name]["properties"]["status"]["const"] == 200
 

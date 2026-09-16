@@ -61,6 +61,23 @@ class ImportFilePageResponse(BaseModel):
     body: ImportFilePageRead
 
 
+class ImportFileSummaryRead(BaseModel):
+    import_file_count: int
+    imported_file_count: int
+    row_count: int
+    success_count: int
+    skip_count: int
+    issue_count: int
+    q: str
+    filter: ImportFileFilter
+
+
+class ImportFileSummaryResponse(BaseModel):
+    status: Literal[200] = 200
+    message: str = "ok"
+    body: ImportFileSummaryRead
+
+
 class ImportFileDetailRead(BaseModel):
     import_file: ImportFileRead
 

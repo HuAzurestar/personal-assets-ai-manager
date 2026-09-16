@@ -11,6 +11,7 @@ from backend.schema.import_file import (
     ImportFilePageRead,
     ImportFileRead,
     ImportFileSorter,
+    ImportFileSummaryRead,
     ImportFileTransactionFactPageRead,
 )
 from backend.schema.transaction_fact import (
@@ -51,6 +52,18 @@ class ImportFileService:
             q=q,
             filter=filter_value,
             sorter=sorter,
+        )
+
+    def summary(
+        self,
+        *,
+        q: str,
+        filter_value: ImportFileFilter,
+    ) -> ImportFileSummaryRead:
+        return ImportFileSummaryRead(
+            **self.mapper.summary(q, filter_value),
+            q=q,
+            filter=filter_value,
         )
 
     def detail(self, import_file_id: int) -> ImportFileDetailRead:
