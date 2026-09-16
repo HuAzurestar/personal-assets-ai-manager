@@ -163,9 +163,9 @@ function renderPageActions(page) {
 async function summaryPage() {
   state.accountMonth = cursorFromParam(state.params.get("month"), state.accountMonth);
   const range = monthBounds(state.accountMonth);
-  const makePath = (page) => `/paam/ledger/v2/entry/list?${new URLSearchParams({ page, page_size: "100", date_from: range.from, date_to: range.to })}`;
+  const makePath = (page) => `/paam/ledger/v1/flow/list?${new URLSearchParams({ page, page_size: "100", date_from: range.from, date_to: range.to })}`;
   const [economicSummary, first] = await Promise.all([
-    request(`/paam/ledger/v2/summary?${new URLSearchParams({ date_from: range.from, date_to: range.to })}`),
+    request(`/paam/ledger/v1/flow/summary?${new URLSearchParams({ date_from: range.from, date_to: range.to })}`),
     request(makePath(1)),
   ]);
   const pages = Math.ceil(first.total / 100);
@@ -255,8 +255,21 @@ function detailPager(result, pageId) {
   return `<div class="pagination ledger-pagination"><span class="range">${start}–${end} / ${result.total}</span><div class="page-buttons"><button data-action="detail-page" data-page-id="${pageId}" data-value="${result.page - 1}" ${result.page <= 1 ? "disabled" : ""}>上一页</button><span>第 ${result.page} / ${pages} 页</span><button data-action="detail-page" data-page-id="${pageId}" data-value="${result.page + 1}" ${result.page >= pages ? "disabled" : ""}>下一页</button></div></div>`;
 }
 
+async function loadFactCandidates(maxItems) {
+  const items = [];
+  const pageSize = Math.min(maxItems, 100);
+  let page = 1;
+  while (items.length < maxItems) {
+    const result = await request(`/paam/ledger/v1/fact/list?${new URLSearchParams({ page, page_size: pageSize })}`);
+    items.push(...result.items);
+    if (!result.items.length || items.length >= result.total) break;
+    page += 1;
+  }
+  return items.slice(0, maxItems);
+}
+
 async function ledgerPage() {
-  const facts = await request("/paam/review/v2/fact/candidates?limit=500");
+  const facts = await loadFactCandidates(500);
   const q = (state.params.get("q") || "").trim().toLowerCase();
   const currency = (state.params.get("currency_code") || "").trim().toUpperCase();
   const dateFrom = state.params.get("date_from") || "";
@@ -294,23 +307,24 @@ function showFactDetail(id) {
 
 async function economicPage() {
   const query = new URLSearchParams();
-  for (const name of ["page", "page_size", "q", "currency_code", "date_from", "date_to", "entry_type"]) {
+  for (const name of ["page", "page_size", "q", "currency_code", "date_from", "date_to"]) {
     for (const value of state.params.getAll(name)) if (value) query.append(name, value);
   }
+  const selectedType = state.params.get("entry_type") || "";
+  if (selectedType in entryTypeCodes) query.set("economic_type", entryTypeCodes[selectedType]);
   if (!query.has("page")) query.set("page", "1");
   if (!query.has("page_size")) query.set("page_size", "25");
-  const result = await request(`/paam/ledger/v2/entry/list?${query}`);
+  const result = await request(`/paam/ledger/v1/flow/list?${query}`);
   state.detailEconomics = new Map(result.items.map((item) => [item.id, item]));
   const rows = result.items.map((item) => `<tr class="detail-click-row" tabindex="0" data-economic-row="${item.id}">
     <td>${date(item.occurred_time)}</td><td><button type="button" class="detail-primary" data-action="economic-detail" data-id="${item.id}"><strong>账本流水 #${item.id}</strong><small>${esc(item.account_code)}</small></button></td><td>${esc(typeNames[entryTypeCodes[item.entry_type]] || entryTypeCodes[item.entry_type])}</td><td>${item.entry_direction === 1 ? "流入" : "流出"}</td><td class="money ${item.entry_direction === 1 ? "income" : "expense"}">${signedMoney(item.amount, entryDirection(item.entry_direction))}</td><td>${tags(item)}</td><td class="detail-arrow">→</td>
   </tr>`).join("");
-  const selectedType = state.params.get("entry_type") || "";
   const toolbar = `<form class="detail-filter" data-form="economic-filter"><label class="grow">搜索<input name="q" value="${esc(state.params.get("q") || "")}" placeholder="审查说明、交易方或摘要"></label><label>账本类型<select name="entry_type"><option value="">全部类型</option>${Object.entries(entryTypeCodes).map(([value, code]) => `<option value="${value}" ${selectedType === value ? "selected" : ""}>${esc(typeNames[code] || code)}</option>`).join("")}</select></label><label>币种<input name="currency_code" maxlength="12" value="${esc(state.params.get("currency_code") || "")}" placeholder="全部币种"></label><button type="button" class="quiet" data-action="detail-clear" data-page-id="economy">清空</button><button class="primary">筛选</button></form>`;
   return detailList({ active: "economy", toolbar, title: "经济流水", description: "已生效的最终经济结果；每笔都可追溯到审查、Allocation 与事实。", total: result.total, headers: ["发生时间", "经济结果", "类型", "方向", "金额", "标签", ""], rows, footer: detailPager(result, "economy") });
 }
 
 async function showEconomicDetail(id) {
-  const detail = await request(`/paam/ledger/v2/entry/detail/${id}`);
+  const detail = await request(`/paam/ledger/v1/flow/${id}`);
   const flow = detail.entry;
   const allocations = detail.allocations.map((item) => `<div class="drawer-review-row"><span><strong>Allocation #${item.id}</strong><small>Fact #${item.transaction_fact_id} → Ledger #${item.ledger_entry_id}</small></span><strong>${money(item.amount)}</strong></div>`).join("");
   const facts = detail.facts.map((item) => `<div class="drawer-review-row"><span><strong>Fact #${item.id} · ${esc(item.summary || item.counterparty)}</strong><small>${date(item.occurred_time)} · 导入账户 ${esc(item.account_code)}</small></span><strong>${money(item.amount)}</strong><button type="button" class="quiet" data-action="account" data-fact="${item.id}" data-ledger="${flow.id}" data-version="${item.account_review_version}" data-account="${esc(flow.account_code)}">修正账户</button></div>`).join("");
@@ -336,7 +350,7 @@ function showSummaryDetail(type) {
 async function ledgerReviewsPage() {
   const query = new URLSearchParams({ page: state.params.get("page") || "1", page_size: "20" });
   if (state.params.get("status")) query.set("status", state.params.get("status"));
-  const result = await request(`/paam/review/v2/case/page?${query}`);
+  const result = await request(`/paam/ledger/v1/review/list?${query}`);
   state.detailEconomicReviews = new Map(result.items.map((item) => [item.id, item]));
   const rows = result.items.map((item) => `<tr class="detail-click-row" tabindex="0" data-review-row="${item.id}">
     <td>${date(item.updated_time)}</td><td><button type="button" class="detail-primary" data-action="economic-review-detail" data-id="${item.id}"><strong>${esc(item.title || "未填写标题")}</strong><small>#${item.id} · ${item.behavior_type === 1 ? "借钱 / 还钱" : "正常交易"}</small></button></td>
@@ -347,7 +361,7 @@ async function ledgerReviewsPage() {
 }
 
 async function showEconomicReview(id) {
-  const item = await request(`/paam/review/v2/case/detail/${id}`);
+  const item = await request(`/paam/ledger/v1/review/${id}`);
   const economics = item.ledger_entries.map((flow) => {
     const typeCode = entryTypeCodes[flow.entry_type];
     return `<div class="drawer-review-row"><span><strong>Ledger #${flow.id} · ${esc(typeNames[typeCode] || typeCode)}</strong><small>${flow.entry_direction === 1 ? "流入" : "流出"} · ${esc(flow.currency_code)}</small></span><strong>${money({ amount_value: flow.amount_value, amount_scale: flow.amount_scale, currency_code: flow.currency_code })}</strong></div>`;
@@ -364,14 +378,14 @@ async function showEconomicReview(id) {
 async function transitionEconomicReview(button) {
   const labels = { revoke: "撤销", restore: "恢复" };
   if (!confirm(`${labels[button.dataset.kind]}这次经济审查？`)) return;
-  await jsonRequest(`/paam/review/v2/case/${button.dataset.kind}/${button.dataset.id}`, "POST", { reason: `人工${labels[button.dataset.kind]}经济审查`, idempotency_key: key() });
+  await jsonRequest(`/paam/ledger/v1/review/${button.dataset.id}/${button.dataset.kind}`, "POST", { reason: `人工${labels[button.dataset.kind]}经济审查`, idempotency_key: key() });
   closeDialogs();
   toast(`${labels[button.dataset.kind]}完成，经济流水已重新投影`);
   await render();
 }
 
 async function openEconomicReviewEditor() {
-  const facts = await request("/paam/review/v2/fact/candidates?limit=100");
+  const facts = await loadFactCandidates(100);
   if (!facts.length) throw new Error("当前没有可分配的事实流水");
   const selected = new Set();
   const values = new Map();
@@ -442,7 +456,7 @@ async function openEconomicReviewEditor() {
         client_key: item.key,
         entry_type: entryTypeValues[data.get(`type-${item.key}`)],
       }));
-      const created = await jsonRequest("/paam/review/v2/case/create", "POST", {
+      const created = await jsonRequest("/paam/ledger/v1/review", "POST", {
         behavior_type: Number(data.get("behavior_type")),
         title: data.get("title") || "",
         entries: definitions, allocations,
@@ -464,7 +478,8 @@ async function ledgerImportsPage() {
   const query = new URLSearchParams({ page: state.params.get("page") || "1", page_size: "20" });
   if (state.params.get("q")) query.set("q", state.params.get("q"));
   if (state.params.get("account")) query.set("account", state.params.get("account"));
-  const [result, accounts] = await Promise.all([request(`/paam/import/v1/batch/list?${query}`), request("/paam/import/v1/account/list")]);
+  const [result, accountPage] = await Promise.all([request(`/paam/import/v1/batch/list?${query}`), request("/paam/import/v1/account/list?page=1&page_size=100")]);
+  const accounts = accountPage.items;
   state.historyAccountNames = new Map(accounts.map((account) => [account.identity, account.display_name || account.identity]));
   const rows = result.items.map((item) => {
     const accountLabels = (item.account_codes || []).map((identity) => state.historyAccountNames.get(identity) || identity).join("、") || "未识别";
@@ -476,7 +491,8 @@ async function ledgerImportsPage() {
 }
 
 async function ledgerTagsPage() {
-  const views = await request("/paam/tag/v1/view/list?include_archived=true");
+  const viewPage = await request("/paam/tag/v1/view/list?page=1&page_size=100&include_archived=true");
+  const views = viewPage.items;
   state.detailTagViews = new Map(views.map((view) => [view.id, view]));
   const rows = views.map((view) => `<tr class="detail-click-row" tabindex="0" data-tag-view-row="${view.id}"><td><button type="button" class="detail-primary" data-action="tag-view-detail" data-id="${view.id}"><strong>${esc(view.name)}</strong><small>${esc(view.system_name)}</small></button></td><td>${view.tags.length}</td><td><div class="tag-list">${view.tags.slice(0, 5).map((tag) => `<span class="tag">${esc(tag.name)}</span>`).join("")}${view.tags.length > 5 ? `<span class="muted">+${view.tags.length - 5}</span>` : ""}</div></td><td><span class="badge neutral">${esc(statusNames[view.status] || view.status)}</span></td><td class="detail-arrow">→</td></tr>`).join("");
   return detailList({ active: "ledger-tags", title: "分类标签", description: "查看维度、标签值和启用状态；维护操作仍使用 v1 接口。", total: views.length, headers: ["维度", "标签数", "标签值", "状态", ""], rows });
@@ -491,14 +507,15 @@ function showTagViewDetail(id) {
 
 async function editTags(ledgerId) {
   const renderVersion = state.renderVersion;
-  const [views, detail] = await Promise.all([
-    request("/paam/tag/v1/view/list"),
-    request(`/paam/ledger/v2/entry/detail/${ledgerId}`),
+  const [viewPage, detail] = await Promise.all([
+    request("/paam/tag/v1/view/list?page=1&page_size=100"),
+    request(`/paam/ledger/v1/flow/${ledgerId}`),
   ]);
+  const views = viewPage.items;
   if (renderVersion !== state.renderVersion) return;
   if (!views.length) return toast("请先创建标签维度", true);
   const current = Object.fromEntries(detail.entry.tags.map((item) => [item.view_system_name, item.tag_system_name]));
-  const dialog = modal("编辑最终流水标签", `<form data-form="tag-assignment" data-ledger="${ledgerId}" data-version="${detail.tag_review_version}" class="stack">${views.map((view) => `<label>${esc(view.name)}<select name="${esc(view.system_name)}">${view.tags.map((tag) => `<option value="${esc(tag.system_name)}" ${(current[view.system_name] || "unclassified") === tag.system_name ? "selected" : ""}>${esc(tag.name)}</option>`).join("")}</select></label>`).join("")}<label>修改原因<input name="reason" value="用户修订标签"></label><div class="actions"><button class="primary">保存标签</button></div></form>`);
+  const dialog = modal("编辑最终流水标签", `<form data-form="tag-assignment" data-ledger="${ledgerId}" class="stack">${views.map((view) => `<label>${esc(view.name)}<select name="${esc(view.system_name)}">${view.tags.map((tag) => `<option value="${esc(tag.system_name)}" ${(current[view.system_name] || "unclassified") === tag.system_name ? "selected" : ""}>${esc(tag.name)}</option>`).join("")}</select></label>`).join("")}<div class="actions"><button class="primary">保存标签</button></div></form>`);
   bindPage(dialog);
 }
 
@@ -591,10 +608,11 @@ function historyResultsMarkup(result) {
 }
 
 async function importHistoryPage() {
-  const [result, accounts] = await Promise.all([
+  const [result, accountPage] = await Promise.all([
     request("/paam/import/v1/batch/list?page=1&page_size=10"),
-    request("/paam/import/v1/account/list"),
+    request("/paam/import/v1/account/list?page=1&page_size=100"),
   ]);
+  const accounts = accountPage.items;
   state.historyAccountNames = new Map(accounts.map((account) => [account.identity, account.display_name || account.identity]));
   const accountOptions = accounts.map((account) => `<option value="${esc(account.identity)}">${esc(account.display_name || account.identity)}</option>`).join("");
   return `<div class="history-summary" data-history-summary>${historySummaryMarkup(result)}</div><section class="panel history-panel"><div class="section-head"><div><h2>导入批次</h2><p class="import-section-help">搜索和账户筛选只更新下方结果，不会刷新页面或打断输入。</p></div><button class="primary" data-page="import">＋ 导入新数据</button></div><form class="toolbar history-toolbar" data-form="history-filter"><label class="grow">搜索<input name="q" placeholder="文件名、来源或批次编号" autocomplete="off"></label><label>来源账户<select name="account"><option value="">全部账户</option>${accountOptions}</select></label><span class="history-updating" data-history-updating aria-live="polite"></span></form><div data-history-results>${historyResultsMarkup(result)}</div></section>`;
@@ -610,7 +628,7 @@ async function refreshHistoryResults(form, page = 1) {
   const query = form.elements.q.value.trim();
   const account = form.elements.account.value;
   if (query) params.set("q", query);
-  if (account) params.set("account", account);
+  if (account) params.set("account_code", account);
   const resultsRoot = $("[data-history-results]");
   const summaryRoot = $("[data-history-summary]");
   const updating = $("[data-history-updating]", form);
@@ -668,7 +686,7 @@ async function renderImportBatchDrawer(dialog) {
   body.innerHTML = '<div class="preview-drawer-loading">正在读取当前页…</div>';
   range.textContent = "正在读取当前页…";
   try {
-    const result = await request(`/paam/import/v1/batch/row/list?batch_id=${dialog.dataset.batchId}&page=${page}&page_size=${pageSize}`, {
+    const result = await request(`/paam/import/v1/batch/${dialog.dataset.batchId}/row/list?page=${page}&page_size=${pageSize}`, {
       signal: controller.signal,
     });
     if (!dialog.open || dialog.requestController !== controller) return;
@@ -875,7 +893,8 @@ async function reviseImport(event) {
 }
 
 async function tagsPage() {
-  const views = await request("/paam/tag/v1/view/list?include_archived=true");
+  const viewPage = await request("/paam/tag/v1/view/list?page=1&page_size=100&include_archived=true");
+  const views = viewPage.items;
   const activeCount = views.filter((view) => view.status === "ACTIVE").length;
   const cards = views.map((view) => {
     const isActive = view.status === "ACTIVE";
@@ -903,9 +922,9 @@ async function reviewsPage() {
     review_type: "FACT_CONFLICT",
   });
   const [result, candidates, pending, conflicts] = await Promise.all([
-    request(`/paam/review/v2/case/page?${reviewQuery}`),
-    request("/paam/review/v2/fact/candidates?limit=500"),
-    request("/paam/review/v2/case/page?page=1&page_size=20"),
+    request(`/paam/ledger/v1/review/list?${reviewQuery}`),
+    loadFactCandidates(500),
+    Promise.resolve({ total: 0 }),
     request(`/paam/review/v1/case/page?${conflictQuery}`),
   ]);
   const rows = result.items.map((item) => `<tr><td>${item.id}</td><td><strong>${item.behavior_type === 1 ? "借钱 / 还钱" : "正常交易"}</strong><br><small>${esc(item.title || "未填写标题")}</small></td><td><span class="badge neutral">${esc(statusNames[item.status] || item.status)}</span></td><td>${item.ledger_entry_count}</td><td>${item.allocation_count}</td><td><button data-action="economic-review-detail" data-id="${item.id}">处理 / 详情</button></td></tr>`);
@@ -1250,10 +1269,9 @@ function bindPage(root) {
 
 async function submitTags(event) {
   event.preventDefault(); const form = event.currentTarget; const data = new FormData(form);
-  const idempotencyKey = beginSubmit(form); if (!idempotencyKey) return;
-  const reason = data.get("reason"); data.delete("reason");
+  if (!beginSubmit(form)) return;
   try {
-    await jsonRequest(`/paam/tag/v1/assignment/set/${form.dataset.ledger}`, "PUT", { tag_state: Object.fromEntries(data), expected_version: Number(form.dataset.version), reason, idempotency_key: idempotencyKey });
+    await jsonRequest(`/paam/tag/v1/assignment/${form.dataset.ledger}`, "PUT", { tag_state: Object.fromEntries(data) });
     closeDialogs(); toast("标签已保存"); await render();
   } catch (error) { endSubmit(form); showFormError(form, error); }
 }
@@ -1270,7 +1288,7 @@ async function confirmImport() {
   state.confirmingImport = true;
   const button = $('[data-action="confirm-import"]');
   if (button) button.disabled = true;
-  try { const result = await jsonRequest(`/paam/import/v1/preview/confirm/${state.importPlan.token}`, "POST", { version: state.importPlan.version }); state.importPlan = null; toast(`导入完成：${result.bill_fact_ids?.length || 0} 条新事实`); route("import-history"); } catch (error) { if (button) button.disabled = false; const form = button?.closest("form"); if (form) showFormError(form, error); else toast(error.message, true); }
+  try { const result = await jsonRequest(`/paam/import/v1/preview/${state.importPlan.token}/confirm`, "POST", { version: state.importPlan.version }); state.importPlan = null; toast(`导入完成：${result.bill_fact_ids?.length || 0} 条新事实`); route("import-history"); } catch (error) { if (button) button.disabled = false; const form = button?.closest("form"); if (form) showFormError(form, error); else toast(error.message, true); }
   finally { state.confirmingImport = false; }
 }
 function simpleDictionaryDialog(kind, viewId = "") {
@@ -1282,7 +1300,7 @@ async function submitInlineTag(event) {
   const payload = Object.fromEntries(new FormData(form));
   if (!beginSubmit(form)) return;
   try {
-    await jsonRequest(`/paam/tag/v1/tag/create/${form.dataset.view}`, "POST", payload);
+    await jsonRequest(`/paam/tag/v1/view/${form.dataset.view}/tag`, "POST", payload);
     toast(`标签“${payload.name}”已添加`);
     await render();
   } catch (error) {
@@ -1293,13 +1311,13 @@ async function submitInlineTag(event) {
 async function submitDictionary(event) {
   event.preventDefault(); const form = event.currentTarget; const payload = Object.fromEntries(new FormData(form));
   if (!beginSubmit(form)) return;
-  const url = form.dataset.kind === "view" ? "/paam/tag/v1/view/create" : `/paam/tag/v1/tag/create/${form.dataset.view}`;
+  const url = form.dataset.kind === "view" ? "/paam/tag/v1/view" : `/paam/tag/v1/view/${form.dataset.view}/tag`;
   try { await jsonRequest(url, "POST", payload); form.closest("dialog").close(); toast("标签定义已保存"); await render(); } catch (error) { endSubmit(form); showFormError(form, error); }
 }
 async function dictionaryStatus(kind, button) {
   if (button.disabled) return;
   button.disabled = true;
-  const url = kind === "view" ? `/paam/tag/v1/view/status/${button.dataset.id}` : `/paam/tag/v1/tag/status/${button.dataset.view}/${button.dataset.id}`;
+  const url = kind === "view" ? `/paam/tag/v1/view/${button.dataset.id}` : `/paam/tag/v1/view/${button.dataset.view}/tag/${button.dataset.id}`;
   try { await jsonRequest(url, "PUT", { status: button.dataset.status }); toast("状态已更新"); await render(); }
   catch (error) { button.disabled = false; throw error; }
 }
@@ -1315,7 +1333,7 @@ async function transitionConflict(button) {
   if (button.disabled) return;
   button.disabled = true;
   try {
-    await jsonRequest(`/paam/review/v1/fact-conflict/${button.dataset.kind}/${button.dataset.id}`, "POST", { expected_version: Number(button.dataset.version), reason: "用户处理事实冲突", idempotency_key: key() });
+    await jsonRequest(`/paam/import/v1/fact-conflict/${button.dataset.id}/${button.dataset.kind}`, "POST", { expected_version: Number(button.dataset.version), reason: "用户处理事实冲突", idempotency_key: key() });
     closeDialogs(); toast("冲突状态已更新"); await render();
   } catch (error) { button.disabled = false; throw error; }
 }
@@ -1326,7 +1344,7 @@ async function submitConflict(event) {
   event.preventDefault(); const form = event.currentTarget; const data = Object.fromEntries(new FormData(form));
   const idempotencyKey = beginSubmit(form); if (!idempotencyKey) return;
   data.existing_bill_id = data.existing_bill_id ? Number(data.existing_bill_id) : 0;
-  try { await jsonRequest(`/paam/review/v1/fact-conflict/resolve/${form.dataset.id}`, "POST", { ...data, expected_version: Number(form.dataset.version), idempotency_key: idempotencyKey }); closeDialogs(); toast("事实冲突已解决"); await render(); } catch (error) { endSubmit(form); showFormError(form, error); }
+  try { await jsonRequest(`/paam/import/v1/fact-conflict/${form.dataset.id}/resolve`, "POST", { ...data, expected_version: Number(form.dataset.version), idempotency_key: idempotencyKey }); closeDialogs(); toast("事实冲突已解决"); await render(); } catch (error) { endSubmit(form); showFormError(form, error); }
 }
 
 $$('[data-page]').forEach((button) => button.onclick = () => route(button.dataset.page));

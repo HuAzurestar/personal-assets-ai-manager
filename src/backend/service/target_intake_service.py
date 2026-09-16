@@ -10,6 +10,7 @@ from backend.core.intake_preview_store import (
     IntakePreviewState,
     target_intake_preview_store,
 )
+from backend.error import TargetIntakeError
 from backend.mapper.target_intake_mapper import TargetIntakeMapper
 from backend.schema.intake import (
     IntakeConfirmRequest,
@@ -19,12 +20,6 @@ from backend.schema.intake import (
 from backend.smart_import import public_plan
 from backend.parser.statement_parser import parse_statement
 from backend.service.target_economic_service import TargetEconomicService
-
-
-class TargetIntakeError(Exception):
-    def __init__(self, status_code: int, message: str):
-        super().__init__(message)
-        self.status_code = status_code
 
 
 class TargetIntakeService:
@@ -127,14 +122,14 @@ class TargetIntakeService:
     def history(
         self,
         page: int = 1,
-        page_size: int = 10,
+        page_size: int = 20,
         q: str = "",
-        account: str = "",
+        account_code: str = "",
     ) -> dict[str, object]:
-        return self.mapper.history(page, page_size, q, account)
+        return self.mapper.history(page, page_size, q, account_code)
 
-    def accounts(self) -> list[dict[str, object]]:
-        return self.mapper.accounts()
+    def accounts(self, page: int, page_size: int) -> dict[str, object]:
+        return self.mapper.accounts(page, page_size)
 
     def rows(
         self,

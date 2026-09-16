@@ -1,21 +1,23 @@
-"""PIRC-9 API application backed by exactly the 11 ledger tables."""
+"""PIRC-9 API application backed by the fresh target ledger schema."""
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 
-from backend.router.target_intake import router as target_intake_router
-from backend.router.target_economic import router as target_economic_router
-from backend.router.target_review import v2_router as economic_review_router
-from backend.router.target_tag import router as target_tag_router
 from backend.core import target_database
 from backend.core.config import APP_DISPLAY_NAME, RESOURCE_DIR
-
-
-templates = Jinja2Templates(directory=RESOURCE_DIR / "frontend")
+from backend.router.error import register_error_handlers
+from backend.router.import_conflict import router as import_conflict_router
+from backend.router.import_router import router as import_router
+from backend.router.ledger import router as ledger_router
+from backend.router.ledger_account import router as ledger_account_router
+from backend.router.ledger_fact import router as ledger_fact_router
+from backend.router.ledger_review import router as ledger_review_router
+from backend.router.ledger_review_legacy import router as ledger_review_legacy_router
+from backend.router.system import router as system_router
+from backend.router.tag import router as tag_router
+from backend.router.tag_assignment import router as tag_assignment_router
 
 
 @asynccontextmanager
@@ -29,23 +31,16 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+register_error_handlers(app)
 app.mount("/static", StaticFiles(directory=RESOURCE_DIR / "frontend"), name="static")
 app.mount("/asset", StaticFiles(directory=RESOURCE_DIR / "asset"), name="asset")
-app.include_router(target_intake_router)
-app.include_router(target_economic_router)
-app.include_router(economic_review_router)
-app.include_router(target_tag_router)
-
-
-@app.get("/", response_class=HTMLResponse)
-def home(request: Request):
-    return templates.TemplateResponse(
-        request=request,
-        name="target.html",
-        context={"app_name": APP_DISPLAY_NAME},
-    )
-
-
-@app.get("/api/health")
-def health():
-    return {"status": "ok", "schema": "pirc-9-target"}
+app.include_router(import_router)
+app.include_router(import_conflict_router)
+app.include_router(ledger_router)
+app.include_router(ledger_review_router)
+app.include_router(ledger_review_legacy_router)
+app.include_router(ledger_fact_router)
+app.include_router(ledger_account_router)
+app.include_router(tag_router)
+app.include_router(tag_assignment_router)
+app.include_router(system_router)

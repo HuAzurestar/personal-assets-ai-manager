@@ -7,6 +7,7 @@ from datetime import datetime
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
+from backend.error import TargetEconomicError
 from backend.mapper.target_economic_mapper import TargetEconomicMapper
 from backend.schema.target_review import (
     TargetEconomicReviewCreateRequest,
@@ -16,17 +17,12 @@ from backend.schema.target_review import (
     TargetEconomicReviewTransitionRequest,
     TargetEconomicReviewUpdateRequest,
     TargetFactAllocationCandidateRead,
+    TargetFactAllocationCandidatePageRead,
     TargetReviewFactVO,
     TargetReviewTransitionRequest,
 )
 from backend.service.target_tag_projection_service import TargetTagProjectionService
 from backend.service.target_account_projection_service import TargetAccountProjectionService
-
-
-class TargetEconomicError(Exception):
-    def __init__(self, status_code: int, message: str):
-        super().__init__(message)
-        self.status_code = status_code
 
 
 class TargetEconomicService:
@@ -63,24 +59,9 @@ class TargetEconomicService:
                 ))
         self.mapper.create_defaults(defaults, now)
         self._assert_exact(facts)
-        self.tags.sync_economics(self.mapper.active_economic_facts(fact_ids))
+        self.tags.sync_ledgers(list(self.mapper.active_economic_facts(fact_ids)))
         if commit:
             self.mapper.commit()
-
-    def backfill_defaults(self) -> None:
-        """Advance facts from an older database into the strict v2 invariant."""
-
-        try:
-            self.mapper.begin_write()
-            fact_ids = self.mapper.all_fact_ids()
-            if not fact_ids:
-                self.mapper.commit()
-                return
-            self.ensure_defaults(fact_ids)
-            self.mapper.commit()
-        except Exception:
-            self.mapper.rollback()
-            raise
 
     def page(self, page: int, page_size: int, status: int | None = None) -> TargetEconomicReviewPageRead:
         rows, total = self.mapper.review_page(page, page_size, status)
@@ -96,6 +77,19 @@ class TargetEconomicService:
             TargetFactAllocationCandidateRead(**row)
             for row in self.mapper.fact_candidates(limit)
         ]
+
+    def fact_candidate_page(
+        self,
+        page: int,
+        page_size: int,
+    ) -> TargetFactAllocationCandidatePageRead:
+        rows, total = self.mapper.fact_candidate_page(page, page_size)
+        return TargetFactAllocationCandidatePageRead(
+            items=[TargetFactAllocationCandidateRead(**row) for row in rows],
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
 
     def create(self, payload: TargetEconomicReviewCreateRequest) -> TargetEconomicReviewRead:
         request_json = self._canonical({"operation": "CREATE", **payload.model_dump(mode="json")})
@@ -159,7 +153,7 @@ class TargetEconomicService:
             ):
                 raise TargetEconomicError(409, "review changed while it was being published")
             self._assert_exact(facts)
-            self.tags.sync_economics(self.mapper.active_economic_facts(fact_ids))
+            self.tags.sync_ledgers(list(self.mapper.active_economic_facts(fact_ids)))
             self.mapper.commit()
             return self._required(case_id)
         except TargetEconomicError:
@@ -247,7 +241,7 @@ class TargetEconomicService:
             ):
                 raise TargetEconomicError(409, "review version changed; reload before confirming")
             self._assert_exact(facts)
-            self.tags.sync_economics(self.mapper.active_economic_facts(fact_ids))
+            self.tags.sync_ledgers(list(self.mapper.active_economic_facts(fact_ids)))
             self.mapper.commit()
             return self._required(case_id)
         except TargetEconomicError:
@@ -359,7 +353,9 @@ class TargetEconomicService:
             ):
                 raise TargetEconomicError(409, "review version changed; reload before revoking")
             self._assert_exact(facts)
-            self.tags.sync_economics(self.mapper.active_economic_facts(sorted(released)))
+            self.tags.sync_ledgers(list(
+                self.mapper.active_economic_facts(sorted(released))
+            ))
             self.mapper.commit()
             return self._required(case_id)
         except TargetEconomicError:
@@ -430,7 +426,7 @@ class TargetEconomicService:
             ):
                 raise TargetEconomicError(409, "review changed while it was being restored")
             self._assert_exact(facts)
-            self.tags.sync_economics(self.mapper.active_economic_facts(fact_ids))
+            self.tags.sync_ledgers(list(self.mapper.active_economic_facts(fact_ids)))
             self.mapper.commit()
             return self._required(case_id)
         except TargetEconomicError:

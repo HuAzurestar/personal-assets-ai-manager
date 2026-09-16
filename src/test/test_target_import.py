@@ -110,7 +110,7 @@ def _preview(client, filename: str, content: bytes, password: str | None = None)
 
 def _confirm(client, preview):
     return client.post(
-        f"/paam/import/v1/preview/confirm/{preview['token']}",
+        f"/paam/import/v1/preview/{preview['token']}/confirm",
         json={"version": preview["version"]},
     )
 
@@ -135,11 +135,11 @@ def test_target_import_writes_fact_evidence_and_hot_projection(target_import_api
     assert set(inspect(engine).get_table_names()) == set(
         target_database.TARGET_TABLE_NAMES
     )
-    ledger_v2 = client.get("/paam/ledger/v2/entry/list")
+    ledger_v2 = client.get("/paam/ledger/v1/flow/list")
     assert ledger_v2.status_code == 200, ledger_v2.text
-    assert ledger_v2.json()["total"] == 1
-    assert ledger_v2.json()["items"][0]["entry_type"] == 0
-    assert ledger_v2.json()["items"][0]["amount"]["amount_value"] == 1000
+    assert ledger_v2.json()["body"]["total"] == 1
+    assert ledger_v2.json()["body"]["items"][0]["entry_type"] == 0
+    assert ledger_v2.json()["body"]["items"][0]["amount"]["amount_value"] == 1000
 
     repeated = _preview(client, "renamed.csv", _csv())
     assert repeated["counts"]["duplicate_file"] == 1
@@ -189,13 +189,13 @@ def test_import_history_supports_search_pagination_and_account_filter(
     ).json()["body"]
     assert source_search["total"] == 2
 
-    accounts = client.get("/paam/import/v1/account/list").json()["body"]
+    accounts = client.get("/paam/import/v1/account/list").json()["body"]["items"]
     card_account = next(
         item for item in accounts if "尾号 1234" in item["display_name"]
     )
     filtered = client.get(
         "/paam/import/v1/batch/list",
-        params={"account": card_account["identity"]},
+        params={"account_code": card_account["identity"]},
     ).json()["body"]
     assert [item["filename"] for item in filtered["items"]] == [
         "card-september.csv"
@@ -217,15 +217,15 @@ def test_import_history_rows_are_loaded_by_page(target_import_api):
     batch_id = confirmed.json()["body"]["import_file_ids"][0]
 
     first = client.get(
-        "/paam/import/v1/batch/row/list",
-        params={"batch_id": batch_id, "page": 1, "page_size": 20},
+        f"/paam/import/v1/batch/{batch_id}/row/list",
+        params={"page": 1, "page_size": 20},
     ).json()["body"]
     assert (first["total"], len(first["items"])) == (26, 20)
     assert first["summary"] == {"success": 26, "skipped": 0, "invalid": 0}
 
     second = client.get(
-        "/paam/import/v1/batch/row/list",
-        params={"batch_id": batch_id, "page": 2, "page_size": 20},
+        f"/paam/import/v1/batch/{batch_id}/row/list",
+        params={"page": 2, "page_size": 20},
     ).json()["body"]
     assert (second["page"], len(second["items"])) == (2, 6)
     assert second["items"][0]["id"] > first["items"][-1]["id"]

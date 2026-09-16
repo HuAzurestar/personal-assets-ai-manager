@@ -7,10 +7,12 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 
-from backend.router.target_economic import router as economic_router
-from backend.router.target_review import v2_router as review_v2_router
-from backend.router.target_tag import router as tag_router
-from backend.router.target_dep import get_target_db
+from backend.router.dependency import get_db
+from backend.router.ledger import router as ledger_router
+from backend.router.ledger_fact import router as ledger_fact_router
+from backend.router.ledger_review import router as ledger_review_router
+from backend.router.tag import router as tag_router
+from backend.router.tag_assignment import router as tag_assignment_router
 from backend.entity import (
     BillFact,
     LedgerEntry,
@@ -31,15 +33,17 @@ def economic_api(tmp_path):
     sessions = sessionmaker(bind=engine, autoflush=False)
     init_target_db(bind=engine)
     api = FastAPI()
-    api.include_router(review_v2_router)
-    api.include_router(economic_router)
+    api.include_router(ledger_review_router)
+    api.include_router(ledger_fact_router)
+    api.include_router(ledger_router)
     api.include_router(tag_router)
+    api.include_router(tag_assignment_router)
 
     def override_db():
         with sessions() as db:
             yield db
 
-    api.dependency_overrides[get_target_db] = override_db
+    api.dependency_overrides[get_db] = override_db
     with TestClient(api) as client:
         yield client, sessions
     engine.dispose()
@@ -72,9 +76,9 @@ def test_ledger_v2_exposes_only_confirmed_cash_entry_fields(economic_api):
     with sessions() as db:
         TargetEconomicService(db).ensure_defaults([fact_id], commit=True)
 
-    page = client.get("/paam/ledger/v2/entry/list")
+    page = client.get("/paam/ledger/v1/flow/list")
     assert page.status_code == 200, page.text
-    item = page.json()["items"][0]
+    item = page.json()["body"]["items"][0]
     assert set(item) == {
         "id",
         "entry_type",
@@ -86,7 +90,7 @@ def test_ledger_v2_exposes_only_confirmed_cash_entry_fields(economic_api):
         "tags",
     }
     assert (item["entry_type"], item["entry_direction"]) == (0, 2)
-    detail = client.get(f"/paam/ledger/v2/entry/detail/{item['id']}").json()
+    detail = client.get(f"/paam/ledger/v1/flow/{item['id']}").json()["body"]
     assert "role" not in detail["allocations"][0]
     assert detail["entry"] == item
     assert client.get("/paam/economy/v1/flow/list").status_code == 404
@@ -103,7 +107,7 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
         ("IN", 10000, "CNY"),
         ("IN", 10000, "CNY"),
     ])
-    response = client.post("/paam/review/v2/case/create", json={
+    response = client.post("/paam/ledger/v1/review", json={
         "behavior_type": 0,
         "title": "垫付分摊",
         "entries": [
@@ -151,7 +155,7 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
             ReviewCaseBill.case_id == case["id"],
         )).all())
         assert 0 not in original_ledger_ids
-    summary = client.get("/paam/ledger/v2/summary").json()
+    summary = client.get("/paam/ledger/v1/flow/summary").json()["body"]
     assert summary["totals"] == [{
         "currency_code": "CNY",
         "amount_scale": 2,
@@ -177,11 +181,11 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
         assert coverage == dict(zip(fact_ids, [50000, 10000, 10000, 10000, 10000]))
 
     revoked = client.post(
-        f"/paam/review/v2/case/revoke/{case['id']}",
+        f"/paam/ledger/v1/review/{case['id']}/revoke",
         json={"idempotency_key": "advance-revoke"},
     )
     assert revoked.status_code == 200, revoked.text
-    summary = client.get("/paam/ledger/v2/summary").json()["totals"][0]
+    summary = client.get("/paam/ledger/v1/flow/summary").json()["body"]["totals"][0]
     assert summary["income_and_expense_in_value"] == 40000
     assert summary["income_and_expense_out_value"] == 50000
     assert summary["internal_transfer_in_value"] == 0
@@ -225,7 +229,7 @@ def test_loan_uses_one_asset_and_liability_entry_per_fact(economic_api):
         {"transaction_fact_id": fact_ids[3], "entry_key": "repayment-2", "amount_value": 300000},
         {"transaction_fact_id": fact_ids[4], "entry_key": "repayment-3", "amount_value": 400000},
     ]
-    case = client.post("/paam/review/v2/case/create", json={
+    case = client.post("/paam/ledger/v1/review", json={
         "behavior_type": 1,
         "entries": entries,
         "allocations": allocations,
@@ -235,7 +239,7 @@ def test_loan_uses_one_asset_and_liability_entry_per_fact(economic_api):
     assert sorted(item["amount_value"] for item in body["ledger_entries"]) == [
         300000, 300000, 400000, 500000, 500000,
     ]
-    summary = client.get("/paam/ledger/v2/summary").json()["totals"][0]
+    summary = client.get("/paam/ledger/v1/flow/summary").json()["body"]["totals"][0]
     assert summary["asset_and_liability_out_value"] == 1000000
     assert summary["asset_and_liability_in_value"] == 1000000
 
@@ -243,7 +247,7 @@ def test_loan_uses_one_asset_and_liability_entry_per_fact(economic_api):
 def test_one_economic_cannot_allocate_multiple_facts(economic_api):
     client, sessions = economic_api
     out_id, in_id = _facts(sessions, [("OUT", 12000, "CNY"), ("IN", 2000, "USD")])
-    response = client.post("/paam/review/v2/case/create", json={
+    response = client.post("/paam/ledger/v1/review", json={
         "behavior_type": 0,
         "entries": [{"client_key": "mixed", "entry_type": 1}],
         "allocations": [
@@ -258,7 +262,7 @@ def test_one_economic_cannot_allocate_multiple_facts(economic_api):
 def test_partial_manual_reviews_keep_exact_default_coverage_and_are_idempotent(economic_api):
     client, sessions = economic_api
     fact_id = _facts(sessions, [("OUT", 10000, "CNY")])[0]
-    created = client.post("/paam/review/v2/case/create", json={
+    created = client.post("/paam/ledger/v1/review", json={
         "behavior_type": 0,
         "entries": [{"client_key": "part", "entry_type": 0}],
         "allocations": [{
@@ -278,14 +282,14 @@ def test_partial_manual_reviews_keep_exact_default_coverage_and_are_idempotent(e
         }],
         "idempotency_key": "partial-create",
     }
-    first = client.post("/paam/review/v2/case/create", json=payload)
-    replay = client.post("/paam/review/v2/case/create", json=payload)
+    first = client.post("/paam/ledger/v1/review", json=payload)
+    replay = client.post("/paam/ledger/v1/review", json=payload)
     assert first.status_code == replay.status_code == 200
     assert first.json()["body"] == replay.json()["body"]
 
-    candidates = client.get("/paam/review/v2/fact/candidates").json()["body"]
+    candidates = client.get("/paam/ledger/v1/fact/list").json()["body"]["items"]
     assert [(item["id"], item["available_value"]) for item in candidates] == [(fact_id, 6000)]
-    cases = client.get("/paam/review/v2/case/page").json()["body"]
+    cases = client.get("/paam/ledger/v1/review/list").json()["body"]
     assert cases["total"] == 1
     assert cases["items"][0]["ledger_entry_count"] == 1
     assert cases["items"][0]["allocation_count"] == 1
@@ -305,7 +309,7 @@ def test_partial_manual_reviews_keep_exact_default_coverage_and_are_idempotent(e
 def test_fx_review_uses_two_single_currency_internal_transfers(economic_api):
     client, sessions = economic_api
     cny_id, usd_id = _facts(sessions, [("OUT", 12000, "CNY"), ("IN", 2000, "USD")])
-    case = client.post("/paam/review/v2/case/create", json={
+    case = client.post("/paam/ledger/v1/review", json={
         "behavior_type": 0,
         "entries": [
             {"client_key": "cny", "entry_type": 1},
@@ -322,7 +326,7 @@ def test_fx_review_uses_two_single_currency_internal_transfers(economic_api):
         (2, 12000, "CNY"),
         (1, 2000, "USD"),
     }
-    totals = client.get("/paam/ledger/v2/summary").json()["totals"]
+    totals = client.get("/paam/ledger/v1/flow/summary").json()["body"]["totals"]
     assert {(item["currency_code"], item["internal_transfer_in_value"], item["internal_transfer_out_value"]) for item in totals} == {
         ("CNY", 0, 12000),
         ("USD", 2000, 0),
@@ -332,7 +336,7 @@ def test_fx_review_uses_two_single_currency_internal_transfers(economic_api):
 def test_review_v2_rejects_removed_fields(economic_api):
     client, sessions = economic_api
     fact_id = _facts(sessions, [("IN", 4000, "CNY")])[0]
-    rejected = client.post("/paam/review/v2/case/create", json={
+    rejected = client.post("/paam/ledger/v1/review", json={
         "behavior_code": "REFUND",
         "title": "legacy title",
         "economics": [{
@@ -356,11 +360,11 @@ def test_tag_sync_uses_allocations_for_every_split_ledger_entry(economic_api):
     fact_id = _facts(sessions, [("OUT", 10000, "CNY")])[0]
     with sessions() as db:
         TargetEconomicService(db).ensure_defaults([fact_id], commit=True)
-    view = client.post("/paam/tag/v1/view/create", json={
+    view = client.post("/paam/tag/v1/view", json={
         "name": "Category",
         "system_name": "category",
     }).json()["body"]
-    case = client.post("/paam/review/v2/case/create", json={
+    case = client.post("/paam/ledger/v1/review", json={
         "behavior_type": 0,
         "entries": [
             {"client_key": "goods", "entry_type": 0},
@@ -376,35 +380,32 @@ def test_tag_sync_uses_allocations_for_every_split_ledger_entry(economic_api):
     with sessions() as db:
         assert db.query(LedgerEntryTag).count() == 3
 
-    tagged_view = client.post(f"/paam/tag/v1/tag/create/{view['id']}", json={
+    tagged_view = client.post(f"/paam/tag/v1/view/{view['id']}/tag", json={
         "name": "Food",
         "system_name": "food",
     })
     assert tagged_view.status_code == 200, tagged_view.text
-    detail = client.get(f"/paam/ledger/v2/entry/detail/{ledger_ids[0]}").json()
-    assert detail["tag_review_version"] == 0
-    assigned = client.put(f"/paam/tag/v1/assignment/set/{ledger_ids[0]}", json={
+    detail = client.get(f"/paam/ledger/v1/flow/{ledger_ids[0]}").json()["body"]
+    assigned = client.put(f"/paam/tag/v1/assignment/{ledger_ids[0]}", json={
         "tag_state": {"category": "food"},
-        "expected_version": 0,
-        "idempotency_key": "split-tag-assign",
     })
     assert assigned.status_code == 200, assigned.text
-    assert assigned.json()["body"]["version"] == 0
+    assert assigned.json()["body"]["ledger_id"] == ledger_ids[0]
     details = [
-        client.get(f"/paam/ledger/v2/entry/detail/{ledger_id}").json()
+        client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]
         for ledger_id in ledger_ids
     ]
     assert details[0]["entry"]["tags"][0]["tag_system_name"] == "food"
     assert details[1]["entry"]["tags"][0]["tag_system_name"] == "unclassified"
 
-    archived = client.put(f"/paam/tag/v1/view/status/{view['id']}", json={
+    archived = client.put(f"/paam/tag/v1/view/{view['id']}", json={
         "status": "ARCHIVED",
     })
     assert archived.status_code == 200, archived.text
     with sessions() as db:
-        assert db.query(LedgerEntryTag).count() == 1
+        assert db.query(LedgerEntryTag).count() == 0
 
-    restored = client.put(f"/paam/tag/v1/view/status/{view['id']}", json={
+    restored = client.put(f"/paam/tag/v1/view/{view['id']}", json={
         "status": "ACTIVE",
     })
     assert restored.status_code == 200, restored.text
@@ -417,7 +418,7 @@ def test_account_review_updates_every_split_ledger_and_survives_rebuild(economic
     fact_id = _facts(sessions, [("OUT", 10000, "CNY")])[0]
     with sessions() as db:
         TargetEconomicService(db).ensure_defaults([fact_id], commit=True)
-    case = client.post("/paam/review/v2/case/create", json={
+    case = client.post("/paam/ledger/v1/review", json={
         "behavior_type": 0,
         "entries": [
             {"client_key": "goods", "entry_type": 0},
@@ -438,7 +439,7 @@ def test_account_review_updates_every_split_ledger_and_survives_rebuild(economic
     assert corrected.status_code == 404
     return
     details = [
-        client.get(f"/paam/ledger/v2/entry/detail/{ledger_id}").json()
+        client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]
         for ledger_id in ledger_ids
     ]
     assert all(item["entry"]["account_code"] == "checked-bank" for item in details)
@@ -451,21 +452,21 @@ def test_account_review_updates_every_split_ledger_and_survives_rebuild(economic
     with sessions() as db:
         assert db.get(BillFact, fact_id).account_code == "account-1"
 
-    revoked = client.post(f"/paam/review/v2/case/revoke/{case['id']}", json={
+    revoked = client.post(f"/paam/ledger/v1/review/{case['id']}/revoke", json={
         "idempotency_key": "split-account-review-revoke",
     })
     assert revoked.status_code == 200, revoked.text
-    rebuilt = client.get("/paam/ledger/v2/entry/list").json()["items"]
+    rebuilt = client.get("/paam/ledger/v1/flow/list").json()["body"]["items"]
     assert len(rebuilt) == 1
     assert rebuilt[0]["account_code"] == "checked-bank"
 
-    restored = client.post(f"/paam/review/v2/case/restore/{case['id']}", json={
+    restored = client.post(f"/paam/ledger/v1/review/{case['id']}/restore", json={
         "idempotency_key": "split-account-review-restore",
     })
     assert restored.status_code == 200, restored.text
     assert {
         item["account_code"]
-        for item in client.get("/paam/ledger/v2/entry/list").json()["items"]
+        for item in client.get("/paam/ledger/v1/flow/list").json()["body"]["items"]
     } == {"checked-bank"}
 
 def test_ledger_entry_entity_has_only_cash_projection_columns():

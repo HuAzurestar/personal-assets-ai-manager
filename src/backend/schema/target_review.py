@@ -121,7 +121,7 @@ class TargetReviewCasePageResponse(BaseModel):
     body: TargetReviewCasePageRead
 
 
-# V2 review contract.  Scenario names live on Review; LedgerEntry has only the
+# Production Review contract. Scenario names live on Review; LedgerEntry has only the
 # three agreed cash-flow classifications. Direction, currency, account and
 # occurred_time are derived from the single referenced fact.
 class TargetEconomicDefinitionRequest(BaseModel):
@@ -209,7 +209,7 @@ class TargetEconomicReviewRead(BaseModel):
 
 
 class TargetEconomicReviewResponse(BaseModel):
-    status: Literal["success"] = "success"
+    status: Literal[200] = 200
     message: str = "ok"
     body: TargetEconomicReviewRead
 
@@ -233,7 +233,7 @@ class TargetEconomicReviewPageRead(BaseModel):
 
 
 class TargetEconomicReviewPageResponse(BaseModel):
-    status: Literal["success"] = "success"
+    status: Literal[200] = 200
     message: str = "ok"
     body: TargetEconomicReviewPageRead
 
@@ -249,6 +249,19 @@ class TargetFactAllocationCandidateRead(BaseModel):
     counterparty: str
     summary: str
     available_value: int
+
+
+class TargetFactAllocationCandidatePageRead(BaseModel):
+    items: list[TargetFactAllocationCandidateRead]
+    total: int
+    page: int
+    page_size: int
+
+
+class TargetFactAllocationCandidatePageResponse(BaseModel):
+    status: Literal[200] = 200
+    message: str = "ok"
+    body: TargetFactAllocationCandidatePageRead
 
 
 class TargetFactAllocationCandidateResponse(BaseModel):

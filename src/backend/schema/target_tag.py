@@ -26,15 +26,11 @@ class TargetTagStatusRequest(BaseModel):
 
 
 class TargetTagAssignmentRequest(BaseModel):
-    """One UI command for the effective tags of one hot ledger entry."""
+    """The complete effective Tag state owned directly by one Ledger."""
 
     model_config = ConfigDict(extra="forbid")
 
     tag_state: dict[str, str]
-    expected_version: int = Field(ge=0)
-    actor: str = Field(default="local-user", min_length=1, max_length=120)
-    reason: str = Field(default="", max_length=2000)
-    idempotency_key: str = Field(min_length=1, max_length=120)
 
 
 class TargetTagRead(BaseModel):
@@ -52,26 +48,31 @@ class TargetTagViewRead(BaseModel):
     tags: list[TargetTagRead]
 
 
+class TargetTagViewPageRead(BaseModel):
+    items: list[TargetTagViewRead]
+    total: int
+    page: int
+    page_size: int
+
+
 class TargetTagViewResponse(BaseModel):
-    status: Literal["success"] = "success"
+    status: Literal[200] = 200
     message: str = "ok"
     body: TargetTagViewRead
 
 
 class TargetTagViewListResponse(BaseModel):
-    status: Literal["success"] = "success"
+    status: Literal[200] = 200
     message: str = "ok"
-    body: list[TargetTagViewRead]
+    body: TargetTagViewPageRead
 
 
 class TargetTagAssignmentRead(BaseModel):
     ledger_id: int
-    version: int
     tag_state: dict[str, str]
-    review_case_ids: list[int]
 
 
 class TargetTagAssignmentResponse(BaseModel):
-    status: Literal["success"] = "success"
+    status: Literal[200] = 200
     message: str = "ok"
     body: TargetTagAssignmentRead

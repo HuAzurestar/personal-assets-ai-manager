@@ -91,7 +91,6 @@ def test_ledger_entry_is_confirmed_single_fact_cash_projection():
             "claim_side",
             "reversal_of_id",
             "input_hash",
-            "projection_version",
         } & ledger_columns
 
         connection.execute(

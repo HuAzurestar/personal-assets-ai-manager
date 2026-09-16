@@ -2,14 +2,14 @@
 
 本文件是 PIRC-9 的权威表字典。账本按“事实、审查、经济”分层。
 
-## V2 核心关系
+## 核心关系
 
 四个核心业务对象为 `bill_fact`（事实流水）、`review_case`（流水审查）、
 `ledger_entry`（迁移期物理名；语义为 Economic Flow）和
 `review_allocation`（Review、Fact 与 LedgerEntry 的三元关系）。
 
-Allocation 是三元关系：每行同时保存 `case_id`、`bill_id`、
-`economic_id` 和一份明确金额。一个 Review 或 Fact 可以拥有多条
+Allocation 是三元关系：每行同时保存 `review_case_id`、
+`transaction_fact_id`、`ledger_entry_id` 和一份明确金额。一个 Review 或 Fact 可以拥有多条
 Allocation；已发布的 LedgerEntry 只拥有一条 Allocation，因此只对应
 一个 Fact。一次完整审查由事实集合、账本集合和分配矩阵组成。
 
@@ -185,14 +185,14 @@ Fact 只放跨来源稳定、计算必须的核心字段。客户详情、完整
 
 `(view_id, system_name)` 唯一。每个活动维度有受保护的 `unclassified` 默认值；定义采用归档而不是删除。
 
-### 10. `ledger_entry_tag`：热投影标签
+### 10. `ledger_entry_tag`：Ledger 当前标签
 
 | 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
 | `ledger_id` | INTEGER | `0` | 隐式 Ledger ID |
 | `tag_id` | INTEGER | `0` | 隐式 Tag ID |
 
-`(ledger_id, tag_id)` 唯一。列表页按返回的 Ledger ID 一次批量读取。当前规模无需 Elasticsearch；引入第二套存储会增加一致性成本。
+`(ledger_id, tag_id)` 唯一。Tag Assignment 直接以 Ledger ID 为对象，不经 Fact 或 Review 间接派生；每个活动 Ledger 在每个活动 Tag View 下恰有一个当前值。列表页按返回的 Ledger ID 一次批量读取。当前规模无需 Elasticsearch；引入第二套存储会增加一致性成本。
 
 ## 热、冷与读取规则
 
@@ -208,11 +208,11 @@ Fact 只放跨来源稳定、计算必须的核心字段。客户详情、完整
 
 ## 迁移结论
 
-旧业务表和过渡表已经从模型和运行时删除。现有数据库原位迁移为 10 张目标表，必要语义分别进入：
+旧业务表和过渡表已经从模型和运行时删除。新数据库直接创建 10 张目标表；不提供旧数据库原位迁移。必要语义分别进入：
 
 - 文件/批次/来源/异常：`import_file + bill_raw`。
 - 规范流水：`bill_fact`。
-- AA/垫付/借贷/退款/转账/换汇等行为：统一 Review 三表。
+- 正常交易与借钱/还钱行为：统一 Review 三表。
 - 正式经济结果：`ledger_entry`、三元 `review_allocation` 与标签表。
 
 应用只创建当前结构，不在启动时升级或回填旧数据库。导入事务为新 Fact 同步创建 CONFIRMED Review、等额 INCOME_AND_EXPENSE 与 `review_allocation`。

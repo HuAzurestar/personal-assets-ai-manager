@@ -5,20 +5,16 @@ from datetime import datetime
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from backend.error import TargetTagError
 from backend.mapper.target_tag_mapper import TargetTagMapper
 from backend.schema.target_tag import (
     TargetTagCreateRequest,
     TargetTagStatusRequest,
     TargetTagViewCreateRequest,
+    TargetTagViewPageRead,
     TargetTagViewRead,
 )
 from backend.service.target_tag_projection_service import TargetTagProjectionService
-
-
-class TargetTagError(Exception):
-    def __init__(self, status_code: int, message: str):
-        super().__init__(message)
-        self.status_code = status_code
 
 
 class TargetTagService:
@@ -26,8 +22,13 @@ class TargetTagService:
         self.mapper = TargetTagMapper(db)
         self.projection = TargetTagProjectionService(db)
 
-    def list(self, include_archived: bool = False) -> list[TargetTagViewRead]:
-        return self.mapper.list(include_archived)
+    def list(
+        self,
+        page: int,
+        page_size: int,
+        include_archived: bool = False,
+    ) -> TargetTagViewPageRead:
+        return self.mapper.list(page, page_size, include_archived)
 
     def create_view(self, payload: TargetTagViewCreateRequest) -> TargetTagViewRead:
         try:

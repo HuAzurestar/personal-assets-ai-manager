@@ -1,6 +1,6 @@
 # PAAM
 
-PAAM 是一个 SQLite + Python 的分层模块化账本。当前模型按“事实 → 审查 → 账本”分层，TransactionFact 与 LedgerEntry 通过 Review 下的 Allocation 三元关系连接；数据库固定为 10 张表。
+PAAM 是一个 SQLite + Python 的分层模块化账本。当前模型按“事实 → 审查 → 经济”分层，Fact 与 Economic 通过 Review 下的 Allocation 三元关系连接；数据库固定为 10 张表。
 
 ## 启动
 
@@ -15,9 +15,8 @@ powershell -ExecutionPolicy Bypass -File src/script/setup.ps1
 正式接口只使用：
 
 - `/paam/import/v1`
-- `/paam/ledger/v2`
-- `/paam/review/v2`（账本审查）
-- `/paam/review/v1`（账户与事实冲突等辅助审查）
+- `/paam/ledger/v1`（事实、Flow 与经济审查）
+- `/paam/review/v1`（账户修正、事实冲突与迁移兼容查询）
 - `/paam/tag/v1`
 
 ## 架构
@@ -29,7 +28,7 @@ powershell -ExecutionPolicy Bypass -File src/script/setup.ps1
 - Router：HTTP 参数、状态码和 DTO 校验。
 - Service：业务规则、事务、幂等和投影更新。
 - Mapper：显式字段 SQL、批量查询和 VO 组装。
-- Entity：按表拆分，只定义 10 张目标表。
+- Entity：按表拆分，只定义 10 张目标表并使用当前物理表名。
 - Parser：文件解析、来源字段解释，返回解析结果，由 Service 编排调用。
 
 ## 文件结构
@@ -87,6 +86,8 @@ Mapper 方法和导入计划的现有调用关系不变。
 node --check src/frontend/target-ledger.js
 .\.venv\Scripts\python.exe -m compileall -q src/backend src/script src/test
 .\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m pytest src/report/test_pirc9_regression.py -q
+.\.venv\Scripts\python.exe src/report/verify_smart_sample.py --commit --reverse
 .\.venv\Scripts\python.exe src/script/verify_target_ui.py
 ```
 

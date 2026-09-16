@@ -2,14 +2,9 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
+from backend.error import TargetReviewError
 from backend.mapper.target_review_mapper import TargetReviewMapper
 from backend.schema.target_review import TargetReviewCasePageRead, TargetReviewCaseRead
-
-
-class TargetReviewError(Exception):
-    def __init__(self, status_code: int, message: str):
-        super().__init__(message)
-        self.status_code = status_code
 
 
 class TargetReviewService:

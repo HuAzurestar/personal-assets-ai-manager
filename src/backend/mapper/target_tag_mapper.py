@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import exists, insert, literal, select
+from sqlalchemy import exists, func, insert, literal, select
 from sqlalchemy.orm import Session
 
 from backend.entity import (
@@ -11,7 +11,11 @@ from backend.entity import (
     TargetTag,
     TargetTagView,
 )
-from backend.schema.target_tag import TargetTagRead, TargetTagViewRead
+from backend.schema.target_tag import (
+    TargetTagRead,
+    TargetTagViewPageRead,
+    TargetTagViewRead,
+)
 
 
 class TargetTagMapper:
@@ -20,16 +24,27 @@ class TargetTagMapper:
     def __init__(self, db: Session):
         self.db = db
 
-    def list(self, include_archived: bool = False) -> list[TargetTagViewRead]:
+    def list(
+        self,
+        page: int,
+        page_size: int,
+        include_archived: bool = False,
+    ) -> TargetTagViewPageRead:
+        conditions = []
+        if not include_archived:
+            conditions.append(TargetTagView.status == "ACTIVE")
+        total = self.db.scalar(select(func.count(TargetTagView.id)).where(
+            *conditions,
+        )) or 0
         view_statement = select(
             TargetTagView.id,
             TargetTagView.name,
             TargetTagView.system_name,
             TargetTagView.status,
         )
-        if not include_archived:
-            view_statement = view_statement.where(TargetTagView.status == "ACTIVE")
-        views = self.db.execute(view_statement.order_by(TargetTagView.id)).mappings().all()
+        views = self.db.execute(view_statement.where(*conditions).order_by(
+            TargetTagView.id,
+        ).offset((page - 1) * page_size).limit(page_size)).mappings().all()
         view_ids = [row["id"] for row in views]
         tag_statement = select(
             TargetTag.id,
@@ -52,10 +67,16 @@ class TargetTagMapper:
                 system_name=row["system_name"],
                 status=row["status"],
             ))
-        return [TargetTagViewRead(
+        items = [TargetTagViewRead(
             **row,
             tags=by_view.get(row["id"], []),
         ) for row in views]
+        return TargetTagViewPageRead(
+            items=items,
+            total=int(total),
+            page=page,
+            page_size=page_size,
+        )
 
     def view(self, view_id: int) -> TargetTagViewRead | None:
         view = self.db.execute(select(
@@ -147,7 +168,9 @@ class TargetTagMapper:
         ))
         self.db.execute(insert(LedgerEntryTag).from_select(
             ["ledger_id", "tag_id"],
-            select(LedgerEntry.id, literal(tag_id)).where(~existing),
+            select(LedgerEntry.id, literal(tag_id)).where(
+                ~existing,
+            ),
         ))
 
     def commit(self) -> None:

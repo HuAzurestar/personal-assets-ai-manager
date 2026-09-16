@@ -211,7 +211,7 @@ def run() -> None:
                 page.locator("dialog[open] [data-close]").first.click()
 
                 tag_view_response = page.request.post(
-                    f"{base_url}/paam/tag/v1/view/create",
+                    f"{base_url}/paam/tag/v1/view",
                     data={"name": "验收分类", "system_name": "acceptance"},
                 )
                 assert tag_view_response.ok, tag_view_response.text()

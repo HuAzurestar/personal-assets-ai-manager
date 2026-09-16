@@ -6,6 +6,9 @@ description: Change PAAM review cases, allocations, duplicate/refund/AA/loan/tra
 # Review layer
 
 - Use one `review_case` lifecycle with an enum type; do not create one table per Review type.
+- Tag definition and Ledger Tag assignment are not Review use cases. They do
+  not create `TAG` Review cases, allocation rows, or Review history; Tag
+  auditing requires a dedicated Tag/Ledger audit design if it is needed later.
 - One flow case owns several allocation rows. Every allocation carries
   `review_case_id`, `transaction_fact_id`, `ledger_entry_id`, and one explicit money value; never embed
   member IDs in JSON.

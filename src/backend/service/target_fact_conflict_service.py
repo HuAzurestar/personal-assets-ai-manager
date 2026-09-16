@@ -7,6 +7,7 @@ from datetime import datetime
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
+from backend.error import TargetReviewError
 from backend.mapper.target_fact_conflict_mapper import TargetFactConflictMapper
 from backend.mapper.target_review_mapper import TargetReviewMapper
 from backend.schema.target_review import (
@@ -15,7 +16,6 @@ from backend.schema.target_review import (
     TargetReviewTransitionRequest,
 )
 from backend.service.target_economic_service import TargetEconomicService
-from backend.service.target_review_service import TargetReviewError
 
 
 class TargetFactConflictService:

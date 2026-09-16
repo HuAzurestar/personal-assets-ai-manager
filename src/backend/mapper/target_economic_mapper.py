@@ -28,7 +28,7 @@ ReviewHistory = ReviewRevision
 
 
 class TargetEconomicMapper:
-    """Set-oriented persistence for v2 Review/Economic/Allocation commands."""
+    """Set-oriented persistence for Review/Ledger/Allocation commands."""
 
     def __init__(self, db: Session):
         self.db = db
@@ -55,9 +55,6 @@ class TargetEconomicMapper:
             BillFact.updated_time,
         ).where(BillFact.id.in_(fact_ids))).mappings().all()
         return tuple(TargetReviewFactVO(**row) for row in rows)
-
-    def all_fact_ids(self) -> list[int]:
-        return list(self.db.scalars(select(BillFact.id).order_by(BillFact.id)).all())
 
     def review_page(self, page: int, page_size: int, status: int | None = None) -> tuple[list[dict], int]:
         clauses = [~select(ReviewRevision.id).where(
@@ -88,8 +85,8 @@ class TargetEconomicMapper:
             "status": 0 if row["status"] == "CONFIRMED" else 1,
         } for row in rows], total
 
-    def fact_candidates(self, limit: int) -> list[dict]:
-        rows = self.db.execute(select(
+    def _fact_candidate_query(self):
+        return select(
             BillFact.id,
             BillFact.occurred_time,
             BillFact.cash_direction,
@@ -114,7 +111,26 @@ class TargetEconomicMapper:
             ).exists(),
         ).group_by(BillFact.id).order_by(
             BillFact.occurred_time.desc(), BillFact.id.desc(),
-        ).limit(limit)).mappings().all()
+        )
+
+    def fact_candidate_page(
+        self,
+        page: int,
+        page_size: int,
+    ) -> tuple[list[dict], int]:
+        query = self._fact_candidate_query()
+        total = self.db.scalar(select(func.count()).select_from(
+            query.order_by(None).subquery()
+        )) or 0
+        rows = self.db.execute(query.offset(
+            (page - 1) * page_size
+        ).limit(page_size)).mappings().all()
+        return [dict(row) for row in rows], total
+
+    def fact_candidates(self, limit: int) -> list[dict]:
+        rows = self.db.execute(
+            self._fact_candidate_query().limit(limit)
+        ).mappings().all()
         return [dict(row) for row in rows]
 
     def idempotency(self, key: str):
