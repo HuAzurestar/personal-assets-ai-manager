@@ -12,6 +12,9 @@ description: Change PAAM review cases, allocations, duplicate/refund/AA/loan/tra
 - One flow case owns several allocation rows. Every allocation carries
   `case_id`, `bill_id`, `economic_id`, and one explicit money value; never embed
   member IDs in JSON.
+- Every Economic/Ledger Entry is backed by exactly one allocation to exactly
+  one Fact. One Fact may be divided into several Ledger Entries; several Facts
+  must never be merged into one Ledger Entry.
 - Fact, allocation, and Economic values have equal direction and currency.
 - The effective allocations of every accepted Fact sum exactly to the Fact
   amount. A manual Review may consume part of the DEFAULT allocation; its

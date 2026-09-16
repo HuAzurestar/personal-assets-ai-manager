@@ -16,6 +16,9 @@ description: Change PAAM ledger projections, summaries, tags, DTOs/VOs, Services
   refund, and FX are Review behavior codes, not Economic Types.
 - `review_case_bill` is the physical ternary Allocation during migration:
   one row maps one Review, one Fact, and one Economic.
+- Every Economic/Ledger Entry has exactly one Allocation and therefore points
+  to exactly one Fact. A Fact may be split across several Ledger Entries. Do
+  not combine several Facts into one Ledger Entry.
 - A single Economic never mixes direction or currency. Never store an exchange
   rate or convert currencies; summaries remain per currency.
 - List and summary SQL names every selected column. Sparse tags are loaded once with `WHERE ledger_id IN (...)` and assembled by ID.
