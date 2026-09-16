@@ -538,7 +538,7 @@ const sourceLabels = {
 const actionLabels = {
   new: "新增", supplement: "补充证据", duplicate_file: "重复文件", record: "仅保留记录", ambiguous: "待确认", error: "有错误",
 };
-const statusLabels = { IMPORTED: "已导入", PARTIAL: "部分导入", FAILED: "失败" };
+const statusLabels = { PENDING: "待确认", IMPORTED: "已导入", PARTIAL: "部分导入", FAILED: "失败" };
 
 function fileExtension(filename) {
   return String(filename || "FILE").split(".").pop().slice(0, 4).toUpperCase();

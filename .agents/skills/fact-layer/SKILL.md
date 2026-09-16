@@ -8,6 +8,7 @@ description: Change PAAM import files, raw rows, normalized bill facts, parsing,
 Use `src/doc/data-model.md` as the target schema contract.
 
 - `transaction_import_file` represents one imported artifact and owns the exact source, parsed content format, SHA-256, covered period, and row counts.
+- Persist or reuse its `PENDING` row before parsing. Parse outside the write transaction, mark parse failures `FAILED`, and finalize it with Fact rows and default Review coverage in one confirmation transaction.
 - `transaction_import_row` represents one immutable source row. `(transaction_import_file_id, source_row_number)` is unique. Multiple raw rows may point to the same `transaction_fact`.
 - `transaction_fact` contains only stable normalized accounting facts. Optional export fields remain raw evidence.
 - A richer repeat export adds another raw row; it does not overwrite the first raw row or accepted fact.

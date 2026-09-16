@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session
 
 from backend.entity import (
     CASH_DIRECTION_OUT,
+    IMPORT_FILE_STATUS_IMPORTED,
+    IMPORT_FILE_STATUS_PARTIAL,
     IMPORT_SOURCE_ABC_BANK,
     IMPORT_SOURCE_ALIPAY,
     IMPORT_SOURCE_CCB_BANK,
@@ -179,7 +181,11 @@ class TargetImportMatchMapper:
             )
 
         seen_files = set(self.db.scalars(select(TransactionImportFile.sha256).where(
-            TransactionImportFile.sha256.in_(upload_hashes)
+            TransactionImportFile.sha256.in_(upload_hashes),
+            TransactionImportFile.status.in_((
+                IMPORT_FILE_STATUS_IMPORTED,
+                IMPORT_FILE_STATUS_PARTIAL,
+            )),
         )).all())
         return {
             "identities": identities,

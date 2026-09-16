@@ -11,13 +11,16 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event, inspect, select
 from sqlalchemy.orm import sessionmaker
 
+import backend.service.target_intake_service as target_intake_service_module
 from backend.core import target_database
 from backend import target_main
 from backend.core.intake_preview_store import target_intake_preview_store
 from backend.entity import (
     CASH_DIRECTION_OUT,
     IMPORT_FILE_FORMAT_CSV,
+    IMPORT_FILE_STATUS_FAILED,
     IMPORT_FILE_STATUS_IMPORTED,
+    IMPORT_FILE_STATUS_PENDING,
     IMPORT_ROW_STATUS_ACCEPTED,
     IMPORT_ROW_STATUS_INVALID,
     IMPORT_SOURCE_ABC_BANK,
@@ -146,10 +149,38 @@ def test_import_match_mapper_owns_preview_planning():
     assert not hasattr(TargetImportWriteMapper, "plan")
 
 
+def test_import_file_is_pending_before_parser_runs(target_import_api, monkeypatch):
+    client, sessions, _ = target_import_api
+    original_parse_statement = target_intake_service_module.parse_statement
+    observed_statuses = []
+
+    def parse_after_pending(*args, **kwargs):
+        with sessions() as db:
+            observed_statuses.append(
+                db.scalar(select(TransactionImportFile.status))
+            )
+        return original_parse_statement(*args, **kwargs)
+
+    monkeypatch.setattr(
+        target_intake_service_module,
+        "parse_statement",
+        parse_after_pending,
+    )
+    preview = _preview(client, "pending-before-parse.csv", _csv())
+    assert preview["can_confirm"]
+    assert observed_statuses == [IMPORT_FILE_STATUS_PENDING]
+
+
 def test_target_import_writes_fact_evidence_and_hot_projection(target_import_api):
     client, sessions, engine = target_import_api
     preview = _preview(client, "wechat.csv", _csv())
     assert preview["can_confirm"]
+    with sessions() as db:
+        pending_file = db.scalar(select(TransactionImportFile))
+        pending_file_id = pending_file.id
+        assert pending_file.status == IMPORT_FILE_STATUS_PENDING
+        assert db.query(TransactionFact).count() == 0
+        assert db.query(TransactionImportRow).count() == 0
     response = _confirm(client, preview)
     assert response.status_code == 200, response.text
 
@@ -180,10 +211,12 @@ def test_target_import_writes_fact_evidence_and_hot_projection(target_import_api
         )
         import_file = db.scalar(select(TransactionImportFile))
         assert (
+            import_file.id,
             import_file.source_type,
             import_file.file_format,
             import_file.status,
         ) == (
+            pending_file_id,
             IMPORT_SOURCE_WECHAT,
             IMPORT_FILE_FORMAT_CSV,
             IMPORT_FILE_STATUS_IMPORTED,
@@ -203,6 +236,7 @@ def test_target_import_writes_fact_evidence_and_hot_projection(target_import_api
     assert _confirm(client, repeated).status_code == 200
     with sessions() as db:
         assert db.query(TransactionFact).count() == 1
+        assert db.query(TransactionImportFile).count() == 1
 
 
 def test_target_import_rolls_back_when_default_review_write_fails(
@@ -228,10 +262,23 @@ def test_target_import_rolls_back_when_default_review_write_fails(
 
     with sessions() as db:
         assert db.query(TransactionFact).count() == 0
-        assert db.query(TransactionImportFile).count() == 0
+        import_file = db.scalar(select(TransactionImportFile))
+        failed_file_id = import_file.id
+        assert import_file.status == IMPORT_FILE_STATUS_FAILED
         assert db.query(TransactionImportRow).count() == 0
         assert db.query(ReviewCase).count() == 0
         assert db.query(LedgerEntry).count() == 0
+
+    monkeypatch.setattr(
+        TargetEconomicService,
+        "ensure_defaults",
+        original_ensure_defaults,
+    )
+    retried = _confirm(client, preview)
+    assert retried.status_code == 200, retried.text
+    assert retried.json()["body"]["transaction_import_file_ids"] == [
+        failed_file_id
+    ]
 
 
 def test_import_history_supports_search_pagination_and_account_filter(
@@ -411,8 +458,18 @@ def test_encrypted_zip_password_is_ephemeral(target_import_api):
     wrong = _preview(client, "statement.zip", output.getvalue(), "wrong")
     assert not wrong["can_confirm"]
     assert password not in json.dumps(wrong, ensure_ascii=False)
+    with sessions() as db:
+        failed_file = db.scalar(select(TransactionImportFile))
+        failed_file_id = failed_file.id
+        assert failed_file.status == IMPORT_FILE_STATUS_FAILED
     preview = _preview(client, "statement.zip", output.getvalue(), password)
     assert preview["can_confirm"]
+    with sessions() as db:
+        pending_file = db.scalar(select(TransactionImportFile))
+        assert (pending_file.id, pending_file.status) == (
+            failed_file_id,
+            IMPORT_FILE_STATUS_PENDING,
+        )
     assert _confirm(client, preview).status_code == 200
     with sessions() as db:
         raw = db.scalar(select(TransactionImportRow.raw_payload))
@@ -420,6 +477,7 @@ def test_encrypted_zip_password_is_ephemeral(target_import_api):
         assert db.scalar(
             select(TransactionImportFile.file_format)
         ) == IMPORT_FILE_FORMAT_CSV
+        assert db.query(TransactionImportFile).count() == 1
 
 
 @pytest.mark.parametrize("extension", ["xls", "xlsx"])
@@ -430,6 +488,8 @@ def test_corrupt_workbook_is_a_preview_error(target_import_api, extension):
     assert preview["documents"][0]["error"]
     with sessions() as db:
         assert db.query(TransactionFact).count() == 0
+        import_file = db.scalar(select(TransactionImportFile))
+        assert import_file.status == IMPORT_FILE_STATUS_FAILED
 
 
 def test_target_fact_conflict_stays_on_import_row(target_import_api):

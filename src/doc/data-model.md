@@ -67,7 +67,7 @@ ASSET_AND_LIABILITY 目前仅表示资产与负债相关的现金流水分类，
 | `issue_count` | INTEGER | `0` | 解析失败或冲突行数 |
 | `status` | INTEGER | `0` | 0=PENDING，1=IMPORTED，2=PARTIAL，3=FAILED |
 
-`sha256` 全局唯一。ZIP 是传输容器；例如 ZIP 内实际解析 CSV 时，`file_format=1`。`total_count = success_count + skip_count + issue_count`。
+`sha256` 全局唯一。上传解码后先创建或复用 `PENDING` 记录，再在写事务外解析文件；解析失败转为 `FAILED`，确认事务成功后转为 `IMPORTED` 或 `PARTIAL`。`PENDING`、`FAILED` 可按同一 SHA-256 重试复用，已完成文件不重复创建。ZIP 是传输容器；例如 ZIP 内实际解析 CSV 时，`file_format=1`。`total_count = success_count + skip_count + issue_count`。
 
 ### 2. `transaction_import_row`：来源行与原始证据
 
