@@ -118,23 +118,3 @@ class TargetIntakeService:
             except Exception:
                 self.mapper.rollback()
                 raise
-
-    def history(
-        self,
-        page: int = 1,
-        page_size: int = 20,
-        q: str = "",
-        account_code: str = "",
-    ) -> dict[str, object]:
-        return self.mapper.history(page, page_size, q, account_code)
-
-    def accounts(self, page: int, page_size: int) -> dict[str, object]:
-        return self.mapper.accounts(page, page_size)
-
-    def rows(
-        self,
-        import_file_id: int,
-        page: int = 1,
-        page_size: int = 20,
-    ) -> dict[str, object]:
-        return self.mapper.rows(import_file_id, page, page_size)

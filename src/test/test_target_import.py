@@ -150,7 +150,7 @@ def test_target_import_writes_fact_evidence_and_hot_projection(target_import_api
         assert db.query(BillFact).count() == 1
 
 
-def test_import_history_supports_search_pagination_and_account_filter(
+def test_import_file_api_supports_history_search_filter_and_summary(
     target_import_api,
 ):
     client, _, _ = target_import_api
@@ -165,49 +165,52 @@ def test_import_history_supports_search_pagination_and_account_filter(
         assert _confirm(client, preview).status_code == 200
 
     first_page = client.get(
-        "/paam/import/v1/batch/list?page=1&page_size=1"
+        "/paam/import/v1/import_file/list",
+        params={
+            "page": 1,
+            "page_size": 1,
+            "sorter": '{"field":"created_time","order":"desc"}',
+        },
     ).json()["body"]
     assert (first_page["total"], len(first_page["items"])) == (2, 1)
     assert first_page["items"][0]["filename"] == "card-september.csv"
-    assert first_page["summary"] == {
-        "batch_count": 2,
-        "complete_count": 2,
-        "imported_count": 2,
-    }
+    assert "account_codes" not in first_page["items"][0]
 
     second_page = client.get(
-        "/paam/import/v1/batch/list?page=2&page_size=1"
+        "/paam/import/v1/import_file/list",
+        params={
+            "page": 2,
+            "page_size": 1,
+            "sorter": '{"field":"created_time","order":"desc"}',
+        },
     ).json()["body"]
     assert second_page["items"][0]["filename"] == "cash-august.csv"
 
     search = client.get(
-        "/paam/import/v1/batch/list", params={"q": "september"}
+        "/paam/import/v1/import_file/list", params={"q": "september"}
     ).json()["body"]
     assert [item["filename"] for item in search["items"]] == [
         "card-september.csv"
     ]
-    source_search = client.get(
-        "/paam/import/v1/batch/list", params={"q": "微信"}
-    ).json()["body"]
-    assert source_search["total"] == 2
-
-    accounts = client.get("/paam/import/v1/account/list").json()["body"]["items"]
-    card_account = next(
-        item for item in accounts if "尾号 1234" in item["display_name"]
-    )
     filtered = client.get(
-        "/paam/import/v1/batch/list",
-        params={"account_code": card_account["identity"]},
+        "/paam/import/v1/import_file/list",
+        params={"filter": '{"source_type":"wechat","status":"IMPORTED"}'},
     ).json()["body"]
-    assert [item["filename"] for item in filtered["items"]] == [
-        "card-september.csv"
-    ]
-    assert filtered["items"][0]["account_codes"] == [
-        card_account["identity"]
-    ]
+    assert filtered["total"] == 2
+
+    summary = client.get(
+        "/paam/import/v1/import_file/summary",
+        params={"filter": '{"source_type":"wechat","status":"IMPORTED"}'},
+    ).json()["body"]
+    assert summary["import_file_count"] == 2
+    assert summary["imported_file_count"] == 2
+    assert summary["row_count"] == 2
+    assert summary["success_count"] == 2
+    assert client.get("/paam/import/v1/batch/list").status_code == 404
+    assert client.get("/paam/import/v1/account/list").status_code == 404
 
 
-def test_import_history_rows_are_loaded_by_page(target_import_api):
+def test_import_file_transaction_facts_are_loaded_by_page(target_import_api):
     client, _, _ = target_import_api
     preview = _preview(
         client,
@@ -219,18 +222,20 @@ def test_import_history_rows_are_loaded_by_page(target_import_api):
     batch_id = confirmed.json()["body"]["import_file_ids"][0]
 
     first = client.get(
-        f"/paam/import/v1/batch/{batch_id}/row/list",
+        f"/paam/import/v1/import_file/{batch_id}/transaction_fact/list",
         params={"page": 1, "page_size": 20},
     ).json()["body"]
     assert (first["total"], len(first["items"])) == (26, 20)
-    assert first["summary"] == {"success": 26, "skipped": 0, "invalid": 0}
 
     second = client.get(
-        f"/paam/import/v1/batch/{batch_id}/row/list",
+        f"/paam/import/v1/import_file/{batch_id}/transaction_fact/list",
         params={"page": 2, "page_size": 20},
     ).json()["body"]
     assert (second["page"], len(second["items"])) == (2, 6)
-    assert second["items"][0]["id"] > first["items"][-1]["id"]
+    assert second["items"][-1]["id"] < first["items"][0]["id"]
+    assert client.get(
+        f"/paam/import/v1/batch/{batch_id}/row/list"
+    ).status_code == 404
 
 
 def test_target_confirm_select_count_is_independent_of_row_count(target_import_api):

@@ -76,6 +76,11 @@ description: Change PAAM FastAPI routers, URL modules or versions, HTTP endpoint
   `GET /import_file/{import_file_id}/transaction_fact/list`. The optional
   filtered aggregate is `GET /import_file/summary`; keep summary counts out of
   individual PO rows.
+- The former `/batch/list`, `/batch/{batch_id}/row/list`, and Import-owned
+  `/account/list` projections are retired. Import history is an Import File PO
+  view; accepted row-level relationships are inspected through the
+  Transaction Fact subresource. Do not restore raw JSON rows or Fact accounts
+  as fields on Import File list items.
 
 ## Caller migration safety
 

@@ -615,32 +615,34 @@ function showImportStep(step, focusHeading = true) {
   if (focusHeading) $(`[data-import-step-panel="${target}"] h2`, workflow)?.focus({ preventScroll: true });
 }
 
-function historySummaryMarkup(result) {
-  return `<div class="history-metric"><span>匹配批次</span><strong>${result.summary.batch_count}</strong><small>当前筛选结果</small></div><div class="history-metric"><span>完整导入</span><strong>${result.summary.complete_count}</strong><small>无异常完成</small></div><div class="history-metric"><span>已写入记录</span><strong>${result.summary.imported_count}</strong><small>当前结果合计</small></div>`;
+function historySummaryMarkup(summary) {
+  return `<div class="history-metric"><span>匹配文件</span><strong>${summary.import_file_count}</strong><small>当前筛选结果</small></div><div class="history-metric"><span>完整导入</span><strong>${summary.imported_file_count}</strong><small>无异常完成</small></div><div class="history-metric"><span>已写入记录</span><strong>${summary.success_count}</strong><small>当前结果合计</small></div>`;
 }
 function historyResultsMarkup(result) {
-  const batchCards = result.items.map((item) => {
-    const accountLabels = (item.account_codes || []).map((identity) => state.historyAccountNames.get(identity) || identity);
-    return `<button type="button" class="batch-card" data-action="batch-rows" data-id="${item.id}" data-filename="${esc(item.filename)}" aria-label="查看批次 ${item.id}：${esc(item.filename)}"><span class="file-type-icon">${esc(fileExtension(item.filename))}</span><span class="batch-file"><span class="history-id">批次 #${item.id}</span><strong>${esc(item.filename)}</strong><small>${esc(sourceLabels[item.source_type] || item.source_type)}</small></span><span class="batch-field batch-account"><small>来源账户</small><span>${accountLabels.length ? accountLabels.map((label) => `<span class="account-chip">${esc(label)}</span>`).join("") : '<span class="muted">未识别</span>'}</span></span><span class="batch-field"><small>成功 / 总数</small><span class="progress-count"><strong>${item.imported_count}</strong> / ${item.row_count}</span></span><span class="batch-field"><small>状态</small><span><span class="badge ${item.status === "IMPORTED" ? "" : "warn"}">${esc(statusLabels[item.status] || item.status)}</span></span></span><span class="batch-field batch-time"><small>导入时间</small><span>${date(item.imported_at)}</span></span><span class="batch-chevron" aria-hidden="true">›</span></button>`;
-  });
+  const fileCards = result.items.map((item) => `<button type="button" class="batch-card" data-action="import-file-detail" data-id="${item.id}" aria-label="查看导入文件 ${item.id}：${esc(item.filename)}"><span class="file-type-icon">${esc(fileExtension(item.filename))}</span><span class="batch-file"><span class="history-id">Import File #${item.id}</span><strong>${esc(item.filename)}</strong><small>${esc(sourceLabels[item.source_type] || item.source_type)}</small></span><span class="batch-field batch-account"><small>文件格式</small><span>${esc(item.file_format)}</span></span><span class="batch-field"><small>成功 / 总数</small><span class="progress-count"><strong>${item.success_count}</strong> / ${item.total_count}</span></span><span class="batch-field"><small>状态</small><span><span class="badge ${item.status === "IMPORTED" ? "" : "warn"}">${esc(statusLabels[item.status] || item.status)}</span></span></span><span class="batch-field batch-time"><small>导入时间</small><span>${date(item.created_time)}</span></span><span class="batch-chevron" aria-hidden="true">›</span></button>`);
   const pages = Math.max(1, Math.ceil(result.total / result.page_size));
   const start = result.total ? (result.page - 1) * result.page_size + 1 : 0;
   const end = Math.min(result.page * result.page_size, result.total);
-  const historyPager = `<div class="pagination"><span class="range">显示 ${start}–${end}，共 ${result.total} 个批次</span><button data-action="history-page" data-value="${result.page - 1}" ${result.page <= 1 ? "disabled" : ""}>上一页</button><span>${result.page} / ${pages}</span><button data-action="history-page" data-value="${result.page + 1}" ${result.page >= pages ? "disabled" : ""}>下一页</button></div>`;
-  return batchCards.length
-    ? `<div class="batch-card-list">${batchCards.join("")}</div>${historyPager}`
-    : '<div class="empty-state"><span class="empty-state-icon">⌁</span><strong>没有匹配的导入记录</strong><p>调整上方关键词或来源账户，下方结果会自动更新。</p><button class="primary" data-page="import">导入新账单</button></div>';
+  const historyPager = `<div class="pagination"><span class="range">显示 ${start}–${end}，共 ${result.total} 个文件</span><button data-action="history-page" data-value="${result.page - 1}" ${result.page <= 1 ? "disabled" : ""}>上一页</button><span>${result.page} / ${pages}</span><button data-action="history-page" data-value="${result.page + 1}" ${result.page >= pages ? "disabled" : ""}>下一页</button></div>`;
+  return fileCards.length
+    ? `<div class="batch-card-list">${fileCards.join("")}</div>${historyPager}`
+    : '<div class="empty-state"><span class="empty-state-icon">⌁</span><strong>没有匹配的导入记录</strong><p>调整上方关键词、来源或状态，下方结果会自动更新。</p><button class="primary" data-page="import">导入新账单</button></div>';
 }
 
 async function importHistoryPage() {
-  const [result, accountPage] = await Promise.all([
-    request("/paam/import/v1/batch/list?page=1&page_size=10"),
-    request("/paam/import/v1/account/list?page=1&page_size=100"),
+  const initialQuery = new URLSearchParams({
+    page: "1",
+    page_size: "10",
+    filter: "{}",
+    sorter: JSON.stringify({ field: "created_time", order: "desc" }),
+  });
+  const [result, summary] = await Promise.all([
+    request(`/paam/import/v1/import_file/list?${initialQuery}`),
+    request("/paam/import/v1/import_file/summary"),
   ]);
-  const accounts = accountPage.items;
-  state.historyAccountNames = new Map(accounts.map((account) => [account.identity, account.display_name || account.identity]));
-  const accountOptions = accounts.map((account) => `<option value="${esc(account.identity)}">${esc(account.display_name || account.identity)}</option>`).join("");
-  return `<div class="history-summary" data-history-summary>${historySummaryMarkup(result)}</div><section class="panel history-panel"><div class="section-head"><div><h2>导入批次</h2><p class="import-section-help">搜索和账户筛选只更新下方结果，不会刷新页面或打断输入。</p></div><button class="primary" data-page="import">＋ 导入新数据</button></div><form class="toolbar history-toolbar" data-form="history-filter"><label class="grow">搜索<input name="q" placeholder="文件名、来源或批次编号" autocomplete="off"></label><label>来源账户<select name="account"><option value="">全部账户</option>${accountOptions}</select></label><span class="history-updating" data-history-updating aria-live="polite"></span></form><div data-history-results>${historyResultsMarkup(result)}</div></section>`;
+  const sourceOptions = Object.entries(sourceLabels).map(([value, label]) => `<option value="${esc(value)}">${esc(label)}</option>`).join("");
+  const statusOptions = ["PENDING", "IMPORTED", "FAILED"].map((value) => `<option value="${value}">${esc(statusLabels[value] || value)}</option>`).join("");
+  return `<div class="history-summary" data-history-summary>${historySummaryMarkup(summary)}</div><section class="panel history-panel"><div class="section-head"><div><h2>导入文件</h2><p class="import-section-help">搜索、来源和状态筛选只更新下方结果，不会刷新页面或打断输入。</p></div><button class="primary" data-page="import">＋ 导入新数据</button></div><form class="toolbar history-toolbar" data-form="history-filter"><label class="grow">搜索<input name="q" placeholder="文件名、来源或批次编号" autocomplete="off"></label><label>来源<select name="source_type"><option value="">全部来源</option>${sourceOptions}</select></label><label>状态<select name="status"><option value="">全部状态</option>${statusOptions}</select></label><span class="history-updating" data-history-updating aria-live="polite"></span></form><div data-history-results>${historyResultsMarkup(result)}</div></section>`;
 }
 
 async function refreshHistoryResults(form, page = 1) {
@@ -649,11 +651,26 @@ async function refreshHistoryResults(form, page = 1) {
   const controller = new AbortController();
   const requestVersion = ++state.historyRequestVersion;
   state.historyRequestController = controller;
-  const params = new URLSearchParams({ page: String(page), page_size: "10" });
+  const params = new URLSearchParams({
+    page: String(page),
+    page_size: "10",
+    sorter: JSON.stringify({ field: "created_time", order: "desc" }),
+  });
+  const summaryParams = new URLSearchParams();
   const query = form.elements.q.value.trim();
-  const account = form.elements.account.value;
-  if (query) params.set("q", query);
-  if (account) params.set("account_code", account);
+  const filter = Object.fromEntries(Object.entries({
+    source_type: form.elements.source_type.value,
+    status: form.elements.status.value,
+  }).filter(([, value]) => value));
+  if (query) {
+    params.set("q", query);
+    summaryParams.set("q", query);
+  }
+  if (Object.keys(filter).length) {
+    const encodedFilter = JSON.stringify(filter);
+    params.set("filter", encodedFilter);
+    summaryParams.set("filter", encodedFilter);
+  }
   const resultsRoot = $("[data-history-results]");
   const summaryRoot = $("[data-history-summary]");
   const updating = $("[data-history-updating]", form);
@@ -661,9 +678,12 @@ async function refreshHistoryResults(form, page = 1) {
   form.classList.add("updating");
   if (updating) updating.textContent = "正在更新…";
   try {
-    const result = await request(`/paam/import/v1/batch/list?${params}`, { signal: controller.signal });
+    const [result, summary] = await Promise.all([
+      request(`/paam/import/v1/import_file/list?${params}`, { signal: controller.signal }),
+      request(`/paam/import/v1/import_file/summary?${summaryParams}`, { signal: controller.signal }),
+    ]);
     if (requestVersion !== state.historyRequestVersion || state.page !== "import-history") return;
-    if (summaryRoot) summaryRoot.innerHTML = historySummaryMarkup(result);
+    if (summaryRoot) summaryRoot.innerHTML = historySummaryMarkup(summary);
     if (resultsRoot) {
       resultsRoot.innerHTML = historyResultsMarkup(result);
       bindPage(resultsRoot);
@@ -684,93 +704,6 @@ function scheduleHistoryRefresh(form) {
   state.historyFilterTimer = setTimeout(() => refreshHistoryResults(form, 1), 200);
 }
 
-function importRowMoney(row) {
-  const amount = Number(row.amount_minor);
-  if (!Number.isFinite(amount)) return "—";
-  return new Intl.NumberFormat("zh-CN", {
-    style: "currency", currency: row.currency || "CNY",
-  }).format(amount / 100);
-}
-
-function importBatchRow(item) {
-  const status = { SUCCESS: "已写入", SKIPPED: "已跳过", INVALID: "异常" };
-  const normalized = item.record?.normalized || {};
-  const account = normalized.account?.display_name || normalized.account?.identity || "未识别";
-  const summary = normalized.merchant || normalized.counterparty || normalized.note || "未命名交易";
-  return `<tr><td>${item.id}</td><td>${date(normalized.occurred_at)}</td><td><strong>${esc(summary)}</strong>${normalized.note && normalized.note !== summary ? `<small>${esc(normalized.note)}</small>` : ""}</td><td>${esc(account)}</td><td class="money ${Number(normalized.amount_minor) > 0 ? "income" : "expense"}">${esc(importRowMoney(normalized))}</td><td><span class="badge ${item.disposition === "INVALID" ? "warn" : "neutral"}">${esc(status[item.disposition] || item.disposition)}</span>${item.bill_id ? `<small>Fact #${item.bill_id}</small>` : ""}</td></tr>`;
-}
-
-async function renderImportBatchDrawer(dialog) {
-  dialog.requestController?.abort();
-  const controller = new AbortController();
-  dialog.requestController = controller;
-  const page = Number(dialog.dataset.page || 1);
-  const pageSize = Number(dialog.dataset.pageSize || 20);
-  const body = $('[data-batch-drawer-body]', dialog);
-  const range = $('[data-batch-range]', dialog);
-  body.innerHTML = '<div class="preview-drawer-loading">正在读取当前页…</div>';
-  range.textContent = "正在读取当前页…";
-  try {
-    const result = await request(`/paam/import/v1/batch/${dialog.dataset.batchId}/row/list?page=${page}&page_size=${pageSize}`, {
-      signal: controller.signal,
-    });
-    if (!dialog.open || dialog.requestController !== controller) return;
-    const pages = Math.max(1, Math.ceil(result.total / result.page_size));
-    const currentPage = Math.min(Math.max(1, result.page), pages);
-    const start = result.total ? (currentPage - 1) * result.page_size + 1 : 0;
-    const end = Math.min(currentPage * result.page_size, result.total);
-    const summary = result.summary || {};
-    dialog.dataset.page = String(currentPage);
-    range.textContent = result.total ? `显示 ${start}–${end}，共 ${result.total} 行` : "没有原始行记录";
-    $('[data-batch-page]', dialog).textContent = `${currentPage} / ${pages}`;
-    $('[data-action="batch-page-prev"]', dialog).disabled = currentPage <= 1;
-    $('[data-action="batch-page-next"]', dialog).disabled = currentPage >= pages;
-    const summaryCards = `<div class="batch-detail-summary"><span>总行数 <strong>${result.total}</strong></span><span>已写入 <strong>${summary.success || 0}</strong></span><span>已跳过 <strong>${summary.skipped || 0}</strong></span><span>异常 <strong>${summary.invalid || 0}</strong></span></div>`;
-    body.innerHTML = `${summaryCards}${result.items.length ? table(["Raw", "交易时间", "摘要 / 备注", "账户", "金额", "处理结果"], result.items.map(importBatchRow)) : '<div class="empty-state">这个批次没有原始行记录。</div>'}`;
-  } catch (error) {
-    if (error.name !== "AbortError" && dialog.open) {
-      body.innerHTML = `<div class="error">${esc(error.message)}</div>`;
-      range.textContent = "读取失败";
-    }
-  }
-}
-
-function showImportBatch(button) {
-  const dialog = document.createElement("dialog");
-  dialog.className = "preview-drawer batch-detail-drawer";
-  dialog.dataset.batchId = button.dataset.id;
-  dialog.dataset.page = "1";
-  dialog.dataset.pageSize = "20";
-  dialog.innerHTML = `<div class="preview-drawer-shell"><div class="preview-drawer-head"><div><span class="step-kicker">导入批次 #${esc(button.dataset.id)}</span><h2>${esc(button.dataset.filename || "未命名文件")}</h2><p>按页读取原始记录与处理结果</p></div><button type="button" class="drawer-close" data-close aria-label="关闭批次明细">×</button></div><div class="preview-drawer-toolbar"><span data-batch-range>正在读取当前页…</span><label>每页显示<select data-batch-page-size aria-label="批次明细每页行数"><option value="20">20 行</option><option value="30">30 行</option><option value="50">50 行</option><option value="100">100 行</option></select></label></div><div class="preview-drawer-body" data-batch-drawer-body><div class="preview-drawer-loading">正在读取当前页…</div></div><div class="preview-drawer-footer"><button type="button" data-action="batch-page-prev" disabled>← 上一页</button><span data-batch-page>—</span><button type="button" data-action="batch-page-next" disabled>下一页 →</button></div></div>`;
-  dialog.addEventListener("close", () => {
-    dialog.requestController?.abort();
-    dialog.remove();
-  });
-  dialog.addEventListener("click", (event) => {
-    if (event.target === dialog || event.target.closest("[data-close]")) {
-      dialog.close();
-      return;
-    }
-    if (event.target.closest('[data-action="batch-page-prev"]')) {
-      dialog.dataset.page = String(Number(dialog.dataset.page) - 1);
-      renderImportBatchDrawer(dialog);
-    }
-    if (event.target.closest('[data-action="batch-page-next"]')) {
-      dialog.dataset.page = String(Number(dialog.dataset.page) + 1);
-      renderImportBatchDrawer(dialog);
-    }
-  });
-  $('[data-batch-page-size]', dialog).addEventListener("change", (event) => {
-    dialog.dataset.pageSize = event.currentTarget.value;
-    dialog.dataset.page = "1";
-    renderImportBatchDrawer(dialog);
-  });
-  document.body.append(dialog);
-  dialog.showModal();
-  requestAnimationFrame(() => {
-    if (dialog.open) renderImportBatchDrawer(dialog);
-  });
-}
 const fileBase64 = (file) => new Promise((resolve, reject) => {
   const reader = new FileReader();
   reader.onload = () => resolve(String(reader.result).split(",")[1]);
@@ -1119,7 +1052,6 @@ function bindPage(root) {
       if (row.dataset.factRow) showFactDetail(row.dataset.factRow).catch((error) => toast(error.message, true));
       if (row.dataset.economicRow) showEconomicDetail(row.dataset.economicRow).catch((error) => toast(error.message, true));
       if (row.dataset.reviewRow) showEconomicReview(row.dataset.reviewRow).catch((error) => toast(error.message, true));
-      if (row.dataset.importRow) showImportBatch($("[data-action='batch-rows']", row));
       if (row.dataset.importFileRow) showImportFileDetail(row.dataset.importFileRow).catch((error) => toast(error.message, true));
     });
   });
@@ -1202,7 +1134,6 @@ function bindPage(root) {
   $$('[data-action="account-transition"]', root).forEach((button) => button.onclick = () => transitionAccount(button).catch((error) => toast(error.message, true)));
   $$('[data-action="conflict-transition"]', root).forEach((button) => button.onclick = () => transitionConflict(button).catch((error) => toast(error.message, true)));
   $$('[data-action="conflict-resolve"]', root).forEach((button) => button.onclick = () => conflictDialog(button));
-  $$('[data-action="batch-rows"]', root).forEach((button) => button.onclick = () => showImportBatch(button));
   const importForm = $('[data-form="import-preview"]', root);
   if (importForm) {
     $$('[data-action="import-source"]', importForm).forEach((button) => button.addEventListener("click", () => {
@@ -1277,7 +1208,8 @@ function bindPage(root) {
     if (!event.isComposing) scheduleHistoryRefresh(historyFilter);
   });
   historyFilter?.elements.q.addEventListener("compositionend", () => scheduleHistoryRefresh(historyFilter));
-  historyFilter?.elements.account.addEventListener("change", () => scheduleHistoryRefresh(historyFilter));
+  historyFilter?.elements.source_type.addEventListener("change", () => scheduleHistoryRefresh(historyFilter));
+  historyFilter?.elements.status.addEventListener("change", () => scheduleHistoryRefresh(historyFilter));
   importForm?.addEventListener("submit", async (event) => { event.preventDefault(); try { await previewImport(event.currentTarget); } catch (error) { showFormError(event.currentTarget, error); } });
   $('[data-form="import-revise"]', root)?.addEventListener("submit", reviseImport);
   $('[data-form="tag-assignment"]', root)?.addEventListener("submit", submitTags);

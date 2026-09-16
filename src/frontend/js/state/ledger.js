@@ -7,7 +7,6 @@ export const state = {
   historyFilterTimer: null,
   historyRequestController: null,
   historyRequestVersion: 0,
-  historyAccountNames: new Map(),
   detailEconomics: new Map(),
   detailEconomicReviews: new Map(),
   detailSummaries: new Map(),

@@ -139,26 +139,19 @@ def run() -> None:
                 expect(page.get_by_role("heading", name="导入记录")).to_be_visible()
                 expect(page.get_by_text("target-ui.csv")).to_be_visible()
                 expect(page.locator('[data-form="history-filter"]')).to_be_visible()
-                page.locator('[data-action="batch-rows"]').click()
-                history_drawer = page.locator("dialog.batch-detail-drawer[open]")
+                page.locator('[data-action="import-file-detail"]').click()
+                history_drawer = page.locator("dialog.detail-view-drawer[open]")
                 expect(history_drawer).to_be_visible()
                 history_drawer_box = history_drawer.bounding_box()
                 assert history_drawer_box is not None
                 assert history_drawer_box["x"] > 500, history_drawer_box
-                expect(history_drawer.locator("[data-batch-page-size]")).to_be_visible()
-                expect(
-                    history_drawer.locator("[data-batch-page-size] option")
-                ).to_have_count(4)
                 expect(history_drawer.locator("tbody tr")).to_have_count(20)
-                expect(history_drawer).to_contain_text("浏览器测试商户")
+                expect(history_drawer).to_contain_text("Transaction Fact")
                 expect(
-                    history_drawer.locator("th", has_text="摘要 / 备注")
+                    history_drawer.locator("th", has_text="摘要")
                 ).to_be_visible()
-                history_drawer.locator('[data-action="batch-page-next"]').click()
-                expect(history_drawer.locator("tbody tr")).to_have_count(6)
-                history_drawer.locator("[data-batch-page-size]").select_option("30")
-                expect(history_drawer.locator("tbody tr")).to_have_count(26)
-                history_drawer.locator("[data-close]").click()
+                expect(history_drawer).to_contain_text("显示 20 / 26 条")
+                history_drawer.locator("[data-close]").first.click()
                 history_hash = page.evaluate("location.hash")
                 search = page.locator(
                     '[data-form="history-filter"] input[name="q"]'
@@ -173,11 +166,10 @@ def run() -> None:
                 search.fill("target-ui")
                 expect(page.get_by_text("target-ui.csv")).to_be_visible()
                 assert page.evaluate("location.hash") == history_hash
-                account_filter = page.locator(
-                    '[data-form="history-filter"] select[name="account"]'
+                source_filter = page.locator(
+                    '[data-form="history-filter"] select[name="source_type"]'
                 )
-                account_label = page.locator(".account-chip").first.inner_text()
-                account_filter.select_option(label=account_label)
+                source_filter.select_option("wechat")
                 expect(page.get_by_text("target-ui.csv")).to_be_visible()
                 assert page.evaluate("location.hash") == history_hash
 
