@@ -51,7 +51,7 @@ description: Change PAAM FastAPI routers, URL modules or versions, HTTP endpoint
   use actions only after the identifier.
 - Ledger Review candidates use `/review_candidate/list`. They are a creation
   aid, not the Transaction Fact PO list, and follow the shared
-  `q/filter/sorter/page/page_size` contract.
+  `page_index/page_size/keyword/filter/sorter` contract.
 - A Ledger-owned account is the nested subresource
   `/flow/{ledger_id}/account`. Reading or updating it starts from the Ledger ID
   and never rewrites the source Transaction Fact account. Updates use the
@@ -109,12 +109,16 @@ description: Change PAAM FastAPI routers, URL modules or versions, HTTP endpoint
 - Every business Router declares its complete module prefix on `APIRouter`.
   Route decorators contain only object-relative paths. System routes are the
   exception because they do not share one business prefix.
-- Request and Response DTOs are optional. Use them when validation, response
-  structure, or contract complexity requires them; simple endpoints may use
-  plain parameters and return values.
+- Request and Response DTOs are optional for simple non-list endpoints. Every
+  standard list endpoint uses an object-specific `ListRequest` subclass and an
+  object-specific `ListResponse` subclass so pagination and OpenAPI remain
+  uniform and strongly typed.
 - Do not add a route-local response-envelope helper whose only behavior is
   constructing a response DTO. When a response DTO is useful, construct it
   directly at the Router boundary.
+- Do not add implicit response factories such as `_envelope`, `success`, or
+  `make_response`. Reuse protocol structure through DTO inheritance, and have
+  the Router explicitly instantiate the concrete response DTO.
 - Use one primary `APIRouter` per file and one primary Service responsibility
   per Router object.
 - Format business `APIRouter` declarations consistently with `prefix`, `tags`,
@@ -171,9 +175,10 @@ description: Change PAAM FastAPI routers, URL modules or versions, HTTP endpoint
   query parameters. Write input uses a JSON request body when a body is needed.
 - Every successful business API response uses the common
   `status/message/body` envelope and HTTP status `200`. `status` is the integer
-  HTTP status code and must equal the actual response status. `message`
-  describes the result, and `body` carries the returned object, collection,
-  page, or an empty object when no result data is needed.
+  HTTP status code and must equal the actual response status. A successful
+  response uses `message == "ok"`; callers determine success from `status`, not
+  from `message`. `body` carries the returned object, collection, page, or an
+  empty object when no result data is needed.
 - Creation, update, deletion, and domain-action success all use HTTP `200`.
   Failures use an appropriate non-200 status code under the shared error
   contract.
@@ -181,9 +186,29 @@ description: Change PAAM FastAPI routers, URL modules or versions, HTTP endpoint
   equals the actual non-200 HTTP status, `message` contains the human-readable
   error, and `body` carries a stable machine-readable error code plus optional
   structured details.
-- Canonical paged list requests use `page` with default `1` and `page_size` with
-  default `20` and maximum `100`. The response `body` contains `items`, `total`,
-  `page`, and `page_size`.
+- The shared DTO hierarchy is `Response -> SuccessResponse[BodyT] ->
+  ListResponse[ItemT]` for successful lists and `Response -> ErrorResponse` for
+  failures. `SuccessResponse` fixes `status` to integer `200` and `message` to
+  `"ok"`. `ErrorResponse` keeps the actual non-200 integer status, uses the
+  error text as `message`, and carries `code` plus optional `details` in its
+  body. These fields must also be required in the serialized OpenAPI schema.
+- Canonical paged list requests inherit from
+  `ListRequest[FilterT, SorterT]`. Its fields are `page_index`, `page_size`,
+  `keyword`, `filter`, and `sorter`. `page_index` is a one-based page number,
+  never a row offset; it defaults to `1`. `page_size` defaults to `20` and is at
+  most `100`. `keyword` replaces the abbreviated `q`, defaults to empty text,
+  and is at most 200 characters.
+- Each object defines concrete Filter and Sorter DTOs and a concrete list
+  request subclass, such as
+  `TransactionFactListRequest(ListRequest[TransactionFactFilter,
+  TransactionFactSorter])`. The wire-level `filter` and `sorter` values remain
+  JSON query objects and are validated into those typed DTOs.
+- `ListResponse[ItemT]` extends `SuccessResponse[ListBody[ItemT]]`. Its body
+  contains exactly `items`, `total`, `page_index`, and `page_size`; request
+  search and ordering state is not echoed back. Each object declares a concrete
+  response subclass, such as
+  `TransactionFactListResponse(ListResponse[TransactionFactListItem])`, to keep
+  stable and readable OpenAPI component names.
 - Compatibility routes retain their existing request defaults and response
   shapes until their callers migrate.
 
@@ -200,9 +225,9 @@ description: Change PAAM FastAPI routers, URL modules or versions, HTTP endpoint
   count may be exposed only when labeled as a summary; related object data
   belongs in detail.
 - Every standard `GET /{object}/list` supports server-side search, filtering,
-  sorting, and pagination. Use the shared `q`, `filter`, `sorter`, `page`, and
-  `page_size` contract; never fetch an arbitrary large page and implement the
-  canonical list query only in the browser.
+  sorting, and pagination. Use the shared `page_index`, `page_size`, `keyword`,
+  `filter`, and `sorter` contract; never fetch an arbitrary large page and
+  implement the canonical list query only in the browser.
 - `filter` and `sorter` are JSON query objects. Each object API must whitelist
   supported filter fields, sorter fields, value types, and sort directions at
   its boundary. Unknown fields or malformed objects fail with `422`; never
