@@ -34,12 +34,12 @@ def test_fact_period_lookup_uses_time_index():
     engine = _target_engine()
     plan = _plan(
         engine,
-        "SELECT id, occurred_time FROM bill_fact "
+        "SELECT id, occurred_time FROM transaction_fact "
         "WHERE occurred_time >= :start AND occurred_time < :end "
         "ORDER BY occurred_time, id",
         {"start": "2025-01-01 00:00:00", "end": "2025-02-01 00:00:00"},
     )
-    assert "ix_bill_fact_occurred_time_id" in plan
+    assert "ix_transaction_fact_occurred_time_id" in plan
 
 
 def test_raw_evidence_batch_lookup_uses_bill_index():

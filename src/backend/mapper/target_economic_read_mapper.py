@@ -6,13 +6,15 @@ from sqlalchemy import exists, func, or_, select
 from sqlalchemy.orm import Session
 
 from backend.entity import (
-    BillFact,
+    CASH_DIRECTION_IN,
+    CASH_DIRECTION_OUT,
     LedgerEntry,
     LedgerEntryTag,
     ReviewAllocation,
     ReviewCase,
     TargetTag,
     TargetTagView,
+    TransactionFact,
 )
 from backend.schema.target_economic import EconomicPageQuery, EconomicSummaryQuery
 
@@ -70,18 +72,19 @@ class TargetEconomicReadMapper:
         ).order_by(ReviewAllocation.id)).mappings().all()
         fact_ids = sorted({row["transaction_fact_id"] for row in allocations})
         facts = self.db.execute(select(
-            BillFact.id,
-            BillFact.occurred_time,
-            BillFact.cash_direction,
-            BillFact.amount_value,
-            BillFact.amount_scale,
-            BillFact.currency_code,
-            BillFact.account_code,
-            BillFact.counterparty,
-            BillFact.summary,
+            TransactionFact.id,
+            TransactionFact.occurred_time,
+            TransactionFact.cash_direction,
+            TransactionFact.amount_value,
+            TransactionFact.amount_scale,
+            TransactionFact.currency_code,
+            TransactionFact.account_code,
+            TransactionFact.counterparty_name.label("counterparty"),
+            TransactionFact.summary,
         ).where(
-            BillFact.id.in_(fact_ids)
-        ).order_by(BillFact.id)).mappings().all() if fact_ids else []
+            TransactionFact.id.in_(fact_ids)
+        ).order_by(TransactionFact.id)).mappings().all() if fact_ids else []
+        facts = [self._fact_values(row) for row in facts]
         review_ids = sorted({row["review_case_id"] for row in allocations})
         reviews = self.db.execute(select(
             ReviewCase.id,
@@ -169,15 +172,15 @@ class TargetEconomicReadMapper:
                 ReviewCase,
                 ReviewCase.id == ReviewAllocation.review_case_id,
             ).join(
-                BillFact,
-                BillFact.id == ReviewAllocation.transaction_fact_id,
+                TransactionFact,
+                TransactionFact.id == ReviewAllocation.transaction_fact_id,
             ).where(
                 ReviewAllocation.ledger_entry_id == LedgerEntry.id,
                 ReviewCase.status == 0,
                 or_(
                     ReviewCase.title.ilike(f"%{query.q}%"),
-                    BillFact.counterparty.ilike(f"%{query.q}%"),
-                    BillFact.summary.ilike(f"%{query.q}%"),
+                    TransactionFact.counterparty_name.ilike(f"%{query.q}%"),
+                    TransactionFact.summary.ilike(f"%{query.q}%"),
                 ),
             )))
         return clauses
@@ -197,3 +200,18 @@ class TargetEconomicReadMapper:
                 ReviewCase.status == 0,
             )),
         ]
+
+    @staticmethod
+    def _fact_values(row) -> dict:
+        values = dict(row)
+        direction = {
+            CASH_DIRECTION_IN: "IN",
+            CASH_DIRECTION_OUT: "OUT",
+        }.get(values["cash_direction"])
+        if direction is None:
+            raise ValueError(
+                f"unknown transaction_fact cash_direction: "
+                f"{values['cash_direction']}"
+            )
+        values["cash_direction"] = direction
+        return values

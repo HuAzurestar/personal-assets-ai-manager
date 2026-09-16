@@ -14,12 +14,14 @@ from backend.router.ledger_review import router as ledger_review_router
 from backend.router.tag import router as tag_router
 from backend.router.tag_assignment import router as tag_assignment_router
 from backend.entity import (
-    BillFact,
+    CASH_DIRECTION_IN,
+    CASH_DIRECTION_OUT,
     LedgerEntry,
     LedgerEntryTag,
     ReviewAllocation,
     ReviewCase,
     ReviewRevision,
+    TransactionFact,
 )
 from backend.service.target_economic_service import TargetEconomicService
 from backend.core.target_database import init_target_db
@@ -53,15 +55,20 @@ def economic_api(tmp_path):
 def _facts(sessions, specifications):
     now = datetime(2026, 9, 13, 10)
     with sessions() as db:
-        rows = [BillFact(
+        direction_codes = {
+            "IN": CASH_DIRECTION_IN,
+            "OUT": CASH_DIRECTION_OUT,
+        }
+        rows = [TransactionFact(
             fact_key=f"economic-v2-{uuid4().hex}",
             occurred_time=now + timedelta(minutes=index),
-            cash_direction=direction,
+            cash_direction=direction_codes[direction],
             amount_value=amount,
             amount_scale=2,
             currency_code=currency,
             account_code=f"account-{index}",
-            counterparty="counterparty",
+            counterparty_name="counterparty",
+            counterparty_account_ref="",
             summary="fact",
             created_time=now,
             updated_time=now,

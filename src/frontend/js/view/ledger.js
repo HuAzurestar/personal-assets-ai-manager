@@ -1239,7 +1239,7 @@ async function confirmImport() {
   state.confirmingImport = true;
   const button = $('[data-action="confirm-import"]');
   if (button) button.disabled = true;
-  try { const result = await jsonRequest(`/paam/import/v1/preview/${state.importPlan.token}/confirm`, "POST", { version: state.importPlan.version }); state.importPlan = null; toast(`导入完成：${result.bill_fact_ids?.length || 0} 条新事实`); route("import-history"); } catch (error) { if (button) button.disabled = false; const form = button?.closest("form"); if (form) showFormError(form, error); else toast(error.message, true); }
+  try { const result = await jsonRequest(`/paam/import/v1/preview/${state.importPlan.token}/confirm`, "POST", { version: state.importPlan.version }); state.importPlan = null; toast(`导入完成：${result.transaction_fact_ids?.length || 0} 条新事实`); route("import-history"); } catch (error) { if (button) button.disabled = false; const form = button?.closest("form"); if (form) showFormError(form, error); else toast(error.message, true); }
   finally { state.confirmingImport = false; }
 }
 function simpleDictionaryDialog(kind, viewId = "") {

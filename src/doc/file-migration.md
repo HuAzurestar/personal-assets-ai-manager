@@ -140,7 +140,7 @@
 | TargetTable | `base.py` |
 | ImportFile | `import_file.py` |
 | BillRaw | `bill_raw.py` |
-| BillFact | `bill_fact.py` |
+| TransactionFact | `transaction_fact.py` |
 | ReviewCase | `review_case.py` |
 | ReviewCaseBill | `review_case_bill.py` |
 | ReviewHistory | `review_history.py` |

@@ -1,7 +1,17 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime
 from pathlib import Path
+
+from sqlalchemy import create_engine, select, text
+from sqlalchemy.orm import Session
+
+from backend.entity import (
+    CASH_DIRECTION_OUT,
+    TransactionFact,
+)
+from backend.mapper.target_economic_mapper import TargetEconomicMapper
 
 
 SQL_DIR = Path(__file__).parents[1] / "asset" / "sql"
@@ -250,3 +260,68 @@ def test_review_revision_is_append_only_audit_without_business_version():
                 raise AssertionError(f"review_revision accepted invalid row: {statement}")
     finally:
         connection.close()
+
+
+def test_transaction_fact_sql_asset_matches_entity_and_mapper(tmp_path):
+    database_path = tmp_path / "transaction-fact.db"
+    connection = sqlite3.connect(database_path)
+    try:
+        connection.executescript(
+            (SQL_DIR / "transaction_fact.sql").read_text(encoding="utf-8")
+        )
+    finally:
+        connection.close()
+
+    engine = create_engine(f"sqlite:///{database_path}")
+    try:
+        with Session(engine) as db:
+            fact = TransactionFact(
+                fact_key="sql-asset-transaction-fact",
+                occurred_time=datetime(2026, 9, 16, 12, 30),
+                cash_direction=CASH_DIRECTION_OUT,
+                amount_value=500000,
+                amount_scale=2,
+                currency_code="CNY",
+                account_code="cash",
+                counterparty_name="测试对手方",
+                counterparty_account_ref="counterparty-account",
+                summary="SQL asset contract",
+            )
+            db.add(fact)
+            db.commit()
+
+            stored_direction = db.scalar(select(TransactionFact.cash_direction))
+            assert stored_direction == CASH_DIRECTION_OUT
+            mapped = TargetEconomicMapper(db).facts([fact.id])[0]
+            assert mapped.cash_direction == "OUT"
+            assert mapped.counterparty == "测试对手方"
+            fact_id = fact.id
+        with engine.connect() as connection:
+            stored = connection.execute(text(
+                "SELECT cash_direction, occurred_time, created_time "
+                "FROM transaction_fact WHERE id = :fact_id"
+            ), {"fact_id": fact_id}).mappings().one()
+            assert stored["cash_direction"] == CASH_DIRECTION_OUT
+            assert stored["occurred_time"] == "2026-09-16T12:30:00.000Z"
+            assert "T" in stored["created_time"]
+            assert stored["created_time"].endswith("Z")
+    finally:
+        engine.dispose()
+
+
+def test_transaction_fact_entity_has_only_current_physical_columns():
+    assert set(TransactionFact.__table__.columns.keys()) == {
+        "id",
+        "fact_key",
+        "occurred_time",
+        "cash_direction",
+        "amount_value",
+        "amount_scale",
+        "currency_code",
+        "account_code",
+        "counterparty_name",
+        "counterparty_account_ref",
+        "summary",
+        "created_time",
+        "updated_time",
+    }

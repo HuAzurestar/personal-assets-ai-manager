@@ -180,7 +180,7 @@ def test_target_review_confirm_revoke_restore_rebuilds_projection(
                 json={"version": preview["version"]},
             )
             assert confirmation.status_code == 200, confirmation.text
-            fact_ids = confirmation.json()["body"]["bill_fact_ids"]
+            fact_ids = confirmation.json()["body"]["transaction_fact_ids"]
             assert len(fact_ids) == 2
 
             created = client.post(

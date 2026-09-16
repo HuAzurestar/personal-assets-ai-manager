@@ -4,7 +4,7 @@
 
 ## 核心关系
 
-四个核心业务对象为 `bill_fact`（事实流水）、`review_case`（流水审查）、
+四个核心业务对象为 `transaction_fact`（事实流水）、`review_case`（流水审查）、
 `ledger_entry`（迁移期物理名；语义为 Economic Flow）和
 `review_allocation`（Review、Fact 与 LedgerEntry 的三元关系）。
 
@@ -86,18 +86,19 @@ ASSET_AND_LIABILITY 目前仅表示资产与负债相关的现金流水分类，
 
 唯一约束为 `(import_file_id, source_row_number)`。`bill_id` 不唯一：同一笔真实交易可以因不同导出选项、不同文件或不同来源拥有多条 Raw。处理冲突时只能更新 `bill_id` 和处理状态，不能改原始载荷、指纹、来源文件和行号。
 
-### 3. `bill_fact`：接受后的规范账单事实
+### 3. `transaction_fact`：接受后的规范交易事实
 
 | 字段 | 类型 | 默认 | 可变性与说明 |
 | --- | --- | --- | --- |
 | `fact_key` | VARCHAR(160) | 无伪造默认 | 不可变、唯一的来源身份或已接受指纹 |
 | `occurred_time` | DATETIME | 无伪造默认 | 不可变的发生时间 |
-| `cash_direction` | VARCHAR(8) | 无伪造默认 | 不可变的 IN/OUT |
+| `cash_direction` | INTEGER | 无伪造默认 | 不可变；1=CASH_DIRECTION_IN，2=CASH_DIRECTION_OUT |
 | `amount_value` | BIGINT | 无伪造默认 | 不可变的最小精度整数金额 |
 | `amount_scale` | SMALLINT | `2` | 不可变的小数位数 |
 | `currency_code` | VARCHAR(12) | `CNY` | 不可变的币种/单位 |
 | `account_code` | VARCHAR(120) | `UNKNOWN` | 导入时识别的不可变来源账户 |
-| `counterparty` | VARCHAR(200) | `''` | 不可变的规范交易对手 |
+| `counterparty_name` | VARCHAR(200) | `''` | 不可变的规范交易对手名称 |
+| `counterparty_account_ref` | VARCHAR(200) | `''` | 来源可识别的对手方账户引用 |
 | `summary` | TEXT | `''` | 不可变的规范摘要 |
 
 Fact 只放跨来源稳定、计算必须的核心字段。客户详情、完整账户文本、追溯文本和 SHA 等只保留在 Raw/File，点开详情时再查。当前不提供独立的账户修正 Review；LedgerEntry 直接采用 Fact 的不可变 `account_code`，后续账户管理能力需另行设计。
@@ -146,7 +147,7 @@ Fact 只放跨来源稳定、计算必须的核心字段。客户详情、完整
 
 ## 三、经济层
 
-该层是 UI 日常读取的正式经济结果。准确性来自 `bill_fact + confirmed review + allocation`；经济审查服务是唯一写入者。
+该层是 UI 日常读取的正式经济结果。准确性来自 `transaction_fact + confirmed review + allocation`；经济审查服务是唯一写入者。
 
 ### 7. `ledger_entry`：最终展示的一条实际账本记录
 
@@ -200,7 +201,7 @@ Fact 只放跨来源稳定、计算必须的核心字段。客户详情、完整
 | --- | --- | --- |
 | `ledger_entry` | 热 | 读取已确认 Review 发布的列表、筛选和按币种汇总 |
 | `ledger_entry_tag`、`tag`、`tag_view` | 热/温 | 列表按 ID 批量取；字典独立取 |
-| `bill_fact` | 温 | 导入核对、审查、单条详情 |
+| `transaction_fact` | 温 | 导入核对、审查、单条详情 |
 | `review_case`、`review_allocation` | 温 | 审查工作台与单条详情 |
 | `import_file`、`bill_raw`、`review_revision` | 冷 | 来源追溯、问题核查、审计详情 |
 
@@ -211,7 +212,7 @@ Fact 只放跨来源稳定、计算必须的核心字段。客户详情、完整
 旧业务表和过渡表已经从模型和运行时删除。新数据库直接创建 10 张目标表；不提供旧数据库原位迁移。必要语义分别进入：
 
 - 文件/批次/来源/异常：`import_file + bill_raw`。
-- 规范流水：`bill_fact`。
+- 规范流水：`transaction_fact`。
 - 正常交易与借钱/还钱行为：统一 Review 三表。
 - 正式经济结果：`ledger_entry`、三元 `review_allocation` 与标签表。
 

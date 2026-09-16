@@ -9,7 +9,13 @@ from decimal import Decimal
 from sqlalchemy import case, func, or_, select, text
 from sqlalchemy.orm import Session
 
-from backend.entity import BillFact, BillRaw, ImportFile
+from backend.entity import (
+    CASH_DIRECTION_IN,
+    CASH_DIRECTION_OUT,
+    BillRaw,
+    ImportFile,
+    TransactionFact,
+)
 from backend.smart_import import build_plan, dump
 from backend.parser.statement_parser import digest
 
@@ -60,13 +66,13 @@ class TargetIntakeMapper:
     @staticmethod
     def _ranked_accounts():
         return select(
-            BillFact.account_code.label("account_code"),
+            TransactionFact.account_code.label("account_code"),
             BillRaw.raw_payload.label("raw_payload"),
             func.row_number().over(
-                partition_by=BillFact.account_code,
+                partition_by=TransactionFact.account_code,
                 order_by=BillRaw.id.desc(),
             ).label("position"),
-        ).outerjoin(BillRaw, BillRaw.bill_id == BillFact.id).subquery()
+        ).outerjoin(BillRaw, BillRaw.bill_id == TransactionFact.id).subquery()
 
     @staticmethod
     def _account_items(rows, start_id: int = 1) -> list[dict[str, object]]:
@@ -102,9 +108,9 @@ class TargetIntakeMapper:
         identities = {
             row["fact_key"]: row["id"]
             for row in self.db.execute(select(
-                BillFact.id,
-                BillFact.fact_key,
-            ).where(BillFact.fact_key.in_(lookup_keys))).mappings().all()
+                TransactionFact.id,
+                TransactionFact.fact_key,
+            ).where(TransactionFact.fact_key.in_(lookup_keys))).mappings().all()
         }
         identity_bill_ids = set(identities.values())
         clauses = []
@@ -114,25 +120,25 @@ class TargetIntakeMapper:
                 max(occurred_values).date() + timedelta(days=1), time.min
             )
             clauses.append(
-                (BillFact.occurred_time >= first_day)
-                & (BillFact.occurred_time < last_day)
+                (TransactionFact.occurred_time >= first_day)
+                & (TransactionFact.occurred_time < last_day)
             )
         if identity_bill_ids:
-            clauses.append(BillFact.id.in_(identity_bill_ids))
+            clauses.append(TransactionFact.id.in_(identity_bill_ids))
         query = select(
-            BillFact.id,
-            BillFact.occurred_time,
-            BillFact.cash_direction,
-            BillFact.amount_value,
-            BillFact.amount_scale,
-            BillFact.currency_code,
+            TransactionFact.id,
+            TransactionFact.occurred_time,
+            TransactionFact.cash_direction,
+            TransactionFact.amount_value,
+            TransactionFact.amount_scale,
+            TransactionFact.currency_code,
         )
         query = query.where(or_(*clauses)) if clauses else query.where(False)
         fact_rows = self.db.execute(query).mappings().all()
         bills = {}
         for row in fact_rows:
             signed = Decimal(row["amount_value"]) / (Decimal(10) ** row["amount_scale"])
-            if row["cash_direction"] == "OUT":
+            if row["cash_direction"] == CASH_DIRECTION_OUT:
                 signed = -signed
             bills[row["id"]] = {
                 "id": row["id"],
@@ -218,15 +224,18 @@ class TargetIntakeMapper:
                 row["currency"],
                 row["raw"],
             ])
-            fact = BillFact(
+            fact = TransactionFact(
                 fact_key=fact_key,
                 occurred_time=datetime.fromisoformat(row["occurred_at"]),
-                cash_direction="IN" if amount_minor > 0 else "OUT",
+                cash_direction=(
+                    CASH_DIRECTION_IN if amount_minor > 0 else CASH_DIRECTION_OUT
+                ),
                 amount_value=abs(amount_minor),
                 amount_scale=2,
                 currency_code=row["currency"],
                 account_code=row["account"]["identity"] or "UNKNOWN",
-                counterparty=row["merchant"],
+                counterparty_name=row["merchant"],
+                counterparty_account_ref="",
                 summary=row["note"],
                 created_time=now,
                 updated_time=now,
@@ -322,7 +331,7 @@ class TargetIntakeMapper:
         return {
             "counts": plan["counts"],
             "import_file_ids": [item.id for _doc, item in import_files],
-            "bill_fact_ids": sorted(new_targets.values()),
+            "transaction_fact_ids": sorted(new_targets.values()),
             "affected_fact_ids": affected_fact_ids,
         }
 
@@ -359,10 +368,10 @@ class TargetIntakeMapper:
             clauses.append(or_(*search))
         if account_code:
             matching_files = select(BillRaw.import_file_id).join(
-                BillFact,
-                BillRaw.bill_id == BillFact.id,
+                TransactionFact,
+                BillRaw.bill_id == TransactionFact.id,
             ).where(
-                BillFact.account_code == account_code,
+                TransactionFact.account_code == account_code,
             ).distinct()
             clauses.append(ImportFile.id.in_(matching_files))
 
@@ -392,15 +401,15 @@ class TargetIntakeMapper:
         if file_ids:
             links = self.db.execute(select(
                 BillRaw.import_file_id,
-                BillFact.account_code,
+                TransactionFact.account_code,
             ).join(
-                BillFact,
-                BillRaw.bill_id == BillFact.id,
+                TransactionFact,
+                BillRaw.bill_id == TransactionFact.id,
             ).where(
                 BillRaw.import_file_id.in_(file_ids),
             ).distinct().order_by(
                 BillRaw.import_file_id,
-                BillFact.account_code,
+                TransactionFact.account_code,
             )).mappings().all()
             for link in links:
                 account_codes[link["import_file_id"]].append(link["account_code"])

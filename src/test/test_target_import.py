@@ -14,7 +14,14 @@ from sqlalchemy.orm import sessionmaker
 from backend.core import target_database
 from backend import target_main
 from backend.core.intake_preview_store import target_intake_preview_store
-from backend.entity import BillFact, BillRaw, ImportFile, LedgerEntry, ReviewCase
+from backend.entity import (
+    CASH_DIRECTION_OUT,
+    BillRaw,
+    ImportFile,
+    LedgerEntry,
+    ReviewCase,
+    TransactionFact,
+)
 from backend.parser.statement_parser import parse_statement
 
 
@@ -123,11 +130,21 @@ def test_target_import_writes_fact_evidence_and_hot_projection(target_import_api
     assert response.status_code == 200, response.text
 
     with sessions() as db:
-        fact = db.scalar(select(BillFact))
-        assert (fact.amount_value, fact.amount_scale, fact.currency_code) == (
+        fact = db.scalar(select(TransactionFact))
+        assert (
+            fact.cash_direction,
+            fact.amount_value,
+            fact.amount_scale,
+            fact.currency_code,
+            fact.counterparty_name,
+            fact.counterparty_account_ref,
+        ) == (
+            CASH_DIRECTION_OUT,
             1000,
             2,
             "CNY",
+            "测试商户",
+            "",
         )
         assert db.query(BillRaw).count() == 1
         assert db.query(ImportFile).count() == 1
@@ -145,7 +162,7 @@ def test_target_import_writes_fact_evidence_and_hot_projection(target_import_api
     assert repeated["counts"]["duplicate_file"] == 1
     assert _confirm(client, repeated).status_code == 200
     with sessions() as db:
-        assert db.query(BillFact).count() == 1
+        assert db.query(TransactionFact).count() == 1
 
 
 def test_import_history_supports_search_pagination_and_account_filter(
@@ -263,7 +280,7 @@ def test_target_import_accepts_supported_workbooks(target_import_api, extension)
     assert preview["can_confirm"]
     assert _confirm(client, preview).status_code == 200
     with sessions() as db:
-        assert db.query(BillFact).count() == 1
+        assert db.query(TransactionFact).count() == 1
 
 
 def test_encrypted_zip_password_is_ephemeral(target_import_api):
@@ -297,7 +314,7 @@ def test_corrupt_workbook_is_a_preview_error(target_import_api, extension):
     assert not preview["can_confirm"]
     assert preview["documents"][0]["error"]
     with sessions() as db:
-        assert db.query(BillFact).count() == 0
+        assert db.query(TransactionFact).count() == 0
 
 
 def test_target_fact_conflict_stays_on_import_row(target_import_api):

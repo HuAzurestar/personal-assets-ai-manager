@@ -3,7 +3,11 @@
 from backend.entity.base import TargetTable
 from backend.entity.import_file import ImportFile
 from backend.entity.bill_raw import BillRaw
-from backend.entity.bill_fact import BillFact
+from backend.entity.transaction_fact import (
+    CASH_DIRECTION_IN,
+    CASH_DIRECTION_OUT,
+    TransactionFact,
+)
 from backend.entity.review_case import ReviewCase
 from backend.entity.review_allocation import ReviewAllocation
 from backend.entity.review_revision import ReviewRevision

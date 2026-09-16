@@ -8,11 +8,13 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from backend.entity import (
-    BillFact,
+    CASH_DIRECTION_IN,
+    CASH_DIRECTION_OUT,
     LedgerEntry,
     ReviewAllocation,
     ReviewCase,
     ReviewRevision,
+    TransactionFact,
 )
 from backend.schema.target_review import (
     TargetEconomicFlowRead,
@@ -37,20 +39,22 @@ class TargetEconomicMapper:
         if not fact_ids:
             return ()
         rows = self.db.execute(select(
-            BillFact.id,
-            BillFact.occurred_time,
-            BillFact.cash_direction,
-            BillFact.amount_value,
-            BillFact.amount_scale,
-            BillFact.currency_code,
-            BillFact.account_code,
-            BillFact.counterparty,
-            BillFact.summary,
-            BillFact.fact_key,
-            BillFact.created_time,
-            BillFact.updated_time,
-        ).where(BillFact.id.in_(fact_ids))).mappings().all()
-        return tuple(TargetReviewFactVO(**row) for row in rows)
+            TransactionFact.id,
+            TransactionFact.occurred_time,
+            TransactionFact.cash_direction,
+            TransactionFact.amount_value,
+            TransactionFact.amount_scale,
+            TransactionFact.currency_code,
+            TransactionFact.account_code,
+            TransactionFact.counterparty_name.label("counterparty"),
+            TransactionFact.summary,
+            TransactionFact.fact_key,
+            TransactionFact.created_time,
+            TransactionFact.updated_time,
+        ).where(TransactionFact.id.in_(fact_ids))).mappings().all()
+        return tuple(TargetReviewFactVO(
+            **self._fact_values(row)
+        ) for row in rows)
 
     def review_page(
         self,
@@ -90,19 +94,19 @@ class TargetEconomicMapper:
 
     def _fact_candidate_query(self):
         return select(
-            BillFact.id,
-            BillFact.occurred_time,
-            BillFact.cash_direction,
-            BillFact.amount_value,
-            BillFact.amount_scale,
-            BillFact.currency_code,
-            BillFact.account_code,
-            BillFact.counterparty,
-            BillFact.summary,
+            TransactionFact.id,
+            TransactionFact.occurred_time,
+            TransactionFact.cash_direction,
+            TransactionFact.amount_value,
+            TransactionFact.amount_scale,
+            TransactionFact.currency_code,
+            TransactionFact.account_code,
+            TransactionFact.counterparty_name.label("counterparty"),
+            TransactionFact.summary,
             func.sum(ReviewAllocation.amount_value).label("available_value"),
         ).join(
             ReviewAllocation,
-            ReviewAllocation.transaction_fact_id == BillFact.id,
+            ReviewAllocation.transaction_fact_id == TransactionFact.id,
         ).join(
             ReviewCase,
             ReviewCase.id == ReviewAllocation.review_case_id,
@@ -112,9 +116,9 @@ class TargetEconomicMapper:
         ).where(
             ReviewCase.status == 0,
             self._system_case_exists(),
-        ).group_by(BillFact.id).order_by(
-            BillFact.occurred_time.desc(),
-            BillFact.id.desc(),
+        ).group_by(TransactionFact.id).order_by(
+            TransactionFact.occurred_time.desc(),
+            TransactionFact.id.desc(),
         )
 
     def fact_candidate_page(
@@ -129,13 +133,13 @@ class TargetEconomicMapper:
         rows = self.db.execute(query.offset(
             (page - 1) * page_size
         ).limit(page_size)).mappings().all()
-        return [dict(row) for row in rows], int(total)
+        return [self._fact_values(row) for row in rows], int(total)
 
     def fact_candidates(self, limit: int) -> list[dict]:
         rows = self.db.execute(
             self._fact_candidate_query().limit(limit)
         ).mappings().all()
-        return [dict(row) for row in rows]
+        return [self._fact_values(row) for row in rows]
 
     def idempotency(self, key: str):
         if not key:
@@ -595,9 +599,15 @@ class TargetEconomicMapper:
         client_key: str = "",
     ) -> dict:
         del client_key
+        direction_code = {
+            "IN": CASH_DIRECTION_IN,
+            "OUT": CASH_DIRECTION_OUT,
+        }.get(direction)
+        if direction_code is None:
+            raise ValueError(f"unknown cash direction: {direction}")
         return {
             "entry_type": entry_type,
-            "entry_direction": 1 if direction == "IN" else 2,
+            "entry_direction": direction_code,
             "amount_value": amount_value,
             "amount_scale": amount_scale,
             "currency_code": currency_code,
@@ -691,3 +701,18 @@ class TargetEconomicMapper:
             ReviewRevision.review_case_id == ReviewCase.id,
             ReviewRevision.actor == "system",
         ).exists()
+
+    @staticmethod
+    def _fact_values(row) -> dict:
+        values = dict(row)
+        direction = {
+            CASH_DIRECTION_IN: "IN",
+            CASH_DIRECTION_OUT: "OUT",
+        }.get(values["cash_direction"])
+        if direction is None:
+            raise ValueError(
+                f"unknown transaction_fact cash_direction: "
+                f"{values['cash_direction']}"
+            )
+        values["cash_direction"] = direction
+        return values
