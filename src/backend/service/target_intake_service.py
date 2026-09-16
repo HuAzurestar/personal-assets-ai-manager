@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 from pathlib import Path
 from uuid import uuid4
 
@@ -25,6 +26,9 @@ from backend.schema.intake import (
 )
 from backend.service.target_economic_service import TargetEconomicService
 from backend.smart_import import public_plan
+
+
+logger = logging.getLogger(__name__)
 
 
 class TargetIntakeService:
@@ -164,6 +168,7 @@ class TargetIntakeService:
                 raise
             except (IntegrityError, OperationalError) as error:
                 self.write_mapper.rollback()
+                logger.exception("Atomic import failed for preview %s", token)
                 raise TargetIntakeError(
                     409,
                     "账本正在写入，请重试；本次未部分导入",

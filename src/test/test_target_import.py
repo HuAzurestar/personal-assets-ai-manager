@@ -23,6 +23,7 @@ from backend.entity import (
     IMPORT_FILE_STATUS_PENDING,
     IMPORT_ROW_STATUS_ACCEPTED,
     IMPORT_ROW_STATUS_INVALID,
+    IMPORT_ROW_STATUS_SKIPPED,
     IMPORT_SOURCE_ABC_BANK,
     IMPORT_SOURCE_CCB_BANK,
     IMPORT_SOURCE_CMB_BANK,
@@ -237,6 +238,30 @@ def test_target_import_writes_fact_evidence_and_hot_projection(target_import_api
     with sessions() as db:
         assert db.query(TransactionFact).count() == 1
         assert db.query(TransactionImportFile).count() == 1
+
+
+def test_zero_amount_rows_are_preserved_without_creating_facts(target_import_api):
+    client, sessions, _ = target_import_api
+    rows = _rows(amount="0.00", prefix="zero") + _rows(
+        amount="10.00", prefix="normal"
+    )
+    preview = _preview(client, "zero-balance-opening.csv", _csv(rows))
+
+    assert preview["can_confirm"]
+    assert preview["counts"]["record"] == 1
+    assert preview["counts"]["new"] == 1
+
+    response = _confirm(client, preview)
+    assert response.status_code == 200, response.text
+    with sessions() as db:
+        assert db.query(TransactionFact).count() == 1
+        assert db.query(TransactionImportRow).count() == 2
+        skipped = db.scalar(select(TransactionImportRow).where(
+            TransactionImportRow.row_status == IMPORT_ROW_STATUS_SKIPPED
+        ))
+        assert skipped is not None
+        assert skipped.transaction_fact_id == 0
+        assert db.query(LedgerEntry).count() == 1
 
 
 def test_target_import_rolls_back_when_default_review_write_fails(

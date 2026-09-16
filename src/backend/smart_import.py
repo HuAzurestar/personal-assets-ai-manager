@@ -170,7 +170,7 @@ def build_plan(
                 "error"
                 if row.get("error")
                 else "record"
-                if row["disposition"] != "posted"
+                if row["disposition"] != "posted" or not row["amount_minor"]
                 else "new"
             )
             row["match"] = None
