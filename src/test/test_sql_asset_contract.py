@@ -11,9 +11,11 @@ from backend.entity import (
     CASH_DIRECTION_OUT,
     IMPORT_FILE_FORMAT_CSV,
     IMPORT_FILE_STATUS_IMPORTED,
+    IMPORT_ROW_STATUS_ACCEPTED,
     IMPORT_SOURCE_CCB_BANK,
     TransactionFact,
     TransactionImportFile,
+    TransactionImportRow,
 )
 from backend.mapper.target_economic_mapper import TargetEconomicMapper
 
@@ -392,6 +394,65 @@ def test_transaction_import_file_entity_has_only_current_physical_columns():
         "skip_count",
         "issue_count",
         "status",
+        "created_time",
+        "updated_time",
+    }
+
+
+def test_transaction_import_row_sql_asset_matches_entity(tmp_path):
+    database_path = tmp_path / "transaction-import-row.db"
+    connection = sqlite3.connect(database_path)
+    try:
+        connection.executescript(
+            (SQL_DIR / "transaction_import_row.sql").read_text(encoding="utf-8")
+        )
+    finally:
+        connection.close()
+
+    engine = create_engine(f"sqlite:///{database_path}")
+    try:
+        with Session(engine) as db:
+            import_row = TransactionImportRow(
+                transaction_fact_id=7,
+                transaction_import_file_id=3,
+                source_row_number=1,
+                source_reference="reference-1",
+                raw_payload='{"raw":{"amount":"10.00"}}',
+                raw_hash="b" * 64,
+                row_status=IMPORT_ROW_STATUS_ACCEPTED,
+            )
+            db.add(import_row)
+            db.commit()
+            import_row_id = import_row.id
+
+        with engine.connect() as connection:
+            stored = connection.execute(text(
+                "SELECT transaction_fact_id, transaction_import_file_id, "
+                "row_status, raw_payload FROM transaction_import_row "
+                "WHERE id = :import_row_id"
+            ), {"import_row_id": import_row_id}).mappings().one()
+            assert dict(stored) == {
+                "transaction_fact_id": 7,
+                "transaction_import_file_id": 3,
+                "row_status": IMPORT_ROW_STATUS_ACCEPTED,
+                "raw_payload": '{"raw":{"amount":"10.00"}}',
+            }
+    finally:
+        engine.dispose()
+
+
+def test_transaction_import_row_entity_has_only_current_physical_columns():
+    assert set(TransactionImportRow.__table__.columns.keys()) == {
+        "id",
+        "transaction_fact_id",
+        "transaction_import_file_id",
+        "source_row_number",
+        "source_reference",
+        "raw_payload",
+        "raw_hash",
+        "row_status",
+        "issue_code",
+        "issue_message",
         "created_time",
         "updated_time",
     }

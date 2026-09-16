@@ -42,27 +42,28 @@ def test_fact_period_lookup_uses_time_index():
     assert "ix_transaction_fact_occurred_time_id" in plan
 
 
-def test_raw_evidence_batch_lookup_uses_bill_index():
+def test_import_row_batch_lookup_uses_fact_index():
     engine = _target_engine()
     plan = _plan(
         engine,
-        "SELECT id, bill_id, raw_payload FROM bill_raw "
-        "WHERE bill_id IN (1, 2, 3) ORDER BY bill_id, id",
+        "SELECT id, transaction_fact_id, raw_payload FROM transaction_import_row "
+        "WHERE transaction_fact_id IN (1, 2, 3) "
+        "ORDER BY transaction_fact_id, id",
     )
-    assert "ix_bill_raw_bill_id_id" in plan
+    assert "ix_transaction_import_row_fact_id" in plan
 
 
 def test_raw_reference_lookup_uses_partial_reference_index():
     engine = _target_engine()
     plan = _plan(
         engine,
-        "SELECT bill_id, source_reference FROM bill_raw "
+        "SELECT transaction_fact_id, source_reference FROM transaction_import_row "
         "WHERE source_reference IN ('A', 'B') AND source_reference <> ''",
     )
-    assert "ix_bill_raw_source_reference_bill_id" in plan
+    assert "ix_transaction_import_row_reference_fact" in plan
 
 
-def test_review_lookup_from_bill_uses_implicit_id_index():
+def test_review_lookup_from_fact_uses_implicit_id_index():
     engine = _target_engine()
     plan = _plan(
         engine,

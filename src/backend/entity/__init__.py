@@ -20,7 +20,13 @@ from backend.entity.transaction_import_file import (
     IMPORT_SOURCE_WECHAT,
     TransactionImportFile,
 )
-from backend.entity.bill_raw import BillRaw
+from backend.entity.transaction_import_row import (
+    IMPORT_ROW_STATUS_ACCEPTED,
+    IMPORT_ROW_STATUS_INVALID,
+    IMPORT_ROW_STATUS_SKIPPED,
+    IMPORT_ROW_STATUS_UNKNOWN,
+    TransactionImportRow,
+)
 from backend.entity.transaction_fact import (
     CASH_DIRECTION_IN,
     CASH_DIRECTION_OUT,

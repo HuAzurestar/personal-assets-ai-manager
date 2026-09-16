@@ -133,8 +133,8 @@ class TargetIntakeService:
 
     def rows(
         self,
-        import_file_id: int,
+        transaction_import_file_id: int,
         page: int = 1,
         page_size: int = 20,
     ) -> dict[str, object]:
-        return self.mapper.rows(import_file_id, page, page_size)
+        return self.mapper.rows(transaction_import_file_id, page, page_size)

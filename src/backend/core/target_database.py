@@ -27,7 +27,7 @@ from backend import entity as _target_models  # noqa: E402,F401
 
 TARGET_TABLE_NAMES = (
     "transaction_import_file",
-    "bill_raw",
+    "transaction_import_row",
     "transaction_fact",
     "review_case",
     "review_allocation",

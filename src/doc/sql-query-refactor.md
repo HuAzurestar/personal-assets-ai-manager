@@ -41,8 +41,8 @@
 | --- | --- |
 | `ix_ledger_entry_occurred_time_id` | 流水按发生时间和 ID 稳定分页 |
 | `ix_transaction_fact_occurred_time_id` | 导入候选的时间窗和事实排序 |
-| `ix_bill_raw_bill_id_id` | 详情批量取原始证据 |
-| `ix_bill_raw_source_reference_bill_id` | 来源引用去重；非空部分索引 |
+| `ix_transaction_import_row_fact_id` | 详情批量取原始证据 |
+| `ix_transaction_import_row_reference_fact` | 来源引用去重；非空部分索引 |
 | `ix_review_allocation_fact_case` | 从 Fact 反查相关 Review |
 | `ix_review_allocation_case_id` | 批量读取一个/多个 Case 明细 |
 

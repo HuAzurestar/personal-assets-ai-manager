@@ -18,15 +18,17 @@ from backend.entity import (
     CASH_DIRECTION_OUT,
     IMPORT_FILE_FORMAT_CSV,
     IMPORT_FILE_STATUS_IMPORTED,
+    IMPORT_ROW_STATUS_ACCEPTED,
+    IMPORT_ROW_STATUS_INVALID,
     IMPORT_SOURCE_ABC_BANK,
     IMPORT_SOURCE_CCB_BANK,
     IMPORT_SOURCE_CMB_BANK,
     IMPORT_SOURCE_WECHAT,
-    BillRaw,
     LedgerEntry,
     ReviewCase,
     TransactionFact,
     TransactionImportFile,
+    TransactionImportRow,
 )
 from backend.parser.statement_parser import parse_statement
 
@@ -152,7 +154,14 @@ def test_target_import_writes_fact_evidence_and_hot_projection(target_import_api
             "测试商户",
             "",
         )
-        assert db.query(BillRaw).count() == 1
+        import_row = db.scalar(select(TransactionImportRow))
+        assert (
+            import_row.transaction_fact_id,
+            import_row.row_status,
+        ) == (
+            fact.id,
+            IMPORT_ROW_STATUS_ACCEPTED,
+        )
         import_file = db.scalar(select(TransactionImportFile))
         assert (
             import_file.source_type,
@@ -294,6 +303,9 @@ def test_import_history_rows_are_loaded_by_page(target_import_api):
     ).json()["body"]
     assert (first["total"], len(first["items"])) == (26, 20)
     assert first["summary"] == {"success": 26, "skipped": 0, "invalid": 0}
+    assert first["items"][0]["disposition"] == "ACCEPTED"
+    assert first["items"][0]["transaction_fact_id"] > 0
+    assert "bill_id" not in first["items"][0]
 
     second = client.get(
         f"/paam/import/v1/batch/{batch_id}/row/list",
@@ -358,7 +370,7 @@ def test_encrypted_zip_password_is_ephemeral(target_import_api):
     assert preview["can_confirm"]
     assert _confirm(client, preview).status_code == 200
     with sessions() as db:
-        raw = db.scalar(select(BillRaw.raw_payload))
+        raw = db.scalar(select(TransactionImportRow.raw_payload))
         assert password not in raw
         assert db.scalar(
             select(TransactionImportFile.file_format)
@@ -385,8 +397,13 @@ def test_target_fact_conflict_stays_on_import_row(target_import_api):
     assert _confirm(client, conflict).status_code == 200
 
     with sessions() as db:
-        raw = db.scalar(select(BillRaw).where(BillRaw.issue_code == "FACT_CONFLICT"))
-        assert (raw.parse_status, raw.bill_id) == ("INVALID", 0)
+        raw = db.scalar(select(TransactionImportRow).where(
+            TransactionImportRow.issue_code == "FACT_CONFLICT"
+        ))
+        assert (raw.row_status, raw.transaction_fact_id) == (
+            IMPORT_ROW_STATUS_INVALID,
+            0,
+        )
         assert db.query(ReviewCase).count() == 1
 
 

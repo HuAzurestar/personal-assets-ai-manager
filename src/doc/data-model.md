@@ -69,21 +69,21 @@ ASSET_AND_LIABILITY 目前仅表示资产与负债相关的现金流水分类，
 
 `sha256` 全局唯一。ZIP 是传输容器；例如 ZIP 内实际解析 CSV 时，`file_format=1`。`total_count = success_count + skip_count + issue_count`。
 
-### 2. `bill_raw`：来源行与原始证据
+### 2. `transaction_import_row`：来源行与原始证据
 
 | 字段 | 类型 | 默认 | 可变性与说明 |
 | --- | --- | --- | --- |
-| `bill_id` | INTEGER | `0` | 可变的隐式 Fact ID；未解决时为 0 |
-| `import_file_id` | INTEGER | `0` | 不可变的隐式文件 ID |
-| `source_row_number` | INTEGER | `0` | 不可变的文件内行号 |
+| `transaction_fact_id` | INTEGER | `0` | 关联的 Fact ID；未解决或未接受时为 0 |
+| `transaction_import_file_id` | INTEGER | 无 | 不可变的导入文件 ID，必须大于 0 |
+| `source_row_number` | INTEGER | 无 | 不可变的文件内行号，必须大于 0 |
 | `source_reference` | VARCHAR(160) | `''` | 来源交易号/订单号 |
-| `raw_payload` | TEXT | `'{}'` | 不可变的原始字段 JSON |
+| `raw_payload` | TEXT | `NULL` | 不可变的原始字段 JSON；JSON 字段允许 NULL |
 | `raw_hash` | VARCHAR(64) | `''` | 不可变的规范行指纹 |
-| `parse_status` | VARCHAR(20) | `PENDING` | PENDING/SUCCESS/DUPLICATE/SKIPPED/INVALID |
+| `row_status` | INTEGER | `0` | 0=UNKNOWN，1=ACCEPTED，2=SKIPPED，3=INVALID |
 | `issue_code` | VARCHAR(80) | `''` | 稳定的机器错误代码 |
 | `issue_message` | TEXT | `''` | 用户可读错误说明 |
 
-唯一约束为 `(import_file_id, source_row_number)`。`bill_id` 不唯一：同一笔真实交易可以因不同导出选项、不同文件或不同来源拥有多条 Raw。处理冲突时只能更新 `bill_id` 和处理状态，不能改原始载荷、指纹、来源文件和行号。
+唯一约束为 `(transaction_import_file_id, source_row_number)`。`transaction_fact_id` 不唯一：同一笔真实交易可以因不同导出选项、不同文件或不同来源拥有多条来源行。处理冲突时只能更新 Fact 关联和处理状态，不能改原始载荷、指纹、来源文件和行号。
 
 ### 3. `transaction_fact`：接受后的规范交易事实
 
@@ -202,7 +202,7 @@ Fact 只放跨来源稳定、计算必须的核心字段。客户详情、完整
 | `ledger_entry_tag`、`tag`、`tag_view` | 热/温 | 列表按 ID 批量取；字典独立取 |
 | `transaction_fact` | 温 | 导入核对、审查、单条详情 |
 | `review_case`、`review_allocation` | 温 | 审查工作台与单条详情 |
-| `transaction_import_file`、`bill_raw`、`review_revision` | 冷 | 来源追溯、问题核查、审计详情 |
+| `transaction_import_file`、`transaction_import_row`、`review_revision` | 冷 | 来源追溯、问题核查、审计详情 |
 
 流水列表禁止读取 Raw、文件元数据、Review 明细和历史；这些详细文本只在用户点开一条记录时按 ID 批量取。SHA 前端可以短显示，但后端保留完整值。
 
@@ -210,7 +210,7 @@ Fact 只放跨来源稳定、计算必须的核心字段。客户详情、完整
 
 旧业务表和过渡表已经从模型和运行时删除。新数据库直接创建 10 张目标表；不提供旧数据库原位迁移。必要语义分别进入：
 
-- 文件/批次/来源/异常：`transaction_import_file + bill_raw`。
+- 文件/批次/来源/异常：`transaction_import_file + transaction_import_row`。
 - 规范流水：`transaction_fact`。
 - 正常交易与借钱/还钱行为：统一 Review 三表。
 - 正式经济结果：`ledger_entry`、三元 `review_allocation` 与标签表。

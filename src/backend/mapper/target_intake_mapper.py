@@ -27,9 +27,13 @@ from backend.entity import (
     IMPORT_SOURCE_MANUAL,
     IMPORT_SOURCE_UNKNOWN,
     IMPORT_SOURCE_WECHAT,
-    BillRaw,
+    IMPORT_ROW_STATUS_ACCEPTED,
+    IMPORT_ROW_STATUS_INVALID,
+    IMPORT_ROW_STATUS_SKIPPED,
+    IMPORT_ROW_STATUS_UNKNOWN,
     TransactionFact,
     TransactionImportFile,
+    TransactionImportRow,
 )
 from backend.smart_import import build_plan, dump
 from backend.parser.statement_parser import digest
@@ -68,6 +72,12 @@ _IMPORT_FILE_STATUS_NAME_BY_CODE = {
     IMPORT_FILE_STATUS_PARTIAL: "PARTIAL",
     IMPORT_FILE_STATUS_FAILED: "FAILED",
 }
+_IMPORT_ROW_STATUS_NAME_BY_CODE = {
+    IMPORT_ROW_STATUS_UNKNOWN: "UNKNOWN",
+    IMPORT_ROW_STATUS_ACCEPTED: "ACCEPTED",
+    IMPORT_ROW_STATUS_SKIPPED: "SKIPPED",
+    IMPORT_ROW_STATUS_INVALID: "INVALID",
+}
 
 
 def _import_source_code(name: str) -> int:
@@ -98,6 +108,13 @@ def _import_file_status_name(code: int) -> str:
         raise ValueError(f"unknown persisted import file status: {code}") from error
 
 
+def _import_row_status_name(code: int) -> str:
+    try:
+        return _IMPORT_ROW_STATUS_NAME_BY_CODE[code]
+    except KeyError as error:
+        raise ValueError(f"unknown persisted import row status: {code}") from error
+
+
 class TargetIntakeMapper:
     """Set-oriented persistence for the PIRC-9 Fact-layer import path."""
 
@@ -119,7 +136,7 @@ class TargetIntakeMapper:
             accounts,
             decisions,
         )
-        # Persist row-level conflicts as bill_raw evidence. Whole-file parse
+        # Persist row-level conflicts as transaction_import_row evidence. Whole-file parse
         # failures and unresolved identity choices still block confirmation.
         plan["can_confirm"] = not (
             plan["counts"].get("errors", 0)
@@ -145,12 +162,15 @@ class TargetIntakeMapper:
     def _ranked_accounts():
         return select(
             TransactionFact.account_code.label("account_code"),
-            BillRaw.raw_payload.label("raw_payload"),
+            TransactionImportRow.raw_payload.label("raw_payload"),
             func.row_number().over(
                 partition_by=TransactionFact.account_code,
-                order_by=BillRaw.id.desc(),
+                order_by=TransactionImportRow.id.desc(),
             ).label("position"),
-        ).outerjoin(BillRaw, BillRaw.bill_id == TransactionFact.id).subquery()
+        ).outerjoin(
+            TransactionImportRow,
+            TransactionImportRow.transaction_fact_id == TransactionFact.id,
+        ).subquery()
 
     @staticmethod
     def _account_items(rows, start_id: int = 1) -> list[dict[str, object]]:
@@ -190,7 +210,7 @@ class TargetIntakeMapper:
                 TransactionFact.fact_key,
             ).where(TransactionFact.fact_key.in_(lookup_keys))).mappings().all()
         }
-        identity_bill_ids = set(identities.values())
+        identity_fact_ids = set(identities.values())
         clauses = []
         if occurred_values:
             first_day = datetime.combine(min(occurred_values).date(), time.min)
@@ -201,8 +221,8 @@ class TargetIntakeMapper:
                 (TransactionFact.occurred_time >= first_day)
                 & (TransactionFact.occurred_time < last_day)
             )
-        if identity_bill_ids:
-            clauses.append(TransactionFact.id.in_(identity_bill_ids))
+        if identity_fact_ids:
+            clauses.append(TransactionFact.id.in_(identity_fact_ids))
         query = select(
             TransactionFact.id,
             TransactionFact.occurred_time,
@@ -213,12 +233,12 @@ class TargetIntakeMapper:
         )
         query = query.where(or_(*clauses)) if clauses else query.where(False)
         fact_rows = self.db.execute(query).mappings().all()
-        bills = {}
+        facts = {}
         for row in fact_rows:
             signed = Decimal(row["amount_value"]) / (Decimal(10) ** row["amount_scale"])
             if row["cash_direction"] == CASH_DIRECTION_OUT:
                 signed = -signed
-            bills[row["id"]] = {
+            facts[row["id"]] = {
                 "id": row["id"],
                 "amount": signed,
                 "currency": row["currency_code"],
@@ -227,40 +247,43 @@ class TargetIntakeMapper:
 
         evidence: dict[int, list[dict[str, object]]] = defaultdict(list)
         evidence_rows = self.db.execute(select(
-            BillRaw.bill_id,
-            BillRaw.raw_payload,
-        ).where(BillRaw.bill_id.in_(bills))).mappings().all()
+            TransactionImportRow.transaction_fact_id,
+            TransactionImportRow.raw_payload,
+        ).where(
+            TransactionImportRow.transaction_fact_id.in_(facts)
+        )).mappings().all()
         for row in evidence_rows:
             try:
                 envelope = json.loads(row["raw_payload"])
                 normalized = envelope.get("normalized")
             except (json.JSONDecodeError, TypeError, AttributeError):
                 normalized = None
-            if row["bill_id"] and isinstance(normalized, dict):
-                evidence[row["bill_id"]].append(normalized)
+            if row["transaction_fact_id"] and isinstance(normalized, dict):
+                evidence[row["transaction_fact_id"]].append(normalized)
 
         matched_references: dict[tuple[str, str], list[int]] = defaultdict(list)
         reference_query = select(
-            BillRaw.bill_id,
-            BillRaw.source_reference,
+            TransactionImportRow.transaction_fact_id,
+            TransactionImportRow.source_reference,
             TransactionImportFile.source_type,
         ).join(
             TransactionImportFile,
-            BillRaw.import_file_id == TransactionImportFile.id,
+            TransactionImportRow.transaction_import_file_id
+            == TransactionImportFile.id,
         )
         if source_types and references:
             source_codes = [_import_source_code(value) for value in source_types]
             reference_query = reference_query.where(
                 TransactionImportFile.source_type.in_(source_codes),
-                BillRaw.source_reference.in_(references),
-                BillRaw.bill_id > 0,
+                TransactionImportRow.source_reference.in_(references),
+                TransactionImportRow.transaction_fact_id > 0,
             )
         else:
             reference_query = reference_query.where(False)
         for row in self.db.execute(reference_query).mappings().all():
             source_name = _import_source_name(row["source_type"])
             matched_references[(source_name, row["source_reference"])].append(
-                row["bill_id"]
+                row["transaction_fact_id"]
             )
 
         seen_files = set(self.db.scalars(select(TransactionImportFile.sha256).where(
@@ -268,7 +291,7 @@ class TargetIntakeMapper:
         )).all())
         return {
             "identities": identities,
-            "bills": bills,
+            "facts": facts,
             "evidence": dict(evidence),
             "references": dict(matched_references),
             "seen_files": seen_files,
@@ -367,15 +390,19 @@ class TargetIntakeMapper:
         for doc, import_file in import_files:
             for row in doc["rows"]:
                 target = row.get("match")
-                bill_id = new_targets.get(target, target) if target is not None else 0
-                bill_id = bill_id if isinstance(bill_id, int) else 0
+                transaction_fact_id = (
+                    new_targets.get(target, target) if target is not None else 0
+                )
+                transaction_fact_id = (
+                    transaction_fact_id if isinstance(transaction_fact_id, int) else 0
+                )
                 action = row["action"]
-                parse_status = (
-                    "SUCCESS"
+                row_status = (
+                    IMPORT_ROW_STATUS_ACCEPTED
                     if action in {"new", "supplement"}
-                    else "SKIPPED"
+                    else IMPORT_ROW_STATUS_SKIPPED
                     if action == "record"
-                    else "INVALID"
+                    else IMPORT_ROW_STATUS_INVALID
                 )
                 raw = row.get("raw", {})
                 envelope = {
@@ -386,14 +413,14 @@ class TargetIntakeMapper:
                         if key not in {"raw", "candidates", "error"}
                     },
                 }
-                raw_row = BillRaw(
-                    bill_id=bill_id,
-                    import_file_id=import_file.id,
+                import_row = TransactionImportRow(
+                    transaction_fact_id=transaction_fact_id,
+                    transaction_import_file_id=import_file.id,
                     source_row_number=row["row_number"],
                     source_reference=row.get("reference", ""),
                     raw_payload=dump(envelope),
                     raw_hash=digest(raw),
-                    parse_status=parse_status,
+                    row_status=row_status,
                     issue_code=(
                         "FACT_CONFLICT"
                         if action == "error" and row.get("keys")
@@ -405,7 +432,7 @@ class TargetIntakeMapper:
                     created_time=now,
                     updated_time=now,
                 )
-                self.db.add(raw_row)
+                self.db.add(import_row)
         self.db.flush()
         affected_fact_ids = sorted({
             new_targets.get(row.get("match"), row.get("match"))
@@ -448,9 +475,11 @@ class TargetIntakeMapper:
                 search.append(TransactionImportFile.id == int(numeric_query))
             clauses.append(or_(*search))
         if account_code:
-            matching_files = select(BillRaw.import_file_id).join(
+            matching_files = select(
+                TransactionImportRow.transaction_import_file_id
+            ).join(
                 TransactionFact,
-                BillRaw.bill_id == TransactionFact.id,
+                TransactionImportRow.transaction_fact_id == TransactionFact.id,
             ).where(
                 TransactionFact.account_code == account_code,
             ).distinct()
@@ -482,19 +511,21 @@ class TargetIntakeMapper:
         account_codes: dict[int, list[str]] = defaultdict(list)
         if file_ids:
             links = self.db.execute(select(
-                BillRaw.import_file_id,
+                TransactionImportRow.transaction_import_file_id,
                 TransactionFact.account_code,
             ).join(
                 TransactionFact,
-                BillRaw.bill_id == TransactionFact.id,
+                TransactionImportRow.transaction_fact_id == TransactionFact.id,
             ).where(
-                BillRaw.import_file_id.in_(file_ids),
+                TransactionImportRow.transaction_import_file_id.in_(file_ids),
             ).distinct().order_by(
-                BillRaw.import_file_id,
+                TransactionImportRow.transaction_import_file_id,
                 TransactionFact.account_code,
             )).mappings().all()
             for link in links:
-                account_codes[link["import_file_id"]].append(link["account_code"])
+                account_codes[link["transaction_import_file_id"]].append(
+                    link["account_code"]
+                )
         items = [{
             "id": row["id"],
             "filename": row["filename"],
@@ -520,7 +551,7 @@ class TargetIntakeMapper:
 
     def rows(
         self,
-        import_file_id: int,
+        transaction_import_file_id: int,
         page: int = 1,
         page_size: int = 20,
     ) -> dict[str, object]:
@@ -530,7 +561,7 @@ class TargetIntakeMapper:
             TransactionImportFile.skip_count,
             TransactionImportFile.issue_count,
         ).where(
-            TransactionImportFile.id == import_file_id
+            TransactionImportFile.id == transaction_import_file_id
         )).mappings().one_or_none()
         if batch is None:
             return {
@@ -541,20 +572,23 @@ class TargetIntakeMapper:
                 "summary": {"success": 0, "skipped": 0, "invalid": 0},
             }
         rows = self.db.execute(select(
-            BillRaw.id,
-            BillRaw.bill_id,
-            BillRaw.parse_status,
-            BillRaw.raw_payload,
-        ).where(BillRaw.import_file_id == import_file_id).order_by(
-            BillRaw.source_row_number,
+            TransactionImportRow.id,
+            TransactionImportRow.transaction_fact_id,
+            TransactionImportRow.row_status,
+            TransactionImportRow.raw_payload,
+        ).where(
+            TransactionImportRow.transaction_import_file_id
+            == transaction_import_file_id
+        ).order_by(
+            TransactionImportRow.source_row_number,
         ).offset(
             (page - 1) * page_size
         ).limit(page_size)).mappings().all()
         items = [{
             "id": row["id"],
-            "bill_id": row["bill_id"],
-            "disposition": row["parse_status"],
-            "record": json.loads(row["raw_payload"]),
+            "transaction_fact_id": row["transaction_fact_id"],
+            "disposition": _import_row_status_name(row["row_status"]),
+            "record": json.loads(row["raw_payload"]) if row["raw_payload"] else None,
         } for row in rows]
         return {
             "items": items,

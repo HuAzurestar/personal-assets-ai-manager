@@ -149,7 +149,7 @@ def build_plan(
         upload_hashes,
     )
     identities = history["identities"]
-    bills = history["bills"]
+    facts = history["facts"]
     evidence = defaultdict(list, history["evidence"])
     known_refs = defaultdict(list, history["references"])
     seen_files = set(history["seen_files"])
@@ -206,11 +206,11 @@ def build_plan(
                     target = next(iter(targets))
                     other = virtual.get(target)
                     if other is None:
-                        bill = bills[target]
+                        fact = facts[target]
                         other = {
-                            "amount_minor": cents(bill["amount"]),
-                            "currency": bill["currency"],
-                            "occurred_at": bill["occurred_at"].isoformat(),
+                            "amount_minor": cents(fact["amount"]),
+                            "currency": fact["currency"],
+                            "occurred_at": fact["occurred_at"].isoformat(),
                         }
                     if not compatible(row, other):
                         row.update(

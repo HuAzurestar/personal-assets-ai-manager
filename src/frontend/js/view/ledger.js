@@ -663,11 +663,11 @@ function importRowMoney(row) {
 }
 
 function importBatchRow(item) {
-  const status = { SUCCESS: "已写入", SKIPPED: "已跳过", INVALID: "异常" };
+  const status = { ACCEPTED: "已写入", SKIPPED: "已跳过", INVALID: "异常" };
   const normalized = item.record?.normalized || {};
   const account = normalized.account?.display_name || normalized.account?.identity || "未识别";
   const summary = normalized.merchant || normalized.counterparty || normalized.note || "未命名交易";
-  return `<tr><td>${item.id}</td><td>${date(normalized.occurred_at)}</td><td><strong>${esc(summary)}</strong>${normalized.note && normalized.note !== summary ? `<small>${esc(normalized.note)}</small>` : ""}</td><td>${esc(account)}</td><td class="money ${Number(normalized.amount_minor) > 0 ? "income" : "expense"}">${esc(importRowMoney(normalized))}</td><td><span class="badge ${item.disposition === "INVALID" ? "warn" : "neutral"}">${esc(status[item.disposition] || item.disposition)}</span>${item.bill_id ? `<small>Fact #${item.bill_id}</small>` : ""}</td></tr>`;
+  return `<tr><td>${item.id}</td><td>${date(normalized.occurred_at)}</td><td><strong>${esc(summary)}</strong>${normalized.note && normalized.note !== summary ? `<small>${esc(normalized.note)}</small>` : ""}</td><td>${esc(account)}</td><td class="money ${Number(normalized.amount_minor) > 0 ? "income" : "expense"}">${esc(importRowMoney(normalized))}</td><td><span class="badge ${item.disposition === "INVALID" ? "warn" : "neutral"}">${esc(status[item.disposition] || item.disposition)}</span>${item.transaction_fact_id ? `<small>Fact #${item.transaction_fact_id}</small>` : ""}</td></tr>`;
 }
 
 async function renderImportBatchDrawer(dialog) {

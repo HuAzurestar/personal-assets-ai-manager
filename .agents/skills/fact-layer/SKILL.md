@@ -19,7 +19,7 @@ Use `src/doc/data-model.md` as the target schema contract.
 - Confirmation preloads every referenced ID set and performs grouped flushes.
   Do not call `get()`, `select()`, or `flush()` once per parsed row.
 - Alternate bank/wallet exports may share one fact. Persist each source row in
-  `bill_raw`, link it by `bill_id`, and keep only the accepted canonical identity
+  `transaction_import_row`, link it by `transaction_fact_id`, and keep only the accepted canonical identity
   in `transaction_fact.fact_key`; do not add a parallel identity/evidence table.
 - Import previews are bounded, expiring application command state rather than a
   ledger table. Never read previews, raw payloads, or verbose account details in
