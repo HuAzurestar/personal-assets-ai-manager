@@ -11,9 +11,11 @@ from backend.error import TargetEconomicError
 from backend.mapper.target_economic_mapper import TargetEconomicMapper
 from backend.schema.target_review import (
     TargetEconomicReviewCreateRequest,
+    TargetEconomicReviewFilter,
     TargetEconomicReviewListItem,
     TargetEconomicReviewPageRead,
     TargetEconomicReviewRead,
+    TargetEconomicReviewSorter,
     TargetEconomicReviewUpdateRequest,
     TargetFactAllocationCandidateRead,
     TargetFactAllocationCandidatePageRead,
@@ -83,13 +85,25 @@ class TargetEconomicService:
             self.mapper.rollback()
             raise
 
-    def page(self, page: int, page_size: int, status: str = "") -> TargetEconomicReviewPageRead:
-        rows, total = self.mapper.review_page(page, page_size, status)
+    def page(
+        self,
+        page: int,
+        page_size: int,
+        q: str,
+        filter_value: TargetEconomicReviewFilter,
+        sorter: TargetEconomicReviewSorter,
+    ) -> TargetEconomicReviewPageRead:
+        rows, total = self.mapper.review_page(
+            page, page_size, q, filter_value, sorter
+        )
         return TargetEconomicReviewPageRead(
             items=[TargetEconomicReviewListItem(**row) for row in rows],
             total=total,
             page=page,
             page_size=page_size,
+            q=q,
+            filter=filter_value,
+            sorter=sorter,
         )
 
     def fact_candidates(self, limit: int = 100) -> list[TargetFactAllocationCandidateRead]:

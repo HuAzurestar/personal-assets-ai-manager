@@ -9,6 +9,7 @@ from backend.schema.target_economic import (
     EconomicAllocationEvidenceRead,
     EconomicCurrencySummaryRead,
     EconomicFactBriefRead,
+    EconomicFlowDetailItem,
     EconomicFlowDetailRead,
     EconomicFlowListItem,
     EconomicFlowPageRead,
@@ -36,19 +37,22 @@ class TargetEconomicReadService:
         invalid = sorted(set(query.entry_type) - {0, 1, 2})
         if invalid:
             raise ValueError(f"unknown ledger entry types: {invalid}")
-        rows, total, tags = self.mapper.page(query)
+        rows, total = self.mapper.page(query)
         return EconomicFlowPageRead(
-            items=[self._flow(row, tags.get(row["id"], [])) for row in rows],
+            items=[self._flow(row) for row in rows],
             total=total,
             page=query.page,
             page_size=query.page_size,
-            filters={
-                "date_from": str(query.date_from) if query.date_from else None,
-                "date_to": str(query.date_to) if query.date_to else None,
+            q=query.q,
+            filter={
+                "date_from": query.date_from,
+                "date_to": query.date_to,
                 "economic_type": [self.ECONOMIC_TYPES[value] for value in query.entry_type],
+                "cash_direction": self.CASH_DIRECTIONS.get(query.cash_direction),
                 "currency_code": list(query.currency_code),
-                "q": query.q,
+                "account_code": query.account_code or None,
             },
+            sorter={"field": query.sort_field, "order": query.sort_order},
         )
 
     def detail(self, economic_id: int) -> EconomicFlowDetailRead | None:
@@ -57,7 +61,10 @@ class TargetEconomicReadService:
             return None
         flow, allocations, facts, reviews, tags, account_versions = data
         return EconomicFlowDetailRead(
-            flow=self._flow(flow, tags),
+            flow=EconomicFlowDetailItem(
+                **self._flow(flow).model_dump(),
+                tags=[EconomicTagRead(**tag) for tag in tags],
+            ),
             allocations=[EconomicAllocationEvidenceRead(
                 id=row["id"],
                 review_id=row["review_id"],
@@ -122,7 +129,7 @@ class TargetEconomicReadService:
         )
 
     @staticmethod
-    def _flow(row, tags=()) -> EconomicFlowListItem:
+    def _flow(row) -> EconomicFlowListItem:
         return EconomicFlowListItem(
             id=row["id"],
             economic_type=TargetEconomicReadService.ECONOMIC_TYPES[row["entry_type"]],
@@ -136,5 +143,4 @@ class TargetEconomicReadService:
             counterparty_account_ref=row["counterparty_account_ref"],
             projection_version=row["projection_version"],
             occurred_time=row["occurred_time"],
-            tags=[EconomicTagRead(**tag) for tag in tags],
         )

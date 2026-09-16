@@ -4,7 +4,29 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+from backend.schema.list_query import ListSorter
+
+
+class EconomicFlowFilter(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    economic_type: list[Literal["TRANSACTION", "ACCOUNT_TRANSFER", "CLAIM"]] = Field(default_factory=list)
+    cash_direction: Literal["IN", "OUT"] | None = None
+    currency_code: list[str] = Field(default_factory=list)
+    account_code: str | None = None
+    date_from: date | None = None
+    date_to: date | None = None
+
+
+class EconomicFlowSorter(ListSorter):
+    field: Literal[
+        "id",
+        "occurred_time",
+        "amount_value",
+        "projection_version",
+    ] = "occurred_time"
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,7 +37,11 @@ class EconomicPageQuery:
     date_to: date | None = None
     entry_type: tuple[int, ...] = ()
     currency_code: tuple[str, ...] = ()
+    cash_direction: int | None = None
+    account_code: str = ""
     q: str = ""
+    sort_field: str = "occurred_time"
+    sort_order: str = "desc"
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,7 +72,6 @@ class EconomicFlowListItem(BaseModel):
     counterparty_account_ref: str
     projection_version: int
     occurred_time: datetime
-    tags: list[EconomicTagRead] = Field(default_factory=list)
 
 
 class EconomicFlowPageRead(BaseModel):
@@ -54,7 +79,9 @@ class EconomicFlowPageRead(BaseModel):
     total: int
     page: int
     page_size: int
-    filters: dict[str, object]
+    q: str
+    filter: EconomicFlowFilter
+    sorter: EconomicFlowSorter
 
 
 class EconomicFlowPageResponse(BaseModel):
@@ -91,8 +118,12 @@ class EconomicReviewBriefRead(BaseModel):
     title: str
 
 
+class EconomicFlowDetailItem(EconomicFlowListItem):
+    tags: list[EconomicTagRead] = Field(default_factory=list)
+
+
 class EconomicFlowDetailRead(BaseModel):
-    flow: EconomicFlowListItem
+    flow: EconomicFlowDetailItem
     allocations: list[EconomicAllocationEvidenceRead]
     facts: list[EconomicFactBriefRead]
     reviews: list[EconomicReviewBriefRead]

@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
+from backend.schema.list_query import ListSorter
+
 
 @dataclass(frozen=True, slots=True)
 class TargetReviewFactVO:
@@ -243,11 +245,26 @@ class TargetEconomicReviewListItem(BaseModel):
     updated_time: datetime
 
 
+class TargetEconomicReviewFilter(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["PENDING", "CONFIRMED", "REVOKED"] | None = None
+    behavior_code: str | None = None
+    exclude_behavior_code: str | None = None
+
+
+class TargetEconomicReviewSorter(ListSorter):
+    field: Literal["id", "created_time", "updated_time", "version"] = "updated_time"
+
+
 class TargetEconomicReviewPageRead(BaseModel):
     items: list[TargetEconomicReviewListItem]
     total: int
     page: int
     page_size: int
+    q: str
+    filter: TargetEconomicReviewFilter
+    sorter: TargetEconomicReviewSorter
 
 
 class TargetEconomicReviewPageResponse(BaseModel):

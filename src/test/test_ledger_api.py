@@ -114,15 +114,44 @@ def test_ledger_v1_exposes_only_confirmed_cash_entry_fields(economic_api):
         "counterparty_account_ref",
         "projection_version",
         "occurred_time",
-        "tags",
     }
     assert (item["economic_type"], item["cash_direction"]) == ("TRANSACTION", "OUT")
     detail = client.get(f"/paam/ledger/v1/flow/{item['id']}").json()["body"]
     assert "role" not in detail["allocations"][0]
-    assert detail["flow"] == item
+    assert detail["flow"] == {**item, "tags": []}
     assert client.get("/paam/economy/v1/flow/list").status_code == 404
     assert client.get("/paam/economy/v1/flow/detail/1").status_code == 404
     assert client.get("/paam/economy/v1/summary").status_code == 404
+
+
+def test_ledger_lists_accept_whitelisted_filter_and_sorter_objects(economic_api):
+    client, sessions = economic_api
+    fact_ids = _facts(sessions, [
+        ("OUT", 3000, "CNY"),
+        ("IN", 1000, "CNY"),
+        ("IN", 2000, "USD"),
+    ])
+    with sessions() as db:
+        TargetEconomicService(db).ensure_defaults(fact_ids, commit=True)
+
+    page = client.get(
+        "/paam/ledger/v1/flow/list",
+        params={
+            "filter": '{"cash_direction":"IN","currency_code":["CNY"]}',
+            "sorter": '{"field":"amount_value","order":"asc"}',
+        },
+    ).json()["body"]
+    assert page["total"] == 1
+    assert page["items"][0]["amount"]["amount_value"] == 1000
+    assert page["filter"]["cash_direction"] == "IN"
+    assert page["sorter"] == {"field": "amount_value", "order": "asc"}
+
+    rejected = client.get(
+        "/paam/ledger/v1/flow/list",
+        params={"sorter": '{"field":"physical_column","order":"asc"}'},
+    )
+    assert rejected.status_code == 422
+    assert rejected.json()["body"]["code"] == "LIST_QUERY_ERROR"
 
 
 def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_api):
@@ -315,7 +344,12 @@ def test_partial_manual_reviews_keep_exact_default_coverage_and_are_idempotent(e
     assert candidate_page["page"] == 1
     assert candidate_page["page_size"] == 20
     assert [(item["id"], item["available_value"]) for item in candidates] == [(fact_id, 6000)]
-    case_response = client.get("/paam/ledger/v1/review/list")
+    complete_page = client.get("/paam/ledger/v1/review/list").json()["body"]
+    assert complete_page["total"] == 3
+    case_response = client.get(
+        "/paam/ledger/v1/review/list",
+        params={"filter": '{"exclude_behavior_code":"DEFAULT"}'},
+    )
     assert case_response.json()["status"] == case_response.status_code
     assert case_response.json()["message"] == "Ledger reviews listed"
     cases = case_response.json()["body"]

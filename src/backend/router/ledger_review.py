@@ -7,10 +7,13 @@ from sqlalchemy.orm import Session
 
 from backend.router.dependency import get_db
 from backend.router.error import DomainErrorRoute
+from backend.schema.list_query import parse_query_object
 from backend.schema.target_review import (
     TargetEconomicReviewCreateRequest,
+    TargetEconomicReviewFilter,
     TargetEconomicReviewPageResponse,
     TargetEconomicReviewResponse,
+    TargetEconomicReviewSorter,
     TargetEconomicReviewUpdateRequest,
     TargetReviewTransitionRequest,
 )
@@ -88,11 +91,24 @@ def case_page(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     status: str = Query(default="", pattern="^(|PENDING|CONFIRMED|REVOKED)$"),
+    q: str = Query(default="", max_length=200),
+    filter: str = Query(default="{}"),
+    sorter: str = Query(default='{"field":"updated_time","order":"desc"}'),
     db: Session = Depends(get_db),
 ):
+    filter_value = parse_query_object(filter, TargetEconomicReviewFilter, "filter")
+    sorter_value = parse_query_object(sorter, TargetEconomicReviewSorter, "sorter")
+    if status and not filter_value.status:
+        filter_value = filter_value.model_copy(update={"status": status})
     return TargetEconomicReviewPageResponse(
         message="Ledger reviews listed",
-        body=TargetEconomicService(db).page(page, page_size, status)
+        body=TargetEconomicService(db).page(
+            page,
+            page_size,
+            q.strip(),
+            filter_value,
+            sorter_value,
+        )
     )
 
 

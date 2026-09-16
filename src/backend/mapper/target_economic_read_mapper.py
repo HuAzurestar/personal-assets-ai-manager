@@ -23,6 +23,13 @@ class TargetEconomicReadMapper:
     def __init__(self, db: Session):
         self.db = db
 
+    _SORT_COLUMNS = {
+        "id": LedgerEntry.id,
+        "occurred_time": LedgerEntry.occurred_time,
+        "amount_value": LedgerEntry.amount_value,
+        "projection_version": LedgerEntry.projection_version,
+    }
+
     @staticmethod
     def _flow_columns():
         return (
@@ -41,10 +48,13 @@ class TargetEconomicReadMapper:
     def page(self, query: EconomicPageQuery):
         clauses = self._clauses(query)
         total = self.db.scalar(select(func.count(LedgerEntry.id)).where(*clauses)) or 0
+        column = self._SORT_COLUMNS[query.sort_field]
+        order = column.asc() if query.sort_order == "asc" else column.desc()
+        id_order = LedgerEntry.id.asc() if query.sort_order == "asc" else LedgerEntry.id.desc()
         rows = self.db.execute(select(*self._flow_columns()).where(*clauses).order_by(
-            LedgerEntry.occurred_time.desc(), LedgerEntry.id.desc(),
+            order, id_order,
         ).offset((query.page - 1) * query.page_size).limit(query.page_size)).mappings().all()
-        return rows, total, self.tags([row["id"] for row in rows])
+        return rows, total
 
     def detail(self, economic_id: int):
         flow = self.db.execute(select(*self._flow_columns()).where(
@@ -175,6 +185,10 @@ class TargetEconomicReadMapper:
             clauses.append(LedgerEntry.entry_type.in_(query.entry_type))
         if query.currency_code:
             clauses.append(LedgerEntry.currency_code.in_(query.currency_code))
+        if query.cash_direction:
+            clauses.append(LedgerEntry.entry_direction == query.cash_direction)
+        if query.account_code:
+            clauses.append(LedgerEntry.account_code == query.account_code)
         if query.q:
             clauses.append(exists(select(ReviewCaseBill.id).join(
                 ReviewCase, ReviewCase.id == ReviewCaseBill.case_id,

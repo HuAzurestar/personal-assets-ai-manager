@@ -5,7 +5,7 @@ import json
 from collections import defaultdict
 from datetime import datetime
 
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import String, cast, delete, func, or_, select, text
 from sqlalchemy.orm import Session
 
 from backend.entity import (
@@ -19,6 +19,8 @@ from backend.entity import (
 from backend.schema.target_review import (
     TargetEconomicFlowRead,
     TargetEconomicReviewRead,
+    TargetEconomicReviewFilter,
+    TargetEconomicReviewSorter,
     TargetFlowAllocationRead,
     TargetReviewFactVO,
     TargetReviewHistoryRead,
@@ -91,12 +93,28 @@ class TargetEconomicMapper:
         ).where(*clauses).order_by(ReviewCaseBill.id)).mappings().all()
         return [dict(row) for row in rows]
 
-    def review_page(self, page: int, page_size: int, status: str = "") -> tuple[list[dict], int]:
-        clauses = [
-            ReviewCase.behavior_code != "DEFAULT",
-        ]
-        if status:
-            clauses.append(ReviewCase.status == status)
+    def review_page(
+        self,
+        page: int,
+        page_size: int,
+        q: str,
+        filter_value: TargetEconomicReviewFilter,
+        sorter: TargetEconomicReviewSorter,
+    ) -> tuple[list[dict], int]:
+        clauses = []
+        if q:
+            pattern = f"%{q}%"
+            clauses.append(or_(
+                cast(ReviewCase.id, String).like(pattern),
+                ReviewCase.title.like(pattern),
+                ReviewCase.behavior_code.like(pattern),
+            ))
+        if filter_value.status:
+            clauses.append(ReviewCase.status == filter_value.status)
+        if filter_value.behavior_code:
+            clauses.append(ReviewCase.behavior_code == filter_value.behavior_code)
+        if filter_value.exclude_behavior_code:
+            clauses.append(ReviewCase.behavior_code != filter_value.exclude_behavior_code)
         grouped = select(
             ReviewCase.id,
             ReviewCase.behavior_code,
@@ -111,8 +129,17 @@ class TargetEconomicMapper:
             ReviewCaseBill, ReviewCaseBill.case_id == ReviewCase.id,
         ).where(*clauses).group_by(ReviewCase.id)
         total = int(self.db.scalar(select(func.count()).select_from(grouped.subquery())) or 0)
+        sort_columns = {
+            "id": ReviewCase.id,
+            "created_time": ReviewCase.created_time,
+            "updated_time": ReviewCase.updated_time,
+            "version": ReviewCase.version,
+        }
+        column = sort_columns[sorter.field]
+        order = column.asc() if sorter.order == "asc" else column.desc()
+        id_order = ReviewCase.id.asc() if sorter.order == "asc" else ReviewCase.id.desc()
         rows = self.db.execute(grouped.order_by(
-            ReviewCase.updated_time.desc(), ReviewCase.id.desc(),
+            order, id_order,
         ).offset((page - 1) * page_size).limit(page_size)).mappings().all()
         return [dict(row) for row in rows], total
 
