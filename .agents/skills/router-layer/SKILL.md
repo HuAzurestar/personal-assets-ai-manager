@@ -33,6 +33,10 @@ description: Change PAAM FastAPI routers, URL modules or versions, HTTP endpoint
   Do not use `v2` merely to distinguish new code from legacy code.
 - The production module prefixes are `/paam/import/v1`, `/paam/ledger/v1`, and
   `/paam/tag/v1`. System health remains under `/api/health`.
+- A Mapper or Entity refactor does not change a production v1 request or
+  response contract. Translate physical names and values at the Service/DTO
+  boundary. A deliberate incompatible public contract requires an explicit
+  API design and version decision.
 
 ## Ledger API migration
 
@@ -105,6 +109,9 @@ description: Change PAAM FastAPI routers, URL modules or versions, HTTP endpoint
 
 - Canonical paths use
   `/paam/{module}/{version}/{object}/{resource_id}`. Object names are singular.
+- Public field names describe domain resources rather than physical tables or
+  Mapper rows. Compatibility aliases may read persisted historical payloads,
+  but OpenAPI and serialized responses expose only the canonical field names.
 - A nested object uses
   `/paam/{module}/{version}/{object}/{resource_id}/{subobject}/{subresource_id}`.
   Omit the trailing identifier when addressing the nested collection.

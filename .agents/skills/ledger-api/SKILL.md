@@ -14,6 +14,13 @@ description: Change PAAM ledger projections, summaries, tags, DTOs/VOs, Services
   coordinated migration it remains physically stored in `ledger_entry`.
 - Economic Type is exactly TRANSACTION, ACCOUNT_TRANSFER, or CLAIM. AA, loan,
   refund, and FX are Review behavior codes, not Economic Types.
+- The v1 API serializes Economic Type as `economic_type` with the semantic
+  string values above and direction as `cash_direction` with `IN` or `OUT`.
+  Integer `entry_type` and `entry_direction` values are physical projection
+  details and never appear in public requests or responses.
+- Public Allocation identifiers are `review_id`, `fact_id`, and `economic_id`.
+  Physical names such as `case_id`, `bill_id`, `ledger_entry_id`, or
+  `transaction_fact_id` remain behind the Mapper/Service boundary.
 - `review_case_bill` is the physical ternary Allocation during migration:
   one row maps one Review, one Fact, and one Economic.
 - Every Economic/Ledger Entry has exactly one Allocation and therefore points
