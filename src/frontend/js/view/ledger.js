@@ -3,6 +3,7 @@ import { toast } from "../component/toast.js";
 import { table } from "../component/table.js";
 import {
   detailFields, detailList, detailPager, detailRelationRows, detailSection,
+  detailTabs,
 } from "../component/detail.js";
 import { now, state } from "../state/ledger.js";
 import {
@@ -526,18 +527,7 @@ async function showImportFileDetail(id) {
 }
 
 async function ledgerTagsPage() {
-  const viewPage = await request("/paam/tag/v1/view/list?page=1&page_size=100&include_archived=true");
-  const views = viewPage.items;
-  state.detailTagViews = new Map(views.map((view) => [view.id, view]));
-  const rows = views.map((view) => `<tr class="detail-click-row" tabindex="0" data-tag-view-row="${view.id}"><td><button type="button" class="detail-primary" data-action="tag-view-detail" data-id="${view.id}"><strong>${esc(view.name)}</strong><small>${esc(view.system_name)}</small></button></td><td>${view.tags.length}</td><td><div class="tag-list">${view.tags.slice(0, 5).map((tag) => `<span class="tag">${esc(tag.name)}</span>`).join("")}${view.tags.length > 5 ? `<span class="muted">+${view.tags.length - 5}</span>` : ""}</div></td><td><span class="badge neutral">${esc(statusNames[view.status] || view.status)}</span></td><td class="detail-arrow">→</td></tr>`).join("");
-  return detailListView({ active: "ledger-tags", title: "Tag", description: "Tag 是可编辑的管理对象；Ledger 详情仅编辑对应账本的 Tag Assignment。", total: views.length, headers: ["维度", "标签数", "标签值", "状态", ""], rows });
-}
-
-function showTagViewDetail(id) {
-  const view = state.detailTagViews.get(Number(id));
-  if (!view) return;
-  const rows = view.tags.map((tag) => `<div class="drawer-tag-row"><span><strong>${esc(tag.name)}</strong><small>${esc(tag.system_name)}</small></span><span class="badge neutral">${esc(statusNames[tag.status] || tag.status)}</span></div>`).join("");
-  detailDrawer({ title: view.name, kicker: `TAG VIEW · ${view.system_name}`, subtitle: `${view.tags.length} 个标签值 · ${statusNames[view.status] || view.status}`, body: `<section class="drawer-section"><h3>标签值</h3><div class="drawer-tag-list">${rows || '<p class="muted">暂无标签值</p>'}</div></section>`, footer: '<button type="button" class="primary" data-page="tags">管理分类标签</button>' });
+  return `${detailTabs("ledger-tags", detailTabItems)}${await tagsPage()}`;
 }
 
 async function editTags(ledgerId) {
@@ -1117,14 +1107,13 @@ function bindPage(root) {
     closeDialogs();
     route("economy", params);
   });
-  $$('[data-action="tag-view-detail"]', root).forEach((button) => button.onclick = () => showTagViewDetail(button.dataset.id));
   $$('[data-action="fact-detail"]', root).forEach((button) => button.onclick = () => showFactDetail(button.dataset.id).catch((error) => toast(error.message, true)));
   $$('[data-action="import-file-detail"]', root).forEach((button) => button.onclick = () => showImportFileDetail(button.dataset.id).catch((error) => toast(error.message, true)));
   $$('[data-action="economic-detail"]', root).forEach((button) => button.onclick = () => showEconomicDetail(button.dataset.id).catch((error) => toast(error.message, true)));
   $$('[data-action="economic-review-detail"]', root).forEach((button) => button.onclick = () => showEconomicReview(button.dataset.id).catch((error) => toast(error.message, true)));
   $$('[data-action="economic-review-transition"]', root).forEach((button) => button.onclick = () => transitionEconomicReview(button).catch((error) => toast(error.message, true)));
   $('[data-action="new-economic-review"]', root)?.addEventListener("click", () => openEconomicReviewEditor().catch((error) => toast(error.message, true)));
-  $$('[data-summary-row],[data-fact-row],[data-economic-row],[data-review-row],[data-import-row],[data-import-file-row],[data-tag-view-row]', root).forEach((row) => {
+  $$('[data-summary-row],[data-fact-row],[data-economic-row],[data-review-row],[data-import-row],[data-import-file-row]', root).forEach((row) => {
     row.addEventListener("click", (event) => {
       if (event.target.closest("button,input,label,select,a")) return;
       if (row.dataset.summaryRow) showSummaryDetail(row.dataset.summaryRow);
@@ -1133,7 +1122,6 @@ function bindPage(root) {
       if (row.dataset.reviewRow) showEconomicReview(row.dataset.reviewRow).catch((error) => toast(error.message, true));
       if (row.dataset.importRow) showImportBatch($("[data-action='batch-rows']", row));
       if (row.dataset.importFileRow) showImportFileDetail(row.dataset.importFileRow).catch((error) => toast(error.message, true));
-      if (row.dataset.tagViewRow) showTagViewDetail(row.dataset.tagViewRow);
     });
   });
   $$('[data-action="import-step"]', root).forEach((button) => button.onclick = () => {

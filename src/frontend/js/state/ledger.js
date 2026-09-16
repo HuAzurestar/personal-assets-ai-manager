@@ -11,6 +11,5 @@ export const state = {
   detailEconomics: new Map(),
   detailEconomicReviews: new Map(),
   detailSummaries: new Map(),
-  detailTagViews: new Map(),
   accountMonth: new Date(now.getFullYear(), now.getMonth(), 1),
 };
