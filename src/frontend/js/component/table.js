@@ -14,7 +14,7 @@ export function pager(result) {
   const start = result.total ? (result.page - 1) * result.page_size + 1 : 0;
   const end = Math.min(result.total, result.page * result.page_size);
   return `<div class="pagination ledger-pagination">
-    <label class="page-size">每页<select data-action="ledger-page-size"><option value="10" ${result.page_size === 10 ? "selected" : ""}>10 条</option><option value="25" ${result.page_size === 25 ? "selected" : ""}>25 条</option><option value="50" ${result.page_size === 50 ? "selected" : ""}>50 条</option></select></label>
+    <label class="page-size">每页<select data-action="ledger-page-size"><option value="10" ${result.page_size === 10 ? "selected" : ""}>10 条</option><option value="20" ${result.page_size === 20 ? "selected" : ""}>20 条</option><option value="50" ${result.page_size === 50 ? "selected" : ""}>50 条</option><option value="100" ${result.page_size === 100 ? "selected" : ""}>100 条</option></select></label>
     <div class="page-buttons"><button data-action="page" data-value="${result.page - 1}" ${result.page <= 1 ? "disabled" : ""} aria-label="上一页">‹</button>${numbers.join("")}<button data-action="page" data-value="${result.page + 1}" ${result.page >= pages ? "disabled" : ""} aria-label="下一页">›</button></div>
     <span class="range">${start}–${end} / ${result.total}</span>
   </div>`;

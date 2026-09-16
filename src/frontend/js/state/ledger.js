@@ -8,7 +8,6 @@ export const state = {
   historyRequestController: null,
   historyRequestVersion: 0,
   historyAccountNames: new Map(),
-  detailFacts: new Map(),
   detailEconomics: new Map(),
   detailEconomicReviews: new Map(),
   detailSummaries: new Map(),
