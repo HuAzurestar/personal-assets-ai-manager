@@ -286,6 +286,8 @@ def test_fact_candidate_list_is_paged_with_fixed_query_count(economic_api):
     finally:
         event.remove(engine, "before_cursor_execute", count_selects)
     assert first.status_code == 200, first.text
+    assert first.json()["status"] == first.status_code
+    assert first.json()["message"] == "Ledger facts listed"
     page = first.json()["body"]
     assert page["total"] == 3
     assert page["page"] == 1

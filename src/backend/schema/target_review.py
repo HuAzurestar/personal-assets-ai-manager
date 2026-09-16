@@ -324,7 +324,7 @@ class TargetFactAllocationCandidatePageRead(BaseModel):
 
 
 class TargetFactAllocationCandidatePageResponse(BaseModel):
-    status: Literal["success"] = "success"
+    status: Literal[200] = 200
     message: str = "ok"
     body: TargetFactAllocationCandidatePageRead
 

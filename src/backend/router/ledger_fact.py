@@ -25,5 +25,6 @@ def fact_list(
     db: Session = Depends(get_db),
 ):
     return TargetFactAllocationCandidatePageResponse(
+        message="Ledger facts listed",
         body=TargetEconomicService(db).fact_candidate_page(page, page_size)
     )
