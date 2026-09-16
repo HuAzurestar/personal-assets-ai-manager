@@ -16,10 +16,6 @@ import {
 const entryTypeCodes = { 0: "TRANSACTION", 1: "ACCOUNT_TRANSFER", 2: "CLAIM" };
 const entryTypeValues = { TRANSACTION: 0, ACCOUNT_TRANSFER: 1, CLAIM: 2 };
 
-function entryDirection(direction) {
-  return Number(direction) === 1 ? "IN" : "OUT";
-}
-
 function closeDialogs() {
   $$('dialog[open]').forEach((dialog) => dialog.close());
 }
@@ -179,16 +175,16 @@ async function summaryPage() {
     const currency = flow.amount.currency_code;
     const trendKey = `${day}:${currency}`;
     const trend = trendMap.get(trendKey) || { day, currency_code: currency, amount_scale: scale, income_value: 0, expense_value: 0, net_value: 0 };
-    if (flow.entry_type === 0) {
-      if (flow.entry_direction === 1) trend.income_value += flow.amount.amount_value;
+    if (flow.economic_type === "TRANSACTION") {
+      if (flow.cash_direction === "IN") trend.income_value += flow.amount.amount_value;
       else trend.expense_value += flow.amount.amount_value;
       trend.net_value = trend.income_value - trend.expense_value;
     }
     trendMap.set(trendKey, trend);
-    const typeCode = entryTypeCodes[flow.entry_type];
+    const typeCode = flow.economic_type;
     const activityKey = `${typeCode}:${currency}`;
     const activity = activityMap.get(activityKey) || { entry_type_code: typeCode, currency_code: currency, amount_scale: scale, in_amount_value: 0, out_amount_value: 0, nettable: true };
-    if (flow.entry_direction === 1) activity.in_amount_value += flow.amount.amount_value;
+    if (flow.cash_direction === "IN") activity.in_amount_value += flow.amount.amount_value;
     else activity.out_amount_value += flow.amount.amount_value;
     activityMap.set(activityKey, activity);
   }
@@ -223,7 +219,7 @@ function accountLedgerParams(extra = {}) {
       || state.params.get("currency_code")
       || "CNY",
   });
-  if (extra.entryTypeCode in entryTypeValues) params.set("entry_type", entryTypeValues[extra.entryTypeCode]);
+  if (extra.entryTypeCode in entryTypeValues) params.set("economic_type", extra.entryTypeCode);
   return params;
 }
 
@@ -310,27 +306,27 @@ async function economicPage() {
   for (const name of ["page", "page_size", "q", "currency_code", "date_from", "date_to"]) {
     for (const value of state.params.getAll(name)) if (value) query.append(name, value);
   }
-  const selectedType = state.params.get("entry_type") || "";
+  const selectedType = state.params.get("economic_type") || "";
   if (selectedType in entryTypeCodes) query.set("economic_type", entryTypeCodes[selectedType]);
   if (!query.has("page")) query.set("page", "1");
   if (!query.has("page_size")) query.set("page_size", "25");
   const result = await request(`/paam/ledger/v1/flow/list?${query}`);
   state.detailEconomics = new Map(result.items.map((item) => [item.id, item]));
   const rows = result.items.map((item) => `<tr class="detail-click-row" tabindex="0" data-economic-row="${item.id}">
-    <td>${date(item.occurred_time)}</td><td><button type="button" class="detail-primary" data-action="economic-detail" data-id="${item.id}"><strong>账本流水 #${item.id}</strong><small>${esc(item.account_code)}</small></button></td><td>${esc(typeNames[entryTypeCodes[item.entry_type]] || entryTypeCodes[item.entry_type])}</td><td>${item.entry_direction === 1 ? "流入" : "流出"}</td><td class="money ${item.entry_direction === 1 ? "income" : "expense"}">${signedMoney(item.amount, entryDirection(item.entry_direction))}</td><td>${tags(item)}</td><td class="detail-arrow">→</td>
+    <td>${date(item.occurred_time)}</td><td><button type="button" class="detail-primary" data-action="economic-detail" data-id="${item.id}"><strong>账本流水 #${item.id}</strong><small>${esc(item.account_code)}</small></button></td><td>${esc(typeNames[item.economic_type] || item.economic_type)}</td><td>${item.cash_direction === "IN" ? "流入" : "流出"}</td><td class="money ${item.cash_direction === "IN" ? "income" : "expense"}">${signedMoney(item.amount, item.cash_direction)}</td><td>${tags(item)}</td><td class="detail-arrow">→</td>
   </tr>`).join("");
-  const toolbar = `<form class="detail-filter" data-form="economic-filter"><label class="grow">搜索<input name="q" value="${esc(state.params.get("q") || "")}" placeholder="审查说明、交易方或摘要"></label><label>账本类型<select name="entry_type"><option value="">全部类型</option>${Object.entries(entryTypeCodes).map(([value, code]) => `<option value="${value}" ${selectedType === value ? "selected" : ""}>${esc(typeNames[code] || code)}</option>`).join("")}</select></label><label>币种<input name="currency_code" maxlength="12" value="${esc(state.params.get("currency_code") || "")}" placeholder="全部币种"></label><button type="button" class="quiet" data-action="detail-clear" data-page-id="economy">清空</button><button class="primary">筛选</button></form>`;
+  const toolbar = `<form class="detail-filter" data-form="economic-filter"><label class="grow">搜索<input name="q" value="${esc(state.params.get("q") || "")}" placeholder="审查说明、交易方或摘要"></label><label>账本类型<select name="economic_type"><option value="">全部类型</option>${Object.keys(entryTypeValues).map((value) => `<option value="${value}" ${selectedType === value ? "selected" : ""}>${esc(typeNames[value] || value)}</option>`).join("")}</select></label><label>币种<input name="currency_code" maxlength="12" value="${esc(state.params.get("currency_code") || "")}" placeholder="全部币种"></label><button type="button" class="quiet" data-action="detail-clear" data-page-id="economy">清空</button><button class="primary">筛选</button></form>`;
   return detailList({ active: "economy", toolbar, title: "经济流水", description: "已生效的最终经济结果；每笔都可追溯到审查、Allocation 与事实。", total: result.total, headers: ["发生时间", "经济结果", "类型", "方向", "金额", "标签", ""], rows, footer: detailPager(result, "economy") });
 }
 
 async function showEconomicDetail(id) {
   const detail = await request(`/paam/ledger/v1/flow/${id}`);
-  const flow = detail.entry;
-  const allocations = detail.allocations.map((item) => `<div class="drawer-review-row"><span><strong>Allocation #${item.id}</strong><small>Fact #${item.transaction_fact_id} → Ledger #${item.ledger_entry_id}</small></span><strong>${money(item.amount)}</strong></div>`).join("");
+  const flow = detail.flow;
+  const allocations = detail.allocations.map((item) => `<div class="drawer-review-row"><span><strong>Allocation #${item.id}</strong><small>Fact #${item.fact_id} → Ledger #${item.economic_id}</small></span><strong>${money(item.amount)}</strong></div>`).join("");
   const facts = detail.facts.map((item) => `<div class="drawer-review-row"><span><strong>Fact #${item.id} · ${esc(item.summary || item.counterparty)}</strong><small>${date(item.occurred_time)} · 导入账户 ${esc(item.account_code)}</small></span><strong>${money(item.amount)}</strong><button type="button" class="quiet" data-action="account" data-fact="${item.id}" data-ledger="${flow.id}" data-version="${item.account_review_version}" data-account="${esc(flow.account_code)}">修正账户</button></div>`).join("");
-  const reviews = detail.reviews.map((item) => `<button type="button" class="drawer-review-row" data-action="${["ACCOUNT", "TAG"].includes(item.review_type) ? "review-detail" : "economic-review-detail"}" data-id="${item.id}"><span><strong>Review #${item.id} · ${esc(item.behavior_code)}</strong><small>${esc(item.description)} · ${esc(statusNames[item.status] || item.status)}</small></span><span>查看审查 →</span></button>`).join("");
-  const typeCode = entryTypeCodes[flow.entry_type];
-  detailDrawer({ title: `账本流水 #${flow.id}`, kicker: `${esc(typeNames[typeCode] || typeCode)} · LEDGER #${flow.id}`, subtitle: `${date(flow.occurred_time)} · ${flow.entry_direction === 1 ? "流入" : "流出"}`, body: `<section class="drawer-record-card"><div><span>已确认账本投影</span><h3>${esc(typeNames[typeCode] || typeCode)}</h3><small>${esc(flow.account_code)} · 单方向、单币种</small></div><strong class="ledger-fact-money ${flow.entry_direction === 1 ? "plus" : "minus"}">${signedMoney(flow.amount, entryDirection(flow.entry_direction))}</strong></section><section class="drawer-section"><h3>来源事实</h3>${facts || '<p class="muted">没有关联事实</p>'}</section><section class="drawer-section"><h3>审查与分配</h3>${reviews}${allocations}</section>`, footer: `<button type="button" class="primary" data-action="edit-tags" data-id="${flow.id}">编辑标签</button>` });
+  const reviews = detail.reviews.map((item) => `<button type="button" class="drawer-review-row" data-action="${["ACCOUNT", "TAG"].includes(item.review_type) ? "review-detail" : "economic-review-detail"}" data-id="${item.id}"><span><strong>Review #${item.id} · ${esc(item.behavior_code)}</strong><small>${esc(item.title)} · ${esc(statusNames[item.status] || item.status)}</small></span><span>查看审查 →</span></button>`).join("");
+  const typeCode = flow.economic_type;
+  detailDrawer({ title: `账本流水 #${flow.id}`, kicker: `${esc(typeNames[typeCode] || typeCode)} · LEDGER #${flow.id}`, subtitle: `${date(flow.occurred_time)} · ${flow.cash_direction === "IN" ? "流入" : "流出"}`, body: `<section class="drawer-record-card"><div><span>已确认账本投影</span><h3>${esc(typeNames[typeCode] || typeCode)}</h3><small>${esc(flow.account_code)} · 单方向、单币种</small></div><strong class="ledger-fact-money ${flow.cash_direction === "IN" ? "plus" : "minus"}">${signedMoney(flow.amount, flow.cash_direction)}</strong></section><section class="drawer-section"><h3>来源事实</h3>${facts || '<p class="muted">没有关联事实</p>'}</section><section class="drawer-section"><h3>审查与分配</h3>${reviews}${allocations}</section>`, footer: `<button type="button" class="primary" data-action="edit-tags" data-id="${flow.id}">编辑标签</button>` });
 }
 
 function showSummaryDetail(type) {
@@ -514,8 +510,8 @@ async function editTags(ledgerId) {
   const views = viewPage.items;
   if (renderVersion !== state.renderVersion) return;
   if (!views.length) return toast("请先创建标签维度", true);
-  const current = Object.fromEntries(detail.entry.tags.map((item) => [item.view_system_name, item.tag_system_name]));
-  const dialog = modal("编辑最终流水标签", `<form data-form="tag-assignment" data-ledger="${ledgerId}" data-version="${detail.entry.projection_version}" class="stack">${views.map((view) => `<label>${esc(view.name)}<select name="${esc(view.system_name)}">${view.tags.map((tag) => `<option value="${esc(tag.system_name)}" ${(current[view.system_name] || "unclassified") === tag.system_name ? "selected" : ""}>${esc(tag.name)}</option>`).join("")}</select></label>`).join("")}<div class="actions"><button class="primary">保存标签</button></div></form>`);
+  const current = Object.fromEntries(detail.flow.tags.map((item) => [item.view_system_name, item.tag_system_name]));
+  const dialog = modal("编辑最终流水标签", `<form data-form="tag-assignment" data-ledger="${ledgerId}" data-version="${detail.flow.projection_version}" class="stack">${views.map((view) => `<label>${esc(view.name)}<select name="${esc(view.system_name)}">${view.tags.map((tag) => `<option value="${esc(tag.system_name)}" ${(current[view.system_name] || "unclassified") === tag.system_name ? "selected" : ""}>${esc(tag.name)}</option>`).join("")}</select></label>`).join("")}<div class="actions"><button class="primary">保存标签</button></div></form>`);
   bindPage(dialog);
 }
 

@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 @dataclass(frozen=True, slots=True)
 class EconomicPageQuery:
     page: int = 1
-    page_size: int = 50
+    page_size: int = 20
     date_from: date | None = None
     date_to: date | None = None
     entry_type: tuple[int, ...] = ()
@@ -39,8 +39,8 @@ class EconomicTagRead(BaseModel):
 
 class EconomicFlowListItem(BaseModel):
     id: int
-    entry_type: Literal[0, 1, 2]
-    entry_direction: Literal[1, 2]
+    economic_type: Literal["TRANSACTION", "ACCOUNT_TRANSFER", "CLAIM"]
+    cash_direction: Literal["IN", "OUT"]
     amount: EconomicMoneyRead
     account_code: str
     counterparty_account_ref: str
@@ -65,9 +65,9 @@ class EconomicFlowPageResponse(BaseModel):
 
 class EconomicAllocationEvidenceRead(BaseModel):
     id: int
-    review_case_id: int
-    transaction_fact_id: int
-    ledger_entry_id: int
+    review_id: int
+    fact_id: int
+    economic_id: int
     amount: EconomicMoneyRead
 
 
@@ -88,11 +88,11 @@ class EconomicReviewBriefRead(BaseModel):
     behavior_code: str
     status: str
     version: int
-    description: str
+    title: str
 
 
 class EconomicFlowDetailRead(BaseModel):
-    entry: EconomicFlowListItem
+    flow: EconomicFlowListItem
     allocations: list[EconomicAllocationEvidenceRead]
     facts: list[EconomicFactBriefRead]
     reviews: list[EconomicReviewBriefRead]
@@ -118,7 +118,7 @@ class EconomicCurrencySummaryRead(BaseModel):
 class EconomicSummaryRead(BaseModel):
     entry_count: int
     totals: list[EconomicCurrencySummaryRead]
-    basis_version: str = "ledger-entry-v2"
+    basis_version: str = "economic-flow-v1"
 
 
 class EconomicSummaryResponse(BaseModel):

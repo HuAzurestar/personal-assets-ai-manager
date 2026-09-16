@@ -53,6 +53,20 @@ def test_openapi_locks_canonical_ledger_v1_contract():
     ):
         assert schemas[name]["properties"]["status"]["const"] == 200
 
+    flow_properties = set(schemas["EconomicFlowListItem"]["properties"])
+    assert {"economic_type", "cash_direction"} <= flow_properties
+    assert {"entry_type", "entry_direction"}.isdisjoint(flow_properties)
+    detail_properties = set(schemas["EconomicFlowDetailRead"]["properties"])
+    assert "flow" in detail_properties
+    assert "entry" not in detail_properties
+    allocation_properties = set(schemas["EconomicAllocationEvidenceRead"]["properties"])
+    assert {"review_id", "fact_id", "economic_id"} <= allocation_properties
+    assert {
+        "review_case_id",
+        "transaction_fact_id",
+        "ledger_entry_id",
+    }.isdisjoint(allocation_properties)
+
 
 def test_importing_target_runtime_does_not_load_legacy_database_module():
     result = subprocess.run(
@@ -275,9 +289,12 @@ def test_target_review_confirm_revoke_restore_rebuilds_projection(
             page = client.get("/paam/ledger/v1/flow/list").json()["body"]
             assert page["total"] == 2
             assert {
-                (item["entry_type"], item["entry_direction"], item["amount"]["amount_value"])
+                (item["economic_type"], item["cash_direction"], item["amount"]["amount_value"])
                 for item in page["items"]
-            } == {(1, 1, 999), (1, 2, 1000)}
+            } == {
+                ("ACCOUNT_TRANSFER", "IN", 999),
+                ("ACCOUNT_TRANSFER", "OUT", 1000),
+            }
             detail = client.get(
                 f"/paam/ledger/v1/flow/{page['items'][0]['id']}"
             ).json()["body"]
@@ -315,7 +332,7 @@ def test_target_review_confirm_revoke_restore_rebuilds_projection(
             assert case["history"][-1]["operation"] == "REVOKE"
             page = client.get("/paam/ledger/v1/flow/list").json()["body"]
             assert page["total"] == 2
-            assert {item["entry_type"] for item in page["items"]} == {0}
+            assert {item["economic_type"] for item in page["items"]} == {"TRANSACTION"}
 
             restored = client.post(
                 f"/paam/ledger/v1/review/{case['id']}/restore",

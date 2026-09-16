@@ -22,6 +22,13 @@ from backend.schema.target_economic import (
 
 
 class TargetEconomicReadService:
+    ECONOMIC_TYPES = {
+        0: "TRANSACTION",
+        1: "ACCOUNT_TRANSFER",
+        2: "CLAIM",
+    }
+    CASH_DIRECTIONS = {1: "IN", 2: "OUT"}
+
     def __init__(self, db: Session):
         self.mapper = TargetEconomicReadMapper(db)
 
@@ -38,7 +45,7 @@ class TargetEconomicReadService:
             filters={
                 "date_from": str(query.date_from) if query.date_from else None,
                 "date_to": str(query.date_to) if query.date_to else None,
-                "entry_type": list(query.entry_type),
+                "economic_type": [self.ECONOMIC_TYPES[value] for value in query.entry_type],
                 "currency_code": list(query.currency_code),
                 "q": query.q,
             },
@@ -50,12 +57,12 @@ class TargetEconomicReadService:
             return None
         flow, allocations, facts, reviews, tags, account_versions = data
         return EconomicFlowDetailRead(
-            entry=self._flow(flow, tags),
+            flow=self._flow(flow, tags),
             allocations=[EconomicAllocationEvidenceRead(
                 id=row["id"],
-                review_case_id=row["review_case_id"],
-                transaction_fact_id=row["transaction_fact_id"],
-                ledger_entry_id=row["ledger_entry_id"],
+                review_id=row["review_id"],
+                fact_id=row["fact_id"],
+                economic_id=row["economic_id"],
                 amount=EconomicMoneyRead(
                     amount_value=row["amount_value"],
                     amount_scale=row["amount_scale"],
@@ -118,8 +125,8 @@ class TargetEconomicReadService:
     def _flow(row, tags=()) -> EconomicFlowListItem:
         return EconomicFlowListItem(
             id=row["id"],
-            entry_type=row["entry_type"],
-            entry_direction=row["entry_direction"],
+            economic_type=TargetEconomicReadService.ECONOMIC_TYPES[row["entry_type"]],
+            cash_direction=TargetEconomicReadService.CASH_DIRECTIONS[row["entry_direction"]],
             amount=EconomicMoneyRead(
                 amount_value=row["amount_value"],
                 amount_scale=row["amount_scale"],

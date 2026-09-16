@@ -140,7 +140,7 @@ def test_target_import_writes_fact_evidence_and_hot_projection(target_import_api
     assert ledger.json()["status"] == ledger.status_code
     ledger_page = ledger.json()["body"]
     assert ledger_page["total"] == 1
-    assert ledger_page["items"][0]["entry_type"] == 0
+    assert ledger_page["items"][0]["economic_type"] == "TRANSACTION"
     assert ledger_page["items"][0]["amount"]["amount_value"] == 1000
 
     repeated = _preview(client, "renamed.csv", _csv())

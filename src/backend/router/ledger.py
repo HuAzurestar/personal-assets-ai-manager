@@ -33,7 +33,7 @@ ECONOMIC_TYPE_IDS = {
 @router.get("/flow/list", response_model=EconomicFlowPageResponse)
 def list_economic_flows(
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=50, ge=1, le=100),
+    page_size: int = Query(default=20, ge=1, le=100),
     date_from: date | None = None,
     date_to: date | None = None,
     economic_type: list[str] = Query(default=[]),

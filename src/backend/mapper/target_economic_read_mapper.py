@@ -55,9 +55,9 @@ class TargetEconomicReadMapper:
             return None
         allocations = self.db.execute(select(
             ReviewCaseBill.id,
-            ReviewCaseBill.case_id.label("review_case_id"),
-            ReviewCaseBill.bill_id.label("transaction_fact_id"),
-            ReviewCaseBill.economic_id.label("ledger_entry_id"),
+            ReviewCaseBill.case_id.label("review_id"),
+            ReviewCaseBill.bill_id.label("fact_id"),
+            ReviewCaseBill.economic_id.label("economic_id"),
             ReviewCaseBill.amount_value,
             ReviewCaseBill.amount_scale,
             ReviewCaseBill.currency_code,
@@ -67,7 +67,7 @@ class TargetEconomicReadMapper:
             ReviewCaseBill.economic_id == economic_id,
             ReviewCase.status == "CONFIRMED",
         ).order_by(ReviewCaseBill.id)).mappings().all()
-        fact_ids = sorted({row["transaction_fact_id"] for row in allocations})
+        fact_ids = sorted({row["fact_id"] for row in allocations})
         facts = self.db.execute(select(
             BillFact.id,
             BillFact.occurred_time,
@@ -85,7 +85,7 @@ class TargetEconomicReadMapper:
             ReviewCase.behavior_code,
             ReviewCase.status,
             ReviewCase.version,
-            ReviewCase.title.label("description"),
+            ReviewCase.title,
         ).join(
             ReviewCaseBill,
             ReviewCaseBill.case_id == ReviewCase.id,

@@ -83,8 +83,8 @@ def test_ledger_v1_exposes_only_confirmed_cash_entry_fields(economic_api):
     item = page.json()["body"]["items"][0]
     assert set(item) == {
         "id",
-        "entry_type",
-        "entry_direction",
+        "economic_type",
+        "cash_direction",
         "amount",
         "account_code",
         "counterparty_account_ref",
@@ -92,10 +92,10 @@ def test_ledger_v1_exposes_only_confirmed_cash_entry_fields(economic_api):
         "occurred_time",
         "tags",
     }
-    assert (item["entry_type"], item["entry_direction"]) == (0, 2)
+    assert (item["economic_type"], item["cash_direction"]) == ("TRANSACTION", "OUT")
     detail = client.get(f"/paam/ledger/v1/flow/{item['id']}").json()["body"]
     assert "role" not in detail["allocations"][0]
-    assert detail["entry"] == item
+    assert detail["flow"] == item
     assert client.get("/paam/economy/v1/flow/list").status_code == 404
     assert client.get("/paam/economy/v1/flow/detail/1").status_code == 404
     assert client.get("/paam/economy/v1/summary").status_code == 404
@@ -442,7 +442,7 @@ def test_tag_sync_uses_allocations_for_every_split_ledger_entry(economic_api):
     detail = client.get(f"/paam/ledger/v1/flow/{ledger_ids[0]}").json()["body"]
     assigned = client.put(f"/paam/tag/v1/assignment/{ledger_ids[0]}", json={
         "tag_state": {"category": "food"},
-        "expected_projection_version": detail["entry"]["projection_version"],
+        "expected_projection_version": detail["flow"]["projection_version"],
     })
     assert assigned.status_code == 200, assigned.text
     assert assigned.json()["body"]["projection_version"] == 2
@@ -450,8 +450,8 @@ def test_tag_sync_uses_allocations_for_every_split_ledger_entry(economic_api):
         client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]
         for ledger_id in ledger_ids
     ]
-    assert details[0]["entry"]["tags"][0]["tag_system_name"] == "food"
-    assert details[1]["entry"]["tags"][0]["tag_system_name"] == "unclassified"
+    assert details[0]["flow"]["tags"][0]["tag_system_name"] == "food"
+    assert details[1]["flow"]["tags"][0]["tag_system_name"] == "unclassified"
 
     archived = client.put(f"/paam/tag/v1/view/{view['id']}", json={
         "status": "ARCHIVED",
@@ -501,7 +501,7 @@ def test_account_review_updates_every_split_ledger_and_survives_rebuild(economic
         client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]
         for ledger_id in ledger_ids
     ]
-    assert all(item["entry"]["account_code"] == "checked-bank" for item in details)
+    assert all(item["flow"]["account_code"] == "checked-bank" for item in details)
     assert all(item["facts"][0]["account_review_version"] == 1 for item in details)
     assert all(
         {review["review_type"] for review in item["reviews"]}
