@@ -93,6 +93,13 @@ def test_openapi_locks_canonical_ledger_v1_contract():
         page_size = next(item for item in parameters if item["name"] == "page_size")
         assert page_size["schema"]["default"] == 20
 
+    assert specification["paths"]["/paam/ledger/v1/flow/list"]["get"]["tags"] == [
+        "ledger-flow"
+    ]
+    assert specification["paths"]["/paam/ledger/v1/review"]["post"]["tags"] == [
+        "ledger-review"
+    ]
+
 
 def test_importing_target_runtime_does_not_load_legacy_database_module():
     result = subprocess.run(

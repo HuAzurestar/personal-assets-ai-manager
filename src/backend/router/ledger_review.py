@@ -19,7 +19,7 @@ from backend.service.target_economic_service import TargetEconomicService
 
 router = APIRouter(
     prefix="/paam/ledger/v1",
-    tags=["economic-review"],
+    tags=["ledger-review"],
     route_class=DomainErrorRoute,
 )
 
