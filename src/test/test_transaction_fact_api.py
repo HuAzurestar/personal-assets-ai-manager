@@ -1,4 +1,5 @@
-from datetime import datetime, timedelta
+import json
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import FastAPI
@@ -119,25 +120,37 @@ def test_transaction_fact_list_is_a_pure_server_queried_po_list(
     response = client.get(
         "/paam/ledger/v1/transaction_fact/list",
         params={
-            "page": 1,
+            "page_index": 1,
             "page_size": 20,
-            "q": "client",
-            "filter": '{"cash_direction":"IN","currency_code":"usd"}',
-            "sorter": '{"field":"amount_value","order":"asc"}',
+            "filter": json.dumps({
+                "op": "AND",
+                "expression": [
+                    {"key": "cash_direction", "op": "=", "val": "IN"},
+                    {"key": "currency_code", "op": "=", "val": "usd"},
+                    {
+                        "key": "occurred_time",
+                        "op": "between",
+                        "val": {
+                            "start": datetime(2026, 9, 17, tzinfo=timezone.utc).isoformat(),
+                            "end": datetime(2026, 9, 19, tzinfo=timezone.utc).isoformat(),
+                        },
+                    },
+                ],
+            }),
+            "sorter": json.dumps([
+                {"key": "amount_value", "direction": "asc"},
+            ]),
         },
     )
 
     assert response.status_code == 200, response.text
-    body = response.json()["body"]
-    assert (body["total"], body["page"], body["page_size"]) == (1, 1, 20)
-    assert body["filter"] == {
-        "cash_direction": "IN",
-        "currency_code": "usd",
-        "account_code": None,
-        "date_from": None,
-        "date_to": None,
-    }
-    assert body["sorter"] == {"field": "amount_value", "order": "asc"}
+    payload = response.json()
+    assert payload["status"] == 200
+    assert payload["message"] == "ok"
+    assert payload["warnings"][0]["code"] == "LIST_AMOUNT_SORT_GROUPED"
+    body = payload["body"]
+    assert (body["total"], body["page_index"], body["page_size"]) == (1, 1, 20)
+    assert set(body) == {"items", "total", "page_index", "page_size"}
     assert body["items"][0]["summary"] == "Consulting"
     assert "available_value" not in body["items"][0]
     assert "fact_key" not in body["items"][0]
@@ -175,12 +188,90 @@ def test_transaction_fact_query_rejects_unknown_fields(transaction_fact_api):
 
     response = client.get(
         "/paam/ledger/v1/transaction_fact/list",
-        params={"sorter": '{"field":"drop_table","order":"asc"}'},
+        params={
+            "sorter": '[{"key":"drop_table","direction":"asc"}]',
+        },
     )
 
     assert response.status_code == 422
     assert response.json()["status"] == 422
-    assert response.json()["body"]["code"] == "LIST_QUERY_ERROR"
+    assert response.json()["body"]["code"] == "LIST_SORTER_FIELD_NOT_SUPPORTED"
+
+
+def test_transaction_fact_list_allows_minimal_request_and_rejects_query(
+    transaction_fact_api,
+):
+    client, sessions = transaction_fact_api
+    _seed(sessions)
+
+    minimal = client.get(
+        "/paam/ledger/v1/transaction_fact/list",
+        params={"page_index": 1, "page_size": 10},
+    )
+    assert minimal.status_code == 200, minimal.text
+    assert minimal.json()["body"]["total"] == 2
+    assert "warnings" not in minimal.json()
+
+    rejected = client.get(
+        "/paam/ledger/v1/transaction_fact/list",
+        params={"query": '[{"key":"summary","word":"Coffee"}]'},
+    )
+    assert rejected.status_code == 422
+    assert rejected.json()["body"]["code"] == "LIST_QUERY_NOT_SUPPORTED"
+
+    legacy = client.get(
+        "/paam/ledger/v1/transaction_fact/list",
+        params={"page": 1, "q": "Coffee"},
+    )
+    assert legacy.status_code == 422
+    assert legacy.json()["body"]["code"] == "LIST_PARAMETER_NOT_SUPPORTED"
+    assert legacy.json()["body"]["details"]["parameters"] == ["page", "q"]
+
+
+def test_transaction_fact_amount_sort_omits_warning_when_money_is_constrained(
+    transaction_fact_api,
+):
+    client, sessions = transaction_fact_api
+    _seed(sessions)
+
+    response = client.get(
+        "/paam/ledger/v1/transaction_fact/list",
+        params={
+            "filter": json.dumps({
+                "op": "AND",
+                "expression": [
+                    {"key": "currency_code", "op": "=", "val": "CNY"},
+                    {"key": "amount_scale", "op": "=", "val": 2},
+                ],
+            }),
+            "sorter": '[{"key":"amount_value","direction":"desc"}]',
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert "warnings" not in response.json()
+    assert response.json()["body"]["total"] == 1
+
+
+def test_transaction_fact_openapi_exposes_only_canonical_list_parameters(
+    transaction_fact_api,
+):
+    client, _sessions = transaction_fact_api
+
+    operation = client.get("/openapi.json").json()["paths"][
+        "/paam/ledger/v1/transaction_fact/list"
+    ]["get"]
+    assert [parameter["name"] for parameter in operation["parameters"]] == [
+        "page_index",
+        "page_size",
+        "query",
+        "filter",
+        "sorter",
+    ]
+    schema = operation["responses"]["200"]["content"]["application/json"][
+        "schema"
+    ]
+    assert schema["$ref"].endswith("/TransactionFactListResponse")
 
 
 def test_transaction_fact_detail_returns_shared_not_found_error(

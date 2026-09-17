@@ -310,13 +310,13 @@ description: Change PAAM FastAPI routers, URL modules or versions, HTTP endpoint
 ## Standard list capabilities
 
 - Transaction Fact supports Filters for `id`, `occurred_time`,
-  `cash_direction`, `currency_code`, and `account_code`. Its ordinary Sorter is
-  `occurred_time`; `amount_value` follows the Money ordering rules. Default to
-  `occurred_time DESC` plus stable ID.
+  `cash_direction`, `currency_code`, `amount_scale`, and `account_code`. Its
+  ordinary Sorter is `occurred_time`; `amount_value` follows the Money ordering
+  rules. Default to `occurred_time DESC` plus stable ID.
 - Ledger supports Filters for `id`, `occurred_time`, `economic_type`,
-  `cash_direction`, `currency_code`, and `account_code`. Its ordinary Sorter is
-  `occurred_time`; `amount_value` follows the Money ordering rules. Do not
-  expose `projection_version` or ID as public Sorters. Default to
+  `cash_direction`, `currency_code`, `amount_scale`, and `account_code`. Its
+  ordinary Sorter is `occurred_time`; `amount_value` follows the Money ordering
+  rules. Do not expose `projection_version` or ID as public Sorters. Default to
   `occurred_time DESC` plus stable ID.
 - Review supports Filters for `id`, `status`, `created_time`, and
   `updated_time`, and Sorters for `created_time` and `updated_time`. Exclude

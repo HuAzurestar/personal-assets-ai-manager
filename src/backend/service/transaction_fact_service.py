@@ -11,12 +11,15 @@ from backend.schema.transaction_fact import (
     TransactionFactFilter,
     TransactionFactImportEvidenceRead,
     TransactionFactLedgerRead,
+    TransactionFactListBody,
     TransactionFactListItem,
-    TransactionFactPageRead,
+    TransactionFactListRequest,
     TransactionFactRead,
     TransactionFactReviewRead,
     TransactionFactSorter,
+    parse_transaction_fact_time,
 )
+from backend.schema.list_query import BetweenValue, iter_filter_fields
 
 
 class TransactionFactService:
@@ -29,28 +32,57 @@ class TransactionFactService:
     def page(
         self,
         *,
-        page: int,
-        page_size: int,
-        q: str,
-        filter_value: TransactionFactFilter,
-        sorter: TransactionFactSorter,
-    ) -> TransactionFactPageRead:
+        request: TransactionFactListRequest,
+    ) -> TransactionFactListBody:
+        filter_value = self._mapper_filter(request)
+        sorter_expression = request.sorter[0] if request.sorter else None
+        sorter = TransactionFactSorter(
+            field=sorter_expression.key if sorter_expression else "occurred_time",
+            order=sorter_expression.direction if sorter_expression else "desc",
+        )
         rows, total = self.mapper.page(
-            page=page,
-            page_size=page_size,
-            q=q,
+            page=request.page_index,
+            page_size=request.page_size,
             filter_value=filter_value,
             sorter=sorter,
         )
-        return TransactionFactPageRead(
+        return TransactionFactListBody(
             items=[TransactionFactListItem(**row) for row in rows],
             total=total,
-            page=page,
-            page_size=page_size,
-            q=q,
-            filter=filter_value,
-            sorter=sorter,
+            page_index=request.page_index,
+            page_size=request.page_size,
         )
+
+    @staticmethod
+    def _mapper_filter(
+        request: TransactionFactListRequest,
+    ) -> TransactionFactFilter:
+        values: dict[str, object] = {}
+        for expression in iter_filter_fields(request.filter):
+            if expression.key == "occurred_time":
+                if expression.op == "between":
+                    between = BetweenValue.model_validate(expression.val)
+                    values["occurred_time_start"] = parse_transaction_fact_time(
+                        between.start
+                    )
+                    values["occurred_time_end"] = parse_transaction_fact_time(
+                        between.end
+                    )
+                elif expression.op == ">=":
+                    values["occurred_time_start"] = parse_transaction_fact_time(
+                        expression.val
+                    )
+                else:
+                    values["occurred_time_end"] = parse_transaction_fact_time(
+                        expression.val
+                    )
+            elif expression.key == "currency_code":
+                values[expression.key] = str(expression.val).strip().upper()
+            elif expression.key == "account_code":
+                values[expression.key] = str(expression.val).strip()
+            else:
+                values[expression.key] = expression.val
+        return TransactionFactFilter.model_validate(values)
 
     def detail(self, fact_id: int) -> TransactionFactDetailRead:
         fact = self.mapper.detail(fact_id)

@@ -247,7 +247,6 @@ async function loadFactCandidates(maxItems) {
 }
 
 async function ledgerPage() {
-  const q = (state.params.get("q") || "").trim();
   const currency = (state.params.get("currency_code") || "").trim().toUpperCase();
   const dateFrom = state.params.get("date_from") || "";
   const dateTo = state.params.get("date_to") || "";
@@ -255,25 +254,38 @@ async function ledgerPage() {
   const pageSize = Math.min(100, Math.max(1, Number(state.params.get("page_size") || 20)));
   const sortField = state.params.get("sort_field") || "occurred_time";
   const sortOrder = state.params.get("sort_order") || "desc";
-  const filter = Object.fromEntries(Object.entries({
-    currency_code: currency,
-    date_from: dateFrom,
-    date_to: dateTo,
-  }).filter(([, value]) => value));
+  const dayBoundary = (value, nextDay = false) => {
+    const boundary = new Date(`${value}T00:00:00`);
+    if (nextDay) boundary.setDate(boundary.getDate() + 1);
+    const offset = -boundary.getTimezoneOffset();
+    const sign = offset >= 0 ? "+" : "-";
+    const hours = String(Math.floor(Math.abs(offset) / 60)).padStart(2, "0");
+    const minutes = String(Math.abs(offset) % 60).padStart(2, "0");
+    const selected = nextDay
+      ? `${boundary.getFullYear()}-${String(boundary.getMonth() + 1).padStart(2, "0")}-${String(boundary.getDate()).padStart(2, "0")}`
+      : value;
+    return `${selected}T00:00:00${sign}${hours}:${minutes}`;
+  };
+  const expressions = [];
+  if (currency) expressions.push({ key: "currency_code", op: "=", val: currency });
+  if (dateFrom) expressions.push({ key: "occurred_time", op: ">=", val: dayBoundary(dateFrom) });
+  if (dateTo) expressions.push({ key: "occurred_time", op: "<", val: dayBoundary(dateTo, true) });
+  const filter = expressions.length > 1
+    ? { op: "AND", expression: expressions }
+    : expressions[0];
   const query = new URLSearchParams({
-    page: String(page),
+    page_index: String(page),
     page_size: String(pageSize),
-    q,
-    filter: JSON.stringify(filter),
-    sorter: JSON.stringify({ field: sortField, order: sortOrder }),
+    sorter: JSON.stringify([{ key: sortField, direction: sortOrder }]),
   });
+  if (filter) query.set("filter", JSON.stringify(filter));
   const result = await request(`/paam/ledger/v1/transaction_fact/list?${query}`);
   const rows = result.items.map((fact) => `<tr class="detail-click-row" tabindex="0" data-fact-row="${fact.id}">
     <td>${date(fact.occurred_time)}</td><td><button type="button" class="detail-primary" data-action="fact-detail" data-id="${fact.id}"><strong>${esc(fact.summary || fact.counterparty || `事实 #${fact.id}`)}</strong><small>#${fact.id} · ${esc(fact.counterparty || "未知交易方")}</small></button></td>
     <td><span class="badge neutral">${fact.cash_direction === "IN" ? "流入" : "流出"}</span></td><td class="money ${fact.cash_direction === "IN" ? "income" : "expense"}">${signedMoney(fact, fact.cash_direction)}</td><td>${esc(fact.currency_code)}</td><td class="mono">${esc(fact.account_code)}</td><td class="detail-arrow">→</td>
   </tr>`).join("");
-  const toolbar = `<form class="detail-filter" data-form="fact-filter"><label class="grow">查找<input name="q" value="${esc(q)}" placeholder="ID、交易方、摘要或账户"></label><label>币种<input name="currency_code" maxlength="12" value="${esc(currency)}" placeholder="全部币种"></label><label>开始日期<input type="date" name="date_from" value="${esc(dateFrom)}"></label><label>结束日期<input type="date" name="date_to" value="${esc(dateTo)}"></label><label>排序<select name="sort_field"><option value="occurred_time" ${sortField === "occurred_time" ? "selected" : ""}>发生时间</option><option value="amount_value" ${sortField === "amount_value" ? "selected" : ""}>金额</option><option value="created_time" ${sortField === "created_time" ? "selected" : ""}>创建时间</option><option value="id" ${sortField === "id" ? "selected" : ""}>ID</option></select></label><label>顺序<select name="sort_order"><option value="desc" ${sortOrder === "desc" ? "selected" : ""}>降序</option><option value="asc" ${sortOrder === "asc" ? "selected" : ""}>升序</option></select></label><button type="button" class="quiet" data-action="detail-clear" data-page-id="ledger">清空</button><button class="primary">查询</button></form>`;
-  return detailListView({ active: "ledger", toolbar, title: "Transaction Fact", description: "外部账单接受后的不可变事实 PO；查找、筛选与排序均由服务端执行。", total: result.total, headers: ["发生时间", "事实", "方向", "金额", "币种", "来源账户", ""], rows, footer: detailPager(result, "ledger") });
+  const toolbar = `<form class="detail-filter" data-form="fact-filter"><label>币种<input name="currency_code" maxlength="12" value="${esc(currency)}" placeholder="全部币种"></label><label>开始日期<input type="date" name="date_from" value="${esc(dateFrom)}"></label><label>结束日期<input type="date" name="date_to" value="${esc(dateTo)}"></label><label>排序<select name="sort_field"><option value="occurred_time" ${sortField === "occurred_time" ? "selected" : ""}>发生时间</option><option value="amount_value" ${sortField === "amount_value" ? "selected" : ""}>金额</option></select></label><label>顺序<select name="sort_order"><option value="desc" ${sortOrder === "desc" ? "selected" : ""}>降序</option><option value="asc" ${sortOrder === "asc" ? "selected" : ""}>升序</option></select></label><button type="button" class="quiet" data-action="detail-clear" data-page-id="ledger">清空</button><button class="primary">筛选</button></form>`;
+  return detailListView({ active: "ledger", toolbar, title: "Transaction Fact", description: "外部账单接受后的不可变事实 PO；筛选与排序均由服务端执行。", total: result.total, headers: ["发生时间", "事实", "方向", "金额", "币种", "来源账户", ""], rows, footer: detailPager(result, "ledger") });
 }
 
 async function showFactDetail(id) {

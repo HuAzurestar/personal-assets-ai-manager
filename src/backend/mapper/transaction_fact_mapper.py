@@ -67,9 +67,9 @@ class TransactionFactMapper:
         *,
         page: int,
         page_size: int,
-        q: str,
         filter_value: TransactionFactFilter,
         sorter: TransactionFactSorter,
+        q: str = "",
         import_file_id: int | None = None,
     ) -> tuple[list[dict], int]:
         clauses = []
@@ -88,6 +88,8 @@ class TransactionFactMapper:
                 TransactionFact.counterparty_name.like(pattern),
                 TransactionFact.summary.like(pattern),
             ))
+        if filter_value.id:
+            clauses.append(TransactionFact.id == filter_value.id)
         if filter_value.cash_direction:
             clauses.append(TransactionFact.cash_direction == {
                 "IN": CASH_DIRECTION_IN,
@@ -97,6 +99,16 @@ class TransactionFactMapper:
             clauses.append(TransactionFact.currency_code == filter_value.currency_code.upper())
         if filter_value.account_code:
             clauses.append(TransactionFact.account_code == filter_value.account_code)
+        if filter_value.amount_scale is not None:
+            clauses.append(TransactionFact.amount_scale == filter_value.amount_scale)
+        if filter_value.occurred_time_start:
+            clauses.append(
+                TransactionFact.occurred_time >= filter_value.occurred_time_start
+            )
+        if filter_value.occurred_time_end:
+            clauses.append(
+                TransactionFact.occurred_time < filter_value.occurred_time_end
+            )
         if filter_value.date_from:
             clauses.append(TransactionFact.occurred_time >= datetime.combine(
                 filter_value.date_from,
@@ -114,9 +126,23 @@ class TransactionFactMapper:
         column = self._SORT_COLUMNS[sorter.field]
         order = column.asc() if sorter.order == "asc" else column.desc()
         id_order = TransactionFact.id.asc() if sorter.order == "asc" else TransactionFact.id.desc()
+        orders = [order, id_order]
+        if (
+            sorter.field == "amount_value"
+            and not (
+                filter_value.currency_code
+                and filter_value.amount_scale is not None
+            )
+        ):
+            orders = [
+                TransactionFact.currency_code.asc(),
+                TransactionFact.amount_scale.asc(),
+                order,
+                id_order,
+            ]
         rows = self.db.execute(select(
             *self._fact_columns(),
-        ).where(*clauses).order_by(order, id_order).offset(
+        ).where(*clauses).order_by(*orders).offset(
             (page - 1) * page_size
         ).limit(page_size)).mappings().all()
         return [dict(row) for row in rows], total

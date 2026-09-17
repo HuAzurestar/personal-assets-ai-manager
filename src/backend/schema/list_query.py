@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from collections.abc import Collection, Iterator, Mapping
 from typing import Any, Literal, TypeVar
 
 from pydantic import (
@@ -291,6 +292,141 @@ def _filter_metrics(expression: FilterExpression) -> tuple[int, int]:
         1 + max(depth for depth, _ in child_metrics),
         sum(fields for _, fields in child_metrics),
     )
+
+
+def iter_filter_fields(
+    expression: FilterExpression | None,
+) -> Iterator[FilterFieldExpression]:
+    if expression is None:
+        return
+    if isinstance(expression, FilterFieldExpression):
+        yield expression
+        return
+    for child in expression.expression:
+        yield from iter_filter_fields(child)
+
+
+def validate_list_capabilities(
+    request: ListRequest,
+    *,
+    query_fields: Collection[str],
+    filter_operators: Mapping[str, Collection[str]],
+    sorter_fields: Collection[str],
+    logical_operators: Collection[str] = ("AND",),
+    max_sorters: int = 1,
+) -> None:
+    if request.query and not query_fields:
+        raise ListQueryError(
+            "Query is not supported",
+            code="LIST_QUERY_NOT_SUPPORTED",
+            details={"component": "query"},
+        )
+    for index, expression in enumerate(request.query):
+        if expression.key not in query_fields:
+            raise ListQueryError(
+                "Query field is not supported",
+                code="LIST_QUERY_FIELD_NOT_SUPPORTED",
+                details={
+                    "component": "query",
+                    "path": f"[{index}].key",
+                    "key": expression.key,
+                    "supported": sorted(query_fields),
+                },
+            )
+    if request.filter is not None and not filter_operators:
+        raise ListQueryError(
+            "Filter is not supported",
+            code="LIST_FILTER_NOT_SUPPORTED",
+            details={"component": "filter"},
+        )
+    _validate_filter_capabilities(
+        request.filter,
+        filter_operators=filter_operators,
+        logical_operators=logical_operators,
+    )
+    if request.sorter and not sorter_fields:
+        raise ListQueryError(
+            "Sorter is not supported",
+            code="LIST_SORTER_NOT_SUPPORTED",
+            details={"component": "sorter"},
+        )
+    if len(request.sorter) > max_sorters:
+        raise ListQueryError(
+            "Sorter combination is not supported",
+            code="LIST_COMBINATION_NOT_SUPPORTED",
+            details={
+                "component": "sorter",
+                "sorter_count": len(request.sorter),
+                "max_sorters": max_sorters,
+            },
+        )
+    for index, expression in enumerate(request.sorter):
+        if expression.key not in sorter_fields:
+            raise ListQueryError(
+                "Sorter field is not supported",
+                code="LIST_SORTER_FIELD_NOT_SUPPORTED",
+                details={
+                    "component": "sorter",
+                    "path": f"[{index}].key",
+                    "key": expression.key,
+                    "supported": sorted(sorter_fields),
+                },
+            )
+
+
+def _validate_filter_capabilities(
+    expression: FilterExpression | None,
+    *,
+    filter_operators: Mapping[str, Collection[str]],
+    logical_operators: Collection[str],
+    path: str = "$",
+) -> None:
+    if expression is None:
+        return
+    if isinstance(expression, FilterFieldExpression):
+        supported = filter_operators.get(expression.key)
+        if supported is None:
+            raise ListQueryError(
+                "Filter field is not supported",
+                code="LIST_FILTER_FIELD_NOT_SUPPORTED",
+                details={
+                    "component": "filter",
+                    "path": f"{path}.key",
+                    "key": expression.key,
+                    "supported": sorted(filter_operators),
+                },
+            )
+        if expression.op not in supported:
+            raise ListQueryError(
+                "Filter operator is not supported for this field",
+                code="LIST_FILTER_OPERATOR_NOT_SUPPORTED",
+                details={
+                    "component": "filter",
+                    "path": f"{path}.op",
+                    "key": expression.key,
+                    "operator": expression.op,
+                    "supported": sorted(supported),
+                },
+            )
+        return
+    if expression.op not in logical_operators:
+        raise ListQueryError(
+            "Logical filter operator is not supported",
+            code="LIST_FILTER_OPERATOR_NOT_SUPPORTED",
+            details={
+                "component": "filter",
+                "path": f"{path}.op",
+                "operator": expression.op,
+                "supported": sorted(logical_operators),
+            },
+        )
+    for index, child in enumerate(expression.expression):
+        _validate_filter_capabilities(
+            child,
+            filter_operators=filter_operators,
+            logical_operators=logical_operators,
+            path=f"{path}.expression[{index}]",
+        )
 
 
 class ListSorter(BaseModel):

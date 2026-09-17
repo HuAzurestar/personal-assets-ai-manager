@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
-from backend.router.dependency import get_db
+from backend.router.dependency import get_db, validate_query_parameter_names
 from backend.router.error import DomainErrorRoute
-from backend.schema.list_query import parse_query_object
+from backend.schema.list_query import iter_filter_fields, parse_list_request
+from backend.schema.response import ResponseWarning
 from backend.schema.transaction_fact import (
     TransactionFactDetailResponse,
-    TransactionFactFilter,
-    TransactionFactPageResponse,
-    TransactionFactSorter,
+    TransactionFactListRequest,
+    TransactionFactListResponse,
 )
 from backend.service.transaction_fact_service import TransactionFactService
 
@@ -26,27 +26,55 @@ router = APIRouter(
 
 @router.get(
     "/transaction_fact/list",
-    response_model=TransactionFactPageResponse,
+    response_model=TransactionFactListResponse,
+    response_model_exclude_none=True,
 )
 def transaction_fact_list(
-    page: int = Query(default=1, ge=1),
+    http_request: Request,
+    page_index: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
-    q: str = Query(default="", max_length=200),
-    filter: str = Query(default="{}"),
-    sorter: str = Query(default='{"field":"occurred_time","order":"desc"}'),
+    query: str | None = Query(default=None),
+    filter: str | None = Query(default=None),
+    sorter: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
-    filter_value = parse_query_object(filter, TransactionFactFilter, "filter")
-    sorter_value = parse_query_object(sorter, TransactionFactSorter, "sorter")
-    return TransactionFactPageResponse(
-        message="Transaction facts listed",
-        body=TransactionFactService(db).page(
-            page=page,
-            page_size=page_size,
-            q=q.strip(),
-            filter_value=filter_value,
-            sorter=sorter_value,
-        ),
+    validate_query_parameter_names(
+        http_request,
+        {"page_index", "page_size", "query", "filter", "sorter"},
+    )
+    request = parse_list_request(
+        TransactionFactListRequest,
+        page_index=page_index,
+        page_size=page_size,
+        query=query,
+        filter=filter,
+        sorter=sorter,
+    )
+    warnings: list[ResponseWarning] = []
+    if request.sorter and request.sorter[0].key == "amount_value":
+        equality_fields = {
+            expression.key
+            for expression in iter_filter_fields(request.filter)
+            if expression.op == "="
+        }
+        if not {"currency_code", "amount_scale"}.issubset(equality_fields):
+            warnings.append(ResponseWarning(
+                code="LIST_AMOUNT_SORT_GROUPED",
+                message="Amounts are grouped by currency and scale before sorting",
+                details={
+                    "order": [
+                        "currency_code asc",
+                        "amount_scale asc",
+                        f"amount_value {request.sorter[0].direction}",
+                        f"id {request.sorter[0].direction}",
+                    ],
+                },
+            ))
+    return TransactionFactListResponse(
+        status=200,
+        message="ok",
+        body=TransactionFactService(db).page(request=request),
+        warnings=warnings,
     )
 
 
@@ -59,6 +87,7 @@ def transaction_fact_detail(
     db: Session = Depends(get_db),
 ):
     return TransactionFactDetailResponse(
-        message="Transaction fact loaded",
+        status=200,
+        message="ok",
         body=TransactionFactService(db).detail(fact_id),
     )
