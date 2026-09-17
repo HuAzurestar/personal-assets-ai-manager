@@ -92,9 +92,3 @@ class LedgerEntryService:
                 for currency, values in sorted(totals.items())
             ],
         )
-
-    @staticmethod
-    def projection_version(updated_time) -> int:
-        """Temporary write-token adapter for account and tag mutation APIs."""
-
-        return max(1, int(updated_time.timestamp() * 1_000_000))

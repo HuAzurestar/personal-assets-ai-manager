@@ -16,7 +16,6 @@ from backend.schema.review_case import (
 from backend.schema.target_review import (
     TargetEconomicReviewCreateRequest,
     TargetEconomicReviewResponse,
-    TargetEconomicReviewUpdateRequest,
     TargetReviewTransitionRequest,
 )
 from backend.service.target_economic_service import TargetEconomicService
@@ -40,30 +39,6 @@ def create_case(
     )
 
 
-@router.post("/review/{review_id}/confirm", response_model=TargetEconomicReviewResponse)
-def confirm_case(
-    review_id: int,
-    payload: TargetReviewTransitionRequest,
-    db: Session = Depends(get_db),
-):
-    return TargetEconomicReviewResponse(
-        message="Ledger review confirmed",
-        body=TargetEconomicService(db).confirm(review_id, payload)
-    )
-
-
-@router.put("/review/{review_id}", response_model=TargetEconomicReviewResponse)
-def update_case(
-    review_id: int,
-    payload: TargetEconomicReviewUpdateRequest,
-    db: Session = Depends(get_db),
-):
-    return TargetEconomicReviewResponse(
-        message="Ledger review updated",
-        body=TargetEconomicService(db).update(review_id, payload)
-    )
-
-
 @router.post("/review/{review_id}/revoke", response_model=TargetEconomicReviewResponse)
 def revoke_case(
     review_id: int,
@@ -84,7 +59,7 @@ def restore_case(
 ):
     return TargetEconomicReviewResponse(
         message="Ledger review restored",
-        body=TargetEconomicService(db).confirm(review_id, payload, restore=True)
+        body=TargetEconomicService(db).restore(review_id, payload)
     )
 
 

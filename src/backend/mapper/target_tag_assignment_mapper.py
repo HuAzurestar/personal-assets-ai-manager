@@ -70,14 +70,13 @@ class TargetTagAssignmentMapper:
     def touch(
         self,
         ledger_id: int,
-        expected_updated_time: datetime,
         now: datetime,
-    ) -> bool:
+    ) -> None:
         result = self.db.execute(update(LedgerEntry).where(
             LedgerEntry.id == ledger_id,
-            LedgerEntry.updated_time == expected_updated_time,
         ).values(updated_time=now))
-        return result.rowcount == 1
+        if result.rowcount != 1:
+            raise ValueError(f"ledger {ledger_id} not found")
 
     def commit(self) -> None:
         self.db.commit()

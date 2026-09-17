@@ -157,16 +157,16 @@ def test_transaction_fact_detail_follows_allocation_relationships(
     assert body["transaction_fact"]["fact_key"] == "fact-1"
     assert body["import_evidence"][0]["filename"] == "september.csv"
     allocation = body["allocations"][0]
-    assert allocation["fact_id"] == fact_id
-    assert allocation["review_id"] == body["reviews"][0]["id"]
-    assert allocation["economic_id"] == body["ledgers"][0]["id"]
+    assert allocation["transaction_fact_id"] == fact_id
+    assert allocation["review_case_id"] == body["reviews"][0]["id"]
+    assert allocation["ledger_entry_id"] == body["ledgers"][0]["id"]
 
     with sessions() as db:
         mapper = TargetEconomicMapper(db)
         assert mapper.allocations_by_relation(
-            review_ids=[allocation["review_id"]],
+            review_ids=[allocation["review_case_id"]],
             fact_ids=[fact_id],
-            economic_ids=[allocation["economic_id"]],
+            economic_ids=[allocation["ledger_entry_id"]],
         )[0]["id"] == allocation["id"]
 
 

@@ -296,8 +296,8 @@ def test_transaction_fact_sql_asset_matches_entity_and_mapper(tmp_path):
             stored_direction = db.scalar(select(TransactionFact.cash_direction))
             assert stored_direction == CASH_DIRECTION_OUT
             mapped = TargetEconomicMapper(db).facts([fact.id])[0]
-            assert mapped.cash_direction == "OUT"
-            assert mapped.counterparty == "测试对手方"
+            assert mapped.cash_direction == CASH_DIRECTION_OUT
+            assert mapped.counterparty_name == "测试对手方"
             fact_id = fact.id
         with engine.connect() as connection:
             stored = connection.execute(text(

@@ -46,9 +46,10 @@ description: Change PAAM ledger projections, summaries, tags, DTOs/VOs, Services
 - Every active Tag View has exactly one effective Tag value on each active
   Ledger. New Ledgers and newly activated Views receive the active
   `unclassified` value until explicitly assigned.
-- A direct Ledger Tag replacement uses optimistic `projection_version`
-  concurrency. Repeating the already-effective complete state is an idempotent
-  success and does not advance the version again.
+- Ledger-owned Account and Tag writes use the application's short serialized
+  SQLite write transaction. Do not expose `projection_version` or require an
+  optimistic-lock token in these local single-user APIs. Replacing an already
+  effective complete Tag state remains an idempotent success.
 - Add query-count tests for list endpoints. Returned row count must not increase SQL statement count.
 - The Ledger Details list represents Ledger projection rows only. Ledger detail
   may include the Allocation, Review, Transaction Fact, and Tag relationships

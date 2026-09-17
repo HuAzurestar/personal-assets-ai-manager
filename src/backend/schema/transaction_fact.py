@@ -78,9 +78,9 @@ class TransactionFactImportEvidenceRead(BaseModel):
 
 class TransactionFactAllocationRead(BaseModel):
     id: int
-    review_id: int
-    fact_id: int
-    economic_id: int
+    review_case_id: int
+    transaction_fact_id: int
+    ledger_entry_id: int
     amount: int
     currency_code: str
 
