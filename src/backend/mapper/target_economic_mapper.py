@@ -101,57 +101,13 @@ class TargetEconomicMapper:
         filter_value,
         sorter,
     ) -> tuple[list[dict], int]:
-        allocations = select(
-            ReviewAllocation.review_case_id.label("case_id"),
-            func.count(func.distinct(ReviewAllocation.ledger_entry_id)).label(
-                "allocation_count"
-            ),
-        ).group_by(ReviewAllocation.review_case_id).subquery()
-        revisions = select(
-            ReviewRevision.review_case_id.label("case_id"),
-            func.count(ReviewRevision.id).label("version"),
-        ).group_by(ReviewRevision.review_case_id).subquery()
-        latest_behavior = select(
-            func.json_extract(ReviewRevision.request_json, "$.behavior_code")
-        ).where(
-            ReviewRevision.review_case_id == ReviewCase.id,
-            func.json_extract(
-                ReviewRevision.request_json, "$.behavior_code"
-            ).is_not(None),
-        ).order_by(
-            ReviewRevision.id.desc()
-        ).limit(1).correlate(ReviewCase).scalar_subquery()
-        allocation_count = func.coalesce(allocations.c.allocation_count, 0)
-        version = case(
-            (func.coalesce(revisions.c.version, 0) > 0, revisions.c.version),
-            else_=1,
-        )
-        behavior_code = func.coalesce(
-            latest_behavior,
-            case(
-                (ReviewCase.behavior_type == 1, "BORROW_AND_REPAY"),
-                else_="TRANSACTION",
-            ),
-        )
-        status = case(
-            (ReviewCase.status == 0, "CONFIRMED"),
-            (allocation_count > 0, "REVOKED"),
-            else_="PENDING",
-        )
         query = select(
             ReviewCase.id,
-            behavior_code.label("behavior_code"),
-            status.label("status"),
-            version.label("version"),
+            ReviewCase.behavior_type,
+            ReviewCase.status,
             ReviewCase.title,
             ReviewCase.created_time,
             ReviewCase.updated_time,
-            allocation_count.label("economic_count"),
-            allocation_count.label("allocation_count"),
-        ).outerjoin(
-            allocations, allocations.c.case_id == ReviewCase.id
-        ).outerjoin(
-            revisions, revisions.c.case_id == ReviewCase.id
         )
         clauses = []
         if q:
@@ -159,14 +115,11 @@ class TargetEconomicMapper:
             clauses.append(or_(
                 cast(ReviewCase.id, String).like(pattern),
                 ReviewCase.title.ilike(pattern),
-                behavior_code.ilike(pattern),
             ))
-        if filter_value.status:
-            clauses.append(status == filter_value.status)
-        if filter_value.behavior_code:
-            clauses.append(behavior_code == filter_value.behavior_code)
-        if filter_value.exclude_behavior_code:
-            clauses.append(behavior_code != filter_value.exclude_behavior_code)
+        if filter_value.status is not None:
+            clauses.append(ReviewCase.status == filter_value.status)
+        if filter_value.behavior_type is not None:
+            clauses.append(ReviewCase.behavior_type == filter_value.behavior_type)
         query = query.where(*clauses)
         total = int(self.db.scalar(
             select(func.count()).select_from(query.order_by(None).subquery())
@@ -175,7 +128,6 @@ class TargetEconomicMapper:
             "id": ReviewCase.id,
             "created_time": ReviewCase.created_time,
             "updated_time": ReviewCase.updated_time,
-            "version": version,
         }
         column = columns[sorter.field]
         order = column.asc() if sorter.order == "asc" else column.desc()

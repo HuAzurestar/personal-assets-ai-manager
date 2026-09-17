@@ -62,7 +62,7 @@ def test_openapi_locks_canonical_ledger_v1_contract():
         "LedgerEntryDetailResponse",
         "LedgerEntrySummaryResponse",
         "TargetEconomicReviewResponse",
-        "TargetEconomicReviewPageResponse",
+        "ReviewCasePageResponse",
         "ImportFactConflictResponse",
         "ImportFactConflictPageResponse",
         "ImportFileSummaryResponse",

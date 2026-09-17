@@ -20,6 +20,7 @@ import {
 const entryTypeValues = { TRANSACTION: 0, ACCOUNT_TRANSFER: 1, CLAIM: 2 };
 const CASH_DIRECTION_IN = 1;
 const CASH_DIRECTION_OUT = 2;
+const reviewBehaviorNames = { 0: "正常交易", 1: "借钱 / 还钱" };
 
 function closeDialogs() {
   $$('dialog[open]').forEach((dialog) => dialog.close());
@@ -359,17 +360,17 @@ async function ledgerReviewsPage() {
     page: state.params.get("page") || "1",
     page_size: state.params.get("page_size") || "20",
     q,
-    filter: JSON.stringify(status ? { status } : {}),
+    filter: JSON.stringify(status === "" ? {} : { status: Number(status) }),
     sorter: JSON.stringify({ field: sortField, order: sortOrder }),
   });
   const result = await request(`/paam/ledger/v1/review/list?${query}`);
   state.detailEconomicReviews = new Map(result.items.map((item) => [item.id, item]));
   const rows = result.items.map((item) => `<tr class="detail-click-row" tabindex="0" data-review-row="${item.id}">
-    <td>${date(item.updated_time)}</td><td><button type="button" class="detail-primary" data-action="economic-review-detail" data-id="${item.id}"><strong>${esc(item.title || item.behavior_code || "未填写说明")}</strong><small>#${item.id} · ${esc(item.behavior_code || "未说明行为")}</small></button></td>
-    <td><span class="badge ${item.status === "PENDING" ? "warn" : "neutral"}">${esc(statusNames[item.status] || item.status)}</span></td><td>${item.economic_count} 条账本流水</td><td>${item.allocation_count} 条分配</td><td>v${item.version}</td><td class="detail-arrow">→</td>
+    <td>${date(item.updated_time)}</td><td><button type="button" class="detail-primary" data-action="economic-review-detail" data-id="${item.id}"><strong>${esc(item.title || `Review #${item.id}`)}</strong><small>#${item.id} · ${esc(reviewBehaviorNames[item.behavior_type] || item.behavior_type)}</small></button></td>
+    <td>${esc(reviewBehaviorNames[item.behavior_type] || item.behavior_type)}</td><td><span class="badge ${item.status === 1 ? "warn" : "neutral"}">${esc(statusNames[item.status] || item.status)}</span></td><td class="detail-arrow">→</td>
   </tr>`).join("");
-  const toolbar = `<form class="detail-filter" data-form="detail-review-filter"><label class="grow">查找<input name="q" value="${esc(q)}" placeholder="ID、标题或行为代码"></label><label>状态<select name="status"><option value="">全部状态</option>${["PENDING", "CONFIRMED", "REVOKED"].map((value) => `<option value="${value}" ${status === value ? "selected" : ""}>${esc(statusNames[value] || value)}</option>`).join("")}</select></label><label>排序<select name="sort_field"><option value="updated_time" ${sortField === "updated_time" ? "selected" : ""}>更新时间</option><option value="created_time" ${sortField === "created_time" ? "selected" : ""}>创建时间</option><option value="version" ${sortField === "version" ? "selected" : ""}>版本</option><option value="id" ${sortField === "id" ? "selected" : ""}>ID</option></select></label><label>顺序<select name="sort_order"><option value="desc" ${sortOrder === "desc" ? "selected" : ""}>降序</option><option value="asc" ${sortOrder === "asc" ? "selected" : ""}>升序</option></select></label><button type="button" class="quiet" data-action="detail-clear" data-page-id="ledger-reviews">清空</button><button class="primary">查询</button><button type="button" class="primary" data-action="new-economic-review">新建 Review</button></form>`;
-  return detailListView({ active: "ledger-reviews", toolbar, title: "Review", description: "Review 是 Allocation 的集合；Fact 与 Ledger 关系必须通过 Allocation 解释。", total: result.total, headers: ["更新时间", "审查", "状态", "账本数量", "分配数量", "版本", ""], rows, footer: detailPager(result, "ledger-reviews") });
+  const toolbar = `<form class="detail-filter" data-form="detail-review-filter"><label class="grow">查找<input name="q" value="${esc(q)}" placeholder="ID 或标题"></label><label>状态<select name="status"><option value="">全部状态</option>${[0, 1].map((value) => `<option value="${value}" ${status === String(value) ? "selected" : ""}>${esc(statusNames[value] || value)}</option>`).join("")}</select></label><label>排序<select name="sort_field"><option value="updated_time" ${sortField === "updated_time" ? "selected" : ""}>更新时间</option><option value="created_time" ${sortField === "created_time" ? "selected" : ""}>创建时间</option><option value="id" ${sortField === "id" ? "selected" : ""}>ID</option></select></label><label>顺序<select name="sort_order"><option value="desc" ${sortOrder === "desc" ? "selected" : ""}>降序</option><option value="asc" ${sortOrder === "asc" ? "selected" : ""}>升序</option></select></label><button type="button" class="quiet" data-action="detail-clear" data-page-id="ledger-reviews">清空</button><button class="primary">查询</button><button type="button" class="primary" data-action="new-economic-review">新建 Review</button></form>`;
+  return detailListView({ active: "ledger-reviews", toolbar, title: "Review", description: "Review 是 Allocation 的集合；Fact 与 Ledger 关系必须通过 Allocation 解释。", total: result.total, headers: ["更新时间", "审查", "行为", "状态", ""], rows, footer: detailPager(result, "ledger-reviews") });
 }
 
 async function showEconomicReview(id) {

@@ -14,11 +14,7 @@ from backend.mapper.target_economic_mapper import (
 )
 from backend.schema.target_review import (
     TargetEconomicReviewCreateRequest,
-    TargetEconomicReviewFilter,
-    TargetEconomicReviewListItem,
-    TargetEconomicReviewPageRead,
     TargetEconomicReviewRead,
-    TargetEconomicReviewSorter,
     TargetEconomicReviewUpdateRequest,
     TargetFactAllocationCandidateRead,
     TargetReviewCandidateFilter,
@@ -26,6 +22,12 @@ from backend.schema.target_review import (
     TargetReviewCandidateSorter,
     TargetReviewFactVO,
     TargetReviewTransitionRequest,
+)
+from backend.schema.review_case import (
+    ReviewCaseFilter,
+    ReviewCaseListItem,
+    ReviewCasePageRead,
+    ReviewCaseSorter,
 )
 from backend.service.target_tag_projection_service import TargetTagProjectionService
 
@@ -67,14 +69,14 @@ class TargetEconomicService:
         page: int,
         page_size: int,
         q: str,
-        filter_value: TargetEconomicReviewFilter,
-        sorter: TargetEconomicReviewSorter,
-    ) -> TargetEconomicReviewPageRead:
+        filter_value: ReviewCaseFilter,
+        sorter: ReviewCaseSorter,
+    ) -> ReviewCasePageRead:
         rows, total = self.mapper.review_page(
             page, page_size, q, filter_value, sorter
         )
-        return TargetEconomicReviewPageRead(
-            items=[TargetEconomicReviewListItem(**row) for row in rows],
+        return ReviewCasePageRead(
+            items=[ReviewCaseListItem(**row) for row in rows],
             total=total,
             page=page,
             page_size=page_size,

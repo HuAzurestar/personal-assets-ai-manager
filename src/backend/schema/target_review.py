@@ -230,46 +230,6 @@ class TargetEconomicReviewResponse(BaseModel):
     body: TargetEconomicReviewRead
 
 
-class TargetEconomicReviewListItem(BaseModel):
-    id: int
-    behavior_code: str
-    status: str
-    version: int
-    title: str
-    economic_count: int
-    allocation_count: int
-    created_time: datetime
-    updated_time: datetime
-
-
-class TargetEconomicReviewFilter(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    status: Literal["PENDING", "CONFIRMED", "REVOKED"] | None = None
-    behavior_code: str | None = None
-    exclude_behavior_code: str | None = None
-
-
-class TargetEconomicReviewSorter(ListSorter):
-    field: Literal["id", "created_time", "updated_time", "version"] = "updated_time"
-
-
-class TargetEconomicReviewPageRead(BaseModel):
-    items: list[TargetEconomicReviewListItem]
-    total: int
-    page: int
-    page_size: int
-    q: str
-    filter: TargetEconomicReviewFilter
-    sorter: TargetEconomicReviewSorter
-
-
-class TargetEconomicReviewPageResponse(BaseModel):
-    status: Literal[200] = 200
-    message: str = "ok"
-    body: TargetEconomicReviewPageRead
-
-
 class TargetFactAllocationCandidateRead(BaseModel):
     id: int
     occurred_time: datetime

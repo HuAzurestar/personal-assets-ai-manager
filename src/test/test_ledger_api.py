@@ -353,14 +353,20 @@ def test_partial_manual_reviews_keep_exact_default_coverage_and_are_idempotent(e
     assert complete_page["total"] == 3
     case_response = client.get(
         "/paam/ledger/v1/review/list",
-        params={"filter": '{"exclude_behavior_code":"DEFAULT"}'},
+        params={"filter": '{"behavior_type":0}'},
     )
     assert case_response.json()["status"] == case_response.status_code
     assert case_response.json()["message"] == "Ledger reviews listed"
     cases = case_response.json()["body"]
-    assert cases["total"] == 1
-    assert cases["items"][0]["economic_count"] == 1
-    assert cases["items"][0]["allocation_count"] == 1
+    assert cases["total"] == 3
+    assert set(cases["items"][0]) == {
+        "id",
+        "behavior_type",
+        "status",
+        "title",
+        "created_time",
+        "updated_time",
+    }
 
     with sessions() as db:
         coverage = db.scalar(select(func.sum(ReviewAllocation.amount)).join(
@@ -437,7 +443,7 @@ def test_review_list_is_database_paged_with_fixed_query_count(economic_api):
             params={
                 "page": 2,
                 "page_size": 10,
-                "filter": '{"behavior_code":"DEFAULT"}',
+                "filter": '{"behavior_type":0}',
             },
         )
     finally:
