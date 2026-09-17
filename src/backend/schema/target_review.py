@@ -14,7 +14,7 @@ class TargetReviewFactVO:
     id: int
     occurred_time: datetime
     cash_direction: str
-    amount_value: int
+    amount: int
     amount_scale: int
     currency_code: str
     account_code: str
@@ -57,7 +57,7 @@ class TargetReviewLineRead(BaseModel):
     bill_id: int
     role: str
     party: str
-    amount_value: int
+    amount: int
     amount_scale: int
     currency_code: str
 
@@ -153,7 +153,7 @@ class TargetFlowAllocationRequest(BaseModel):
         max_length=80,
         validation_alias=AliasChoices("economic_key", "entry_key"),
     )
-    amount_value: int = Field(ge=1)
+    amount: int = Field(ge=1)
 
 
 class TargetEconomicReviewCreateRequest(BaseModel):
@@ -185,7 +185,7 @@ class TargetEconomicFlowRead(BaseModel):
     id: int
     economic_type: Literal["TRANSACTION", "ACCOUNT_TRANSFER", "CLAIM"]
     cash_direction: Literal["IN", "OUT"]
-    amount_value: int
+    amount: int
     amount_scale: int
     currency_code: str
     account_code: str
@@ -197,7 +197,7 @@ class TargetEconomicReviewFactRead(BaseModel):
     id: int
     occurred_time: datetime
     cash_direction: Literal["IN", "OUT"]
-    amount_value: int
+    amount: int
     amount_scale: int
     currency_code: str
     account_code: str
@@ -209,7 +209,7 @@ class TargetFlowAllocationRead(BaseModel):
     id: int
     fact_id: int
     economic_id: int
-    amount_value: int
+    amount: int
     amount_scale: int
     currency_code: str
 
@@ -279,7 +279,7 @@ class TargetFactAllocationCandidateRead(BaseModel):
     id: int
     occurred_time: datetime
     cash_direction: str
-    amount_value: int
+    amount: int
     amount_scale: int
     currency_code: str
     account_code: str
@@ -297,7 +297,7 @@ class TargetReviewCandidateFilter(BaseModel):
 
 
 class TargetReviewCandidateSorter(ListSorter):
-    field: Literal["id", "occurred_time", "amount_value", "available_value"] = (
+    field: Literal["id", "occurred_time", "amount", "available_value"] = (
         "occurred_time"
     )
 

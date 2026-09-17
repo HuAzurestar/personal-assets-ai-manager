@@ -311,12 +311,12 @@ def test_target_review_confirm_revoke_restore_rebuilds_projection(
                         {
                             "fact_id": fact_ids[0],
                             "economic_key": "out",
-                            "amount_value": 1000,
+                            "amount": 1000,
                         },
                         {
                             "fact_id": fact_ids[1],
                             "economic_key": "in",
-                            "amount_value": 999,
+                            "amount": 999,
                         },
                     ],
                     "reason": "识别本人账户转账",
@@ -327,7 +327,7 @@ def test_target_review_confirm_revoke_restore_rebuilds_projection(
             case = created.json()["body"]
             assert case["status"] == "PENDING"
             assert case["version"] == 1
-            assert [row["amount_value"] for row in case["allocations"]] == [1000, 999]
+            assert [row["amount"] for row in case["allocations"]] == [1000, 999]
             assert case["history"][0]["operation"] == "CREATE"
 
             confirmed = client.post(
@@ -346,7 +346,7 @@ def test_target_review_confirm_revoke_restore_rebuilds_projection(
             page = client.get("/paam/ledger/v1/flow/list").json()["body"]
             assert page["total"] == 2
             assert {
-                (item["economic_type"], item["cash_direction"], item["amount"]["amount_value"])
+                (item["economic_type"], item["cash_direction"], item["amount"]["amount"])
                 for item in page["items"]
             } == {
                 ("ACCOUNT_TRANSFER", "IN", 999),

@@ -33,7 +33,7 @@ class TransactionFactMapper:
     _SORT_COLUMNS = {
         "id": TransactionFact.id,
         "occurred_time": TransactionFact.occurred_time,
-        "amount_value": TransactionFact.amount_value,
+        "amount": TransactionFact.amount,
         "created_time": TransactionFact.created_time,
         "updated_time": TransactionFact.updated_time,
     }
@@ -52,7 +52,7 @@ class TransactionFactMapper:
                 (TransactionFact.cash_direction == CASH_DIRECTION_OUT, "OUT"),
                 else_="UNKNOWN",
             ).label("cash_direction"),
-            TransactionFact.amount_value,
+            TransactionFact.amount,
             TransactionFact.amount_scale,
             TransactionFact.currency_code,
             TransactionFact.account_code,
@@ -218,7 +218,7 @@ class TransactionFactMapper:
             LedgerEntry.id,
             LedgerEntry.entry_type,
             LedgerEntry.entry_direction,
-            LedgerEntry.amount_value,
+            LedgerEntry.amount,
             LedgerEntry.amount_scale,
             LedgerEntry.currency_code,
             LedgerEntry.account_code,

@@ -52,7 +52,7 @@ def _facts(sessions, specifications):
                 fact_key=uuid4().hex,
                 occurred_time=now + timedelta(minutes=index),
                 cash_direction={"IN": CASH_DIRECTION_IN, "OUT": CASH_DIRECTION_OUT}[direction],
-                amount_value=1000,
+                amount=1000,
                 amount_scale=2,
                 currency_code="CNY",
                 account_code=account,

@@ -16,7 +16,7 @@ class LedgerEntry(TargetTable, TargetBase):
 
     entry_type: Mapped[int] = mapped_column(Integer, nullable=False)
     entry_direction: Mapped[int] = mapped_column(Integer, nullable=False)
-    amount_value: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    amount: Mapped[int] = mapped_column(BigInteger, nullable=False)
     amount_scale: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=2)
     currency_code: Mapped[str] = mapped_column(String(12), nullable=False)
     account_code: Mapped[str] = mapped_column(String(120), nullable=False)

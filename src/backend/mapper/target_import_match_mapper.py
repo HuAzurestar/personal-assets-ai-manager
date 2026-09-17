@@ -119,7 +119,7 @@ class TargetImportMatchMapper:
             TransactionFact.id,
             TransactionFact.occurred_time,
             TransactionFact.cash_direction,
-            TransactionFact.amount_value,
+            TransactionFact.amount,
             TransactionFact.amount_scale,
             TransactionFact.currency_code,
         )
@@ -127,7 +127,7 @@ class TargetImportMatchMapper:
         fact_rows = self.db.execute(query).mappings().all()
         facts = {}
         for row in fact_rows:
-            signed = Decimal(row["amount_value"]) / (
+            signed = Decimal(row["amount"]) / (
                 Decimal(10) ** row["amount_scale"]
             )
             if row["cash_direction"] == CASH_DIRECTION_OUT:

@@ -44,7 +44,7 @@ ASSET_AND_LIABILITY 目前仅表示资产与负债相关的现金流水分类，
 
 业务字段使用 `NOT NULL`；缺省文本使用空串，未知语义使用 `UNKNOWN` 等明确状态。缺失的必要金额、方向或时间不能用 0/默认时间伪造。关系全部使用隐式 ID，不声明 SQL `FOREIGN KEY`，由 Service 批量校验并在同一事务内写入。
 
-金额表示为 `amount_value / 10^amount_scale`，并带 `currency_code`。禁止 Float；不同币种不得直接相加或隐式换汇。
+金额表示为 `amount / 10^amount_scale`，并带 `currency_code`。禁止 Float；不同币种不得直接相加或隐式换汇。
 
 ## 一、事实层
 
@@ -92,7 +92,7 @@ ASSET_AND_LIABILITY 目前仅表示资产与负债相关的现金流水分类，
 | `fact_key` | VARCHAR(160) | 无伪造默认 | 不可变、唯一的来源身份或已接受指纹 |
 | `occurred_time` | DATETIME | 无伪造默认 | 不可变的发生时间 |
 | `cash_direction` | INTEGER | 无伪造默认 | 不可变；1=CASH_DIRECTION_IN，2=CASH_DIRECTION_OUT |
-| `amount_value` | BIGINT | 无伪造默认 | 不可变的最小精度整数金额 |
+| `amount` | BIGINT | 无伪造默认 | 不可变的最小精度整数金额 |
 | `amount_scale` | SMALLINT | `2` | 不可变的小数位数 |
 | `currency_code` | VARCHAR(12) | `CNY` | 不可变的币种/单位 |
 | `account_code` | VARCHAR(120) | `UNKNOWN` | 导入时识别的不可变来源账户 |
@@ -123,7 +123,7 @@ Fact 只放跨来源稳定、计算必须的核心字段。客户详情、完整
 | `review_case_id` | INTEGER | `0` | 必须为正数的逻辑 Review ID |
 | `transaction_fact_id` | INTEGER | `0` | 必须为正数的逻辑 Fact ID |
 | `ledger_entry_id` | INTEGER | `0` | 必须为正数且唯一的逻辑 LedgerEntry ID |
-| `amount_value` | BIGINT | `0` | 明确保存的本次分配整数金额 |
+| `amount` | BIGINT | `0` | 明确保存的本次分配整数金额 |
 | `amount_scale` | SMALLINT | `2` | 分配金额精度 |
 | `currency_code` | TEXT | `''` | 分配币种，必须与 Fact 和 LedgerEntry 一致 |
 
@@ -157,7 +157,7 @@ Fact 只放跨来源稳定、计算必须的核心字段。客户详情、完整
 | --- | --- | --- | --- |
 | `entry_type` | INTEGER | 无伪造默认 | 0=INCOME_AND_EXPENSE，1=INTERNAL_TRANSFER，2=ASSET_AND_LIABILITY |
 | `entry_direction` | INTEGER | 无伪造默认 | 1=IN，2=OUT |
-| `amount_value` | BIGINT | 无伪造默认 | 单方向 LedgerEntry 的正整数金额 |
+| `amount` | BIGINT | 无伪造默认 | 单方向 LedgerEntry 的正整数金额 |
 | `amount_scale` | SMALLINT | `2` | 金额精度 |
 | `currency_code` | VARCHAR(12) | 无伪造默认 | 币种或稳定单位代码 |
 | `account_code` | VARCHAR(120) | 无伪造默认 | 本方账户代码 |

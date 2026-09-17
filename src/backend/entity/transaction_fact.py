@@ -30,7 +30,7 @@ class TransactionFact(TargetTable, TargetBase):
             f"cash_direction IN ({CASH_DIRECTION_IN}, {CASH_DIRECTION_OUT})",
             name="ck_transaction_fact_cash_direction",
         ),
-        CheckConstraint("amount_value > 0", name="ck_transaction_fact_amount_value"),
+        CheckConstraint("amount > 0", name="ck_transaction_fact_amount_value"),
         CheckConstraint(
             "amount_scale BETWEEN 0 AND 8",
             name="ck_transaction_fact_amount_scale",
@@ -47,7 +47,7 @@ class TransactionFact(TargetTable, TargetBase):
         UTCISO8601DateTime(), nullable=False
     )
     cash_direction: Mapped[int] = mapped_column(Integer, nullable=False)
-    amount_value: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    amount: Mapped[int] = mapped_column(BigInteger, nullable=False)
     amount_scale: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=2)
     currency_code: Mapped[str] = mapped_column(String(12), nullable=False)
     account_code: Mapped[str] = mapped_column(String(120), nullable=False)

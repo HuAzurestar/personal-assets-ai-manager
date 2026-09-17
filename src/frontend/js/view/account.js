@@ -17,7 +17,7 @@ export function cursorFromParam(value, fallback) {
 }
 
 const amount = (value, scale, currency) => money({
-  amount_value: value,
+  amount: value,
   amount_scale: scale,
   currency_code: currency,
 });

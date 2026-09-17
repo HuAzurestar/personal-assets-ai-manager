@@ -52,10 +52,10 @@ class TargetEconomicService:
         defaults = []
         for fact in facts:
             allocated = coverage.get(fact.id, 0)
-            if allocated > fact.amount_value:
+            if allocated > fact.amount:
                 raise TargetEconomicError(409, f"fact {fact.id} is over-allocated")
-            if allocated < fact.amount_value:
-                defaults.append((fact, fact.amount_value - allocated, fact.account_code))
+            if allocated < fact.amount:
+                defaults.append((fact, fact.amount - allocated, fact.account_code))
         self.mapper.create_defaults(defaults, datetime.now())
         self._assert_exact(facts)
         self.tags.sync_ledgers(list(self.mapper.active_economic_facts(fact_ids)))
@@ -233,10 +233,10 @@ class TargetEconomicService:
             default_rows = self.mapper.default_allocations(fact_ids)
             default_by_fact = defaultdict(int)
             for row in default_rows:
-                default_by_fact[row["transaction_fact_id"]] += row["amount_value"]
+                default_by_fact[row["transaction_fact_id"]] += row["amount"]
             requested = defaultdict(int)
             for row in allocations:
-                requested[row["fact_id"]] += row["amount_value"]
+                requested[row["fact_id"]] += row["amount"]
             unavailable = {
                 fact_id: {
                     "requested": amount,
@@ -315,7 +315,7 @@ class TargetEconomicService:
                 raise TargetEconomicError(409, "review version changed; reload before revoking")
             released = defaultdict(int)
             for row in case.allocations:
-                released[row.fact_id] += row.amount_value
+                released[row.fact_id] += row.amount
             facts = self.mapper.facts(sorted(released))
             fact_by_id = {fact.id: fact for fact in facts}
             if not self.mapper.revoke_case(
@@ -372,14 +372,14 @@ class TargetEconomicService:
                 raise TargetEconomicError(409, "review version changed; reload before restoring")
             requested = defaultdict(int)
             for row in case.allocations:
-                requested[row.fact_id] += row.amount_value
+                requested[row.fact_id] += row.amount
             fact_ids = sorted(requested)
             facts = self.mapper.facts(fact_ids)
             fact_by_id = {fact.id: fact for fact in facts}
             default_rows = self.mapper.default_allocations(fact_ids)
             default_by_fact = defaultdict(int)
             for row in default_rows:
-                default_by_fact[row["transaction_fact_id"]] += row["amount_value"]
+                default_by_fact[row["transaction_fact_id"]] += row["amount"]
             unavailable = {
                 fact_id: {
                     "requested": amount,
@@ -455,19 +455,19 @@ class TargetEconomicService:
         allocations = []
         for row in payload.allocations:
             fact = fact_by_id[row.fact_id]
-            fact_totals[fact.id] += row.amount_value
+            fact_totals[fact.id] += row.amount
             grouped[row.economic_key].append((row, fact))
             allocations.append({
                 "fact_id": fact.id,
                 "economic_key": row.economic_key,
-                "amount_value": row.amount_value,
+                "amount": row.amount,
                 "amount_scale": fact.amount_scale,
                 "currency_code": fact.currency_code,
             })
         exceeded = {
             fact_id: total
             for fact_id, total in fact_totals.items()
-            if total > fact_by_id[fact_id].amount_value
+            if total > fact_by_id[fact_id].amount
         }
         if exceeded:
             raise ValueError(f"review allocation exceeds fact amounts: {exceeded}")
@@ -484,7 +484,7 @@ class TargetEconomicService:
                 "client_key": key,
                 "entry_type": ECONOMIC_TYPE_IDS[definition.economic_type],
                 "direction": fact.cash_direction,
-                "amount_value": row.amount_value,
+                "amount": row.amount,
                 "amount_scale": fact.amount_scale,
                 "currency_code": fact.currency_code,
                 "account_code": fact.account_code,
@@ -496,11 +496,11 @@ class TargetEconomicService:
         coverage = self.mapper.fact_coverage([fact.id for fact in facts])
         invalid = {
             fact.id: {
-                "fact": fact.amount_value,
+                "fact": fact.amount,
                 "allocated": coverage.get(fact.id, 0),
             }
             for fact in facts
-            if coverage.get(fact.id, 0) != fact.amount_value
+            if coverage.get(fact.id, 0) != fact.amount
         }
         if invalid:
             raise TargetEconomicError(409, f"fact coverage invariant failed: {invalid}")

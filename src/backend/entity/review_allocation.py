@@ -23,6 +23,6 @@ class ReviewAllocation(TargetTable, TargetBase):
     review_case_id: Mapped[int] = mapped_column(Integer, nullable=False)
     transaction_fact_id: Mapped[int] = mapped_column(Integer, nullable=False)
     ledger_entry_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    amount_value: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    amount: Mapped[int] = mapped_column(BigInteger, nullable=False)
     amount_scale: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=2)
     currency_code: Mapped[str] = mapped_column(String(12), nullable=False)

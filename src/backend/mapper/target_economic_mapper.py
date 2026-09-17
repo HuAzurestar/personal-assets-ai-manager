@@ -56,7 +56,7 @@ class TargetEconomicMapper:
             TransactionFact.id,
             TransactionFact.occurred_time,
             TransactionFact.cash_direction,
-            TransactionFact.amount_value,
+            TransactionFact.amount,
             TransactionFact.amount_scale,
             TransactionFact.currency_code,
             TransactionFact.account_code,
@@ -89,7 +89,7 @@ class TargetEconomicMapper:
             ReviewAllocation.review_case_id.label("review_id"),
             ReviewAllocation.transaction_fact_id.label("fact_id"),
             ReviewAllocation.ledger_entry_id.label("economic_id"),
-            ReviewAllocation.amount_value,
+            ReviewAllocation.amount,
             ReviewAllocation.amount_scale,
             ReviewAllocation.currency_code,
         ).where(*clauses).order_by(ReviewAllocation.id)).mappings().all()
@@ -217,13 +217,13 @@ class TargetEconomicMapper:
             TransactionFact.id,
             TransactionFact.occurred_time,
             TransactionFact.cash_direction,
-            TransactionFact.amount_value,
+            TransactionFact.amount,
             TransactionFact.amount_scale,
             TransactionFact.currency_code,
             TransactionFact.account_code,
             TransactionFact.counterparty_name.label("counterparty"),
             TransactionFact.summary,
-            func.sum(ReviewAllocation.amount_value).label("available_value"),
+            func.sum(ReviewAllocation.amount).label("available_value"),
         ).join(
             ReviewAllocation,
             ReviewAllocation.transaction_fact_id == TransactionFact.id,
@@ -252,8 +252,8 @@ class TargetEconomicMapper:
         columns = {
             "id": TransactionFact.id,
             "occurred_time": TransactionFact.occurred_time,
-            "amount_value": TransactionFact.amount_value,
-            "available_value": func.sum(ReviewAllocation.amount_value),
+            "amount": TransactionFact.amount,
+            "available_value": func.sum(ReviewAllocation.amount),
         }
         column = columns[sort_field]
         order = column.asc() if sort_order == "asc" else column.desc()
@@ -375,7 +375,7 @@ class TargetEconomicMapper:
         request_operation: str = "AUTO_REVIEW",
     ) -> list[int]:
         case_ids = []
-        for fact, amount_value, account_code in values:
+        for fact, amount, account_code in values:
             case = ReviewCase(
                 behavior_type=0,
                 status=0,
@@ -388,7 +388,7 @@ class TargetEconomicMapper:
                 **self._ledger_fields(
                     entry_type=0,
                     direction=fact.cash_direction,
-                    amount_value=amount_value,
+                    amount=amount,
                     amount_scale=fact.amount_scale,
                     currency_code=fact.currency_code,
                     account_code=account_code,
@@ -402,7 +402,7 @@ class TargetEconomicMapper:
                 review_case_id=case.id,
                 transaction_fact_id=fact.id,
                 ledger_entry_id=entry.id,
-                amount_value=amount_value,
+                amount=amount,
                 amount_scale=fact.amount_scale,
                 currency_code=fact.currency_code,
                 created_time=now,
@@ -416,7 +416,7 @@ class TargetEconomicMapper:
                 request_json=self._canonical({
                     "operation": request_operation,
                     "fact_id": fact.id,
-                    "amount_value": amount_value,
+                    "amount": amount,
                     "behavior_code": "DEFAULT",
                 }),
                 before_json="{}",
@@ -437,7 +437,7 @@ class TargetEconomicMapper:
             ReviewAllocation.review_case_id,
             ReviewAllocation.transaction_fact_id,
             ReviewAllocation.ledger_entry_id,
-            ReviewAllocation.amount_value,
+            ReviewAllocation.amount,
             ReviewAllocation.amount_scale,
             ReviewAllocation.currency_code,
         ).join(
@@ -489,7 +489,7 @@ class TargetEconomicMapper:
                 review_case_id=case.id,
                 transaction_fact_id=allocation["fact_id"],
                 ledger_entry_id=entry.id,
-                amount_value=allocation["amount_value"],
+                amount=allocation["amount"],
                 amount_scale=allocation["amount_scale"],
                 currency_code=allocation["currency_code"],
                 created_time=now,
@@ -534,8 +534,8 @@ class TargetEconomicMapper:
         case.status = 1
         case.updated_time = now
         self.create_defaults([
-            (facts_by_id[fact_id], amount_value, facts_by_id[fact_id].account_code)
-            for fact_id, amount_value in sorted(released.items())
+            (facts_by_id[fact_id], amount, facts_by_id[fact_id].account_code)
+            for fact_id, amount in sorted(released.items())
         ], now, request_operation="AUTO_RESTORE")
         self.db.flush()
         self._add_revision(
@@ -593,7 +593,7 @@ class TargetEconomicMapper:
             return {}
         rows = self.db.execute(select(
             ReviewAllocation.transaction_fact_id,
-            func.sum(ReviewAllocation.amount_value).label("amount_value"),
+            func.sum(ReviewAllocation.amount).label("amount"),
         ).join(
             ReviewCase, ReviewCase.id == ReviewAllocation.review_case_id,
         ).join(
@@ -603,7 +603,7 @@ class TargetEconomicMapper:
             ReviewCase.status == 0,
         ).group_by(ReviewAllocation.transaction_fact_id)).mappings().all()
         return {
-            row["transaction_fact_id"]: int(row["amount_value"] or 0)
+            row["transaction_fact_id"]: int(row["amount"] or 0)
             for row in rows
         }
 
@@ -657,7 +657,7 @@ class TargetEconomicMapper:
                 LedgerEntry.id,
                 LedgerEntry.entry_type,
                 LedgerEntry.entry_direction,
-                LedgerEntry.amount_value,
+                LedgerEntry.amount,
                 LedgerEntry.amount_scale,
                 LedgerEntry.currency_code,
                 LedgerEntry.account_code,
@@ -706,7 +706,7 @@ class TargetEconomicMapper:
                 id=fact.id,
                 occurred_time=fact.occurred_time,
                 cash_direction=fact.cash_direction,
-                amount_value=fact.amount_value,
+                amount=fact.amount,
                 amount_scale=fact.amount_scale,
                 currency_code=fact.currency_code,
                 account_code=fact.account_code,
@@ -717,7 +717,7 @@ class TargetEconomicMapper:
                 id=row["id"],
                 economic_type=ECONOMIC_TYPES[row["entry_type"]],
                 cash_direction=CASH_DIRECTIONS[row["entry_direction"]],
-                amount_value=row["amount_value"],
+                amount=row["amount"],
                 amount_scale=row["amount_scale"],
                 currency_code=row["currency_code"],
                 account_code=row["account_code"],
@@ -765,7 +765,7 @@ class TargetEconomicMapper:
                 "entry_direction": {
                     "IN": CASH_DIRECTION_IN, "OUT": CASH_DIRECTION_OUT
                 }[fact.cash_direction],
-                "amount_value": row["amount_value"],
+                "amount": row["amount"],
                 "amount_scale": fact.amount_scale,
                 "currency_code": fact.currency_code,
                 "account_code": fact.account_code,
@@ -776,7 +776,7 @@ class TargetEconomicMapper:
                 "id": -index,
                 "fact_id": fact_id,
                 "economic_id": -index,
-                "amount_value": row["amount_value"],
+                "amount": row["amount"],
                 "amount_scale": fact.amount_scale,
                 "currency_code": fact.currency_code,
             })
@@ -846,7 +846,7 @@ class TargetEconomicMapper:
         *,
         entry_type: int,
         direction: str,
-        amount_value: int,
+        amount: int,
         amount_scale: int,
         currency_code: str,
         account_code: str,
@@ -860,7 +860,7 @@ class TargetEconomicMapper:
             "entry_direction": {"IN": CASH_DIRECTION_IN, "OUT": CASH_DIRECTION_OUT}[
                 direction
             ],
-            "amount_value": amount_value,
+            "amount": amount,
             "amount_scale": amount_scale,
             "currency_code": currency_code,
             "account_code": account_code,

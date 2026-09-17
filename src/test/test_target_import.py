@@ -189,7 +189,7 @@ def test_target_import_writes_fact_evidence_and_hot_projection(target_import_api
         fact = db.scalar(select(TransactionFact))
         assert (
             fact.cash_direction,
-            fact.amount_value,
+            fact.amount,
             fact.amount_scale,
             fact.currency_code,
             fact.counterparty_name,
@@ -230,7 +230,7 @@ def test_target_import_writes_fact_evidence_and_hot_projection(target_import_api
     assert ledger_v2.status_code == 200, ledger_v2.text
     assert ledger_v2.json()["body"]["total"] == 1
     assert ledger_v2.json()["body"]["items"][0]["economic_type"] == "TRANSACTION"
-    assert ledger_v2.json()["body"]["items"][0]["amount"]["amount_value"] == 1000
+    assert ledger_v2.json()["body"]["items"][0]["amount"]["amount"] == 1000
 
     repeated = _preview(client, "renamed.csv", _csv())
     assert repeated["counts"]["duplicate_file"] == 1

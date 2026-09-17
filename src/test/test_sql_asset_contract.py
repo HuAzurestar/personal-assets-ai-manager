@@ -91,7 +91,7 @@ def test_ledger_entry_is_confirmed_single_fact_cash_projection():
         assert {
             "entry_type",
             "entry_direction",
-            "amount_value",
+            "amount",
             "amount_scale",
             "currency_code",
             "account_code",
@@ -112,7 +112,7 @@ def test_ledger_entry_is_confirmed_single_fact_cash_projection():
         connection.execute(
             """
             INSERT INTO ledger_entry (
-                entry_type, entry_direction, amount_value, currency_code,
+                entry_type, entry_direction, amount, currency_code,
                 account_code, occurred_time
             ) VALUES (0, 2, 500000, 'CNY', 'cash', '2026-09-15T12:00:00Z')
             """
@@ -121,7 +121,7 @@ def test_ledger_entry_is_confirmed_single_fact_cash_projection():
             """
             INSERT INTO review_allocation (
                 review_case_id, transaction_fact_id, ledger_entry_id,
-                amount_value, currency_code
+                amount, currency_code
             ) VALUES (1, 1, 1, 500000, 'CNY')
             """
         )
@@ -130,7 +130,7 @@ def test_ledger_entry_is_confirmed_single_fact_cash_projection():
                 """
                 INSERT INTO review_allocation (
                     review_case_id, transaction_fact_id, ledger_entry_id,
-                    amount_value, currency_code
+                    amount, currency_code
                 ) VALUES (1, 2, 1, 500000, 'CNY')
                 """
             )
@@ -188,7 +188,7 @@ def test_review_allocation_only_stores_published_relationships():
             "review_case_id",
             "transaction_fact_id",
             "ledger_entry_id",
-            "amount_value",
+            "amount",
             "amount_scale",
             "currency_code",
             "created_time",
@@ -199,19 +199,19 @@ def test_review_allocation_only_stores_published_relationships():
             "review_case_id",
             "transaction_fact_id",
             "ledger_entry_id",
-            "amount_value",
+            "amount",
         ):
             try:
                 connection.execute(
                     f"""
                     INSERT INTO review_allocation (
                         review_case_id, transaction_fact_id, ledger_entry_id,
-                        amount_value, currency_code
+                        amount, currency_code
                     ) VALUES (
                         {0 if column == 'review_case_id' else 1},
                         {0 if column == 'transaction_fact_id' else 1},
                         {0 if column == 'ledger_entry_id' else 1},
-                        {0 if column == 'amount_value' else 1},
+                        {0 if column == 'amount' else 1},
                         'CNY'
                     )
                     """
@@ -285,7 +285,7 @@ def test_transaction_fact_sql_asset_matches_entity_and_mapper(tmp_path):
                 fact_key="sql-asset-transaction-fact",
                 occurred_time=datetime(2026, 9, 16, 12, 30),
                 cash_direction=CASH_DIRECTION_OUT,
-                amount_value=500000,
+                amount=500000,
                 amount_scale=2,
                 currency_code="CNY",
                 account_code="cash",
@@ -321,7 +321,7 @@ def test_transaction_fact_entity_has_only_current_physical_columns():
         "fact_key",
         "occurred_time",
         "cash_direction",
-        "amount_value",
+        "amount",
         "amount_scale",
         "currency_code",
         "account_code",

@@ -72,7 +72,7 @@ def _seed(sessions):
             fact_key="shared-import-fact",
             occurred_time=now,
             cash_direction=CASH_DIRECTION_OUT,
-            amount_value=880,
+            amount=880,
             amount_scale=2,
             currency_code="CNY",
             account_code="wallet",

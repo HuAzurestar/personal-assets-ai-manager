@@ -69,7 +69,7 @@ def _seed(sessions):
                 fact_key=f"fact-{index}",
                 occurred_time=now + timedelta(days=index),
                 cash_direction={"IN": CASH_DIRECTION_IN, "OUT": CASH_DIRECTION_OUT}[direction],
-                amount_value=amount,
+                amount=amount,
                 amount_scale=2,
                 currency_code=currency,
                 account_code=f"account-{index}",
@@ -123,7 +123,7 @@ def test_transaction_fact_list_is_a_pure_server_queried_po_list(
             "page_size": 20,
             "q": "client",
             "filter": '{"cash_direction":"IN","currency_code":"usd"}',
-            "sorter": '{"field":"amount_value","order":"asc"}',
+            "sorter": '{"field":"amount","order":"asc"}',
         },
     )
 
@@ -137,7 +137,7 @@ def test_transaction_fact_list_is_a_pure_server_queried_po_list(
         "date_from": None,
         "date_to": None,
     }
-    assert body["sorter"] == {"field": "amount_value", "order": "asc"}
+    assert body["sorter"] == {"field": "amount", "order": "asc"}
     assert body["items"][0]["summary"] == "Consulting"
     assert "available_value" not in body["items"][0]
     assert "fact_key" not in body["items"][0]

@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS ledger_entry /* 已确认 Review 发布的单方向�
     id INTEGER PRIMARY KEY /* 隐式主键，由 SQLite rowid 自动生成 */,
     entry_type INTEGER NOT NULL /* 账本类型：0=INCOME_AND_EXPENSE，1=INTERNAL_TRANSFER，2=ASSET_AND_LIABILITY */ CHECK (entry_type IN (0, 1, 2)),
     entry_direction INTEGER NOT NULL /* 资金方向：1=IN，2=OUT */ CHECK (entry_direction IN (1, 2)),
-    amount_value INTEGER NOT NULL /* 按 amount_scale 表示的正整数金额 */ CHECK (amount_value > 0),
+    amount INTEGER NOT NULL /* 按 amount_scale 表示的正整数金额 */ CHECK (amount > 0),
     amount_scale INTEGER NOT NULL DEFAULT 2 /* 金额小数位数 */ CHECK (amount_scale BETWEEN 0 AND 8),
     currency_code TEXT NOT NULL /* ISO 4217 币种代码 */ CHECK (currency_code <> ''),
     account_code TEXT NOT NULL /* 本条流水对应的本方账户代码 */ CHECK (account_code <> ''),

@@ -33,7 +33,7 @@ class TargetEconomicReadMapper:
             LedgerEntry.id,
             LedgerEntry.entry_type,
             LedgerEntry.entry_direction,
-            LedgerEntry.amount_value,
+            LedgerEntry.amount,
             LedgerEntry.amount_scale,
             LedgerEntry.currency_code,
             LedgerEntry.account_code,
@@ -48,7 +48,7 @@ class TargetEconomicReadMapper:
         sort_columns = {
             "id": LedgerEntry.id,
             "occurred_time": LedgerEntry.occurred_time,
-            "amount_value": LedgerEntry.amount_value,
+            "amount": LedgerEntry.amount,
             "projection_version": LedgerEntry.updated_time,
         }
         column = sort_columns[query.sort_field]
@@ -72,7 +72,7 @@ class TargetEconomicReadMapper:
             ReviewAllocation.review_case_id.label("review_id"),
             ReviewAllocation.transaction_fact_id.label("fact_id"),
             ReviewAllocation.ledger_entry_id.label("economic_id"),
-            ReviewAllocation.amount_value,
+            ReviewAllocation.amount,
             ReviewAllocation.amount_scale,
             ReviewAllocation.currency_code,
         ).join(
@@ -87,7 +87,7 @@ class TargetEconomicReadMapper:
             TransactionFact.id,
             TransactionFact.occurred_time,
             TransactionFact.cash_direction,
-            TransactionFact.amount_value,
+            TransactionFact.amount,
             TransactionFact.amount_scale,
             TransactionFact.currency_code,
             TransactionFact.account_code,
@@ -198,7 +198,7 @@ class TargetEconomicReadMapper:
             LedgerEntry.id,
             LedgerEntry.entry_type,
             LedgerEntry.entry_direction,
-            LedgerEntry.amount_value,
+            LedgerEntry.amount,
             LedgerEntry.amount_scale,
             LedgerEntry.currency_code,
         ).where(*clauses)).mappings().all()
@@ -245,7 +245,7 @@ class TargetEconomicReadMapper:
         return [
             LedgerEntry.entry_type.in_((0, 1, 2)),
             LedgerEntry.entry_direction.in_((1, 2)),
-            LedgerEntry.amount_value > 0,
+            LedgerEntry.amount > 0,
             LedgerEntry.occurred_time.is_not(None),
             exists(select(ReviewAllocation.id).join(
                 ReviewCase,

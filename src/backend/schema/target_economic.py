@@ -24,7 +24,7 @@ class EconomicFlowSorter(ListSorter):
     field: Literal[
         "id",
         "occurred_time",
-        "amount_value",
+        "amount",
         "projection_version",
     ] = "occurred_time"
 
@@ -51,7 +51,7 @@ class EconomicSummaryQuery:
 
 
 class EconomicMoneyRead(BaseModel):
-    amount_value: int
+    amount: int
     amount_scale: int
     currency_code: str
 

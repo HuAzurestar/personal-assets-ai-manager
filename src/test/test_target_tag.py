@@ -55,7 +55,7 @@ def _add_facts(sessions, count):
                 fact_key=uuid4().hex,
                 occurred_time=now + timedelta(minutes=index),
                 cash_direction=CASH_DIRECTION_OUT,
-                amount_value=1000,
+                amount=1000,
                 amount_scale=2,
                 currency_code="CNY",
                 account_code="wallet",

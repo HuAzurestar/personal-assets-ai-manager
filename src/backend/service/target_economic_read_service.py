@@ -71,7 +71,7 @@ class TargetEconomicReadService:
                 fact_id=row["fact_id"],
                 economic_id=row["economic_id"],
                 amount=EconomicMoneyRead(
-                    amount_value=row["amount_value"],
+                    amount=row["amount"],
                     amount_scale=row["amount_scale"],
                     currency_code=row["currency_code"],
                 ),
@@ -81,7 +81,7 @@ class TargetEconomicReadService:
                 occurred_time=row["occurred_time"],
                 cash_direction=row["cash_direction"],
                 amount=EconomicMoneyRead(
-                    amount_value=row["amount_value"],
+                    amount=row["amount"],
                     amount_scale=row["amount_scale"],
                     currency_code=row["currency_code"],
                 ),
@@ -109,7 +109,7 @@ class TargetEconomicReadService:
         })
         for row in rows:
             currency = row["currency_code"]
-            value = row["amount_value"] * (10 ** (scales[currency] - row["amount_scale"]))
+            value = row["amount"] * (10 ** (scales[currency] - row["amount_scale"]))
             direction = row["entry_direction"]
             target = totals[currency]
             suffix = "in_value" if direction == 1 else "out_value"
@@ -135,7 +135,7 @@ class TargetEconomicReadService:
             economic_type=TargetEconomicReadService.ECONOMIC_TYPES[row["entry_type"]],
             cash_direction=TargetEconomicReadService.CASH_DIRECTIONS[row["entry_direction"]],
             amount=EconomicMoneyRead(
-                amount_value=row["amount_value"],
+                amount=row["amount"],
                 amount_scale=row["amount_scale"],
                 currency_code=row["currency_code"],
             ),

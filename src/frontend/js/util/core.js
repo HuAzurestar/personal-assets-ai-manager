@@ -51,7 +51,7 @@ export const statusNames = {
 
 export function money(item) {
   if (!item) return "—";
-  const value = Number(item.amount_value) / (10 ** Number(item.amount_scale));
+  const value = Number(item.amount) / (10 ** Number(item.amount_scale));
   try {
     return new Intl.NumberFormat("zh-CN", {
       style: "currency",

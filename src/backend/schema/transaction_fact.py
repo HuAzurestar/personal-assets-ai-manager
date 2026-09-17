@@ -22,7 +22,7 @@ class TransactionFactSorter(ListSorter):
     field: Literal[
         "id",
         "occurred_time",
-        "amount_value",
+        "amount",
         "created_time",
         "updated_time",
     ] = "occurred_time"
@@ -32,7 +32,7 @@ class TransactionFactListItem(BaseModel):
     id: int
     occurred_time: datetime
     cash_direction: Literal["IN", "OUT"]
-    amount_value: int
+    amount: int
     amount_scale: int
     currency_code: str
     account_code: str
@@ -81,7 +81,7 @@ class TransactionFactAllocationRead(BaseModel):
     review_id: int
     fact_id: int
     economic_id: int
-    amount_value: int
+    amount: int
     amount_scale: int
     currency_code: str
 
@@ -101,7 +101,7 @@ class TransactionFactLedgerRead(BaseModel):
     id: int
     economic_type: Literal["TRANSACTION", "ACCOUNT_TRANSFER", "CLAIM"]
     cash_direction: Literal["IN", "OUT"]
-    amount_value: int
+    amount: int
     amount_scale: int
     currency_code: str
     account_code: str
