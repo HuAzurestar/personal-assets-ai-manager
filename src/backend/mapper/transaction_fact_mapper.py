@@ -112,6 +112,8 @@ class TransactionFactMapper:
             TransactionImportRow.source_reference,
             TransactionImportRow.row_status,
             TransactionImportRow.issue_code,
+            TransactionImportRow.issue_message,
+            TransactionImportRow.raw_payload,
             TransactionImportFile.filename,
             TransactionImportFile.source_type,
             TransactionImportFile.file_format,

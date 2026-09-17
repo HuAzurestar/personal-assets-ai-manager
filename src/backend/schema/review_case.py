@@ -44,6 +44,9 @@ class ReviewCaseListItem(BaseModel):
     title: str
     created_time: datetime
     updated_time: datetime
+    display_summary: str = ""
+    fact_count: int = 0
+    allocation_count: int = 0
 
 
 class ReviewCaseFilter(BaseModel):

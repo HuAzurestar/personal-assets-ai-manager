@@ -79,6 +79,8 @@ class LedgerEntryListItem(BaseModel):
     occurred_time: datetime
     created_time: datetime
     updated_time: datetime
+    display_summary: str = ""
+    effective: bool = False
 
 
 class LedgerEntryListBody(ListBody[LedgerEntryListItem]):

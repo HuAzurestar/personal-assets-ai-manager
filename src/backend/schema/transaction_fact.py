@@ -90,6 +90,8 @@ class TransactionFactImportEvidenceRead(BaseModel):
     source_type: int
     file_format: int
     imported_time: datetime
+    raw_payload: str | None = None
+    issue_message: str = ""
 
 
 class TransactionFactAllocationRead(BaseModel):

@@ -108,7 +108,11 @@ def test_ledger_v1_exposes_only_confirmed_cash_entry_fields(economic_api):
         "occurred_time",
         "created_time",
         "updated_time",
+        "display_summary",
+        "effective",
     }
+    assert item["display_summary"] == "fact"
+    assert item["effective"] is True
     assert (item["entry_type"], item["entry_direction"]) == (0, CASH_DIRECTION_OUT)
     detail = client.get(f"/paam/ledger/v1/flow/{item['id']}").json()["body"]
     assert "role" not in detail["allocations"][0]
@@ -145,6 +149,33 @@ def test_ledger_lists_accept_whitelisted_filter_and_sorter_objects(economic_api)
     )
     assert rejected.status_code == 422
     assert rejected.json()["body"]["code"] == "LIST_SORTER_FIELD_NOT_SUPPORTED"
+
+
+def test_ledger_display_context_has_bounded_query_count(economic_api):
+    client, sessions = economic_api
+    fact_ids = _facts(sessions, [("OUT", 100 + index, "CNY") for index in range(25)])
+    with sessions() as db:
+        TargetEconomicService(db).ensure_defaults(fact_ids, commit=True)
+    statements = []
+
+    def count_selects(_connection, _cursor, statement, _parameters, _context, _many):
+        if statement.lstrip().upper().startswith("SELECT"):
+            statements.append(statement)
+
+    engine = sessions.kw["bind"]
+    event.listen(engine, "before_cursor_execute", count_selects)
+    try:
+        for size in (1, 20):
+            statements.clear()
+            response = client.get("/paam/ledger/v1/flow/list", params={"page_size": size})
+            assert response.status_code == 200
+            rows = response.json()["body"]["items"]
+            assert len(rows) == size
+            assert all(row["display_summary"] == "fact" and row["effective"] for row in rows)
+            assert len(statements) == 3
+            assert not any("raw_payload" in sql for sql in statements)
+    finally:
+        event.remove(engine, "before_cursor_execute", count_selects)
 
 
 def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_api):
@@ -334,6 +365,9 @@ def test_partial_manual_reviews_keep_exact_default_coverage_and_are_idempotent(e
         "title",
         "created_time",
         "updated_time",
+        "display_summary",
+        "fact_count",
+        "allocation_count",
     }
 
     with sessions() as db:
@@ -389,7 +423,8 @@ def test_review_candidate_list_is_paged_with_fixed_query_count(economic_api):
     assert len(second["items"]) == 1
 
 
-def test_review_list_is_database_paged_with_fixed_query_count(economic_api):
+@pytest.mark.parametrize("page_size", [1, 10])
+def test_review_list_is_database_paged_with_fixed_query_count(economic_api, page_size):
     client, sessions = economic_api
     fact_ids = _facts(sessions, [
         ("OUT", 1000 + index, "CNY") for index in range(30)
@@ -410,7 +445,7 @@ def test_review_list_is_database_paged_with_fixed_query_count(economic_api):
             "/paam/ledger/v1/review/list",
             params={
                 "page_index": 2,
-                "page_size": 10,
+                "page_size": page_size,
                 "filter": '{"key":"behavior_type","op":"=","val":0}',
             },
         )
@@ -419,8 +454,10 @@ def test_review_list_is_database_paged_with_fixed_query_count(economic_api):
     assert response.status_code == 200, response.text
     page = response.json()["body"]
     assert page["total"] == 30
-    assert len(page["items"]) == 10
-    assert len(statements) == 2
+    assert len(page["items"]) == page_size
+    assert len(statements) == 3
+    assert all(item["display_summary"] == "fact" for item in page["items"])
+    assert all(item["fact_count"] == item["allocation_count"] == 1 for item in page["items"])
 
 
 def test_review_candidate_list_supports_shared_query_contract(economic_api):

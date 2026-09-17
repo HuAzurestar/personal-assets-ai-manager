@@ -8,7 +8,7 @@ export function detailTabs(active, items) {
 export function detailList({ tabs, active, toolbar = "", title, description, total, headers, rows, footer = "" }) {
   return `${detailTabs(active, tabs)}<article class="list-surface detail-list-surface">
     ${toolbar ? `<div class="detail-list-toolbar">${toolbar}</div>` : ""}
-    <div class="list-context"><div><strong>${esc(title)}</strong><span>${esc(description)}</span></div><small>共 ${total} 条</small></div>
+    <div class="list-context"><div><strong>${esc(title)}</strong><span>${esc(description)}</span></div><small>共 ${total} 条 · 未注明时区的时间保留原值</small></div>
     <div class="table-scroll"><table class="reusable-table detail-data-table"><thead><tr>${headers.map((header) => `<th>${esc(header)}</th>`).join("")}</tr></thead><tbody>${rows || `<tr><td colspan="${headers.length}" class="empty-row">暂无符合条件的数据</td></tr>`}</tbody></table></div>
     ${footer ? `<footer class="list-footer">${footer}</footer>` : ""}
   </article>`;

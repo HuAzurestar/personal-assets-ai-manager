@@ -78,6 +78,8 @@ class LedgerEntryService:
         return LedgerEntryDetailRead(
             ledger_entry=LedgerEntryDetailItem(
                 **ledger_entry,
+                display_summary=(facts[0]["summary"] or facts[0]["counterparty_name"]) if facts else "",
+                effective=any(row["status"] == 0 for row in reviews),
                 tags=[LedgerEntryTagRead(**tag) for tag in tags],
             ),
             allocations=[LedgerAllocationEvidenceRead(**row) for row in allocations],

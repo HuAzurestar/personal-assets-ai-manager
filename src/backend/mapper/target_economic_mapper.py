@@ -138,7 +138,36 @@ class TargetEconomicMapper:
         rows = self.db.execute(query.order_by(order, id_order).offset(
             (page - 1) * page_size
         ).limit(page_size)).mappings().all()
-        return [dict(row) for row in rows], total
+        ids = [row["id"] for row in rows]
+        context = self.db.execute(select(
+            ReviewAllocation.review_case_id,
+            TransactionFact.id.label("fact_id"),
+            TransactionFact.summary,
+            TransactionFact.counterparty_name,
+            func.count(ReviewAllocation.id).label("allocation_count"),
+        ).join(TransactionFact, TransactionFact.id == ReviewAllocation.transaction_fact_id).where(
+            ReviewAllocation.review_case_id.in_(ids),
+        ).group_by(
+            ReviewAllocation.review_case_id, TransactionFact.id,
+            TransactionFact.summary, TransactionFact.counterparty_name,
+        ).order_by(TransactionFact.id)).mappings().all() if ids else []
+        grouped = {}
+        for related in context:
+            grouped.setdefault(related["review_case_id"], []).append(related)
+        result = []
+        for row in rows:
+            facts = grouped.get(row["id"], [])
+            title = row["title"]
+            if facts and (not title or (len(facts) == 1 and title == facts[0]["counterparty_name"])):
+                title = facts[0]["summary"] or title or facts[0]["counterparty_name"]
+                if len(facts) > 1:
+                    title = f"{title} 等 {len(facts)} 笔交易"
+            result.append({
+                **dict(row), "display_summary": title,
+                "fact_count": len(facts),
+                "allocation_count": sum(item["allocation_count"] for item in facts),
+            })
+        return result, total
 
     def _fact_candidate_query(self, q: str = "", filter_value=None):
         clauses = [ReviewCase.status == 0, self._system_case_exists()]

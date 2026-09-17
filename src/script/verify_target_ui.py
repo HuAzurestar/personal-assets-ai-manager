@@ -144,32 +144,19 @@ def run() -> None:
                 expect(history_drawer).to_be_visible()
                 history_drawer_box = history_drawer.bounding_box()
                 assert history_drawer_box is not None
-                assert history_drawer_box["x"] > 500, history_drawer_box
-                expect(history_drawer.locator("tbody tr")).to_have_count(20)
-                expect(history_drawer).to_contain_text("Transaction Fact")
-                expect(
-                    history_drawer.locator("th", has_text="摘要")
-                ).to_be_visible()
-                expect(history_drawer).to_contain_text("显示 20 / 26 条")
+                assert history_drawer_box["width"] >= 1438, history_drawer_box
+                expect(history_drawer.locator('.inspection-related[data-kind="fact"]')).to_have_count(20)
+                expect(history_drawer).to_contain_text("关联事实")
+                expect(history_drawer).to_contain_text("显示 1–20 / 26 笔事实")
                 history_drawer.locator("[data-close]").first.click()
                 history_hash = page.evaluate("location.hash")
-                search = page.locator(
-                    '[data-form="history-filter"] input[name="q"]'
-                )
-                search.click()
-                assert page.evaluate("location.hash") == history_hash
-                expect(page.get_by_role("heading", name="导入记录")).to_be_visible()
-                search.fill("not-present")
-                expect(page.get_by_text("没有匹配的导入记录")).to_be_visible()
-                assert page.evaluate("location.hash") == history_hash
-                assert search.evaluate("node => node === document.activeElement")
-                search.fill("target-ui")
-                expect(page.get_by_text("target-ui.csv")).to_be_visible()
-                assert page.evaluate("location.hash") == history_hash
                 source_filter = page.locator(
                     '[data-form="history-filter"] select[name="source_type"]'
                 )
-                source_filter.select_option("wechat")
+                source_filter.select_option("101")
+                expect(page.get_by_text("没有匹配的导入记录")).to_be_visible()
+                assert page.evaluate("location.hash") == history_hash
+                source_filter.select_option("102")
                 expect(page.get_by_text("target-ui.csv")).to_be_visible()
                 assert page.evaluate("location.hash") == history_hash
 
@@ -192,6 +179,7 @@ def run() -> None:
                 expect(economic_drawer).to_contain_text(
                     "来源事实"
                 )
+                economic_drawer.locator('.inspection-action-menu > summary').click()
                 economic_drawer.locator('[data-action="edit-ledger-account"]').click()
                 account_form = page.locator('dialog[open] [data-form="ledger-account"]')
                 expect(account_form).to_be_visible()
@@ -206,7 +194,7 @@ def run() -> None:
                 page.locator('[data-action="import-file-detail"]').first.click()
                 expect(page.locator("dialog.detail-view-drawer[open]")).to_be_visible()
                 expect(page.locator("dialog.detail-view-drawer[open]")).to_contain_text(
-                    "Transaction Fact"
+                    "关联事实"
                 )
                 page.locator("dialog[open] [data-close]").first.click()
 
@@ -225,7 +213,7 @@ def run() -> None:
                 expect(page.locator('[data-form="fact-filter"]')).to_be_visible()
                 page.locator('[data-action="fact-detail"]').first.click()
                 expect(page.locator("dialog.detail-view-drawer[open]")).to_contain_text(
-                    "规范事实"
+                    "交易信息"
                 )
                 page.locator("dialog[open] [data-close]").first.click()
 
@@ -233,9 +221,10 @@ def run() -> None:
                 page.locator('[data-action="new-economic-review"]').first.click()
                 wizard = page.locator('dialog[open] [data-form="economic-review-create"]')
                 expect(wizard).to_be_visible()
-                expect(wizard.get_by_role("heading", name="1. 选择事实流水")).to_be_visible()
-                expect(wizard.get_by_role("heading", name="2. 定义账本流水")).to_be_visible()
-                expect(wizard.get_by_role("heading", name="3. 分配金额")).to_be_visible()
+                expect(wizard.get_by_role("heading", name="选择待审查流水")).to_be_visible()
+                expect(wizard.locator('[data-review-step]')).to_have_count(3)
+                expect(wizard.locator('[data-review-panel="2"]')).to_be_hidden()
+                expect(wizard.locator('[data-review-panel="3"]')).to_be_hidden()
                 wizard.locator('[data-close]').click()
 
                 page.goto(f"{base_url}/#summary")

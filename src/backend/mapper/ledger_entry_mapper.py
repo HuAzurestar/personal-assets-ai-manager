@@ -65,7 +65,24 @@ class LedgerEntryMapper:
         rows = self.db.execute(select(*self._flow_columns()).where(*clauses).order_by(
             *orders,
         ).offset((page - 1) * page_size).limit(page_size)).mappings().all()
-        return rows, total
+        # The page remains one row per Ledger. Sparse display context is fetched
+        # once for this bounded page, never by issuing a query for each record.
+        ids = [row["id"] for row in rows]
+        context = self.db.execute(select(
+            ReviewAllocation.ledger_entry_id,
+            TransactionFact.summary,
+            TransactionFact.counterparty_name,
+            ReviewCase.status,
+        ).join(TransactionFact, TransactionFact.id == ReviewAllocation.transaction_fact_id).join(
+            ReviewCase, ReviewCase.id == ReviewAllocation.review_case_id,
+        ).where(ReviewAllocation.ledger_entry_id.in_(ids))).mappings().all() if ids else []
+        by_id = {row["ledger_entry_id"]: row for row in context}
+        return [{
+            **dict(row),
+            "display_summary": (by_id.get(row["id"], {}).get("summary")
+                                or by_id.get(row["id"], {}).get("counterparty_name") or ""),
+            "effective": by_id.get(row["id"], {}).get("status") == 0,
+        } for row in rows], total
 
     def detail(self, ledger_id: int):
         flow = self.db.execute(select(*self._flow_columns()).where(
