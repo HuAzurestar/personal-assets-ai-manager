@@ -7,7 +7,7 @@ import json
 from collections import Counter, defaultdict
 from datetime import datetime
 
-from backend.core.money import cents
+from backend.core.money import amount_from_decimal
 from backend.parser.statement_parser import BANKS, digest
 
 
@@ -208,7 +208,9 @@ def build_plan(
                     if other is None:
                         fact = facts[target]
                         other = {
-                            "amount_minor": cents(fact["amount"]),
+                            "amount_minor": amount_from_decimal(
+                                fact["amount"], fact["currency"]
+                            ),
                             "currency": fact["currency"],
                             "occurred_at": fact["occurred_at"].isoformat(),
                         }

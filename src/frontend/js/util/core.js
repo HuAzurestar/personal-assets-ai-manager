@@ -9,6 +9,7 @@ export const key = () => crypto.randomUUID();
 export const date = (value) => String(value || "").replace("T", " ").slice(0, 16);
 
 export const typeNames = {
+  0: "收入与支出", 1: "内部转账", 2: "资产与负债",
   TRANSACTION: "事实交易", ACCOUNT_TRANSFER: "账户流转", CLAIM: "债权关系",
   INCOME_AND_EXPENSE: "收入与支出", INTERNAL_TRANSFER: "内部转账", ASSET_AND_LIABILITY: "资产与负债",
 };
@@ -29,16 +30,43 @@ export const statusNames = {
   PARTIAL: "部分", CONFLICT: "冲突", ACTIVE: "启用中", ARCHIVED: "已归档",
 };
 
+const currencyPrecisions = {
+  CNY: 2, EUR: 2, GBP: 2, HKD: 2, JPY: 0, USD: 2,
+};
+
+export function currencyPrecision(value) {
+  const code = String(value || "").trim().toUpperCase();
+  const match = code.match(/^([A-Z][A-Z0-9]{1,11}?)(?:_([0-8]))?$/);
+  if (!match || !(match[1] in currencyPrecisions)) throw new Error(`不支持的币种单位：${value}`);
+  return match[2] === undefined ? currencyPrecisions[match[1]] : Number(match[2]);
+}
+
+export function decimalAmount(value, currencyCode) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+  if (!/^\d+(\.\d+)?$/.test(text)) throw new Error(`金额格式不正确：${text}`);
+  const precision = currencyPrecision(currencyCode);
+  const [whole, decimal = ""] = text.split(".");
+  if (decimal.length > precision) throw new Error(`${currencyCode} 金额最多允许 ${precision} 位小数`);
+  const result = Number(`${whole}${decimal.padEnd(precision, "0")}`);
+  if (!Number.isSafeInteger(result) || result <= 0) throw new Error("金额超出可处理范围");
+  return result;
+}
+
 export function money(item) {
   if (!item) return "—";
-  const value = Number(item.amount_value) / (10 ** Number(item.amount_scale));
+  const code = String(item.currency_code || "").toUpperCase();
+  const precision = currencyPrecision(code);
+  const value = Number(item.amount) / (10 ** precision);
+  const baseCurrency = code.split("_", 1)[0];
   try {
     return new Intl.NumberFormat("zh-CN", {
       style: "currency",
-      currency: item.currency_code,
-      maximumFractionDigits: item.amount_scale,
+      currency: baseCurrency,
+      minimumFractionDigits: precision,
+      maximumFractionDigits: precision,
     }).format(value);
   } catch {
-    return `${value.toFixed(item.amount_scale)} ${item.currency_code}`;
+    return `${value.toFixed(precision)} ${code}`;
   }
 }

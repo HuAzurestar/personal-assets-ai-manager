@@ -59,9 +59,11 @@ class TransactionFactService:
         allocation_rows = self.allocation_mapper.allocations_by_relation(
             fact_ids=[fact_id],
         )
-        review_ids = sorted({row["review_id"] for row in allocation_rows})
+        review_ids = sorted({row["review_case_id"] for row in allocation_rows})
         economic_ids = sorted({
-            row["economic_id"] for row in allocation_rows if row["economic_id"] > 0
+            row["ledger_entry_id"]
+            for row in allocation_rows
+            if row["ledger_entry_id"] > 0
         })
         return TransactionFactDetailRead(
             transaction_fact=TransactionFactRead(**fact),
@@ -77,11 +79,7 @@ class TransactionFactService:
                 for row in self.mapper.reviews(review_ids)
             ],
             ledgers=[
-                TransactionFactLedgerRead(**{
-                    name: value
-                    for name, value in row.items()
-                    if name not in {"entry_type", "entry_direction"}
-                })
+                TransactionFactLedgerRead(**row)
                 for row in self.mapper.ledgers(economic_ids)
             ],
         )

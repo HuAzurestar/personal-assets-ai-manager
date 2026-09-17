@@ -16,9 +16,8 @@ export function cursorFromParam(value, fallback) {
   return new Date(year, month - 1, 1);
 }
 
-const amount = (value, scale, currency) => money({
-  amount_value: value,
-  amount_scale: scale,
+const amount = (value, currency) => money({
+  amount: value,
   currency_code: currency,
 });
 
@@ -30,14 +29,14 @@ function dayMap(summary, currency) {
 
 function chartMarkup(summary, currency, range) {
   const days = dayMap(summary, currency);
-  const values = [...days.values()].flatMap((item) => [item.income_value, item.expense_value]);
+  const values = [...days.values()].flatMap((item) => [item.income_amount, item.expense_amount]);
   const maximum = Math.max(1, ...values);
   return Array.from({ length: range.last }, (_, index) => {
     const day = index + 1;
     const key = `${range.year}-${String(range.month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
     const item = days.get(key);
-    const income = item?.income_value || 0;
-    const expense = item?.expense_value || 0;
+    const income = item?.income_amount || 0;
+    const expense = item?.expense_amount || 0;
     const incomeHeight = income ? Math.max(4, Math.round(income / maximum * 100)) : 0;
     const expenseHeight = expense ? Math.max(4, Math.round(expense / maximum * 100)) : 0;
     return `<button type="button" class="day-bar" data-action="account-day" data-value="${key}" title="${key}：收入 ${income}，支出 ${expense}">
@@ -57,7 +56,7 @@ function calendarMarkup(summary, currency, range) {
     const item = days.get(key);
     return `<button type="button" class="calendar-day${item ? "" : " empty"}" data-action="account-day" data-value="${key}">
       <span>${day}</span>
-      ${item ? `<strong>＋${amount(item.income_value, item.amount_scale, currency)}</strong><small>−${amount(item.expense_value, item.amount_scale, currency)}</small><em>${item.net_value >= 0 ? "+" : ""}${amount(item.net_value, item.amount_scale, currency)}</em>` : ""}
+      ${item ? `<strong>＋${amount(item.income_amount, currency)}</strong><small>−${amount(item.expense_amount, currency)}</small><em>${item.net_amount >= 0 ? "+" : ""}${amount(item.net_amount, currency)}</em>` : ""}
     </button>`;
   });
   return [...blanks, ...cells].join("");
@@ -68,11 +67,10 @@ export function accountsMarkup({ summary, accounts, accountCode, currency, curso
   const currencies = summary.totals.map((item) => item.currency_code);
   const selectedCurrency = currencies.includes(currency) ? currency : currencies[0] || "CNY";
   const total = summary.totals.find((item) => item.currency_code === selectedCurrency) || {
-    amount_scale: 2,
-    income_value: 0,
-    expense_value: 0,
-    refund_offset_value: 0,
-    net_value: 0,
+    income_amount: 0,
+    expense_amount: 0,
+    refund_offset_amount: 0,
+    net_amount: 0,
   };
   const accountOptions = accounts.map((item) => {
     const identity = item.identity || item.account_code || "UNKNOWN";
@@ -92,16 +90,15 @@ export function accountsMarkup({ summary, accounts, accountCode, currency, curso
     visibleActivities.push({
       entry_type_code: entryTypeCode,
       currency_code: selectedCurrency,
-      amount_scale: total.amount_scale,
-      in_amount_value: 0,
-      out_amount_value: 0,
+      in_amount: 0,
+      out_amount: 0,
       nettable: true,
     });
   }
   const activityCards = visibleActivities
     .map((item) => `<button type="button" class="activity-card" data-action="account-type" data-value="${esc(item.entry_type_code)}">
       <header><span>${esc(typeNames[item.entry_type_code] || item.entry_type_code)}</span><small>单方向、单币种经济结果</small></header>
-      <div><p><span>流入</span><strong>${amount(item.in_amount_value, item.amount_scale, selectedCurrency)}</strong></p><p><span>流出</span><strong>${amount(item.out_amount_value, item.amount_scale, selectedCurrency)}</strong></p></div>
+      <div><p><span>流入</span><strong>${amount(item.in_amount, selectedCurrency)}</strong></p><p><span>流出</span><strong>${amount(item.out_amount, selectedCurrency)}</strong></p></div>
       <footer>查看相关流水 →</footer>
     </button>`).join("");
   const activeDays = summary.trend.filter((item) => item.currency_code === selectedCurrency).length;
@@ -119,9 +116,9 @@ export function accountsMarkup({ summary, accounts, accountCode, currency, curso
       <span class="account-scope">${accountCode ? "单一账户" : "全部账户"} · ${esc(selectedCurrency)}</span>
     </form>
     <div class="month-metrics">
-      <button type="button" data-action="account-metric" data-value="INCOME"><span>本月收入</span><strong class="income">${amount(total.income_value, total.amount_scale, selectedCurrency)}</strong><small>点击查看收入流水</small></button>
-      <button type="button" data-action="account-metric" data-value="EXPENSE"><span>本月支出</span><strong class="expense">${amount(total.expense_value, total.amount_scale, selectedCurrency)}</strong><small>点击查看支出流水</small></button>
-      <article><span>本月净收支</span><strong>${amount(total.net_value, total.amount_scale, selectedCurrency)}</strong><small>收入减支出并计入退款抵扣</small></article>
+      <button type="button" data-action="account-metric" data-value="INCOME"><span>本月收入</span><strong class="income">${amount(total.income_amount, selectedCurrency)}</strong><small>点击查看收入流水</small></button>
+      <button type="button" data-action="account-metric" data-value="EXPENSE"><span>本月支出</span><strong class="expense">${amount(total.expense_amount, selectedCurrency)}</strong><small>点击查看支出流水</small></button>
+      <article><span>本月净收支</span><strong>${amount(total.net_amount, selectedCurrency)}</strong><small>收入减支出并计入退款抵扣</small></article>
       <article><span>活跃天数</span><strong>${activeDays} 天</strong><small>${summary.entry_count} 条流水 · ${summary.provisional_count} 条待完善</small></article>
     </div>
     <section class="account-activities economic-activity-cards" aria-label="经济流水分类汇总"><div>${activityCards}</div></section>

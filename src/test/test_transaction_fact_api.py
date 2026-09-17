@@ -69,8 +69,7 @@ def _seed(sessions):
                 fact_key=f"fact-{index}",
                 occurred_time=now + timedelta(days=index),
                 cash_direction={"IN": CASH_DIRECTION_IN, "OUT": CASH_DIRECTION_OUT}[direction],
-                amount_value=amount,
-                amount_scale=2,
+                amount=amount,
                 currency_code=currency,
                 account_code=f"account-{index}",
                 counterparty_name=counterparty,
@@ -122,8 +121,8 @@ def test_transaction_fact_list_is_a_pure_server_queried_po_list(
             "page": 1,
             "page_size": 20,
             "q": "client",
-            "filter": '{"cash_direction":"IN","currency_code":"usd"}',
-            "sorter": '{"field":"amount_value","order":"asc"}',
+            "filter": '{"cash_direction":1,"currency_code":"usd"}',
+            "sorter": '{"field":"amount","order":"asc"}',
         },
     )
 
@@ -131,14 +130,15 @@ def test_transaction_fact_list_is_a_pure_server_queried_po_list(
     body = response.json()["body"]
     assert (body["total"], body["page"], body["page_size"]) == (1, 1, 20)
     assert body["filter"] == {
-        "cash_direction": "IN",
+        "cash_direction": CASH_DIRECTION_IN,
         "currency_code": "usd",
         "account_code": None,
         "date_from": None,
         "date_to": None,
     }
-    assert body["sorter"] == {"field": "amount_value", "order": "asc"}
+    assert body["sorter"] == {"field": "amount", "order": "asc"}
     assert body["items"][0]["summary"] == "Consulting"
+    assert body["items"][0]["counterparty_name"] == "Client"
     assert "available_value" not in body["items"][0]
     assert "fact_key" not in body["items"][0]
 
@@ -157,16 +157,16 @@ def test_transaction_fact_detail_follows_allocation_relationships(
     assert body["transaction_fact"]["fact_key"] == "fact-1"
     assert body["import_evidence"][0]["filename"] == "september.csv"
     allocation = body["allocations"][0]
-    assert allocation["fact_id"] == fact_id
-    assert allocation["review_id"] == body["reviews"][0]["id"]
-    assert allocation["economic_id"] == body["ledgers"][0]["id"]
+    assert allocation["transaction_fact_id"] == fact_id
+    assert allocation["review_case_id"] == body["reviews"][0]["id"]
+    assert allocation["ledger_entry_id"] == body["ledgers"][0]["id"]
 
     with sessions() as db:
         mapper = TargetEconomicMapper(db)
         assert mapper.allocations_by_relation(
-            review_ids=[allocation["review_id"]],
+            review_ids=[allocation["review_case_id"]],
             fact_ids=[fact_id],
-            economic_ids=[allocation["economic_id"]],
+            economic_ids=[allocation["ledger_entry_id"]],
         )[0]["id"] == allocation["id"]
 
 

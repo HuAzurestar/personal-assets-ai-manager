@@ -137,9 +137,14 @@ description: Change PAAM FastAPI routers, URL modules or versions, HTTP endpoint
 
 - Canonical paths use
   `/paam/{module}/{version}/{object}/{resource_id}`. Object names are singular.
-- Public field names describe domain resources rather than physical tables or
-  Mapper rows. Compatibility aliases may read persisted historical payloads,
-  but OpenAPI and serialized responses expose only the canonical field names.
+- Public field names describe domain resources rather than Mapper-era aliases.
+  This is a fresh-database application: do not accept or expose historical
+  payload aliases unless a separately approved migration requirement exists.
+- Public money fields use the flat canonical pair `amount: int` and
+  `currency_code: str`. Do not expose `amount_value`, `amount_scale`, or a
+  nested money object. The code identifies the quantum, such as `CNY=0.01` and
+  `CNY_4=0.0001`; formatting is a caller concern and must use the shared
+  currency-unit rules.
 - A nested object uses
   `/paam/{module}/{version}/{object}/{resource_id}/{subobject}/{subresource_id}`.
   Omit the trailing identifier when addressing the nested collection.

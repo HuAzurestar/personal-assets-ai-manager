@@ -10,12 +10,19 @@ description: Change PAAM review cases, allocations, duplicate/refund/AA/loan/tra
   not create `TAG` Review cases, allocation rows, or Review history; Tag
   auditing requires a dedicated Tag/Ledger audit design if it is needed later.
 - One flow case owns several allocation rows. Every allocation carries
-  `review_case_id`, `transaction_fact_id`, `ledger_entry_id`, and one explicit money value; never embed
+  `review_case_id`, `transaction_fact_id`, `ledger_entry_id`, one integer
+  `amount`, and `currency_code`; never embed
   member IDs in JSON.
 - Every Economic/Ledger Entry is backed by exactly one allocation to exactly
   one Fact. One Fact may be divided into several Ledger Entries; several Facts
   must never be merged into one Ledger Entry.
-- Fact, allocation, and Economic values have equal direction and currency.
+- Fact, allocation, and Ledger values have equal direction and the exact same
+  `currency_code`. No Review table, Entity, VO, DTO, or request carries
+  `amount_scale`; currency precision belongs to the currency code itself.
+- Allocation coverage compares integer `amount` values only after exact
+  `currency_code` equality. Codes with different precision, such as `CNY` and
+  `CNY_4`, are distinct units and require an explicit conversion before they
+  can participate in the same coverage calculation.
 - The effective allocations of every accepted Fact sum exactly to the Fact
   amount. A manual Review may consume part of the DEFAULT allocation; its
   residual remains a confirmed DEFAULT INCOME_AND_EXPENSE entry.

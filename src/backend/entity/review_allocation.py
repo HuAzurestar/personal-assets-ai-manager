@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import BigInteger, Index, Integer, SmallInteger, String, UniqueConstraint
+from sqlalchemy import BigInteger, Index, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.core.target_database import TargetBase
@@ -23,6 +23,5 @@ class ReviewAllocation(TargetTable, TargetBase):
     review_case_id: Mapped[int] = mapped_column(Integer, nullable=False)
     transaction_fact_id: Mapped[int] = mapped_column(Integer, nullable=False)
     ledger_entry_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    amount_value: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    amount_scale: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=2)
+    amount: Mapped[int] = mapped_column(BigInteger, nullable=False)
     currency_code: Mapped[str] = mapped_column(String(12), nullable=False)

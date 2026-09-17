@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from collections import defaultdict
 from datetime import datetime
@@ -9,8 +8,6 @@ from sqlalchemy import String, case, cast, delete, exists, func, or_, select, te
 from sqlalchemy.orm import Session
 
 from backend.entity import (
-    CASH_DIRECTION_IN,
-    CASH_DIRECTION_OUT,
     LedgerEntry,
     LedgerEntryTag,
     ReviewAllocation,
@@ -30,8 +27,6 @@ from backend.schema.target_review import (
 
 ECONOMIC_TYPES = {0: "TRANSACTION", 1: "ACCOUNT_TRANSFER", 2: "CLAIM"}
 ECONOMIC_TYPE_IDS = {value: key for key, value in ECONOMIC_TYPES.items()}
-CASH_DIRECTIONS = {CASH_DIRECTION_IN: "IN", CASH_DIRECTION_OUT: "OUT"}
-REVISION_OPERATIONS = {0: "CREATE", 1: "UPDATE", 2: "REVOKE", 3: "RESTORE"}
 
 
 class TargetEconomicMapper:
@@ -56,11 +51,11 @@ class TargetEconomicMapper:
             TransactionFact.id,
             TransactionFact.occurred_time,
             TransactionFact.cash_direction,
-            TransactionFact.amount_value,
-            TransactionFact.amount_scale,
+            TransactionFact.amount,
             TransactionFact.currency_code,
             TransactionFact.account_code,
-            TransactionFact.counterparty_name.label("counterparty"),
+            TransactionFact.counterparty_name,
+            TransactionFact.counterparty_account_ref,
             TransactionFact.summary,
             TransactionFact.fact_key,
             TransactionFact.created_time,
@@ -86,11 +81,10 @@ class TargetEconomicMapper:
             return []
         rows = self.db.execute(select(
             ReviewAllocation.id,
-            ReviewAllocation.review_case_id.label("review_id"),
-            ReviewAllocation.transaction_fact_id.label("fact_id"),
-            ReviewAllocation.ledger_entry_id.label("economic_id"),
-            ReviewAllocation.amount_value,
-            ReviewAllocation.amount_scale,
+            ReviewAllocation.review_case_id,
+            ReviewAllocation.transaction_fact_id,
+            ReviewAllocation.ledger_entry_id,
+            ReviewAllocation.amount,
             ReviewAllocation.currency_code,
         ).where(*clauses).order_by(ReviewAllocation.id)).mappings().all()
         return [dict(row) for row in rows]
@@ -103,57 +97,13 @@ class TargetEconomicMapper:
         filter_value,
         sorter,
     ) -> tuple[list[dict], int]:
-        allocations = select(
-            ReviewAllocation.review_case_id.label("case_id"),
-            func.count(func.distinct(ReviewAllocation.ledger_entry_id)).label(
-                "allocation_count"
-            ),
-        ).group_by(ReviewAllocation.review_case_id).subquery()
-        revisions = select(
-            ReviewRevision.review_case_id.label("case_id"),
-            func.count(ReviewRevision.id).label("version"),
-        ).group_by(ReviewRevision.review_case_id).subquery()
-        latest_behavior = select(
-            func.json_extract(ReviewRevision.request_json, "$.behavior_code")
-        ).where(
-            ReviewRevision.review_case_id == ReviewCase.id,
-            func.json_extract(
-                ReviewRevision.request_json, "$.behavior_code"
-            ).is_not(None),
-        ).order_by(
-            ReviewRevision.id.desc()
-        ).limit(1).correlate(ReviewCase).scalar_subquery()
-        allocation_count = func.coalesce(allocations.c.allocation_count, 0)
-        version = case(
-            (func.coalesce(revisions.c.version, 0) > 0, revisions.c.version),
-            else_=1,
-        )
-        behavior_code = func.coalesce(
-            latest_behavior,
-            case(
-                (ReviewCase.behavior_type == 1, "BORROW_AND_REPAY"),
-                else_="TRANSACTION",
-            ),
-        )
-        status = case(
-            (ReviewCase.status == 0, "CONFIRMED"),
-            (allocation_count > 0, "REVOKED"),
-            else_="PENDING",
-        )
         query = select(
             ReviewCase.id,
-            behavior_code.label("behavior_code"),
-            status.label("status"),
-            version.label("version"),
+            ReviewCase.behavior_type,
+            ReviewCase.status,
             ReviewCase.title,
             ReviewCase.created_time,
             ReviewCase.updated_time,
-            allocation_count.label("economic_count"),
-            allocation_count.label("allocation_count"),
-        ).outerjoin(
-            allocations, allocations.c.case_id == ReviewCase.id
-        ).outerjoin(
-            revisions, revisions.c.case_id == ReviewCase.id
         )
         clauses = []
         if q:
@@ -161,14 +111,11 @@ class TargetEconomicMapper:
             clauses.append(or_(
                 cast(ReviewCase.id, String).like(pattern),
                 ReviewCase.title.ilike(pattern),
-                behavior_code.ilike(pattern),
             ))
-        if filter_value.status:
-            clauses.append(status == filter_value.status)
-        if filter_value.behavior_code:
-            clauses.append(behavior_code == filter_value.behavior_code)
-        if filter_value.exclude_behavior_code:
-            clauses.append(behavior_code != filter_value.exclude_behavior_code)
+        if filter_value.status is not None:
+            clauses.append(ReviewCase.status == filter_value.status)
+        if filter_value.behavior_type is not None:
+            clauses.append(ReviewCase.behavior_type == filter_value.behavior_type)
         query = query.where(*clauses)
         total = int(self.db.scalar(
             select(func.count()).select_from(query.order_by(None).subquery())
@@ -177,7 +124,6 @@ class TargetEconomicMapper:
             "id": ReviewCase.id,
             "created_time": ReviewCase.created_time,
             "updated_time": ReviewCase.updated_time,
-            "version": version,
         }
         column = columns[sorter.field]
         order = column.asc() if sorter.order == "asc" else column.desc()
@@ -203,10 +149,9 @@ class TargetEconomicMapper:
             ))
         if filter_value is not None:
             if filter_value.cash_direction:
-                clauses.append(TransactionFact.cash_direction == {
-                    "IN": CASH_DIRECTION_IN,
-                    "OUT": CASH_DIRECTION_OUT,
-                }[filter_value.cash_direction])
+                clauses.append(
+                    TransactionFact.cash_direction == filter_value.cash_direction
+                )
             if filter_value.currency_code:
                 clauses.append(
                     TransactionFact.currency_code == filter_value.currency_code.upper()
@@ -215,16 +160,14 @@ class TargetEconomicMapper:
                 clauses.append(TransactionFact.account_code == filter_value.account_code)
         return select(
             TransactionFact.id,
-            func.min(ReviewAllocation.ledger_entry_id).label("ledger_id"),
             TransactionFact.occurred_time,
             TransactionFact.cash_direction,
-            TransactionFact.amount_value,
-            TransactionFact.amount_scale,
+            TransactionFact.amount,
             TransactionFact.currency_code,
             TransactionFact.account_code,
-            TransactionFact.counterparty_name.label("counterparty"),
+            TransactionFact.counterparty_name,
             TransactionFact.summary,
-            func.sum(ReviewAllocation.amount_value).label("available_value"),
+            func.sum(ReviewAllocation.amount).label("available_amount"),
         ).join(
             ReviewAllocation,
             ReviewAllocation.transaction_fact_id == TransactionFact.id,
@@ -253,8 +196,8 @@ class TargetEconomicMapper:
         columns = {
             "id": TransactionFact.id,
             "occurred_time": TransactionFact.occurred_time,
-            "amount_value": TransactionFact.amount_value,
-            "available_value": func.sum(ReviewAllocation.amount_value),
+            "amount": TransactionFact.amount,
+            "available_amount": func.sum(ReviewAllocation.amount),
         }
         column = columns[sort_field]
         order = column.asc() if sort_order == "asc" else column.desc()
@@ -283,16 +226,15 @@ class TargetEconomicMapper:
             ReviewRevision.request_json,
         ).where(ReviewRevision.idempotency_key == key)).mappings().one_or_none()
 
-    def version(self, case_id: int) -> int:
-        return int(self.db.scalar(select(func.count(ReviewRevision.id)).where(
-            ReviewRevision.review_case_id == case_id
-        )) or 0)
-
-    def create_draft(
+    def create_confirmed(
         self,
         *,
-        behavior_code: str,
+        behavior_type: int,
         title: str,
+        default_rows: list[dict],
+        residuals: list[tuple[TargetReviewFactVO, int, str]],
+        economics: list[dict],
+        allocations: list[dict],
         request_json: str,
         actor: str,
         reason: str,
@@ -300,73 +242,53 @@ class TargetEconomicMapper:
         now: datetime,
     ) -> int:
         case = ReviewCase(
-            behavior_type=self._behavior_type(behavior_code),
-            status=1,
+            behavior_type=behavior_type,
+            status=0,
             title=title,
             created_time=now,
             updated_time=now,
         )
         self.db.add(case)
         self.db.flush()
+        self._revoke_defaults(default_rows, case.id, now)
+        definitions = {item["client_key"]: item for item in economics}
+        rows = []
+        for allocation in allocations:
+            entry = LedgerEntry(
+                created_time=now,
+                **self._ledger_fields(
+                    **definitions[allocation["economic_key"]], now=now
+                ),
+            )
+            self.db.add(entry)
+            rows.append((allocation, entry))
+        self.db.flush()
+        self.db.add_all([
+            ReviewAllocation(
+                review_case_id=case.id,
+                transaction_fact_id=allocation["fact_id"],
+                ledger_entry_id=entry.id,
+                amount=allocation["amount"],
+                currency_code=allocation["currency_code"],
+                created_time=now,
+                updated_time=now,
+            )
+            for allocation, entry in rows
+        ])
+        self.create_defaults(residuals, now, request_operation="AUTO_RESIDUAL")
+        self.db.flush()
         self._add_revision(
             case_id=case.id,
             operation=0,
             request_json=request_json,
             before_json="{}",
-            after_json=self._canonical({"status": "PENDING"}),
+            after_json=self._canonical({"status": 0}),
             actor=actor,
             reason=reason,
             idempotency_key=idempotency_key,
             now=now,
         )
         return case.id
-
-    def replace_draft(
-        self,
-        case_id: int,
-        *,
-        expected_version: int,
-        behavior_code: str,
-        title: str,
-        request_json: str,
-        actor: str,
-        reason: str,
-        idempotency_key: str,
-        now: datetime,
-    ) -> bool:
-        case = self.db.get(ReviewCase, case_id)
-        if case is None or case.status != 1 or self._has_allocations(case_id):
-            return False
-        if self.version(case_id) != expected_version:
-            return False
-        before = self._review_json(self.detail(case_id))
-        case.behavior_type = self._behavior_type(behavior_code)
-        case.title = title
-        case.updated_time = now
-        self._add_revision(
-            case_id=case.id,
-            operation=1,
-            request_json=request_json,
-            before_json=before,
-            after_json=self._canonical({"status": "PENDING"}),
-            actor=actor,
-            reason=reason,
-            idempotency_key=idempotency_key,
-            now=now,
-        )
-        return True
-
-    def latest_plan_payload(self, case_id: int) -> dict | None:
-        rows = self.db.scalars(select(ReviewRevision.request_json).where(
-            ReviewRevision.review_case_id == case_id,
-        ).order_by(ReviewRevision.id.desc())).all()
-        for value in rows:
-            payload = json.loads(value or "{}")
-            if "economics" in payload or "entries" in payload:
-                for name in ("operation", "case_id", "expected_version"):
-                    payload.pop(name, None)
-                return payload
-        return None
 
     def create_defaults(
         self,
@@ -376,11 +298,15 @@ class TargetEconomicMapper:
         request_operation: str = "AUTO_REVIEW",
     ) -> list[int]:
         case_ids = []
-        for fact, amount_value, account_code in values:
+        for fact, amount, account_code in values:
             case = ReviewCase(
                 behavior_type=0,
                 status=0,
-                title=fact.counterparty or fact.summary or "Default transaction",
+                title=(
+                    fact.counterparty_name
+                    or fact.summary
+                    or "Default transaction"
+                ),
                 created_time=now,
                 updated_time=now,
             )
@@ -389,8 +315,7 @@ class TargetEconomicMapper:
                 **self._ledger_fields(
                     entry_type=0,
                     direction=fact.cash_direction,
-                    amount_value=amount_value,
-                    amount_scale=fact.amount_scale,
+                    amount=amount,
                     currency_code=fact.currency_code,
                     account_code=account_code,
                     occurred_time=fact.occurred_time,
@@ -403,8 +328,7 @@ class TargetEconomicMapper:
                 review_case_id=case.id,
                 transaction_fact_id=fact.id,
                 ledger_entry_id=entry.id,
-                amount_value=amount_value,
-                amount_scale=fact.amount_scale,
+                amount=amount,
                 currency_code=fact.currency_code,
                 created_time=now,
                 updated_time=now,
@@ -417,8 +341,8 @@ class TargetEconomicMapper:
                 request_json=self._canonical({
                     "operation": request_operation,
                     "fact_id": fact.id,
-                    "amount_value": amount_value,
-                    "behavior_code": "DEFAULT",
+                    "amount": amount,
+                    "behavior_type": 0,
                 }),
                 before_json="{}",
                 after_json=self._canonical({"status": "CONFIRMED"}),
@@ -438,8 +362,7 @@ class TargetEconomicMapper:
             ReviewAllocation.review_case_id,
             ReviewAllocation.transaction_fact_id,
             ReviewAllocation.ledger_entry_id,
-            ReviewAllocation.amount_value,
-            ReviewAllocation.amount_scale,
+            ReviewAllocation.amount,
             ReviewAllocation.currency_code,
         ).join(
             ReviewCase, ReviewCase.id == ReviewAllocation.review_case_id,
@@ -452,73 +375,9 @@ class TargetEconomicMapper:
         )).mappings().all()
         return [dict(row) for row in rows]
 
-    def confirm_draft(
-        self,
-        case_id: int,
-        *,
-        expected_version: int,
-        default_rows: list[dict],
-        residuals: list[tuple[TargetReviewFactVO, int, str]],
-        economics: list[dict],
-        allocations: list[dict],
-        request_json: str,
-        actor: str,
-        reason: str,
-        idempotency_key: str,
-        now: datetime,
-    ) -> bool:
-        case = self.db.get(ReviewCase, case_id)
-        if case is None or case.status != 1 or self._has_allocations(case_id):
-            return False
-        if self.version(case_id) != expected_version:
-            return False
-        before = self._review_json(self.detail(case_id))
-        self._revoke_defaults(default_rows, case.id, now)
-        definitions = {item["client_key"]: item for item in economics}
-        rows = []
-        for allocation in allocations:
-            definition = definitions[allocation["economic_key"]]
-            entry = LedgerEntry(
-                created_time=now,
-                **self._ledger_fields(**definition, now=now),
-            )
-            self.db.add(entry)
-            rows.append((allocation, entry))
-        self.db.flush()
-        self.db.add_all([
-            ReviewAllocation(
-                review_case_id=case.id,
-                transaction_fact_id=allocation["fact_id"],
-                ledger_entry_id=entry.id,
-                amount_value=allocation["amount_value"],
-                amount_scale=allocation["amount_scale"],
-                currency_code=allocation["currency_code"],
-                created_time=now,
-                updated_time=now,
-            )
-            for allocation, entry in rows
-        ])
-        case.status = 0
-        case.updated_time = now
-        self.create_defaults(residuals, now, request_operation="AUTO_RESIDUAL")
-        self.db.flush()
-        self._add_revision(
-            case_id=case.id,
-            operation=1,
-            request_json=request_json,
-            before_json=before,
-            after_json=self._canonical({"status": "CONFIRMED"}),
-            actor=actor,
-            reason=reason,
-            idempotency_key=idempotency_key,
-            now=now,
-        )
-        return True
-
     def revoke_case(
         self,
         case_id: int,
-        expected_version: int,
         facts_by_id: dict[int, TargetReviewFactVO],
         released: dict[int, int],
         *,
@@ -529,14 +388,14 @@ class TargetEconomicMapper:
         now: datetime,
     ) -> bool:
         case = self.db.get(ReviewCase, case_id)
-        if case is None or case.status != 0 or self.version(case_id) != expected_version:
+        if case is None or case.status != 0:
             return False
         before = self._review_json(self.detail(case_id))
         case.status = 1
         case.updated_time = now
         self.create_defaults([
-            (facts_by_id[fact_id], amount_value, facts_by_id[fact_id].account_code)
-            for fact_id, amount_value in sorted(released.items())
+            (facts_by_id[fact_id], amount, facts_by_id[fact_id].account_code)
+            for fact_id, amount in sorted(released.items())
         ], now, request_operation="AUTO_RESTORE")
         self.db.flush()
         self._add_revision(
@@ -555,7 +414,6 @@ class TargetEconomicMapper:
     def restore_case(
         self,
         case_id: int,
-        expected_version: int,
         default_rows: list[dict],
         residuals: list[tuple[TargetReviewFactVO, int, str]],
         *,
@@ -567,8 +425,6 @@ class TargetEconomicMapper:
     ) -> bool:
         case = self.db.get(ReviewCase, case_id)
         if case is None or case.status != 1 or not self._has_allocations(case_id):
-            return False
-        if self.version(case_id) != expected_version:
             return False
         before = self._review_json(self.detail(case_id))
         self._revoke_defaults(default_rows, case.id, now)
@@ -594,7 +450,7 @@ class TargetEconomicMapper:
             return {}
         rows = self.db.execute(select(
             ReviewAllocation.transaction_fact_id,
-            func.sum(ReviewAllocation.amount_value).label("amount_value"),
+            func.sum(ReviewAllocation.amount).label("amount"),
         ).join(
             ReviewCase, ReviewCase.id == ReviewAllocation.review_case_id,
         ).join(
@@ -604,7 +460,7 @@ class TargetEconomicMapper:
             ReviewCase.status == 0,
         ).group_by(ReviewAllocation.transaction_fact_id)).mappings().all()
         return {
-            row["transaction_fact_id"]: int(row["amount_value"] or 0)
+            row["transaction_fact_id"]: int(row["amount"] or 0)
             for row in rows
         }
 
@@ -649,82 +505,56 @@ class TargetEconomicMapper:
         ).where(ReviewRevision.review_case_id == case_id).order_by(
             ReviewRevision.id
         )).mappings().all()
-        plan = self._plan_from_revisions(revision_rows)
         allocation_rows = self.allocations_by_relation(review_ids=[case_id])
-        has_persisted_allocations = bool(allocation_rows)
-        if has_persisted_allocations:
-            economic_ids = [row["economic_id"] for row in allocation_rows]
-            economic_rows = self.db.execute(select(
-                LedgerEntry.id,
-                LedgerEntry.entry_type,
-                LedgerEntry.entry_direction,
-                LedgerEntry.amount_value,
-                LedgerEntry.amount_scale,
-                LedgerEntry.currency_code,
-                LedgerEntry.account_code,
-                LedgerEntry.counterparty_account_ref,
-                LedgerEntry.occurred_time,
-            ).where(LedgerEntry.id.in_(economic_ids)).order_by(
-                LedgerEntry.id
-            )).mappings().all()
-            fact_ids = sorted({row["fact_id"] for row in allocation_rows})
-            facts = self.facts(fact_ids)
-        else:
-            facts, economic_rows, allocation_rows = self._draft_relations(plan)
-        history = []
-        for version, row in enumerate(revision_rows, 1):
-            request = json.loads(row["request_json"] or "{}")
-            operation = request.get("operation") or REVISION_OPERATIONS[row["operation"]]
-            after_json = row["after_json"] or "{}"
-            history.append(TargetReviewHistoryRead(
+        ledger_ids = [row["ledger_entry_id"] for row in allocation_rows]
+        ledger_rows = self.db.execute(select(
+            LedgerEntry.id,
+            LedgerEntry.entry_type,
+            LedgerEntry.entry_direction,
+            LedgerEntry.amount,
+            LedgerEntry.currency_code,
+            LedgerEntry.account_code,
+            LedgerEntry.counterparty_account_ref,
+            LedgerEntry.occurred_time,
+        ).where(LedgerEntry.id.in_(ledger_ids)).order_by(
+            LedgerEntry.id
+        )).mappings().all() if ledger_ids else []
+        fact_ids = sorted({row["transaction_fact_id"] for row in allocation_rows})
+        facts = self.facts(fact_ids)
+        history = [TargetReviewHistoryRead(
                 id=row["id"],
-                version=version,
-                operation=operation,
-                schema_version=1,
-                request=request,
-                before=json.loads(row["before_json"] or "{}"),
-                after=json.loads(after_json),
-                snapshot_hash=hashlib.sha256(after_json.encode()).hexdigest(),
-                reverses_history_id=0,
+                operation=row["operation"],
                 actor=row["actor"],
                 reason=row["reason"],
                 idempotency_key=row["idempotency_key"],
                 created_time=row["created_time"],
-            ))
-        behavior_code = plan.get(
-            "behavior_code", self._behavior_code(case["behavior_type"])
-        )
-        result = plan.get("result", {})
-        status = self._status_name(case["status"], int(has_persisted_allocations))
+            ) for row in revision_rows]
         return TargetEconomicReviewRead(
             id=case["id"],
-            behavior_code=behavior_code,
-            status=status,
-            version=max(1, len(revision_rows)),
+            behavior_type=case["behavior_type"],
+            status=case["status"],
             title=case["title"],
-            result=result,
             facts=[TargetEconomicReviewFactRead(
                 id=fact.id,
                 occurred_time=fact.occurred_time,
                 cash_direction=fact.cash_direction,
-                amount_value=fact.amount_value,
-                amount_scale=fact.amount_scale,
+                amount=fact.amount,
                 currency_code=fact.currency_code,
                 account_code=fact.account_code,
-                counterparty=fact.counterparty,
+                counterparty_name=fact.counterparty_name,
+                counterparty_account_ref=fact.counterparty_account_ref,
                 summary=fact.summary,
             ) for fact in facts],
-            economics=[TargetEconomicFlowRead(
+            ledger_entries=[TargetEconomicFlowRead(
                 id=row["id"],
-                economic_type=ECONOMIC_TYPES[row["entry_type"]],
-                cash_direction=CASH_DIRECTIONS[row["entry_direction"]],
-                amount_value=row["amount_value"],
-                amount_scale=row["amount_scale"],
+                entry_type=row["entry_type"],
+                entry_direction=row["entry_direction"],
+                amount=row["amount"],
                 currency_code=row["currency_code"],
                 account_code=row["account_code"],
                 counterparty_account_ref=row.get("counterparty_account_ref", ""),
                 occurred_time=row["occurred_time"],
-            ) for row in economic_rows],
+            ) for row in ledger_rows],
             allocations=[TargetFlowAllocationRead(**row) for row in allocation_rows],
             history=history,
             created_time=case["created_time"],
@@ -736,52 +566,6 @@ class TargetEconomicMapper:
 
     def rollback(self) -> None:
         self.db.rollback()
-
-    def _draft_relations(self, plan: dict):
-        allocation_defs = plan.get("allocations", [])
-        fact_ids = sorted({
-            row.get("fact_id", row.get("transaction_fact_id", 0))
-            for row in allocation_defs
-            if row.get("fact_id", row.get("transaction_fact_id", 0))
-        })
-        facts = self.facts(fact_ids)
-        fact_by_id = {fact.id: fact for fact in facts}
-        definitions = {
-            row["client_key"]: row
-            for row in plan.get("economics", plan.get("entries", []))
-        }
-        economics = []
-        allocations = []
-        for index, row in enumerate(allocation_defs, 1):
-            fact_id = row.get("fact_id", row.get("transaction_fact_id"))
-            key = row.get("economic_key", row.get("entry_key"))
-            definition = definitions[key]
-            fact = fact_by_id[fact_id]
-            economic_type = definition.get("economic_type")
-            if economic_type is None:
-                economic_type = ECONOMIC_TYPES[definition["entry_type"]]
-            economics.append({
-                "id": -index,
-                "entry_type": ECONOMIC_TYPE_IDS[economic_type],
-                "entry_direction": {
-                    "IN": CASH_DIRECTION_IN, "OUT": CASH_DIRECTION_OUT
-                }[fact.cash_direction],
-                "amount_value": row["amount_value"],
-                "amount_scale": fact.amount_scale,
-                "currency_code": fact.currency_code,
-                "account_code": fact.account_code,
-                "counterparty_account_ref": "",
-                "occurred_time": fact.occurred_time,
-            })
-            allocations.append({
-                "id": -index,
-                "fact_id": fact_id,
-                "economic_id": -index,
-                "amount_value": row["amount_value"],
-                "amount_scale": fact.amount_scale,
-                "currency_code": fact.currency_code,
-            })
-        return facts, economics, allocations
 
     def _revoke_defaults(
         self, default_rows: list[dict], replacement_case_id: int, now: datetime
@@ -846,9 +630,8 @@ class TargetEconomicMapper:
     def _ledger_fields(
         *,
         entry_type: int,
-        direction: str,
-        amount_value: int,
-        amount_scale: int,
+        direction: int,
+        amount: int,
         currency_code: str,
         account_code: str,
         occurred_time: datetime,
@@ -858,11 +641,8 @@ class TargetEconomicMapper:
         del client_key
         return {
             "entry_type": entry_type,
-            "entry_direction": {"IN": CASH_DIRECTION_IN, "OUT": CASH_DIRECTION_OUT}[
-                direction
-            ],
-            "amount_value": amount_value,
-            "amount_scale": amount_scale,
+            "entry_direction": direction,
+            "amount": amount,
             "currency_code": currency_code,
             "account_code": account_code,
             "counterparty_account_ref": "",
@@ -870,62 +650,14 @@ class TargetEconomicMapper:
             "updated_time": now,
         }
 
-    def _latest_plan_requests(self, case_ids: list[int]) -> dict[int, dict]:
-        if not case_ids:
-            return {}
-        rows = self.db.execute(select(
-            ReviewRevision.review_case_id,
-            ReviewRevision.request_json,
-        ).where(
-            ReviewRevision.review_case_id.in_(case_ids)
-        ).order_by(ReviewRevision.id.desc())).mappings().all()
-        result = {}
-        for row in rows:
-            if row["review_case_id"] in result:
-                continue
-            payload = json.loads(row["request_json"] or "{}")
-            if (
-                "economics" in payload
-                or "entries" in payload
-                or payload.get("behavior_code") == "DEFAULT"
-            ):
-                result[row["review_case_id"]] = payload
-        return result
-
-    @staticmethod
-    def _plan_from_revisions(rows) -> dict:
-        for row in reversed(rows):
-            payload = json.loads(row["request_json"] or "{}")
-            if "economics" in payload or "entries" in payload:
-                return payload
-            if payload.get("behavior_code") == "DEFAULT":
-                return payload
-        return {}
-
     def _has_allocations(self, case_id: int) -> bool:
         return self.db.scalar(select(exists(select(ReviewAllocation.id).where(
             ReviewAllocation.review_case_id == case_id
         )))) is True
 
     @staticmethod
-    def _status_name(status: int, allocation_count: int) -> str:
-        if status == 0:
-            return "CONFIRMED"
-        return "REVOKED" if allocation_count else "PENDING"
-
-    @staticmethod
-    def _behavior_type(behavior_code: str) -> int:
-        return 1 if behavior_code == "BORROW_AND_REPAY" else 0
-
-    @staticmethod
-    def _behavior_code(behavior_type: int) -> str:
-        return "BORROW_AND_REPAY" if behavior_type == 1 else "TRANSACTION"
-
-    @staticmethod
     def _fact_values(row) -> dict:
-        values = dict(row)
-        values["cash_direction"] = CASH_DIRECTIONS[values["cash_direction"]]
-        return values
+        return dict(row)
 
     @staticmethod
     def _canonical(value: object) -> str:

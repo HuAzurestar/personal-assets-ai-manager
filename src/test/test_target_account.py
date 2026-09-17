@@ -52,8 +52,7 @@ def _facts(sessions, specifications):
                 fact_key=uuid4().hex,
                 occurred_time=now + timedelta(minutes=index),
                 cash_direction={"IN": CASH_DIRECTION_IN, "OUT": CASH_DIRECTION_OUT}[direction],
-                amount_value=1000,
-                amount_scale=2,
+                amount=1000,
                 currency_code="CNY",
                 account_code=account,
                 counterparty_name="counterparty",
@@ -93,20 +92,18 @@ def test_ledger_account_is_independent_from_transaction_fact(target_account_api)
 
     updated = client.put(f"/paam/ledger/v1/flow/{ledger_id}/account", json={
         "account_code": "ledger-wallet",
-        "expected_projection_version": account.json()["body"]["projection_version"],
     })
     assert updated.status_code == 200, updated.text
     assert updated.json()["body"]["account_code"] == "ledger-wallet"
-    assert updated.json()["body"]["projection_version"] > account.json()["body"]["projection_version"]
 
     with sessions() as db:
         assert db.get(TransactionFact, fact_id).account_code == "fact-wallet"
     detail = client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]
-    assert detail["flow"]["account_code"] == "ledger-wallet"
+    assert detail["ledger_entry"]["account_code"] == "ledger-wallet"
     assert detail["facts"][0]["account_code"] == "fact-wallet"
 
 
-def test_ledger_account_rejects_stale_version_and_projection_sentinel(
+def test_ledger_account_uses_serial_writes_and_rejects_projection_sentinel(
     target_account_api,
 ):
     client, sessions = target_account_api
@@ -115,25 +112,18 @@ def test_ledger_account_rejects_stale_version_and_projection_sentinel(
 
     invalid = client.put(f"/paam/ledger/v1/flow/{ledger_id}/account", json={
         "account_code": "MULTIPLE",
-        "expected_projection_version": client.get(
-            f"/paam/ledger/v1/flow/{ledger_id}/account"
-        ).json()["body"]["projection_version"],
     })
     assert invalid.status_code == 422
 
     first = client.put(f"/paam/ledger/v1/flow/{ledger_id}/account", json={
         "account_code": "checked-wallet",
-        "expected_projection_version": client.get(
-            f"/paam/ledger/v1/flow/{ledger_id}/account"
-        ).json()["body"]["projection_version"],
     })
     assert first.status_code == 200, first.text
-    stale = client.put(f"/paam/ledger/v1/flow/{ledger_id}/account", json={
-        "account_code": "stale-wallet",
-        "expected_projection_version": 1,
+    second = client.put(f"/paam/ledger/v1/flow/{ledger_id}/account", json={
+        "account_code": "latest-wallet",
     })
-    assert stale.status_code == 409
-    assert stale.json()["status"] == 409
+    assert second.status_code == 200
+    assert second.json()["body"]["account_code"] == "latest-wallet"
 
 
 def test_ledger_account_returns_not_found_for_unknown_ledger(target_account_api):

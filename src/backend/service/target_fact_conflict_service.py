@@ -27,7 +27,6 @@ from backend.schema.target_review import (
     TargetReviewCaseRead,
     TargetReviewTransitionRequest,
 )
-from backend.service.target_economic_read_service import TargetEconomicReadService
 from backend.service.target_economic_service import TargetEconomicService
 
 
@@ -181,8 +180,7 @@ class TargetFactConflictService:
             ).hexdigest(),
             "occurred_time": datetime.fromisoformat(normalized["occurred_at"]),
             "cash_direction": CASH_DIRECTION_IN if amount > 0 else CASH_DIRECTION_OUT,
-            "amount_value": abs(amount),
-            "amount_scale": 2,
+            "amount": abs(amount),
             "currency_code": normalized.get("currency", "CNY"),
             "account_code": account_code or "UNKNOWN",
             "counterparty_name": normalized.get("merchant", ""),
@@ -202,7 +200,7 @@ class TargetFactConflictService:
             review_type="FACT_CONFLICT",
             status=status,
             allocation_status="CONFLICT" if status == "PENDING" else "COMPLETE",
-            version=TargetEconomicReadService.projection_version(row["updated_time"]),
+            version=max(1, int(row["updated_time"].timestamp() * 1_000_000)),
             title=row["issue_message"] or "Fact conflict",
             result={
                 "transaction_import_row_id": row["id"],

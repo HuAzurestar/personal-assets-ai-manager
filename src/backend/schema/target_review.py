@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from backend.schema.list_query import ListSorter
 
@@ -13,12 +13,12 @@ from backend.schema.list_query import ListSorter
 class TargetReviewFactVO:
     id: int
     occurred_time: datetime
-    cash_direction: str
-    amount_value: int
-    amount_scale: int
+    cash_direction: int
+    amount: int
     currency_code: str
     account_code: str
-    counterparty: str
+    counterparty_name: str
+    counterparty_account_ref: str
     summary: str
     fact_key: str
     created_time: datetime
@@ -35,7 +35,6 @@ class TargetReviewIdempotencyVO:
 class TargetReviewTransitionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    expected_version: int = Field(ge=1)
     actor: str = Field(default="local-user", min_length=1, max_length=120)
     reason: str = Field(default="", max_length=2000)
     idempotency_key: str = Field(min_length=1, max_length=120)
@@ -57,21 +56,13 @@ class TargetReviewLineRead(BaseModel):
     bill_id: int
     role: str
     party: str
-    amount_value: int
-    amount_scale: int
+    amount: int
     currency_code: str
 
 
 class TargetReviewHistoryRead(BaseModel):
     id: int
-    version: int
-    operation: str
-    schema_version: int
-    request: dict[str, Any]
-    before: dict[str, Any]
-    after: dict[str, Any]
-    snapshot_hash: str
-    reverses_history_id: int
+    operation: int
     actor: str
     reason: str
     idempotency_key: str
@@ -119,74 +110,34 @@ class TargetEconomicDefinitionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     client_key: str = Field(min_length=1, max_length=80)
-    economic_type: Literal["TRANSACTION", "ACCOUNT_TRANSFER", "CLAIM"] = Field(
-        validation_alias=AliasChoices("economic_type", "entry_type")
-    )
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_entry_type(cls, value: object) -> object:
-        if not isinstance(value, dict) or "economic_type" in value:
-            return value
-        entry_type = value.get("entry_type")
-        if entry_type not in {0, 1, 2}:
-            return value
-        normalized = dict(value)
-        normalized.pop("entry_type")
-        normalized["economic_type"] = {
-            0: "TRANSACTION",
-            1: "ACCOUNT_TRANSFER",
-            2: "CLAIM",
-        }[entry_type]
-        return normalized
+    economic_type: Literal["TRANSACTION", "ACCOUNT_TRANSFER", "CLAIM"]
 
 
 class TargetFlowAllocationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    fact_id: int = Field(
-        ge=1,
-        validation_alias=AliasChoices("fact_id", "transaction_fact_id"),
-    )
-    economic_key: str = Field(
-        min_length=1,
-        max_length=80,
-        validation_alias=AliasChoices("economic_key", "entry_key"),
-    )
-    amount_value: int = Field(ge=1)
+    fact_id: int = Field(ge=1)
+    economic_key: str = Field(min_length=1, max_length=80)
+    amount: int = Field(ge=1)
 
 
 class TargetEconomicReviewCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    behavior_code: Literal["TRANSACTION", "BORROW_AND_REPAY"]
-    title: str = Field(
-        default="",
-        max_length=160,
-        validation_alias=AliasChoices("title", "description"),
-    )
-    result: dict[str, Any] = Field(default_factory=dict)
-    economics: list[TargetEconomicDefinitionRequest] = Field(
-        min_length=1,
-        max_length=200,
-        validation_alias=AliasChoices("economics", "entries"),
-    )
+    behavior_type: int = Field(ge=0, le=1)
+    title: str = Field(default="", max_length=160)
+    economics: list[TargetEconomicDefinitionRequest] = Field(min_length=1, max_length=200)
     allocations: list[TargetFlowAllocationRequest] = Field(min_length=1, max_length=500)
     actor: str = Field(default="local-user", min_length=1, max_length=120)
     reason: str = Field(default="", max_length=2000)
     idempotency_key: str = Field(min_length=1, max_length=120)
 
 
-class TargetEconomicReviewUpdateRequest(TargetEconomicReviewCreateRequest):
-    expected_version: int = Field(ge=1)
-
-
 class TargetEconomicFlowRead(BaseModel):
     id: int
-    economic_type: Literal["TRANSACTION", "ACCOUNT_TRANSFER", "CLAIM"]
-    cash_direction: Literal["IN", "OUT"]
-    amount_value: int
-    amount_scale: int
+    entry_type: int
+    entry_direction: int
+    amount: int
     currency_code: str
     account_code: str
     counterparty_account_ref: str
@@ -196,33 +147,31 @@ class TargetEconomicFlowRead(BaseModel):
 class TargetEconomicReviewFactRead(BaseModel):
     id: int
     occurred_time: datetime
-    cash_direction: Literal["IN", "OUT"]
-    amount_value: int
-    amount_scale: int
+    cash_direction: int
+    amount: int
     currency_code: str
     account_code: str
-    counterparty: str
+    counterparty_name: str
+    counterparty_account_ref: str
     summary: str
 
 
 class TargetFlowAllocationRead(BaseModel):
     id: int
-    fact_id: int
-    economic_id: int
-    amount_value: int
-    amount_scale: int
+    review_case_id: int
+    transaction_fact_id: int
+    ledger_entry_id: int
+    amount: int
     currency_code: str
 
 
 class TargetEconomicReviewRead(BaseModel):
     id: int
-    behavior_code: str
-    status: str
-    version: int
+    behavior_type: int
+    status: int
     title: str
-    result: dict[str, Any]
     facts: list[TargetEconomicReviewFactRead]
-    economics: list[TargetEconomicFlowRead]
+    ledger_entries: list[TargetEconomicFlowRead]
     allocations: list[TargetFlowAllocationRead]
     history: list[TargetReviewHistoryRead]
     created_time: datetime
@@ -235,70 +184,28 @@ class TargetEconomicReviewResponse(BaseModel):
     body: TargetEconomicReviewRead
 
 
-class TargetEconomicReviewListItem(BaseModel):
-    id: int
-    behavior_code: str
-    status: str
-    version: int
-    title: str
-    economic_count: int
-    allocation_count: int
-    created_time: datetime
-    updated_time: datetime
-
-
-class TargetEconomicReviewFilter(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    status: Literal["PENDING", "CONFIRMED", "REVOKED"] | None = None
-    behavior_code: str | None = None
-    exclude_behavior_code: str | None = None
-
-
-class TargetEconomicReviewSorter(ListSorter):
-    field: Literal["id", "created_time", "updated_time", "version"] = "updated_time"
-
-
-class TargetEconomicReviewPageRead(BaseModel):
-    items: list[TargetEconomicReviewListItem]
-    total: int
-    page: int
-    page_size: int
-    q: str
-    filter: TargetEconomicReviewFilter
-    sorter: TargetEconomicReviewSorter
-
-
-class TargetEconomicReviewPageResponse(BaseModel):
-    status: Literal[200] = 200
-    message: str = "ok"
-    body: TargetEconomicReviewPageRead
-
-
 class TargetFactAllocationCandidateRead(BaseModel):
     id: int
-    ledger_id: int
     occurred_time: datetime
-    cash_direction: str
-    amount_value: int
-    amount_scale: int
+    cash_direction: int
+    amount: int
     currency_code: str
     account_code: str
-    counterparty: str
+    counterparty_name: str
     summary: str
-    available_value: int
+    available_amount: int
 
 
 class TargetReviewCandidateFilter(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    cash_direction: Literal["IN", "OUT"] | None = None
+    cash_direction: int | None = None
     currency_code: str | None = None
     account_code: str | None = None
 
 
 class TargetReviewCandidateSorter(ListSorter):
-    field: Literal["id", "occurred_time", "amount_value", "available_value"] = (
+    field: Literal["id", "occurred_time", "amount", "available_amount"] = (
         "occurred_time"
     )
 

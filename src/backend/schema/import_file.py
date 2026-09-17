@@ -16,10 +16,9 @@ from backend.schema.transaction_fact import (
 class ImportFileFilter(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    source_type: str | None = None
-    institution_code: str | None = None
-    file_format: str | None = None
-    status: str | None = None
+    source_type: int | None = None
+    file_format: int | None = None
+    status: int | None = None
 
 
 class ImportFileSorter(ListSorter):
@@ -29,10 +28,9 @@ class ImportFileSorter(ListSorter):
 class ImportFileRead(BaseModel):
     id: int
     batch_code: str
-    source_type: str
-    institution_code: str
+    source_type: int
     filename: str
-    file_format: str
+    file_format: int
     sha256: str
     period_start: str
     period_end: str
@@ -40,7 +38,7 @@ class ImportFileRead(BaseModel):
     success_count: int
     skip_count: int
     issue_count: int
-    status: str
+    status: int
     created_time: datetime
     updated_time: datetime
 
