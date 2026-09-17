@@ -99,15 +99,15 @@ class TargetEconomicMapper:
         self,
         page: int,
         page_size: int,
-        q: str,
         filter_value,
         sorter,
     ) -> tuple[list[dict], int]:
         allocations = select(
             ReviewAllocation.review_case_id.label("case_id"),
             func.count(func.distinct(ReviewAllocation.ledger_entry_id)).label(
-                "allocation_count"
+                "economic_count"
             ),
+            func.count(ReviewAllocation.id).label("allocation_count"),
         ).group_by(ReviewAllocation.review_case_id).subquery()
         revisions = select(
             ReviewRevision.review_case_id.label("case_id"),
@@ -123,6 +123,7 @@ class TargetEconomicMapper:
         ).order_by(
             ReviewRevision.id.desc()
         ).limit(1).correlate(ReviewCase).scalar_subquery()
+        economic_count = func.coalesce(allocations.c.economic_count, 0)
         allocation_count = func.coalesce(allocations.c.allocation_count, 0)
         version = case(
             (func.coalesce(revisions.c.version, 0) > 0, revisions.c.version),
@@ -148,36 +149,33 @@ class TargetEconomicMapper:
             ReviewCase.title,
             ReviewCase.created_time,
             ReviewCase.updated_time,
-            allocation_count.label("economic_count"),
+            economic_count.label("economic_count"),
             allocation_count.label("allocation_count"),
         ).outerjoin(
             allocations, allocations.c.case_id == ReviewCase.id
         ).outerjoin(
             revisions, revisions.c.case_id == ReviewCase.id
         )
-        clauses = []
-        if q:
-            pattern = f"%{q}%"
-            clauses.append(or_(
-                cast(ReviewCase.id, String).like(pattern),
-                ReviewCase.title.ilike(pattern),
-                behavior_code.ilike(pattern),
-            ))
+        clauses = [~self._system_case_exists()]
+        if filter_value.id:
+            clauses.append(ReviewCase.id == filter_value.id)
         if filter_value.status:
             clauses.append(status == filter_value.status)
-        if filter_value.behavior_code:
-            clauses.append(behavior_code == filter_value.behavior_code)
-        if filter_value.exclude_behavior_code:
-            clauses.append(behavior_code != filter_value.exclude_behavior_code)
+        if filter_value.created_time_start:
+            clauses.append(ReviewCase.created_time >= filter_value.created_time_start)
+        if filter_value.created_time_end:
+            clauses.append(ReviewCase.created_time < filter_value.created_time_end)
+        if filter_value.updated_time_start:
+            clauses.append(ReviewCase.updated_time >= filter_value.updated_time_start)
+        if filter_value.updated_time_end:
+            clauses.append(ReviewCase.updated_time < filter_value.updated_time_end)
         query = query.where(*clauses)
         total = int(self.db.scalar(
             select(func.count()).select_from(query.order_by(None).subquery())
         ) or 0)
         columns = {
-            "id": ReviewCase.id,
             "created_time": ReviewCase.created_time,
             "updated_time": ReviewCase.updated_time,
-            "version": version,
         }
         column = columns[sorter.field]
         order = column.asc() if sorter.order == "asc" else column.desc()

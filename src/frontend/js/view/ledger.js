@@ -366,24 +366,22 @@ function showSummaryDetail(type) {
 }
 
 async function ledgerReviewsPage() {
-  const q = (state.params.get("q") || "").trim();
   const status = state.params.get("status") || "";
   const sortField = state.params.get("sort_field") || "updated_time";
   const sortOrder = state.params.get("sort_order") || "desc";
   const query = new URLSearchParams({
-    page: state.params.get("page") || "1",
+    page_index: state.params.get("page") || "1",
     page_size: state.params.get("page_size") || "20",
-    q,
-    filter: JSON.stringify(status ? { status } : {}),
-    sorter: JSON.stringify({ field: sortField, order: sortOrder }),
+    sorter: JSON.stringify([{ key: sortField, direction: sortOrder }]),
   });
+  if (status) query.set("filter", JSON.stringify({ key: "status", op: "=", val: status }));
   const result = await request(`/paam/ledger/v1/review/list?${query}`);
   state.detailEconomicReviews = new Map(result.items.map((item) => [item.id, item]));
   const rows = result.items.map((item) => `<tr class="detail-click-row" tabindex="0" data-review-row="${item.id}">
     <td>${date(item.updated_time)}</td><td><button type="button" class="detail-primary" data-action="economic-review-detail" data-id="${item.id}"><strong>${esc(item.title || item.behavior_code || "未填写说明")}</strong><small>#${item.id} · ${esc(item.behavior_code || "未说明行为")}</small></button></td>
     <td><span class="badge ${item.status === "PENDING" ? "warn" : "neutral"}">${esc(statusNames[item.status] || item.status)}</span></td><td>${item.economic_count} 条账本流水</td><td>${item.allocation_count} 条分配</td><td>v${item.version}</td><td class="detail-arrow">→</td>
   </tr>`).join("");
-  const toolbar = `<form class="detail-filter" data-form="detail-review-filter"><label class="grow">查找<input name="q" value="${esc(q)}" placeholder="ID、标题或行为代码"></label><label>状态<select name="status"><option value="">全部状态</option>${["PENDING", "CONFIRMED", "REVOKED"].map((value) => `<option value="${value}" ${status === value ? "selected" : ""}>${esc(statusNames[value] || value)}</option>`).join("")}</select></label><label>排序<select name="sort_field"><option value="updated_time" ${sortField === "updated_time" ? "selected" : ""}>更新时间</option><option value="created_time" ${sortField === "created_time" ? "selected" : ""}>创建时间</option><option value="version" ${sortField === "version" ? "selected" : ""}>版本</option><option value="id" ${sortField === "id" ? "selected" : ""}>ID</option></select></label><label>顺序<select name="sort_order"><option value="desc" ${sortOrder === "desc" ? "selected" : ""}>降序</option><option value="asc" ${sortOrder === "asc" ? "selected" : ""}>升序</option></select></label><button type="button" class="quiet" data-action="detail-clear" data-page-id="ledger-reviews">清空</button><button class="primary">查询</button><button type="button" class="primary" data-action="new-economic-review">新建 Review</button></form>`;
+  const toolbar = `<form class="detail-filter" data-form="detail-review-filter"><label>状态<select name="status"><option value="">全部状态</option>${["PENDING", "CONFIRMED", "REVOKED"].map((value) => `<option value="${value}" ${status === value ? "selected" : ""}>${esc(statusNames[value] || value)}</option>`).join("")}</select></label><label>排序<select name="sort_field"><option value="updated_time" ${sortField === "updated_time" ? "selected" : ""}>更新时间</option><option value="created_time" ${sortField === "created_time" ? "selected" : ""}>创建时间</option></select></label><label>顺序<select name="sort_order"><option value="desc" ${sortOrder === "desc" ? "selected" : ""}>降序</option><option value="asc" ${sortOrder === "asc" ? "selected" : ""}>升序</option></select></label><button type="button" class="quiet" data-action="detail-clear" data-page-id="ledger-reviews">清空</button><button class="primary">筛选</button><button type="button" class="primary" data-action="new-economic-review">新建 Review</button></form>`;
   return detailListView({ active: "ledger-reviews", toolbar, title: "Review", description: "Review 是 Allocation 的集合；Fact 与 Ledger 关系必须通过 Allocation 解释。", total: result.total, headers: ["更新时间", "审查", "状态", "账本数量", "分配数量", "版本", ""], rows, footer: detailPager(result, "ledger-reviews") });
 }
 
@@ -893,13 +891,16 @@ async function tagsPage() {
 
 async function reviewsPage() {
   const reviewQuery = new URLSearchParams({
-    page: state.params.get("review_page") || "1",
+    page_index: state.params.get("review_page") || "1",
     page_size: "25",
   });
-  reviewQuery.set("filter", JSON.stringify({
-    exclude_behavior_code: "DEFAULT",
-    ...(state.params.get("status") ? { status: state.params.get("status") } : {}),
-  }));
+  if (state.params.get("status")) {
+    reviewQuery.set("filter", JSON.stringify({
+      key: "status",
+      op: "=",
+      val: state.params.get("status"),
+    }));
+  }
   const conflictQuery = new URLSearchParams({
     page: state.params.get("conflict_page") || "1",
     page_size: "25",
@@ -907,12 +908,12 @@ async function reviewsPage() {
   const [result, candidatePage, pending, conflicts] = await Promise.all([
     request(`/paam/ledger/v1/review/list?${reviewQuery}`),
     request("/paam/ledger/v1/review_candidate/list?page=1&page_size=1"),
-    request(`/paam/ledger/v1/review/list?${new URLSearchParams({ page: "1", page_size: "1", filter: JSON.stringify({ status: "PENDING", exclude_behavior_code: "DEFAULT" }) })}`),
+    request(`/paam/ledger/v1/review/list?${new URLSearchParams({ page_index: "1", page_size: "1", filter: JSON.stringify({ key: "status", op: "=", val: "PENDING" }) })}`),
     request(`/paam/import/v1/fact_conflict/list?${conflictQuery}`),
   ]);
   const rows = result.items.map((item) => `<tr><td>${item.id}</td><td><strong>${esc(item.behavior_code || "未说明行为")}</strong><br><small>${esc(item.title || "未填写说明")}</small></td><td><span class="badge ${item.status === "PENDING" ? "warn" : "neutral"}">${esc(statusNames[item.status] || item.status)}</span></td><td>${item.economic_count}</td><td>${item.allocation_count}</td><td>v${item.version}</td><td><button data-action="economic-review-detail" data-id="${item.id}">处理 / 详情</button></td></tr>`);
   const pages = Math.max(1, Math.ceil(result.total / result.page_size));
-  const paging = `<div class="pagination"><span>共 ${result.total} 条 · 第 ${result.page}/${pages} 页</span><button data-action="review-page" data-param="review_page" data-value="${result.page - 1}" ${result.page <= 1 ? "disabled" : ""}>上一页</button><button data-action="review-page" data-param="review_page" data-value="${result.page + 1}" ${result.page >= pages ? "disabled" : ""}>下一页</button></div>`;
+  const paging = `<div class="pagination"><span>共 ${result.total} 条 · 第 ${result.page_index}/${pages} 页</span><button data-action="review-page" data-param="review_page" data-value="${result.page_index - 1}" ${result.page_index <= 1 ? "disabled" : ""}>上一页</button><button data-action="review-page" data-param="review_page" data-value="${result.page_index + 1}" ${result.page_index >= pages ? "disabled" : ""}>下一页</button></div>`;
   const conflictRows = conflicts.items.map((item) => `<tr><td>${item.id}</td><td><strong>${esc(item.title || "事实冲突")}</strong><br><small>${item.lines.length} 条候选事实</small></td><td><span class="badge ${item.status === "PENDING" ? "warn" : "neutral"}">${esc(statusNames[item.status] || item.status)}</span></td><td>v${item.version}</td><td><button data-action="fact-conflict-detail" data-id="${item.id}">处理 / 详情</button></td></tr>`);
   const conflictPages = Math.max(1, Math.ceil(conflicts.total / conflicts.page_size));
   const conflictPaging = `<div class="pagination"><span>共 ${conflicts.total} 条 · 第 ${conflicts.page}/${conflictPages} 页</span><button data-action="review-page" data-param="conflict_page" data-value="${conflicts.page - 1}" ${conflicts.page <= 1 ? "disabled" : ""}>上一页</button><button data-action="review-page" data-param="conflict_page" data-value="${conflicts.page + 1}" ${conflicts.page >= conflictPages ? "disabled" : ""}>下一页</button></div>`;

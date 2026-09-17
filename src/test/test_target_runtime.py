@@ -62,7 +62,7 @@ def test_openapi_locks_canonical_ledger_v1_contract():
         "EconomicFlowDetailResponse",
         "EconomicSummaryResponse",
         "TargetEconomicReviewResponse",
-        "TargetEconomicReviewPageResponse",
+        "TargetEconomicReviewListResponse",
         "ImportFactConflictResponse",
         "ImportFactConflictPageResponse",
         "ImportFileSummaryResponse",
@@ -110,6 +110,16 @@ def test_openapi_locks_canonical_ledger_v1_contract():
         parameters = specification["paths"][path]["get"]["parameters"]
         page_size = next(item for item in parameters if item["name"] == "page_size")
         assert page_size["schema"]["default"] == 20
+    review_parameters = specification["paths"][
+        "/paam/ledger/v1/review/list"
+    ]["get"]["parameters"]
+    assert [item["name"] for item in review_parameters] == [
+        "page_index",
+        "page_size",
+        "query",
+        "filter",
+        "sorter",
+    ]
 
     assert specification["paths"]["/paam/ledger/v1/flow/list"]["get"]["tags"] == [
         "ledger-flow"

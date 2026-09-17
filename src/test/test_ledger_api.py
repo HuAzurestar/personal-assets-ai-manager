@@ -389,17 +389,32 @@ def test_partial_manual_reviews_keep_exact_default_coverage_and_are_idempotent(e
     assert candidate_page["page_size"] == 20
     assert [(item["id"], item["available_value"]) for item in candidates] == [(fact_id, 6000)]
     complete_page = client.get("/paam/ledger/v1/review/list").json()["body"]
-    assert complete_page["total"] == 3
-    case_response = client.get(
-        "/paam/ledger/v1/review/list",
-        params={"filter": '{"exclude_behavior_code":"DEFAULT"}'},
-    )
+    assert complete_page["total"] == 1
+    case_response = client.get("/paam/ledger/v1/review/list")
     assert case_response.json()["status"] == case_response.status_code
-    assert case_response.json()["message"] == "Ledger reviews listed"
+    assert case_response.json()["message"] == "ok"
     cases = case_response.json()["body"]
+    assert set(cases) == {"items", "total", "page_index", "page_size"}
     assert cases["total"] == 1
     assert cases["items"][0]["economic_count"] == 1
     assert cases["items"][0]["allocation_count"] == 1
+
+    filtered = client.get("/paam/ledger/v1/review/list", params={
+        "filter": '{"key":"status","op":"=","val":"CONFIRMED"}',
+        "sorter": '[{"key":"updated_time","direction":"desc"}]',
+    })
+    assert filtered.status_code == 200, filtered.text
+    assert filtered.json()["body"]["total"] == 1
+
+    legacy = client.get("/paam/ledger/v1/review/list", params={"page": 1})
+    assert legacy.status_code == 422
+    assert legacy.json()["body"]["code"] == "LIST_PARAMETER_NOT_SUPPORTED"
+
+    unsupported_query = client.get("/paam/ledger/v1/review/list", params={
+        "query": '[{"key":"title","word":"purchase"}]',
+    })
+    assert unsupported_query.status_code == 422
+    assert unsupported_query.json()["body"]["code"] == "LIST_QUERY_NOT_SUPPORTED"
 
     with sessions() as db:
         coverage = db.scalar(select(func.sum(ReviewAllocation.amount_value)).join(
@@ -461,6 +476,18 @@ def test_review_list_is_database_paged_with_fixed_query_count(economic_api):
     ])
     with sessions() as db:
         TargetEconomicService(db).ensure_defaults(fact_ids, commit=True)
+        now = datetime(2026, 9, 14, 10)
+        db.add_all([
+            ReviewCase(
+                behavior_type=0,
+                status=1,
+                title=f"manual review {index}",
+                created_time=now + timedelta(minutes=index),
+                updated_time=now + timedelta(minutes=index),
+            )
+            for index in range(30)
+        ])
+        db.commit()
 
     statements = []
 
@@ -474,9 +501,9 @@ def test_review_list_is_database_paged_with_fixed_query_count(economic_api):
         response = client.get(
             "/paam/ledger/v1/review/list",
             params={
-                "page": 2,
+                "page_index": 2,
                 "page_size": 10,
-                "filter": '{"behavior_code":"DEFAULT"}',
+                "sorter": '[{"key":"created_time","direction":"asc"}]',
             },
         )
     finally:
@@ -484,6 +511,7 @@ def test_review_list_is_database_paged_with_fixed_query_count(economic_api):
     assert response.status_code == 200, response.text
     page = response.json()["body"]
     assert page["total"] == 30
+    assert page["page_index"] == 2
     assert len(page["items"]) == 10
     assert len(statements) == 2
 

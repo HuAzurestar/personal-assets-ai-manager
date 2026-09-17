@@ -12,11 +12,13 @@ from backend.mapper.target_economic_mapper import (
     ECONOMIC_TYPE_IDS,
     TargetEconomicMapper,
 )
+from backend.schema.list_query import BetweenValue, iter_filter_fields
 from backend.schema.target_review import (
     TargetEconomicReviewCreateRequest,
     TargetEconomicReviewFilter,
+    TargetEconomicReviewListBody,
     TargetEconomicReviewListItem,
-    TargetEconomicReviewPageRead,
+    TargetEconomicReviewListRequest,
     TargetEconomicReviewRead,
     TargetEconomicReviewSorter,
     TargetEconomicReviewUpdateRequest,
@@ -26,6 +28,7 @@ from backend.schema.target_review import (
     TargetReviewCandidateSorter,
     TargetReviewFactVO,
     TargetReviewTransitionRequest,
+    parse_review_time,
 )
 from backend.service.target_tag_projection_service import TargetTagProjectionService
 
@@ -64,24 +67,58 @@ class TargetEconomicService:
 
     def page(
         self,
-        page: int,
-        page_size: int,
-        q: str,
-        filter_value: TargetEconomicReviewFilter,
-        sorter: TargetEconomicReviewSorter,
-    ) -> TargetEconomicReviewPageRead:
-        rows, total = self.mapper.review_page(
-            page, page_size, q, filter_value, sorter
+        *,
+        request: TargetEconomicReviewListRequest,
+    ) -> TargetEconomicReviewListBody:
+        filter_value = self._review_mapper_filter(request)
+        sorter_expression = request.sorter[0] if request.sorter else None
+        sorter = TargetEconomicReviewSorter(
+            field=sorter_expression.key if sorter_expression else "updated_time",
+            order=sorter_expression.direction if sorter_expression else "desc",
         )
-        return TargetEconomicReviewPageRead(
+        rows, total = self.mapper.review_page(
+            request.page_index,
+            request.page_size,
+            filter_value,
+            sorter,
+        )
+        return TargetEconomicReviewListBody(
             items=[TargetEconomicReviewListItem(**row) for row in rows],
             total=total,
-            page=page,
-            page_size=page_size,
-            q=q,
-            filter=filter_value,
-            sorter=sorter,
+            page_index=request.page_index,
+            page_size=request.page_size,
         )
+
+    @staticmethod
+    def _review_mapper_filter(
+        request: TargetEconomicReviewListRequest,
+    ) -> TargetEconomicReviewFilter:
+        values: dict[str, object] = {}
+        for expression in iter_filter_fields(request.filter):
+            if expression.key in {"created_time", "updated_time"}:
+                if expression.op == "between":
+                    between = BetweenValue.model_validate(expression.val)
+                    values[f"{expression.key}_start"] = parse_review_time(
+                        between.start,
+                        expression.key,
+                    )
+                    values[f"{expression.key}_end"] = parse_review_time(
+                        between.end,
+                        expression.key,
+                    )
+                elif expression.op == ">=":
+                    values[f"{expression.key}_start"] = parse_review_time(
+                        expression.val,
+                        expression.key,
+                    )
+                else:
+                    values[f"{expression.key}_end"] = parse_review_time(
+                        expression.val,
+                        expression.key,
+                    )
+            else:
+                values[expression.key] = expression.val
+        return TargetEconomicReviewFilter.model_validate(values)
 
     def fact_candidates(self, limit: int = 100) -> list[TargetFactAllocationCandidateRead]:
         return [

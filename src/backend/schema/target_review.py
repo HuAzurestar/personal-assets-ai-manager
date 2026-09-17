@@ -4,9 +4,25 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    ValidationError,
+    model_validator,
+)
 
-from backend.schema.list_query import ListSorter
+from backend.error import ListQueryError
+from backend.schema.list_query import (
+    BetweenValue,
+    ListRequest,
+    ListSorter,
+    iter_filter_fields,
+    validate_list_capabilities,
+)
+from backend.schema.response import ListBody, ListResponse
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,32 +263,133 @@ class TargetEconomicReviewListItem(BaseModel):
     updated_time: datetime
 
 
+class TargetEconomicReviewListRequest(ListRequest):
+    @model_validator(mode="after")
+    def validate_capabilities(self) -> "TargetEconomicReviewListRequest":
+        validate_list_capabilities(
+            self,
+            query_fields=(),
+            filter_operators={
+                "id": ("=",),
+                "status": ("=",),
+                "created_time": (">=", "<", "between"),
+                "updated_time": (">=", "<", "between"),
+            },
+            sorter_fields=("created_time", "updated_time"),
+            logical_operators=("AND",),
+            max_sorters=1,
+        )
+        _validate_review_filter_values(self)
+        return self
+
+
 class TargetEconomicReviewFilter(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    id: int | None = None
     status: Literal["PENDING", "CONFIRMED", "REVOKED"] | None = None
-    behavior_code: str | None = None
-    exclude_behavior_code: str | None = None
+    created_time_start: datetime | None = None
+    created_time_end: datetime | None = None
+    updated_time_start: datetime | None = None
+    updated_time_end: datetime | None = None
 
 
 class TargetEconomicReviewSorter(ListSorter):
-    field: Literal["id", "created_time", "updated_time", "version"] = "updated_time"
+    field: Literal["created_time", "updated_time"] = "updated_time"
 
 
-class TargetEconomicReviewPageRead(BaseModel):
-    items: list[TargetEconomicReviewListItem]
-    total: int
-    page: int
-    page_size: int
-    q: str
-    filter: TargetEconomicReviewFilter
-    sorter: TargetEconomicReviewSorter
+class TargetEconomicReviewListBody(ListBody[TargetEconomicReviewListItem]):
+    pass
 
 
-class TargetEconomicReviewPageResponse(BaseModel):
-    status: Literal[200] = 200
-    message: str = "ok"
-    body: TargetEconomicReviewPageRead
+class TargetEconomicReviewListResponse(ListResponse[TargetEconomicReviewListItem]):
+    body: TargetEconomicReviewListBody
+
+
+_REVIEW_DATETIME_ADAPTER = TypeAdapter(datetime)
+
+
+def parse_review_time(value: object, key: str) -> datetime:
+    try:
+        parsed = _REVIEW_DATETIME_ADAPTER.validate_python(value)
+    except ValidationError as error:
+        raise ListQueryError(
+            "Invalid Review time filter",
+            code="LIST_FILTER_VALUE_INVALID",
+            details={"component": "filter", "key": key},
+        ) from error
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ListQueryError(
+            "Review time filter requires a timezone",
+            code="LIST_FILTER_VALUE_INVALID",
+            details={"component": "filter", "key": key},
+        )
+    return parsed
+
+
+def _validate_review_filter_values(
+    request: TargetEconomicReviewListRequest,
+) -> None:
+    fields = list(iter_filter_fields(request.filter))
+    counts: dict[str, int] = {}
+    time_operators: dict[str, set[str]] = {
+        "created_time": set(),
+        "updated_time": set(),
+    }
+    for expression in fields:
+        counts[expression.key] = counts.get(expression.key, 0) + 1
+        value = expression.val
+        if expression.key == "id":
+            valid = isinstance(value, int) and not isinstance(value, bool) and value >= 1
+        elif expression.key == "status":
+            valid = isinstance(value, str) and value in {
+                "PENDING",
+                "CONFIRMED",
+                "REVOKED",
+            }
+        else:
+            time_operators[expression.key].add(expression.op)
+            if expression.op == "between":
+                between = BetweenValue.model_validate(value)
+                start = parse_review_time(between.start, expression.key)
+                end = parse_review_time(between.end, expression.key)
+                valid = start < end
+            else:
+                parse_review_time(value, expression.key)
+                valid = True
+        if not valid:
+            raise ListQueryError(
+                "Invalid Review filter value",
+                code="LIST_FILTER_VALUE_INVALID",
+                details={
+                    "component": "filter",
+                    "key": expression.key,
+                    "value": value,
+                },
+            )
+
+    duplicate_fields = sorted(
+        key for key, count in counts.items()
+        if key not in time_operators and count > 1
+    )
+    invalid_time_fields = sorted(
+        key
+        for key, operators in time_operators.items()
+        if (
+            ("between" in operators and len(operators) > 1)
+            or len(operators) != counts.get(key, 0)
+        )
+    )
+    if duplicate_fields or invalid_time_fields:
+        raise ListQueryError(
+            "Filter combination is not supported",
+            code="LIST_COMBINATION_NOT_SUPPORTED",
+            details={
+                "component": "filter",
+                "duplicate_fields": duplicate_fields,
+                "invalid_time_fields": invalid_time_fields,
+            },
+        )
 
 
 class TargetFactAllocationCandidateRead(BaseModel):

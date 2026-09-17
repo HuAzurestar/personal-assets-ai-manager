@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
-from backend.router.dependency import get_db
+from backend.router.dependency import get_db, validate_query_parameter_names
 from backend.router.error import DomainErrorRoute
-from backend.schema.list_query import parse_query_object
+from backend.schema.list_query import parse_list_request
 from backend.schema.target_review import (
     TargetEconomicReviewCreateRequest,
-    TargetEconomicReviewFilter,
-    TargetEconomicReviewPageResponse,
+    TargetEconomicReviewListRequest,
+    TargetEconomicReviewListResponse,
     TargetEconomicReviewResponse,
-    TargetEconomicReviewSorter,
     TargetEconomicReviewUpdateRequest,
     TargetReviewTransitionRequest,
 )
@@ -86,29 +85,36 @@ def restore_case(
     )
 
 
-@router.get("/review/list", response_model=TargetEconomicReviewPageResponse)
+@router.get(
+    "/review/list",
+    response_model=TargetEconomicReviewListResponse,
+    response_model_exclude_none=True,
+)
 def case_page(
-    page: int = Query(default=1, ge=1),
+    http_request: Request,
+    page_index: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
-    status: str = Query(default="", pattern="^(|PENDING|CONFIRMED|REVOKED)$"),
-    q: str = Query(default="", max_length=200),
-    filter: str = Query(default="{}"),
-    sorter: str = Query(default='{"field":"updated_time","order":"desc"}'),
+    query: str | None = Query(default=None),
+    filter: str | None = Query(default=None),
+    sorter: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
-    filter_value = parse_query_object(filter, TargetEconomicReviewFilter, "filter")
-    sorter_value = parse_query_object(sorter, TargetEconomicReviewSorter, "sorter")
-    if status and not filter_value.status:
-        filter_value = filter_value.model_copy(update={"status": status})
-    return TargetEconomicReviewPageResponse(
-        message="Ledger reviews listed",
-        body=TargetEconomicService(db).page(
-            page,
-            page_size,
-            q.strip(),
-            filter_value,
-            sorter_value,
-        )
+    validate_query_parameter_names(
+        http_request,
+        {"page_index", "page_size", "query", "filter", "sorter"},
+    )
+    request = parse_list_request(
+        TargetEconomicReviewListRequest,
+        page_index=page_index,
+        page_size=page_size,
+        query=query,
+        filter=filter,
+        sorter=sorter,
+    )
+    return TargetEconomicReviewListResponse(
+        status=200,
+        message="ok",
+        body=TargetEconomicService(db).page(request=request),
     )
 
 
