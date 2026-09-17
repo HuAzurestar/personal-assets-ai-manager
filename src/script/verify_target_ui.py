@@ -77,12 +77,18 @@ def run() -> None:
                 errors: list[str] = []
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 page.goto(base_url)
-                expect(page.get_by_role("heading", name="明细")).to_be_visible()
+                expect(page.locator('[data-form="fact-filter"]')).to_be_visible()
+                expect(page.locator(".module-heading")).to_be_hidden()
                 expect(page.locator(".module-nav [data-module]")).to_have_count(3)
-                assert page.evaluate("location.hash").startswith("#details")
+                assert page.evaluate("location.hash").startswith(
+                    "#details/transaction-fact"
+                )
+                assert page.evaluate(
+                    "getComputedStyle(document.querySelector('.module-topbar')).backdropFilter"
+                ) == "none"
 
                 page.locator('.topbar-actions [data-page="import"]').click()
-                expect(page.get_by_role("heading", name="导入账单")).to_be_visible()
+                expect(page.locator(".module-heading")).to_be_hidden()
                 expect(page.locator('[data-action="import-source"]')).to_have_count(6)
                 expect(page.get_by_role("heading", name="选择数据来源")).to_be_visible()
                 expect(page.get_by_role("heading", name="添加账单文件")).to_be_hidden()
@@ -136,54 +142,43 @@ def run() -> None:
                 drawer.locator("[data-close]").click()
                 expect(page.locator('[data-action="confirm-import"]')).to_be_enabled()
                 page.locator('[data-action="confirm-import"]').click()
-                expect(page.get_by_role("heading", name="导入记录")).to_be_visible()
-                expect(page.get_by_text("target-ui.csv")).to_be_visible()
+                expect(page.locator(".module-heading")).to_be_hidden()
                 expect(page.locator('[data-form="history-filter"]')).to_be_visible()
+                expect(page.locator("#page-content").get_by_text("target-ui.csv")).to_be_visible()
                 page.locator('[data-action="import-file-detail"]').click()
                 history_drawer = page.locator("dialog.detail-view-drawer[open]")
                 expect(history_drawer).to_be_visible()
                 history_drawer_box = history_drawer.bounding_box()
                 assert history_drawer_box is not None
                 assert history_drawer_box["x"] > 500, history_drawer_box
-                expect(history_drawer.locator("tbody tr")).to_have_count(20)
+                expect(history_drawer.locator("tbody tr")).to_have_count(26)
                 expect(history_drawer).to_contain_text("Transaction Fact")
                 expect(
                     history_drawer.locator("th", has_text="摘要")
                 ).to_be_visible()
-                expect(history_drawer).to_contain_text("显示 20 / 26 条")
+                expect(history_drawer).to_contain_text("共 26 条关联 Transaction Fact")
                 history_drawer.locator("[data-close]").first.click()
                 history_hash = page.evaluate("location.hash")
-                search = page.locator(
-                    '[data-form="history-filter"] input[name="q"]'
-                )
-                search.click()
-                assert page.evaluate("location.hash") == history_hash
-                expect(page.get_by_role("heading", name="导入记录")).to_be_visible()
-                search.fill("not-present")
-                expect(page.get_by_text("没有匹配的导入记录")).to_be_visible()
-                assert page.evaluate("location.hash") == history_hash
-                assert search.evaluate("node => node === document.activeElement")
-                search.fill("target-ui")
-                expect(page.get_by_text("target-ui.csv")).to_be_visible()
-                assert page.evaluate("location.hash") == history_hash
+                expect(page.locator('[data-form="history-filter"]')).to_be_visible()
                 source_filter = page.locator(
                     '[data-form="history-filter"] select[name="source_type"]'
                 )
-                source_filter.select_option("wechat")
+                source_filter.select_option("102")
                 expect(page.get_by_text("target-ui.csv")).to_be_visible()
                 assert page.evaluate("location.hash") == history_hash
 
                 page.locator('nav [data-page="summary"]').click()
-                expect(page.get_by_role("heading", name="本月概览")).to_be_visible()
+                expect(page.locator(".module-heading")).to_be_hidden()
                 expect(page.locator(".month-metrics")).to_be_visible()
                 expect(page.locator(".calendar-grid")).to_be_visible()
-                account_overview = page.locator(
+                expect(page.locator(
                     '[data-form="account-filter"] select[name="account_code"]'
-                )
-                expect(account_overview.locator("option")).to_have_count(1)
+                )).to_have_count(0)
+                expect(page.locator(".account-scope")).to_contain_text("Ledger 汇总")
                 page.locator('[data-action="account-drilldown"]').click()
-                expect(page.get_by_role("heading", name="明细")).to_be_visible()
+                expect(page.locator(".module-heading")).to_be_hidden()
                 expect(page.locator('[data-action="economic-detail"]').first).to_be_visible()
+                assert page.evaluate("location.hash").startswith("#details/ledger")
                 expect(page.locator('[data-module="details"]')).to_have_class(
                     re.compile(r"active")
                 )
@@ -201,7 +196,7 @@ def run() -> None:
                 account_form.locator("button.primary").click()
                 expect(page.get_by_text("ui-ledger-account").first).to_be_visible()
 
-                page.locator('.detail-tabs [data-page="ledger-imports"]').click()
+                page.locator('.secondary-nav [data-page="ledger-imports"]').click()
                 expect(page.locator('[data-action="import-file-detail"]')).to_be_visible()
                 page.locator('[data-action="import-file-detail"]').first.click()
                 expect(page.locator("dialog.detail-view-drawer[open]")).to_be_visible()
@@ -215,32 +210,122 @@ def run() -> None:
                     data={"name": "验收分类", "system_name": "acceptance"},
                 )
                 assert tag_view_response.ok, tag_view_response.text()
-                page.locator('.detail-tabs [data-page="ledger-tags"]').click()
-                expect(page.get_by_role("heading", name="明细")).to_be_visible()
+                page.locator('.secondary-nav [data-page="ledger-tags"]').click()
+                expect(page.locator(".module-heading")).to_be_hidden()
                 expect(page.locator(".tag-manager-head")).to_be_visible()
+                page.locator('[data-action="new-view"]').click()
+                dictionary_form = page.locator('dialog[open] [data-form="dictionary"]')
+                expect(dictionary_form).to_be_visible()
+                dictionary_form.locator('[name="name"]').fill("消费 类型")
+                expect(dictionary_form.locator('[name="system_name"]')).to_have_value(
+                    "xiao_fei_lei_xing"
+                )
+                dictionary_form.locator('[name="system_name"]').fill("custom_name")
+                dictionary_form.locator('[name="name"]').fill("新的名称")
+                expect(dictionary_form.locator('[name="system_name"]')).to_have_value(
+                    "custom_name"
+                )
+                page.locator("dialog[open] [data-close]").click()
+                tag_card = page.locator(".tag-view-card").first
+                tag_card.locator('[data-action="new-tag-inline"]').click()
+                inline_tag = tag_card.locator('[data-form="inline-tag"]')
+                inline_tag.locator('[name="name"]').fill("餐饮消费")
+                expect(inline_tag.locator('[name="system_name"]')).to_have_value(
+                    "can_yin_xiao_fei"
+                )
+                inline_tag.locator('[data-action="cancel-tag"]').click()
 
-                page.locator('.detail-tabs [data-page="ledger"]').click()
-                expect(page.get_by_role("heading", name="明细")).to_be_visible()
+                page.locator('.secondary-nav [data-page="ledger"]').click()
+                expect(page.locator(".module-heading")).to_be_hidden()
                 expect(page.get_by_text("浏览器测试商户").first).to_be_visible()
                 expect(page.locator('[data-form="fact-filter"]')).to_be_visible()
+                expect(page.locator(".list-context")).to_have_count(0)
+                fact_filter = page.locator('[data-form="fact-filter"]')
+                expect(fact_filter.locator('select[name="cash_direction"]')).to_be_visible()
+                expect(fact_filter.locator('select[name="currency_code"]')).to_be_visible()
+                expect(fact_filter.locator('select[name="sort"]')).to_be_visible()
+                expect(fact_filter.locator('select[name="currency_code"] option')).to_have_count(7)
+                expect(fact_filter.locator('option[value="CNY_4"]')).to_have_count(0)
+                expect(page.locator(".detail-data-table thead")).to_contain_text("发生时间")
+                expect(page.locator(".detail-data-table thead")).not_to_contain_text("方向")
+                expect(page.locator(".detail-data-table thead")).to_contain_text("交易对手")
+                expect(page.locator(".detail-data-table thead")).to_contain_text("本方账户")
+                expect(page.locator(".fact-amount").first).to_contain_text("CNY")
+                expect(page.locator(".fact-amount").first).not_to_contain_text("¥")
+                filter_tops = page.locator(".detail-filter > label, .detail-filter > .detail-filter-field").evaluate_all(
+                    "nodes => nodes.map(node => Math.round(node.getBoundingClientRect().top))"
+                )
+                assert max(filter_tops) - min(filter_tops) <= 1, filter_tops
+                fact_filter.locator('[data-action="range-open"]').click()
+                range_panel = fact_filter.locator('[data-range-popover]')
+                expect(range_panel).to_be_visible()
+                expect(range_panel.locator('[data-range-time="hour"] option')).to_have_count(24)
+                expect(range_panel.locator('[data-range-time="minute"] option')).to_have_count(60)
+                range_panel.locator('[data-range-date="2026-09-01"]').click()
+                expect(fact_filter.locator('[name="date_from"]')).to_have_value(
+                    "2026-09-01T00:00"
+                )
+                range_panel.locator('[data-range-endpoint="start"]').click()
+                range_panel.locator('[data-range-time="hour"]').select_option("08")
+                range_panel.locator('[data-range-time="minute"]').select_option("15")
+                expect(fact_filter.locator('[name="date_from"]')).to_have_value(
+                    "2026-09-01T08:15"
+                )
+                range_panel.locator('[data-range-endpoint="end"]').click()
+                range_panel.locator('[data-range-date="2026-08-31"]').click()
+                expect(range_panel.locator('[data-range-message]')).to_have_text(
+                    "开始时间不能晚于结束时间"
+                )
+                range_panel.locator('[data-range-date="2026-09-17"]').click()
+                range_panel.locator('[data-range-time="hour"]').select_option("18")
+                range_panel.locator('[data-range-time="minute"]').select_option("45")
+                expect(fact_filter.locator('[name="date_to"]')).to_have_value(
+                    "2026-09-17T18:45"
+                )
+                expect(range_panel.locator('[data-range-endpoint="start"]')).to_contain_text("08:15")
+                expect(range_panel.locator('[data-range-endpoint="end"]')).to_contain_text("18:45")
+                range_panel.locator('[data-range-apply]').click()
+                expect(page.locator('[data-form="fact-filter"]')).to_be_visible()
+                assert page.evaluate(
+                    "new URLSearchParams(location.hash.split('?')[1]).get('date_from')"
+                ) == "2026-09-01T08:15"
+                fact_filter.locator('select[name="cash_direction"]').select_option("1")
+                expect(page.locator('[data-form="fact-filter"]')).to_be_visible()
+                assert "cash_direction=1" in page.evaluate("location.hash")
+                fact_filter.locator('select[name="currency_code"]').select_option("CNY")
+                expect(page.locator('[data-form="fact-filter"]')).to_be_visible()
+                fact_filter.locator('select[name="sort"]').select_option("amount.asc")
+                expect(page.locator('[data-form="fact-filter"]')).to_be_visible()
+                assert "cash_direction=1" in page.evaluate("location.hash")
+                assert "sort_field=amount" in page.evaluate("location.hash")
+                fact_filter.locator('[data-action="range-open"]').click()
+                fact_filter.locator('[data-range-clear]').click()
+                expect(page.locator('[data-form="fact-filter"]')).to_be_visible()
+                assert "date_from=" not in page.evaluate("location.hash")
+                assert "date_to=" not in page.evaluate("location.hash")
+                page.locator('[data-action="detail-clear"]').click()
+                expect(page.get_by_text("浏览器测试商户").first).to_be_visible()
                 page.locator('[data-action="fact-detail"]').first.click()
                 expect(page.locator("dialog.detail-view-drawer[open]")).to_contain_text(
                     "规范事实"
                 )
                 page.locator("dialog[open] [data-close]").first.click()
 
-                page.locator('.detail-tabs [data-page="ledger-reviews"]').click()
-                page.locator('[data-action="new-economic-review"]').first.click()
-                wizard = page.locator('dialog[open] [data-form="economic-review-create"]')
+                page.locator('.secondary-nav [data-page="ledger-reviews"]').click()
+                page.locator('[data-page="review-create"]').first.click()
+                wizard = page.locator('[data-review-workflow] [data-form="economic-review-create"]')
                 expect(wizard).to_be_visible()
-                expect(wizard.get_by_role("heading", name="1. 选择事实流水")).to_be_visible()
-                expect(wizard.get_by_role("heading", name="2. 定义账本流水")).to_be_visible()
-                expect(wizard.get_by_role("heading", name="3. 分配金额")).to_be_visible()
-                wizard.locator('[data-close]').click()
+                expect(wizard.locator('[data-review-step="1"]')).to_contain_text("选择范围")
+                expect(wizard.locator('[data-review-step="2"]')).to_contain_text("配置关系")
+                expect(wizard.locator('[data-review-step="3"]')).to_contain_text("检查并生成")
+                expect(wizard.locator('[data-review-candidate-filter]')).to_be_visible()
+                wizard.locator('[data-page="reviews"]').click()
+                expect(page.locator('.review-dashboard')).to_be_visible()
 
                 page.goto(f"{base_url}/#summary")
-                expect(page.get_by_role("heading", name="本月概览")).to_be_visible()
-                assert page.evaluate("location.hash").startswith("#accounts")
+                expect(page.locator(".module-heading")).to_be_hidden()
+                expect(page.locator(".month-metrics")).to_be_visible()
+                assert page.evaluate("location.hash").startswith("#overview")
 
                 for width, height in (
                     (390, 844),
@@ -250,13 +335,14 @@ def run() -> None:
                     (3440, 1440),
                 ):
                     page.set_viewport_size({"width": width, "height": height})
-                    for route_name, heading in (
-                        ("details", "明细"),
-                        ("accounts", "本月概览"),
-                        ("workbench?task=reviews", "工作台"),
+                    for route_name, selector in (
+                        ("details/transaction-fact", '[data-form="fact-filter"]'),
+                        ("overview", '.month-metrics'),
+                        ("workbench/review", '.review-dashboard'),
                     ):
                         page.goto(f"{base_url}/#{route_name}")
-                        expect(page.get_by_role("heading", name=heading)).to_be_visible()
+                        expect(page.locator(selector)).to_be_visible()
+                        expect(page.locator(".module-heading")).to_be_hidden()
                         overflow = page.evaluate(
                             "document.documentElement.scrollWidth - document.documentElement.clientWidth"
                         )

@@ -1,2 +1,2 @@
 // Application entry: load the existing ledger page workflow.
-import "./js/view/ledger.js";
+import "./js/view/ledger.js?v=20260917.8";

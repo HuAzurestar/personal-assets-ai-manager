@@ -62,7 +62,7 @@ function calendarMarkup(summary, currency, range) {
   return [...blanks, ...cells].join("");
 }
 
-export function accountsMarkup({ summary, accounts, accountCode, currency, cursor }) {
+export function accountsMarkup({ summary, currency, cursor }) {
   const range = monthBounds(cursor);
   const currencies = summary.totals.map((item) => item.currency_code);
   const selectedCurrency = currencies.includes(currency) ? currency : currencies[0] || "CNY";
@@ -72,11 +72,6 @@ export function accountsMarkup({ summary, accounts, accountCode, currency, curso
     refund_offset_amount: 0,
     net_amount: 0,
   };
-  const accountOptions = accounts.map((item) => {
-    const identity = item.identity || item.account_code || "UNKNOWN";
-    const label = item.display_name || identity;
-    return `<option value="${esc(identity)}" ${identity === accountCode ? "selected" : ""}>${esc(label)}</option>`;
-  }).join("");
   const currencyOptions = [...new Set([selectedCurrency, ...currencies])]
     .map((item) => `<option value="${esc(item)}" ${item === selectedCurrency ? "selected" : ""}>${esc(item)}</option>`)
     .join("");
@@ -105,7 +100,6 @@ export function accountsMarkup({ summary, accounts, accountCode, currency, curso
 
   return `<section class="account-dashboard">
     <form class="account-toolbar" data-form="account-filter">
-      <label><span>账户</span><select name="account_code"><option value="">全部账户</option>${accountOptions}</select></label>
       <label><span>币种</span><select name="currency_code">${currencyOptions}</select></label>
       <div class="month-switcher" aria-label="月份选择">
         <button type="button" data-action="account-month" data-value="-1" aria-label="上个月">←</button>
@@ -113,7 +107,7 @@ export function accountsMarkup({ summary, accounts, accountCode, currency, curso
         <button type="button" data-action="account-month" data-value="1" aria-label="下个月">→</button>
         <button type="button" data-action="account-current">本月</button>
       </div>
-      <span class="account-scope">${accountCode ? "单一账户" : "全部账户"} · ${esc(selectedCurrency)}</span>
+      <span class="account-scope">Ledger 汇总 · ${esc(selectedCurrency)}</span>
     </form>
     <div class="month-metrics">
       <button type="button" data-action="account-metric" data-value="INCOME"><span>本月收入</span><strong class="income">${amount(total.income_amount, selectedCurrency)}</strong><small>点击查看收入流水</small></button>
