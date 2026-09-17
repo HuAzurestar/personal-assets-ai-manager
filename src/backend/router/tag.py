@@ -60,7 +60,8 @@ def list_views(
 @router.post("/view", response_model=TargetTagViewResponse)
 def create_view(payload: TargetTagViewCreateRequest, db: Session = Depends(get_db)):
     return TargetTagViewResponse(
-        message="Tag view created",
+        status=200,
+        message="ok",
         body=TargetTagService(db).create_view(payload),
     )
 
@@ -72,7 +73,8 @@ def set_view_status(
     db: Session = Depends(get_db),
 ):
     return TargetTagViewResponse(
-        message="Tag view updated",
+        status=200,
+        message="ok",
         body=TargetTagService(db).set_view_status(view_id, payload),
     )
 
@@ -84,7 +86,8 @@ def create_tag(
     db: Session = Depends(get_db),
 ):
     return TargetTagViewResponse(
-        message="Tag created",
+        status=200,
+        message="ok",
         body=TargetTagService(db).create_tag(view_id, payload),
     )
 
@@ -97,6 +100,7 @@ def set_tag_status(
     db: Session = Depends(get_db),
 ):
     return TargetTagViewResponse(
-        message="Tag updated",
+        status=200,
+        message="ok",
         body=TargetTagService(db).set_tag_status(view_id, tag_id, payload)
     )

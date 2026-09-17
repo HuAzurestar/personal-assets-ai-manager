@@ -20,7 +20,7 @@ from backend.schema.list_query import (
     iter_filter_fields,
     validate_list_capabilities,
 )
-from backend.schema.response import ListBody, ListResponse
+from backend.schema.response import ListBody, ListResponse, SuccessResponse
 
 
 class TargetTagViewCreateRequest(BaseModel):
@@ -108,9 +108,7 @@ class TargetTagViewListBody(ListBody[TargetTagViewRead]):
     pass
 
 
-class TargetTagViewResponse(BaseModel):
-    status: Literal[200] = 200
-    message: str = "ok"
+class TargetTagViewResponse(SuccessResponse[TargetTagViewRead]):
     body: TargetTagViewRead
 
 
@@ -123,9 +121,7 @@ class TargetTagAssignmentRead(BaseModel):
     tag_state: dict[str, str]
 
 
-class TargetTagAssignmentResponse(BaseModel):
-    status: Literal[200] = 200
-    message: str = "ok"
+class TargetTagAssignmentResponse(SuccessResponse[TargetTagAssignmentRead]):
     body: TargetTagAssignmentRead
 
 

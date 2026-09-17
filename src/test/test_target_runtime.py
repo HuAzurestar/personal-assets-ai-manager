@@ -65,6 +65,7 @@ def test_openapi_locks_canonical_ledger_v1_contract():
         "EconomicFlowListResponse",
         "EconomicFlowDetailResponse",
         "EconomicSummaryResponse",
+        "ImportResponse",
         "TargetEconomicReviewResponse",
         "TargetEconomicReviewListResponse",
         "ImportFactConflictResponse",
@@ -75,9 +76,12 @@ def test_openapi_locks_canonical_ledger_v1_contract():
         "ImportFileTransactionFactListResponse",
         "LedgerAccountResponse",
         "TargetReviewCandidateListResponse",
+        "TargetTagViewResponse",
         "TargetTagViewListResponse",
+        "TargetTagAssignmentResponse",
     ):
         assert schemas[name]["properties"]["status"]["const"] == 200
+        assert schemas[name]["properties"]["message"]["const"] == "ok"
 
     flow_properties = set(schemas["EconomicFlowListItem"]["properties"])
     assert {"economic_type", "cash_direction"} <= flow_properties

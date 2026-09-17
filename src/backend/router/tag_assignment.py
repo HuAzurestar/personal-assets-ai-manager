@@ -26,6 +26,7 @@ def set_assignment(
     db: Session = Depends(get_db),
 ):
     return TargetTagAssignmentResponse(
-        message="Ledger tag assignment updated",
+        status=200,
+        message="ok",
         body=TargetTagAssignmentService(db).assign(ledger_id, payload)
     )

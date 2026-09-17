@@ -66,6 +66,8 @@ def list_conflicts(
 )
 def conflict_detail(conflict_id: int, db: Session = Depends(get_db)):
     return ImportFactConflictResponse(
+        status=200,
+        message="ok",
         body=TargetFactConflictService(db).detail(conflict_id)
     )
 
@@ -80,7 +82,8 @@ def resolve_conflict(
     db: Session = Depends(get_db),
 ):
     return ImportFactConflictResponse(
-        message="Fact conflict resolved",
+        status=200,
+        message="ok",
         body=TargetFactConflictService(db).resolve(conflict_id, payload)
     )
 
@@ -95,7 +98,8 @@ def dismiss_conflict(
     db: Session = Depends(get_db),
 ):
     return ImportFactConflictResponse(
-        message="Fact conflict dismissed",
+        status=200,
+        message="ok",
         body=TargetFactConflictService(db).dismiss(conflict_id, payload)
     )
 
@@ -110,6 +114,7 @@ def reopen_conflict(
     db: Session = Depends(get_db),
 ):
     return ImportFactConflictResponse(
-        message="Fact conflict reopened",
+        status=200,
+        message="ok",
         body=TargetFactConflictService(db).reopen(conflict_id, payload)
     )

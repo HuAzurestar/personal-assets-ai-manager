@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from backend.schema.response import SuccessResponse
 
 
 class LedgerAccountUpdateRequest(BaseModel):
@@ -20,7 +21,5 @@ class LedgerAccountRead(BaseModel):
     updated_time: datetime
 
 
-class LedgerAccountResponse(BaseModel):
-    status: Literal[200] = 200
-    message: str = "ok"
+class LedgerAccountResponse(SuccessResponse[LedgerAccountRead]):
     body: LedgerAccountRead

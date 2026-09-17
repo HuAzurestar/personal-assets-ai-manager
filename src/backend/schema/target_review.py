@@ -22,7 +22,7 @@ from backend.schema.list_query import (
     iter_filter_fields,
     validate_list_capabilities,
 )
-from backend.schema.response import ListBody, ListResponse
+from backend.schema.response import ListBody, ListResponse, SuccessResponse
 
 
 @dataclass(frozen=True, slots=True)
@@ -264,9 +264,7 @@ class TargetEconomicReviewRead(BaseModel):
     updated_time: datetime
 
 
-class TargetEconomicReviewResponse(BaseModel):
-    status: Literal[200] = 200
-    message: str = "ok"
+class TargetEconomicReviewResponse(SuccessResponse[TargetEconomicReviewRead]):
     body: TargetEconomicReviewRead
 
 

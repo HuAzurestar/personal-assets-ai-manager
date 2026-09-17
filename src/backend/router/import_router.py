@@ -26,7 +26,8 @@ router = APIRouter(
 @router.post("/preview", response_model=ImportResponse)
 def preview(payload: IntakePreviewRequest, db: Session = Depends(get_db)):
     return ImportResponse(
-        message="Import preview created",
+        status=200,
+        message="ok",
         body=TargetIntakeService(db).preview(payload),
     )
 
@@ -38,7 +39,8 @@ def revise(
     db: Session = Depends(get_db),
 ):
     return ImportResponse(
-        message="Import preview updated",
+        status=200,
+        message="ok",
         body=TargetIntakeService(db).revise(token, payload),
     )
 
@@ -50,6 +52,7 @@ def confirm(
     db: Session = Depends(get_db),
 ):
     return ImportResponse(
-        message="Import confirmed",
+        status=200,
+        message="ok",
         body=TargetIntakeService(db).confirm(token, payload),
     )

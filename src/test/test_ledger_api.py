@@ -232,7 +232,7 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
     })
     assert response.status_code == 200, response.text
     assert response.json()["status"] == response.status_code
-    assert response.json()["message"] == "Ledger review created"
+    assert response.json()["message"] == "ok"
     case = response.json()["body"]
     assert case["status"] == "PENDING"
     assert [fact["id"] for fact in case["facts"]] == fact_ids
