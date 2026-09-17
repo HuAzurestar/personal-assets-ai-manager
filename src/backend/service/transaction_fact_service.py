@@ -77,11 +77,7 @@ class TransactionFactService:
                 for row in self.mapper.reviews(review_ids)
             ],
             ledgers=[
-                TransactionFactLedgerRead(**{
-                    name: value
-                    for name, value in row.items()
-                    if name not in {"entry_type", "entry_direction"}
-                })
+                TransactionFactLedgerRead(**row)
                 for row in self.mapper.ledgers(economic_ids)
             ],
         )

@@ -11,7 +11,7 @@ from backend.schema.list_query import ListSorter
 class TransactionFactFilter(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    cash_direction: Literal["IN", "OUT"] | None = None
+    cash_direction: int | None = None
     currency_code: str | None = None
     account_code: str | None = None
     date_from: date | None = None
@@ -31,11 +31,12 @@ class TransactionFactSorter(ListSorter):
 class TransactionFactListItem(BaseModel):
     id: int
     occurred_time: datetime
-    cash_direction: Literal["IN", "OUT"]
+    cash_direction: int
     amount: int
     currency_code: str
     account_code: str
-    counterparty: str
+    counterparty_name: str
+    counterparty_account_ref: str
     summary: str
     created_time: datetime
     updated_time: datetime
@@ -62,16 +63,16 @@ class TransactionFactPageResponse(BaseModel):
 
 
 class TransactionFactImportEvidenceRead(BaseModel):
-    raw_id: int
-    import_file_id: int
+    id: int
+    transaction_import_file_id: int
+    transaction_fact_id: int
     source_row_number: int
     source_reference: str
-    parse_status: str
+    row_status: int
     issue_code: str
     filename: str
-    source_type: str
-    institution_code: str
-    file_format: str
+    source_type: int
+    file_format: int
     imported_time: datetime
 
 
@@ -86,10 +87,8 @@ class TransactionFactAllocationRead(BaseModel):
 
 class TransactionFactReviewRead(BaseModel):
     id: int
-    review_type: str
-    behavior_code: str
-    status: str
-    version: int
+    behavior_type: int
+    status: int
     title: str
     created_time: datetime
     updated_time: datetime
@@ -97,8 +96,8 @@ class TransactionFactReviewRead(BaseModel):
 
 class TransactionFactLedgerRead(BaseModel):
     id: int
-    economic_type: Literal["TRANSACTION", "ACCOUNT_TRANSFER", "CLAIM"]
-    cash_direction: Literal["IN", "OUT"]
+    entry_type: int
+    entry_direction: int
     amount: int
     currency_code: str
     account_code: str

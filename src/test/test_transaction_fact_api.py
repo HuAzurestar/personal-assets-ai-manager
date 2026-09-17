@@ -121,7 +121,7 @@ def test_transaction_fact_list_is_a_pure_server_queried_po_list(
             "page": 1,
             "page_size": 20,
             "q": "client",
-            "filter": '{"cash_direction":"IN","currency_code":"usd"}',
+            "filter": '{"cash_direction":1,"currency_code":"usd"}',
             "sorter": '{"field":"amount","order":"asc"}',
         },
     )
@@ -130,7 +130,7 @@ def test_transaction_fact_list_is_a_pure_server_queried_po_list(
     body = response.json()["body"]
     assert (body["total"], body["page"], body["page_size"]) == (1, 1, 20)
     assert body["filter"] == {
-        "cash_direction": "IN",
+        "cash_direction": CASH_DIRECTION_IN,
         "currency_code": "usd",
         "account_code": None,
         "date_from": None,
@@ -138,6 +138,7 @@ def test_transaction_fact_list_is_a_pure_server_queried_po_list(
     }
     assert body["sorter"] == {"field": "amount", "order": "asc"}
     assert body["items"][0]["summary"] == "Consulting"
+    assert body["items"][0]["counterparty_name"] == "Client"
     assert "available_value" not in body["items"][0]
     assert "fact_key" not in body["items"][0]
 

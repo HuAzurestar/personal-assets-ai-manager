@@ -18,6 +18,8 @@ import {
 } from "./account.js";
 
 const entryTypeValues = { TRANSACTION: 0, ACCOUNT_TRANSFER: 1, CLAIM: 2 };
+const CASH_DIRECTION_IN = 1;
+const CASH_DIRECTION_OUT = 2;
 
 function closeDialogs() {
   $$('dialog[open]').forEach((dialog) => dialog.close());
@@ -28,7 +30,13 @@ function amountValue(item) {
 
 function signedMoney(item, direction) {
   if (!amountValue(item)) return "0";
-  return `${direction === "IN" ? "＋" : "−"} ${money(item)}`;
+  return `${direction === CASH_DIRECTION_IN || direction === "IN" ? "＋" : "−"} ${money(item)}`;
+}
+
+function cashDirectionName(direction) {
+  if (direction === CASH_DIRECTION_IN || direction === "IN") return "流入";
+  if (direction === CASH_DIRECTION_OUT || direction === "OUT") return "流出";
+  return `未知方向（${direction}）`;
 }
 
 function modal(title, body, wide = true) {
@@ -268,8 +276,8 @@ async function ledgerPage() {
   });
   const result = await request(`/paam/ledger/v1/transaction_fact/list?${query}`);
   const rows = result.items.map((fact) => `<tr class="detail-click-row" tabindex="0" data-fact-row="${fact.id}">
-    <td>${date(fact.occurred_time)}</td><td><button type="button" class="detail-primary" data-action="fact-detail" data-id="${fact.id}"><strong>${esc(fact.summary || fact.counterparty || `事实 #${fact.id}`)}</strong><small>#${fact.id} · ${esc(fact.counterparty || "未知交易方")}</small></button></td>
-    <td><span class="badge neutral">${fact.cash_direction === "IN" ? "流入" : "流出"}</span></td><td class="money ${fact.cash_direction === "IN" ? "income" : "expense"}">${signedMoney(fact, fact.cash_direction)}</td><td>${esc(fact.currency_code)}</td><td class="mono">${esc(fact.account_code)}</td><td class="detail-arrow">→</td>
+    <td>${date(fact.occurred_time)}</td><td><button type="button" class="detail-primary" data-action="fact-detail" data-id="${fact.id}"><strong>${esc(fact.summary || fact.counterparty_name || `事实 #${fact.id}`)}</strong><small>#${fact.id} · ${esc(fact.counterparty_name || "未知交易方")}</small></button></td>
+    <td><span class="badge neutral">${cashDirectionName(fact.cash_direction)}</span></td><td class="money ${fact.cash_direction === CASH_DIRECTION_IN ? "income" : "expense"}">${signedMoney(fact, fact.cash_direction)}</td><td>${esc(fact.currency_code)}</td><td class="mono">${esc(fact.account_code)}</td><td class="detail-arrow">→</td>
   </tr>`).join("");
   const toolbar = `<form class="detail-filter" data-form="fact-filter"><label class="grow">查找<input name="q" value="${esc(q)}" placeholder="ID、交易方、摘要或账户"></label><label>币种<input name="currency_code" maxlength="12" value="${esc(currency)}" placeholder="全部币种"></label><label>开始日期<input type="date" name="date_from" value="${esc(dateFrom)}"></label><label>结束日期<input type="date" name="date_to" value="${esc(dateTo)}"></label><label>排序<select name="sort_field"><option value="occurred_time" ${sortField === "occurred_time" ? "selected" : ""}>发生时间</option><option value="amount" ${sortField === "amount" ? "selected" : ""}>金额</option><option value="created_time" ${sortField === "created_time" ? "selected" : ""}>创建时间</option><option value="id" ${sortField === "id" ? "selected" : ""}>ID</option></select></label><label>顺序<select name="sort_order"><option value="desc" ${sortOrder === "desc" ? "selected" : ""}>降序</option><option value="asc" ${sortOrder === "asc" ? "selected" : ""}>升序</option></select></label><button type="button" class="quiet" data-action="detail-clear" data-page-id="ledger">清空</button><button class="primary">查询</button></form>`;
   return detailListView({ active: "ledger", toolbar, title: "Transaction Fact", description: "外部账单接受后的不可变事实 PO；查找、筛选与排序均由服务端执行。", total: result.total, headers: ["发生时间", "事实", "方向", "金额", "币种", "来源账户", ""], rows, footer: detailPager(result, "ledger") });
@@ -278,15 +286,15 @@ async function ledgerPage() {
 async function showFactDetail(id) {
   const detail = await request(`/paam/ledger/v1/transaction_fact/${id}`);
   const fact = detail.transaction_fact;
-  const evidence = detailRelationRows(detail.import_evidence, (item) => `<span><strong>${esc(item.filename)}</strong><small>Import File #${item.import_file_id} · 第 ${item.source_row_number} 行 · ${esc(item.source_type)}</small></span><span>${esc(item.parse_status)}</span>`);
+  const evidence = detailRelationRows(detail.import_evidence, (item) => `<span><strong>${esc(item.filename)}</strong><small>Import File #${item.transaction_import_file_id} · 第 ${item.source_row_number} 行 · ${esc(sourceLabels[item.source_type] || item.source_type)}</small></span><span>${esc(item.row_status)}</span>`);
   const allocations = detailRelationRows(detail.allocations, (item) => `<span><strong>Allocation #${item.id}</strong><small>Review #${item.review_id} · Fact #${item.fact_id} · Ledger #${item.economic_id || "待确认"}</small></span><strong>${money(item)}</strong>`);
-  const reviews = detailRelationRows(detail.reviews, (item) => `<span><strong>Review #${item.id} · ${esc(item.behavior_code)}</strong><small>${esc(item.title || "未填写标题")} · ${esc(statusNames[item.status] || item.status)}</small></span><span>v${item.version}</span>`);
-  const ledgers = detailRelationRows(detail.ledgers, (item) => `<span><strong>Ledger #${item.id} · ${esc(typeNames[item.economic_type] || item.economic_type)}</strong><small>${date(item.occurred_time)} · ${esc(item.account_code)}</small></span><strong>${money(item)}</strong>`);
+  const reviews = detailRelationRows(detail.reviews, (item) => `<span><strong>Review #${item.id} · 行为 ${esc(item.behavior_type)}</strong><small>${esc(item.title || "未填写标题")} · ${esc(statusNames[item.status] || item.status)}</small></span>`);
+  const ledgers = detailRelationRows(detail.ledgers, (item) => `<span><strong>Ledger #${item.id} · ${esc(typeNames[item.entry_type] || item.entry_type)}</strong><small>${date(item.occurred_time)} · ${esc(item.account_code)}</small></span><strong>${money(item)}</strong>`);
   detailDrawer({
-    title: fact.summary || fact.counterparty || `事实 #${fact.id}`,
+    title: fact.summary || fact.counterparty_name || `事实 #${fact.id}`,
     kicker: `TRANSACTION FACT #${fact.id}`,
     subtitle: "事实层记录导入来源，不直接代表最终经济分类。",
-    body: `<section class="drawer-record-card"><div><span>${fact.cash_direction === "IN" ? "收入事实" : "支出事实"}</span><h3>${esc(fact.counterparty || "未知交易方")}</h3><small>${date(fact.occurred_time)} · ${esc(fact.account_code)}</small></div><strong class="ledger-fact-money ${fact.cash_direction === "IN" ? "plus" : "minus"}">${signedMoney(fact, fact.cash_direction)}</strong></section>${detailSection("规范事实（Transaction Fact）", detailFields([["Fact Key", fact.fact_key], ["摘要", fact.summary], ["币种", fact.currency_code], ["创建时间", date(fact.created_time)], ["更新时间", date(fact.updated_time)]]))}${detailSection("Import File 来源", evidence, "没有关联导入文件")}${detailSection("Allocation", allocations, "没有关联分配")}${detailSection("Review", reviews, "没有关联审查")}${detailSection("Ledger", ledgers, "没有关联账本")}`,
+    body: `<section class="drawer-record-card"><div><span>${cashDirectionName(fact.cash_direction)}事实</span><h3>${esc(fact.counterparty_name || "未知交易方")}</h3><small>${date(fact.occurred_time)} · ${esc(fact.account_code)}</small></div><strong class="ledger-fact-money ${fact.cash_direction === CASH_DIRECTION_IN ? "plus" : "minus"}">${signedMoney(fact, fact.cash_direction)}</strong></section>${detailSection("规范事实（Transaction Fact）", detailFields([["Fact Key", fact.fact_key], ["摘要", fact.summary], ["对手方账户", fact.counterparty_account_ref], ["币种", fact.currency_code], ["创建时间", date(fact.created_time)], ["更新时间", date(fact.updated_time)]]))}${detailSection("Import File 来源", evidence, "没有关联导入文件")}${detailSection("Allocation", allocations, "没有关联分配")}${detailSection("Review", reviews, "没有关联审查")}${detailSection("Ledger", ledgers, "没有关联账本")}`,
   });
 }
 
@@ -515,7 +523,7 @@ async function showImportFileDetail(id) {
     request(`/paam/import/v1/import_file/${id}/transaction_fact/list?${factQuery}`),
   ]);
   const item = detail.import_file;
-  const factRows = facts.items.map((fact) => `<tr><td>#${fact.id}</td><td>${date(fact.occurred_time)}</td><td>${esc(fact.summary || fact.counterparty || "—")}</td><td>${esc(fact.cash_direction)}</td><td class="money">${money(fact)}</td><td>${esc(fact.currency_code)}</td></tr>`);
+  const factRows = facts.items.map((fact) => `<tr><td>#${fact.id}</td><td>${date(fact.occurred_time)}</td><td>${esc(fact.summary || fact.counterparty_name || "—")}</td><td>${cashDirectionName(fact.cash_direction)}</td><td class="money">${money(fact)}</td><td>${esc(fact.currency_code)}</td></tr>`);
   const childTable = factRows.length ? `${table(["Fact", "发生时间", "摘要", "方向", "金额", "币种"], factRows)}<p class="muted">显示 ${facts.items.length} / ${facts.total} 条；完整结果可通过 Transaction Fact 子资源分页查询。</p>` : "";
   detailDrawer({
     title: item.filename || `Import File #${item.id}`,
