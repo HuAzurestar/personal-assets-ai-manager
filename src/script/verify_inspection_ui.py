@@ -317,6 +317,11 @@ def run():
                     drawer.locator("[data-inspect-full]").click()
                     expect(drawer.locator(".inspection-rail")).to_be_hidden()
                     drawer.locator("[data-inspect-full]").click()
+                    old_page_label = drawer.locator("[data-rail-page-label]").inner_text()
+                    drawer.locator('[data-rail-page="next"]').click()
+                    expect(drawer.locator("[data-rail-page-label]")).not_to_have_text(old_page_label)
+                    expect(drawer).to_be_visible()
+                    expect(drawer.locator(".inspection-rail")).to_be_visible()
                     drawer.locator("[data-close]").click()
 
                     # Keyboard open / Escape returns focus and leaves filtering intact.
@@ -353,7 +358,7 @@ def run():
                     expect(historical.locator('.inspection-flow')).to_have_count(2)
                     drawer.locator('[data-close]').click()
 
-                    sizes = [(1440, 1000, 1), (390, 844, 1), (1080, 1080, 1), (2700, 1080, 1)]
+                    sizes = [(1440, 1000, 1), (390, 844, 1), (1080, 1080, 1), (960, 540, 1), (2700, 1080, 1)]
                     if args.matrix:
                         sizes = [(round(h * ratio / scale), round(h / scale), scale) for h in [1080, 2160, 3240] for ratio in [.4, 1, 2.5] for scale in [1, 1.5, 2, 3]]
                     for width, height, scale in sizes:
@@ -375,9 +380,17 @@ def run():
                                 page.locator(f'.secondary-nav [data-page="{tab}"]').click()
                                 expect(page.locator('.detail-primary').first).to_be_visible()
                             drawer = open_detail(kind, record_id)
+                            expected_layout = "split" if width >= 1280 and height >= 680 else "bottom" if width >= 600 and height < 640 else "right" if width >= 768 else "full"
+                            expect(drawer).to_have_attribute("data-layout", expected_layout)
+                            if expected_layout == "split":
+                                expect(drawer.locator(".inspection-rail")).to_be_visible()
+                            else:
+                                expect(drawer.locator(".inspection-rail")).to_be_hidden()
                             geometry = drawer.evaluate("""d => ({
                                 overflow: d.scrollWidth-d.clientWidth,
                                 bodyOverflow: d.querySelector('.inspection-body').scrollWidth-d.querySelector('.inspection-body').clientWidth,
+                                dialog: (()=>{const r=d.getBoundingClientRect();return {x:r.x,y:r.y,right:r.right,bottom:r.bottom,width:r.width,height:r.height}})(),
+                                closeRect: (()=>{const r=d.querySelector('[data-close]').getBoundingClientRect();return {x:r.x,y:r.y,right:r.right,bottom:r.bottom,width:r.width,height:r.height}})(),
                                 close: (()=>{const r=d.querySelector('[data-close]').getBoundingClientRect();return r.x>=0&&r.right<=innerWidth+1&&r.y>=0&&r.bottom<=innerHeight+1})()
                             })""")
                             assert geometry["overflow"] <= 1 and geometry["bodyOverflow"] <= 1 and geometry["close"], (kind, width, height, scale, geometry)

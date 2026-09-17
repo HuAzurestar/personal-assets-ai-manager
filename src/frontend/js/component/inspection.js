@@ -94,8 +94,8 @@ function allocationSection(presentation, allocations, facts, ledgers, reviews, c
   };
   const active = allocations.filter(row => reviewMap.get(row.review_case_id)?.status === 0);
   const history = allocations.filter(row => reviewMap.get(row.review_case_id)?.status !== 0);
-  let result = card("当前资金关系", presentation.collection(active, render, "条关系"), { wide: true, tone: "accent" });
-  if (history.length) result += card("历史资金关系", presentation.collection(history, render, "条历史关系"), { wide: true, tone: "muted" });
+  let result = card("当前资金关系", presentation.collection(active, render, "条关系"), { tone: "accent" });
+  if (history.length) result += card("历史资金关系", presentation.collection(history, render, "条历史关系"), { tone: "muted" });
   return result;
 }
 
@@ -187,7 +187,7 @@ function describe(kind, data) {
     body = metrics([["涉及事实", item.facts.length], ["账本结果", item.ledger_entries.length, "accent"], ["最近更新", when(item.updated_time)]])
       + totals(item.ledger_entries, "entry_direction") + '<div class="inspection-dashboard">'
       + allocationSection(p, item.allocations, item.facts, item.ledger_entries, [item], { kind, id: item.id })
-      + card(`变更记录 · ${item.history.length}`, p.collection(item.history, row => `<article class="inspection-history"><strong>${esc(operations[row.operation] || "操作未识别")}</strong><time>${esc(when(row.created_time))}</time><p>${esc(row.reason === "ensure exact accepted-fact coverage" ? "系统建立默认分配，确保事实金额完整入账" : row.reason || "未填写原因")}</p></article>`, "次变更"), { wide: true }) + "</div>";
+      + card(`变更记录 · ${item.history.length}`, p.collection(item.history, row => `<article class="inspection-history"><strong>${esc(operations[row.operation] || "操作未识别")}</strong><time>${esc(when(row.created_time))}</time><p>${esc(row.reason === "ensure exact accepted-fact coverage" ? "系统建立默认分配，确保事实金额完整入账" : row.reason || "未填写原因")}</p></article>`, "次变更")) + "</div>";
     actions = `<button data-action="economic-review-transition" data-kind="${item.status === 0 ? "revoke" : "restore"}" data-id="${item.id}">${item.status === 0 ? "撤销并恢复默认交易" : "恢复审查"}</button>`;
   } else {
     item = data.import_file;
@@ -214,30 +214,84 @@ async function load(kind, id) {
 
 let current = null;
 let backgroundOverflow = null;
+
+function readListContext() {
+  const buttons = [...document.querySelectorAll('#page-content .detail-primary[data-action]')]
+    .filter((button) => actionKinds[button.dataset.action]);
+  const pager = document.querySelector("#page-content .ledger-pagination");
+  const pageButtons = pager ? [...pager.querySelectorAll('[data-action="detail-page"]')] : [];
+  return {
+    rows: buttons.map((button) => ({
+      kind: actionKinds[button.dataset.action],
+      id: Number(button.dataset.id),
+      title: button.dataset.inspectTitle || button.querySelector("strong")?.textContent || button.textContent,
+      meta: button.dataset.inspectMeta || "",
+      amount: button.dataset.inspectAmount || button.closest("tr")?.querySelector(".fact-amount,.money")?.textContent || "",
+    })),
+    pageLabel: pager?.querySelector(".page-buttons span")?.textContent?.trim() || "",
+    previous: pageButtons[0] || null,
+    next: pageButtons.at(-1) || null,
+  };
+}
+
+function listSignature() {
+  const context = readListContext();
+  return `${context.pageLabel}|${context.rows.map((row) => `${row.kind}:${row.id}`).join(",")}`;
+}
+
 export async function openInspection(kind, id, bindActions) {
-  if (current?.dialog.isConnected && current.dialog.open) return current.navigate(kind, Number(id));
+  if (current?.dialog.isConnected && current.dialog.open) return current.navigate(kind, Number(id), true, true);
   const opener = document.activeElement;
-  const rail = [...document.querySelectorAll('#page-content .detail-primary[data-action]')].filter(button => actionKinds[button.dataset.action]).map(button => ({ kind: actionKinds[button.dataset.action], id: Number(button.dataset.id), title: button.querySelector("strong")?.textContent || button.textContent, amount: button.closest("tr")?.querySelector(".money")?.textContent || "" }));
+  let listContext = readListContext();
+  let rail = listContext.rows;
   const dialog = document.createElement("dialog");
   dialog.className = "detail-view-drawer inspection-workspace";
   dialog.setAttribute("aria-labelledby", "inspection-title");
-  dialog.innerHTML = '<div class="inspection-shell"><aside class="inspection-rail" aria-label="当前列表页"><h2>当前列表</h2><div data-rail></div></aside><div class="inspection-main"><header class="inspection-header"><div class="inspection-controls"><button data-inspect-back disabled>返回上层</button><button data-inspect-prev>上一条</button><button data-inspect-next>下一条</button><button data-inspect-full aria-pressed="false">全屏查看</button><button data-close>返回列表</button></div><div class="inspection-heading" tabindex="-1"><div><span data-kind-label></span><h2 id="inspection-title">正在加载…</h2><p data-inspect-subtitle></p></div><strong data-inspect-hero></strong></div><div class="inspection-tools" data-inspect-actions></div></header><div class="detail-view-drawer-body inspection-body" tabindex="0" aria-label="详情内容"></div></div></div>';
+  dialog.innerHTML = '<div class="inspection-shell"><aside class="inspection-rail" aria-label="当前列表页"><h2>当前列表</h2><div data-rail></div><footer class="inspection-rail-pager"><button data-rail-page="previous">上一页</button><span data-rail-page-label></span><button data-rail-page="next">下一页</button></footer></aside><div class="inspection-main"><header class="inspection-header"><div class="inspection-controls"><button data-inspect-back disabled>返回上层</button><button data-inspect-prev>上一条</button><button data-inspect-next>下一条</button><button data-inspect-full aria-pressed="false">全屏查看</button><button data-close>返回列表</button></div><div class="inspection-heading" tabindex="-1"><div><span data-kind-label></span><h2 id="inspection-title">正在加载…</h2><p data-inspect-subtitle></p></div><strong data-inspect-hero></strong></div><div class="inspection-tools" data-inspect-actions></div></header><div class="detail-view-drawer-body inspection-body" tabindex="0" aria-label="详情内容"></div></div></div>';
   document.body.append(dialog);
   if (backgroundOverflow === null) backgroundOverflow = document.body.style.overflow;
   document.body.style.overflow = "hidden";
   dialog.showModal();
   const railRoot = dialog.querySelector("[data-rail]");
-  railRoot.innerHTML = rail.map(row => `<button data-rail-kind="${row.kind}" data-rail-id="${row.id}"><strong>${esc(row.title)}</strong>${row.amount ? `<span>${esc(row.amount)}</span>` : ""}</button>`).join("");
   const body = dialog.querySelector(".inspection-body");
   const stack = [];
-  let selected = null, version = 0, full = false;
+  let selected = null, version = 0, full = false, listPaging = false;
   const cache = new Map();
-  const get = (nextKind, nextId) => {
+  const get = (nextKind, nextId, fresh = false) => {
     const key = `${nextKind}:${nextId}`;
+    if (fresh) cache.delete(key);
     if (!cache.has(key)) cache.set(key, load(nextKind, nextId).catch(error => { cache.delete(key); throw error; }));
     return cache.get(key);
   };
-  async function navigate(nextKind, nextId, record = true) {
+  function renderRail() {
+    railRoot.innerHTML = rail.map((row) => `<button data-rail-kind="${row.kind}" data-rail-id="${row.id}" title="${esc(row.title)}"><strong>${esc(row.title)}</strong>${row.meta ? `<small>${esc(row.meta)}</small>` : ""}${row.amount ? `<span>${esc(row.amount)}</span>` : ""}</button>`).join("");
+    dialog.querySelector("[data-rail-page-label]").textContent = listContext.pageLabel;
+    dialog.querySelector('[data-rail-page="previous"]').disabled = !listContext.previous || listContext.previous.disabled;
+    dialog.querySelector('[data-rail-page="next"]').disabled = !listContext.next || listContext.next.disabled;
+  }
+  function syncLayout() {
+    const layout = full ? "full" : window.innerWidth >= 1280 && window.innerHeight >= 680
+      ? "split"
+      : window.innerWidth >= 600 && window.innerHeight < 640
+        ? "bottom"
+        : window.innerWidth >= 768 ? "right" : "full";
+    dialog.dataset.layout = layout;
+    const button = dialog.querySelector("[data-inspect-full]");
+    button.setAttribute("aria-pressed", String(full));
+    button.textContent = full ? "恢复自适应" : "全屏查看";
+    button.hidden = layout === "full" && !full;
+  }
+  function updateSelection() {
+    const index = rail.findIndex((row) => row.kind === selected?.kind && row.id === selected?.id);
+    dialog.querySelector("[data-inspect-prev]").disabled = index <= 0;
+    dialog.querySelector("[data-inspect-next]").disabled = index < 0 || index >= rail.length - 1;
+    railRoot.querySelectorAll("button").forEach((button) => {
+      const active = button.dataset.railKind === selected?.kind && Number(button.dataset.railId) === selected?.id;
+      button.setAttribute("aria-current", String(active));
+      if (active) button.scrollIntoView({ block: "nearest" });
+    });
+  }
+  async function navigate(nextKind, nextId, record = true, fresh = false) {
     const ticket = ++version;
     if (record && selected) stack.push({ ...selected, scroll: body.scrollTop });
     selected = { kind: nextKind, id: nextId };
@@ -247,13 +301,10 @@ export async function openInspection(kind, id, bindActions) {
     dialog.querySelector("[data-inspect-hero]").textContent = "";
     dialog.querySelector("[data-inspect-actions]").innerHTML = "";
     dialog.querySelector("[data-inspect-back]").disabled = !stack.length;
-    const index = rail.findIndex(row => row.kind === nextKind && row.id === nextId);
-    dialog.querySelector("[data-inspect-prev]").disabled = index <= 0;
-    dialog.querySelector("[data-inspect-next]").disabled = index < 0 || index >= rail.length - 1;
-    railRoot.querySelectorAll("button").forEach(button => button.setAttribute("aria-current", String(button.dataset.railKind === nextKind && Number(button.dataset.railId) === nextId)));
+    updateSelection();
     body.innerHTML = '<p role="status">正在加载详情…</p>';
     try {
-      const data = await get(nextKind, nextId);
+      const data = await get(nextKind, nextId, fresh);
       if (ticket !== version || !dialog.isConnected) return;
       const view = describe(nextKind, data);
       dialog.querySelector("#inspection-title").textContent = view.title;
@@ -266,6 +317,7 @@ export async function openInspection(kind, id, bindActions) {
       view.presentation.mount(body);
       if (view.kind === "file") mountFileRows(body, data.rows);
       body.scrollTop = 0;
+      dialog.dataset.renderVersion = String(ticket);
       dialog.querySelector(".inspection-heading").focus({ preventScroll: true });
     } catch (error) {
       if (ticket !== version || !dialog.isConnected) return;
@@ -273,11 +325,41 @@ export async function openInspection(kind, id, bindActions) {
       body.innerHTML = `<p role="alert">${esc(error.message)}</p><button data-inspect-retry>重试</button>`;
     }
   }
+  async function changeListPage(direction) {
+    const sourceButton = listContext[direction];
+    if (!sourceButton || sourceButton.disabled || listPaging) return;
+    const before = listSignature();
+    listPaging = true;
+    const changed = new Promise((resolve) => {
+      const root = document.querySelector("#page-content");
+      const observer = new MutationObserver(() => {
+        if (listSignature() !== before && readListContext().rows.length) {
+          observer.disconnect();
+          resolve(true);
+        }
+      });
+      observer.observe(root, { childList: true, subtree: true });
+      window.setTimeout(() => { observer.disconnect(); resolve(false); }, 8000);
+    });
+    sourceButton.click();
+    const didChange = await changed;
+    listPaging = false;
+    if (!didChange || !dialog.isConnected) return;
+    listContext = readListContext();
+    rail = listContext.rows;
+    renderRail();
+    const first = rail[0];
+    if (first) await navigate(first.kind, first.id, false, true);
+  }
+  renderRail();
+  syncLayout();
   current = { dialog, navigate };
-  const closeOnRoute = () => dialog.close();
+  const closeOnRoute = () => { if (!listPaging) dialog.close(); };
+  const resize = () => syncLayout();
   dialog.addEventListener("close", () => {
     version++;
     window.removeEventListener("hashchange", closeOnRoute);
+    window.removeEventListener("resize", resize);
     dialog.remove();
     if (current?.dialog === dialog) current = null;
     if (!document.querySelector(".inspection-workspace[open]")) {
@@ -287,16 +369,19 @@ export async function openInspection(kind, id, bindActions) {
     if (opener?.isConnected && !document.querySelector("dialog[open]")) opener.focus({ preventScroll: true });
   });
   window.addEventListener("hashchange", closeOnRoute);
+  window.addEventListener("resize", resize, { passive: true });
   dialog.querySelector("[data-close]").onclick = () => dialog.close();
-  dialog.querySelector("[data-inspect-full]").onclick = event => { full = !full; dialog.classList.toggle("inspection-full", full); event.target.setAttribute("aria-pressed", String(full)); event.target.textContent = full ? "恢复分栏" : "全屏查看"; };
+  dialog.querySelector("[data-inspect-full]").onclick = () => { full = !full; syncLayout(); };
   dialog.querySelector("[data-inspect-back]").onclick = async () => { const previous = stack.pop(); if (previous) { await navigate(previous.kind, previous.id, false); body.scrollTop = previous.scroll; } };
   for (const [selector, delta] of [["[data-inspect-prev]", -1], ["[data-inspect-next]", 1]]) dialog.querySelector(selector).onclick = () => { const index = rail.findIndex(row => row.kind === selected.kind && row.id === selected.id); const row = rail[index + delta]; if (row) navigate(row.kind, row.id); };
   dialog.addEventListener("click", event => {
     const railButton = event.target.closest("[data-rail-id]");
-    if (railButton) navigate(railButton.dataset.railKind, Number(railButton.dataset.railId));
+    if (railButton) navigate(railButton.dataset.railKind, Number(railButton.dataset.railId), true, true);
+    const railPage = event.target.closest("[data-rail-page]");
+    if (railPage) changeListPage(railPage.dataset.railPage);
     const promote = event.target.closest("[data-promote]");
     if (promote) navigate(promote.dataset.kind, Number(promote.dataset.id));
-    if (event.target.closest("[data-inspect-retry]")) navigate(selected.kind, selected.id, false);
+    if (event.target.closest("[data-inspect-retry]")) navigate(selected.kind, selected.id, false, true);
   });
-  return navigate(kind, Number(id), false);
+  return navigate(kind, Number(id), false, true);
 }
