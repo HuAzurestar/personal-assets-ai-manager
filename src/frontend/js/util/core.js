@@ -6,11 +6,22 @@ export const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => 
 })[char]);
 
 export const key = () => crypto.randomUUID();
-export const date = (value) => String(value || "").replace("T", " ").slice(0, 16);
+export function date(value) {
+  if (!value) return "未提供";
+  const text = String(value);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+  // The current importer/API also emits naive source-local timestamps. Do not
+  // infer an offset and shift those historical values. Explicit offsets alone
+  // can be converted safely; all views use this same presentation policy.
+  if (!/(?:Z|[+-]\d{2}:\d{2})$/i.test(text)) return text.replace("T", " ").slice(0, 16);
+  const parsed = new Date(text);
+  if (!Number.isFinite(parsed.getTime())) return text;
+  return new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Hong_Kong", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(parsed);
+}
 
 export const typeNames = {
   0: "收入与支出", 1: "内部转账", 2: "资产与负债",
-  TRANSACTION: "事实交易", ACCOUNT_TRANSFER: "账户流转", CLAIM: "债权关系",
+  TRANSACTION: "收入与支出", ACCOUNT_TRANSFER: "内部转账", CLAIM: "资产与负债",
   INCOME_AND_EXPENSE: "收入与支出", INTERNAL_TRANSFER: "内部转账", ASSET_AND_LIABILITY: "资产与负债",
 };
 

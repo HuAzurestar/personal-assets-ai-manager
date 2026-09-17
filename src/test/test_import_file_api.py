@@ -186,3 +186,63 @@ def test_import_file_detail_returns_not_found(import_file_api):
     assert response.status_code == 404
     assert response.json()["status"] == 404
     assert response.json()["body"]["code"] == "INTAKE_ERROR"
+
+
+def test_file_relation_summary_deduplicates_source_rows_and_excludes_revoked(import_file_api):
+    from backend.service.target_economic_service import TargetEconomicService
+    from backend.schema.target_review import TargetEconomicReviewCreateRequest, TargetReviewTransitionRequest
+
+    client, sessions = import_file_api
+    file_ids, fact_id = _seed(sessions)
+    now = datetime(2026, 9, 17, 8)
+    with sessions() as db:
+        # A repeated source row must not multiply the same fact's money.
+        db.add(TransactionImportRow(
+            transaction_fact_id=fact_id, transaction_import_file_id=file_ids[0],
+            source_row_number=2, row_status=IMPORT_ROW_STATUS_ACCEPTED,
+            created_time=now, updated_time=now,
+        ))
+        precise = TransactionFact(
+            fact_key="precision-fact", occurred_time=now, cash_direction=1,
+            amount=12345, currency_code="CNY_4", account_code="wallet",
+            counterparty_name="Merchant", counterparty_account_ref="", summary="Precise",
+            created_time=now, updated_time=now,
+        )
+        db.add(precise)
+        db.flush()
+        db.add(TransactionImportRow(
+            transaction_fact_id=precise.id, transaction_import_file_id=file_ids[0],
+            source_row_number=3, row_status=IMPORT_ROW_STATUS_ACCEPTED,
+            created_time=now, updated_time=now,
+        ))
+        db.commit()
+        precise_id = precise.id
+        TargetEconomicService(db).ensure_defaults([fact_id, precise_id], commit=True)
+    expected = [
+        {"currency_code": "CNY", "entry_direction": 2, "amount": 880},
+        {"currency_code": "CNY_4", "entry_direction": 1, "amount": 12345},
+    ]
+    before = client.get(f"/paam/import/v1/import_file/{file_ids[0]}").json()["body"]["relation_summary"]
+    assert before["totals"] == expected
+    assert before["allocation_count"] == before["ledger_count"] == before["review_count"] == 2
+    with sessions() as db:
+        review = TargetEconomicService(db).create(TargetEconomicReviewCreateRequest(
+            behavior_type=0, title="Split", idempotency_key="file-summary-split",
+            economics=[{"client_key": "part", "economic_type": "ACCOUNT_TRANSFER"}],
+            allocations=[{"fact_id": fact_id, "economic_key": "part", "amount": 400}],
+        ))
+        review_id = review.id
+    during = client.get(f"/paam/import/v1/import_file/{file_ids[0]}").json()["body"]["relation_summary"]
+    assert during["totals"] == expected
+    assert during["allocation_count"] == 3
+    with sessions() as db:
+        TargetEconomicService(db).revoke(review_id, TargetReviewTransitionRequest(
+            idempotency_key="file-summary-revoke", actor="test", reason="test",
+        ))
+    after = client.get(f"/paam/import/v1/import_file/{file_ids[0]}").json()["body"]["relation_summary"]
+    assert after["totals"] == expected
+    # The untouched 480 residual and restored 400 default remain two entries;
+    # revocation does not merge them into a new fabricated aggregate.
+    assert after["allocation_count"] == 3
+    facts = client.get(f"/paam/import/v1/import_file/{file_ids[0]}/transaction_fact/list").json()["body"]
+    assert facts["total"] == 2

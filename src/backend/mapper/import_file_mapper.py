@@ -21,6 +21,10 @@ from backend.entity import (
     IMPORT_SOURCE_UNKNOWN,
     IMPORT_SOURCE_WECHAT,
     TransactionImportFile,
+    TransactionImportRow,
+    ReviewAllocation,
+    ReviewCase,
+    LedgerEntry,
 )
 from backend.schema.import_file import ImportFileFilter, ImportFileSorter
 
@@ -143,3 +147,36 @@ class ImportFileMapper:
             *self._columns(),
         ).where(TransactionImportFile.id == import_file_id)).mappings().one_or_none()
         return dict(row) if row is not None else None
+
+    def relation_summary(self, import_file_id: int) -> dict:
+        # IN is a semijoin: repeat source rows cannot multiply allocated money.
+        fact_ids = select(TransactionImportRow.transaction_fact_id).where(
+            TransactionImportRow.transaction_import_file_id == import_file_id,
+            TransactionImportRow.transaction_fact_id > 0,
+        )
+        relations = select(
+            ReviewAllocation.id.label("allocation_id"),
+            ReviewAllocation.review_case_id,
+            ReviewAllocation.ledger_entry_id,
+            ReviewAllocation.amount,
+            ReviewAllocation.currency_code,
+            LedgerEntry.entry_direction,
+        ).join(ReviewCase, ReviewCase.id == ReviewAllocation.review_case_id).join(
+            LedgerEntry, LedgerEntry.id == ReviewAllocation.ledger_entry_id,
+        ).where(
+            ReviewAllocation.transaction_fact_id.in_(fact_ids),
+            ReviewCase.status == 0,
+        ).subquery()
+        counts = self.db.execute(select(
+            func.count(func.distinct(relations.c.review_case_id)).label("review_count"),
+            func.count(relations.c.allocation_id).label("allocation_count"),
+            func.count(func.distinct(relations.c.ledger_entry_id)).label("ledger_count"),
+        )).mappings().one()
+        totals = self.db.execute(select(
+            relations.c.currency_code,
+            relations.c.entry_direction,
+            func.sum(relations.c.amount).label("amount"),
+        ).group_by(relations.c.currency_code, relations.c.entry_direction).order_by(
+            relations.c.currency_code, relations.c.entry_direction,
+        )).mappings().all()
+        return {**dict(counts), "totals": [dict(row) for row in totals]}

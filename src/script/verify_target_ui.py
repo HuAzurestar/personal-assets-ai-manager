@@ -150,13 +150,10 @@ def run() -> None:
                 expect(history_drawer).to_be_visible()
                 history_drawer_box = history_drawer.bounding_box()
                 assert history_drawer_box is not None
-                assert history_drawer_box["x"] > 500, history_drawer_box
-                expect(history_drawer.locator("tbody tr")).to_have_count(26)
-                expect(history_drawer).to_contain_text("Transaction Fact")
-                expect(
-                    history_drawer.locator("th", has_text="摘要")
-                ).to_be_visible()
-                expect(history_drawer).to_contain_text("共 26 条关联 Transaction Fact")
+                assert history_drawer_box["width"] >= 1438, history_drawer_box
+                expect(history_drawer.locator('.inspection-related[data-kind="fact"]')).to_have_count(20)
+                expect(history_drawer).to_contain_text("关联事实")
+                expect(history_drawer).to_contain_text("显示 1–20 / 26 笔事实")
                 history_drawer.locator("[data-close]").first.click()
                 history_hash = page.evaluate("location.hash")
                 expect(page.locator('[data-form="history-filter"]')).to_be_visible()
@@ -187,6 +184,7 @@ def run() -> None:
                 expect(economic_drawer).to_contain_text(
                     "来源事实"
                 )
+                economic_drawer.locator('.inspection-action-menu > summary').click()
                 economic_drawer.locator('[data-action="edit-ledger-account"]').click()
                 account_form = page.locator('dialog[open] [data-form="ledger-account"]')
                 expect(account_form).to_be_visible()
@@ -201,7 +199,7 @@ def run() -> None:
                 page.locator('[data-action="import-file-detail"]').first.click()
                 expect(page.locator("dialog.detail-view-drawer[open]")).to_be_visible()
                 expect(page.locator("dialog.detail-view-drawer[open]")).to_contain_text(
-                    "Transaction Fact"
+                    "关联事实"
                 )
                 page.locator("dialog[open] [data-close]").first.click()
 
@@ -307,20 +305,23 @@ def run() -> None:
                 expect(page.get_by_text("浏览器测试商户").first).to_be_visible()
                 page.locator('[data-action="fact-detail"]').first.click()
                 expect(page.locator("dialog.detail-view-drawer[open]")).to_contain_text(
-                    "规范事实"
+                    "交易信息"
                 )
                 page.locator("dialog[open] [data-close]").first.click()
 
                 page.locator('.secondary-nav [data-page="ledger-reviews"]').click()
-                page.locator('[data-page="review-create"]').first.click()
+                page.locator('[data-page="reviews"]').first.click()
                 wizard = page.locator('[data-review-workflow] [data-form="economic-review-create"]')
                 expect(wizard).to_be_visible()
                 expect(wizard.locator('[data-review-step="1"]')).to_contain_text("选择范围")
                 expect(wizard.locator('[data-review-step="2"]')).to_contain_text("配置关系")
                 expect(wizard.locator('[data-review-step="3"]')).to_contain_text("检查并生成")
                 expect(wizard.locator('[data-review-candidate-filter]')).to_be_visible()
-                wizard.locator('[data-page="reviews"]').click()
-                expect(page.locator('.review-dashboard')).to_be_visible()
+                assert page.evaluate("location.hash").startswith("#workbench/review")
+                page.goto(f"{base_url}/#workbench/review/create")
+                expect(page.locator('[data-review-workflow]')).to_be_visible()
+                assert page.evaluate("location.hash").startswith("#workbench/review")
+                assert "/create" not in page.evaluate("location.hash")
 
                 page.goto(f"{base_url}/#summary")
                 expect(page.locator(".module-heading")).to_be_hidden()
@@ -338,7 +339,7 @@ def run() -> None:
                     for route_name, selector in (
                         ("details/transaction-fact", '[data-form="fact-filter"]'),
                         ("overview", '.month-metrics'),
-                        ("workbench/review", '.review-dashboard'),
+                        ("workbench/review", '[data-review-workflow]'),
                     ):
                         page.goto(f"{base_url}/#{route_name}")
                         expect(page.locator(selector)).to_be_visible()

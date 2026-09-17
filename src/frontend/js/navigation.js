@@ -43,7 +43,6 @@ const pageModules = {
   "ledger-tags": "details",
   summary: "overview",
   reviews: "workbench",
-  "review-create": "workbench",
   import: "workbench",
   "import-history": "workbench",
 };
@@ -72,11 +71,11 @@ const pagePaths = {
   summary: "overview",
   import: "workbench/import",
   reviews: "workbench/review",
-  "review-create": "workbench/review/create",
   "import-history": "workbench/import/history",
 };
 
 const pathPages = Object.fromEntries(Object.entries(pagePaths).map(([page, path]) => [path, page]));
+pathPages["workbench/review/create"] = "reviews";
 
 export function pageModule(page) {
   return pageModules[page] || "details";
@@ -143,9 +142,7 @@ export function syncNavigation(page) {
     button.classList.toggle("active", selected);
     button.setAttribute("aria-pressed", String(selected));
   });
-  const selectedPage = page === "import-history"
-    ? "import"
-    : page === "review-create" ? "reviews" : page;
+  const selectedPage = page === "import-history" ? "import" : page;
   const secondaryNavigation = $("#secondary-nav");
   if (secondaryNavigation) {
     secondaryNavigation.dataset.activeModule = active;

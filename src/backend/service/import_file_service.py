@@ -62,7 +62,10 @@ class ImportFileService:
         row = self.mapper.detail(import_file_id)
         if row is None:
             raise TargetIntakeError(404, f"import file {import_file_id} not found")
-        return ImportFileDetailRead(import_file=ImportFileRead(**row))
+        return ImportFileDetailRead(
+            import_file=ImportFileRead(**row),
+            relation_summary=self.mapper.relation_summary(import_file_id),
+        )
 
     def transaction_facts(
         self,

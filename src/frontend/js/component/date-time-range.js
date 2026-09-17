@@ -99,7 +99,7 @@ function position(control) {
   const left = Math.max(10, Math.min(box.left, window.innerWidth - width - 10));
   popover.style.width = `${width}px`;
   popover.style.left = `${left}px`;
-  popover.style.top = `${Math.min(box.bottom + 6, window.innerHeight - popover.offsetHeight - 10)}px`;
+  popover.style.top = `${Math.max(10, Math.min(box.bottom + 6, window.innerHeight - popover.offsetHeight - 10))}px`;
 }
 
 function close(control) {
@@ -125,12 +125,14 @@ function validate(control) {
 }
 
 export function bindDateTimeRanges(root, onApply) {
+  if (openedControl && !openedControl.isConnected) close(openedControl);
   $$('[data-date-time-range]', root).forEach((control) => {
     const popover = $("[data-range-popover]", control);
     const trigger = $("[data-action=range-open]", control);
     render(control);
     trigger.onclick = () => {
-      if (openedControl && openedControl !== control) close(openedControl);
+      if (openedControl === control) { close(control); return; }
+      if (openedControl) close(openedControl);
       popover.hidden = false;
       trigger.setAttribute("aria-expanded", "true");
       openedControl = control;
@@ -141,6 +143,9 @@ export function bindDateTimeRanges(root, onApply) {
       };
       document.addEventListener("pointerdown", outsideHandler, true);
     };
+    control.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") { close(control); trigger.focus(); }
+    });
     popover.onclick = (event) => {
       const monthButton = event.target.closest('[data-range-month]');
       if (monthButton) {

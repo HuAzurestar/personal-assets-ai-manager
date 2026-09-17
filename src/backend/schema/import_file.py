@@ -95,8 +95,22 @@ class ImportFileSummaryResponse(SuccessResponse[ImportFileSummaryRead]):
     body: ImportFileSummaryRead
 
 
+class ImportFileRelationTotal(BaseModel):
+    currency_code: str
+    entry_direction: int
+    amount: int
+
+
+class ImportFileRelationSummary(BaseModel):
+    review_count: int
+    allocation_count: int
+    ledger_count: int
+    totals: list[ImportFileRelationTotal]
+
+
 class ImportFileDetailRead(BaseModel):
     import_file: ImportFileRead
+    relation_summary: ImportFileRelationSummary
 
 
 class ImportFileDetailResponse(SuccessResponse[ImportFileDetailRead]):
