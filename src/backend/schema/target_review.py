@@ -233,6 +233,7 @@ class TargetReviewCandidateListRequest(ListRequest):
                 "cash_direction": ("=",),
                 "currency_code": ("=",),
                 "account_code": ("=",),
+                "occurred_time": (">=", "<", "between"),
             },
             sorter_fields=("occurred_time",),
             logical_operators=("AND",),
@@ -248,6 +249,8 @@ class TargetReviewCandidateFilter(BaseModel):
     cash_direction: int | None = None
     currency_code: str | None = None
     account_code: str | None = None
+    occurred_time_start: datetime | None = None
+    occurred_time_end: datetime | None = None
 
 
 class TargetReviewCandidateSorter(ListSorter):
@@ -327,10 +330,19 @@ def _validate_fact_conflict_filter_values(request: TargetFactConflictListRequest
 def _validate_review_candidate_filter_values(request: TargetReviewCandidateListRequest) -> None:
     fields = list(iter_filter_fields(request.filter))
     counts: dict[str, int] = {}
+    time_operators: list[str] = []
     for expression in fields:
         counts[expression.key] = counts.get(expression.key, 0) + 1
         value = expression.val
-        if expression.key == "cash_direction":
+        if expression.key == "occurred_time":
+            time_operators.append(expression.op)
+            if expression.op == "between":
+                between = BetweenValue.model_validate(value)
+                valid = parse_review_time(between.start, expression.key) < parse_review_time(between.end, expression.key)
+            else:
+                parse_review_time(value, expression.key)
+                valid = True
+        elif expression.key == "cash_direction":
             valid = isinstance(value, int) and not isinstance(value, bool) and value in {1, 2}
         elif expression.key == "currency_code":
             valid = isinstance(value, str) and 1 <= len(value.strip()) <= 12
@@ -342,11 +354,12 @@ def _validate_review_candidate_filter_values(request: TargetReviewCandidateListR
                 code="LIST_FILTER_VALUE_INVALID",
                 details={"component": "filter", "key": expression.key, "value": value},
             )
-    duplicate_fields = sorted(key for key, count in counts.items() if count > 1)
-    if duplicate_fields:
+    duplicate_fields = sorted(key for key, count in counts.items() if key != "occurred_time" and count > 1)
+    invalid_time_combination = (time_operators.count("between") > 0 and len(time_operators) > 1) or len(set(time_operators)) != len(time_operators)
+    if duplicate_fields or invalid_time_combination:
         raise ListQueryError(
             "Filter combination is not supported",
             code="LIST_COMBINATION_NOT_SUPPORTED",
-            details={"component": "filter", "duplicate_fields": duplicate_fields},
+            details={"component": "filter", "duplicate_fields": duplicate_fields, "time_operators": sorted(time_operators)},
         )
 

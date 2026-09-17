@@ -22,6 +22,7 @@ from backend.schema.target_review import (
     TargetReviewCandidateSorter,
     TargetReviewFactVO,
     TargetReviewTransitionRequest,
+    parse_review_time,
 )
 from backend.schema.review_case import (
     ReviewCaseFilter,
@@ -118,6 +119,16 @@ class TargetEconomicService:
     ) -> TargetReviewCandidateListBody:
         values: dict[str, object] = {}
         for expression in iter_filter_fields(request.filter):
+            if expression.key == "occurred_time":
+                if expression.op == "between":
+                    between = BetweenValue.model_validate(expression.val)
+                    values["occurred_time_start"] = parse_review_time(between.start, expression.key)
+                    values["occurred_time_end"] = parse_review_time(between.end, expression.key)
+                elif expression.op == ">=":
+                    values["occurred_time_start"] = parse_review_time(expression.val, expression.key)
+                else:
+                    values["occurred_time_end"] = parse_review_time(expression.val, expression.key)
+                continue
             values[expression.key] = (
                 str(expression.val).strip().upper()
                 if expression.key == "currency_code"

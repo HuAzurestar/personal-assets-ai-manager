@@ -92,6 +92,7 @@ def test_ledger_v1_exposes_only_confirmed_cash_entry_fields(economic_api):
     client, sessions = economic_api
     fact_id = _facts(sessions, [("OUT", 12345, "CNY")])[0]
     with sessions() as db:
+        db.get(TransactionFact, fact_id).summary = ""
         TargetEconomicService(db).ensure_defaults([fact_id], commit=True)
 
     page = client.get("/paam/ledger/v1/flow/list")
@@ -99,6 +100,8 @@ def test_ledger_v1_exposes_only_confirmed_cash_entry_fields(economic_api):
     item = page.json()["body"]["items"][0]
     assert set(item) == {
         "id",
+        "summary",
+        "review_behavior_type",
         "entry_type",
         "entry_direction",
         "amount",
@@ -108,11 +111,15 @@ def test_ledger_v1_exposes_only_confirmed_cash_entry_fields(economic_api):
         "occurred_time",
         "created_time",
         "updated_time",
+        "tags",
     }
+    assert item["tags"] == []
+    assert item["summary"] == "事实交易"
+    assert item["review_behavior_type"] == 0
     assert (item["entry_type"], item["entry_direction"]) == (0, CASH_DIRECTION_OUT)
     detail = client.get(f"/paam/ledger/v1/flow/{item['id']}").json()["body"]
     assert "role" not in detail["allocations"][0]
-    assert detail["ledger_entry"] == {**item, "tags": []}
+    assert detail["ledger_entry"] == item
     assert client.get("/paam/economy/v1/flow/list").status_code == 404
     assert client.get("/paam/economy/v1/flow/detail/1").status_code == 404
     assert client.get("/paam/economy/v1/summary").status_code == 404
@@ -137,6 +144,7 @@ def test_ledger_lists_accept_whitelisted_filter_and_sorter_objects(economic_api)
     ).json()["body"]
     assert page["total"] == 1
     assert page["items"][0]["amount"] == 1000
+    assert page["items"][0]["summary"] == "事实交易：fact"
     assert set(page) == {"items", "total", "page_index", "page_size"}
 
     rejected = client.get(
@@ -145,6 +153,29 @@ def test_ledger_lists_accept_whitelisted_filter_and_sorter_objects(economic_api)
     )
     assert rejected.status_code == 422
     assert rejected.json()["body"]["code"] == "LIST_SORTER_FIELD_NOT_SUPPORTED"
+
+
+def test_ledger_list_loads_sparse_tags_with_fixed_query_count(economic_api):
+    client, sessions = economic_api
+    fact_ids = _facts(sessions, [("OUT", 1000 + index, "CNY") for index in range(30)])
+    with sessions() as db:
+        TargetEconomicService(db).ensure_defaults(fact_ids, commit=True)
+
+    statements = []
+
+    def count_selects(_connection, _cursor, statement, _parameters, _context, _many):
+        if statement.lstrip().upper().startswith("SELECT"):
+            statements.append(statement)
+
+    engine = sessions.kw["bind"]
+    event.listen(engine, "before_cursor_execute", count_selects)
+    try:
+        response = client.get("/paam/ledger/v1/flow/list?page_size=20")
+    finally:
+        event.remove(engine, "before_cursor_execute", count_selects)
+    assert response.status_code == 200, response.text
+    assert len(response.json()["body"]["items"]) == 20
+    assert len(statements) == 3
 
 
 def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_api):
@@ -440,6 +471,12 @@ def test_review_candidate_list_supports_shared_query_contract(economic_api):
     body = response.json()["body"]
     assert [item["id"] for item in body["items"]] == [fact_ids[1]]
     assert set(body) == {"items", "total", "page_index", "page_size"}
+
+    ranged = client.get("/paam/ledger/v1/review_candidate/list", params={
+        "filter": '{"op":"AND","expression":[{"key":"occurred_time","op":">=","val":"2026-09-13T10:02:00+00:00"},{"key":"occurred_time","op":"<","val":"2026-09-13T10:03:00+00:00"}]}',
+    })
+    assert ranged.status_code == 200, ranged.text
+    assert [item["id"] for item in ranged.json()["body"]["items"]] == [fact_ids[1]]
 
 
 def test_fx_review_uses_two_single_currency_account_transfers(economic_api):

@@ -70,6 +70,8 @@ class LedgerEntryTagRead(BaseModel):
 
 class LedgerEntryListItem(BaseModel):
     id: int
+    summary: str
+    review_behavior_type: int
     entry_type: int
     entry_direction: int
     amount: int
@@ -79,6 +81,7 @@ class LedgerEntryListItem(BaseModel):
     occurred_time: datetime
     created_time: datetime
     updated_time: datetime
+    tags: list[LedgerEntryTagRead] = Field(default_factory=list)
 
 
 class LedgerEntryListBody(ListBody[LedgerEntryListItem]):
@@ -120,7 +123,7 @@ class LedgerReviewBriefRead(BaseModel):
 
 
 class LedgerEntryDetailItem(LedgerEntryListItem):
-    tags: list[LedgerEntryTagRead] = Field(default_factory=list)
+    pass
 
 
 class LedgerEntryDetailRead(BaseModel):

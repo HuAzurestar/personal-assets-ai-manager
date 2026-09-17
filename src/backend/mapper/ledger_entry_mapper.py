@@ -62,7 +62,20 @@ class LedgerEntryMapper:
         orders = [order, id_order]
         if sorter.field == "amount" and not filter_value.currency_code:
             orders = [LedgerEntry.currency_code.asc(), order, id_order]
-        rows = self.db.execute(select(*self._flow_columns()).where(*clauses).order_by(
+        rows = self.db.execute(select(
+            *self._flow_columns(),
+            TransactionFact.summary.label("summary"),
+            ReviewCase.behavior_type.label("review_behavior_type"),
+        ).join(
+            ReviewAllocation,
+            ReviewAllocation.ledger_entry_id == LedgerEntry.id,
+        ).join(
+            TransactionFact,
+            TransactionFact.id == ReviewAllocation.transaction_fact_id,
+        ).join(
+            ReviewCase,
+            ReviewCase.id == ReviewAllocation.review_case_id,
+        ).where(*clauses).order_by(
             *orders,
         ).offset((page - 1) * page_size).limit(page_size)).mappings().all()
         return rows, total

@@ -44,8 +44,22 @@ class LedgerEntryService:
             filter_value=filter_value,
             sorter=sorter,
         )
+        tags_by_ledger = self.mapper.tags([row["id"] for row in rows])
+        items = []
+        for row in rows:
+            values = dict(row)
+            values["summary"] = self._summary(
+                values["summary"], values["review_behavior_type"]
+            )
+            items.append(LedgerEntryListItem(
+                **values,
+                tags=[
+                    LedgerEntryTagRead(**tag)
+                    for tag in tags_by_ledger.get(row["id"], [])
+                ],
+            ))
         return LedgerEntryListBody(
-            items=[LedgerEntryListItem(**row) for row in rows],
+            items=items,
             total=total,
             page_index=request.page_index,
             page_size=request.page_size,
@@ -78,12 +92,25 @@ class LedgerEntryService:
         return LedgerEntryDetailRead(
             ledger_entry=LedgerEntryDetailItem(
                 **ledger_entry,
+                summary=self._summary(
+                    facts[0]["summary"], reviews[0]["behavior_type"]
+                ),
+                review_behavior_type=reviews[0]["behavior_type"],
                 tags=[LedgerEntryTagRead(**tag) for tag in tags],
             ),
             allocations=[LedgerAllocationEvidenceRead(**row) for row in allocations],
             facts=[LedgerFactBriefRead(**row) for row in facts],
             reviews=[LedgerReviewBriefRead(**row) for row in reviews],
         )
+
+    @staticmethod
+    def _summary(fact_summary: str, review_behavior_type: int) -> str:
+        behavior = {
+            0: "事实交易",
+            1: "借款与还款",
+        }.get(review_behavior_type, f"审查类型 {review_behavior_type}")
+        summary = fact_summary.strip()
+        return f"{behavior}：{summary}" if summary else behavior
 
     def summary(self, query: LedgerEntrySummaryQuery) -> LedgerEntrySummaryRead:
         rows = self.mapper.summary(query)

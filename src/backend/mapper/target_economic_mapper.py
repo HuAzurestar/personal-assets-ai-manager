@@ -161,6 +161,10 @@ class TargetEconomicMapper:
                 )
             if filter_value.account_code:
                 clauses.append(TransactionFact.account_code == filter_value.account_code)
+            if filter_value.occurred_time_start:
+                clauses.append(TransactionFact.occurred_time >= filter_value.occurred_time_start)
+            if filter_value.occurred_time_end:
+                clauses.append(TransactionFact.occurred_time < filter_value.occurred_time_end)
         return select(
             TransactionFact.id,
             TransactionFact.occurred_time,
