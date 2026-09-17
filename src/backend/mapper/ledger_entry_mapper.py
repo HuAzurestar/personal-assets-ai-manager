@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, time
 
-from sqlalchemy import exists, func, or_, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session
 
 from backend.entity import (
@@ -14,7 +14,11 @@ from backend.entity import (
     TargetTagView,
     TransactionFact,
 )
-from backend.schema.ledger_entry import LedgerEntryPageQuery, LedgerEntrySummaryQuery
+from backend.schema.ledger_entry import (
+    LedgerEntryFilter,
+    LedgerEntrySorter,
+    LedgerEntrySummaryQuery,
+)
 
 
 class LedgerEntryMapper:
@@ -38,29 +42,34 @@ class LedgerEntryMapper:
             LedgerEntry.updated_time,
         )
 
-    def page(self, query: LedgerEntryPageQuery):
-        clauses = self._clauses(query)
+    def page(
+        self,
+        *,
+        page: int,
+        page_size: int,
+        filter_value: LedgerEntryFilter,
+        sorter: LedgerEntrySorter,
+    ):
+        clauses = self._clauses(filter_value)
         total = self.db.scalar(select(func.count(LedgerEntry.id)).where(*clauses)) or 0
         sort_columns = {
-            "id": LedgerEntry.id,
             "occurred_time": LedgerEntry.occurred_time,
             "amount": LedgerEntry.amount,
-            "created_time": LedgerEntry.created_time,
-            "updated_time": LedgerEntry.updated_time,
         }
-        column = sort_columns[query.sort_field]
-        order = column.asc() if query.sort_order == "asc" else column.desc()
-        id_order = LedgerEntry.id.asc() if query.sort_order == "asc" else LedgerEntry.id.desc()
+        column = sort_columns[sorter.field]
+        order = column.asc() if sorter.order == "asc" else column.desc()
+        id_order = LedgerEntry.id.asc() if sorter.order == "asc" else LedgerEntry.id.desc()
+        orders = [order, id_order]
+        if sorter.field == "amount" and not filter_value.currency_code:
+            orders = [LedgerEntry.currency_code.asc(), order, id_order]
         rows = self.db.execute(select(*self._flow_columns()).where(*clauses).order_by(
-            order,
-            id_order,
-        ).offset((query.page - 1) * query.page_size).limit(query.page_size)).mappings().all()
+            *orders,
+        ).offset((page - 1) * page_size).limit(page_size)).mappings().all()
         return rows, total
 
     def detail(self, ledger_id: int):
         flow = self.db.execute(select(*self._flow_columns()).where(
             LedgerEntry.id == ledger_id,
-            *self._active_clauses(),
         )).mappings().one_or_none()
         if flow is None:
             return None
@@ -71,12 +80,8 @@ class LedgerEntryMapper:
             ReviewAllocation.ledger_entry_id,
             ReviewAllocation.amount,
             ReviewAllocation.currency_code,
-        ).join(
-            ReviewCase,
-            ReviewCase.id == ReviewAllocation.review_case_id,
         ).where(
             ReviewAllocation.ledger_entry_id == ledger_id,
-            ReviewCase.status == 0,
         ).order_by(ReviewAllocation.id)).mappings().all()
         fact_ids = sorted({row["transaction_fact_id"] for row in allocations})
         facts = self.db.execute(select(
@@ -158,43 +163,26 @@ class LedgerEntryMapper:
             LedgerEntry.entry_direction,
             LedgerEntry.amount,
             LedgerEntry.currency_code,
+            LedgerEntry.occurred_time,
         ).where(*clauses)).mappings().all()
 
     @staticmethod
-    def _clauses(query: LedgerEntryPageQuery) -> list:
-        clauses = LedgerEntryMapper._active_clauses()
-        if query.date_from:
-            clauses.append(
-                LedgerEntry.occurred_time >= datetime.combine(query.date_from, time.min)
-            )
-        if query.date_to:
-            clauses.append(
-                LedgerEntry.occurred_time <= datetime.combine(query.date_to, time.max)
-            )
-        if query.entry_type:
-            clauses.append(LedgerEntry.entry_type.in_(query.entry_type))
-        if query.currency_code:
-            clauses.append(LedgerEntry.currency_code.in_(query.currency_code))
-        if query.entry_direction:
-            clauses.append(LedgerEntry.entry_direction == query.entry_direction)
-        if query.account_code:
-            clauses.append(LedgerEntry.account_code == query.account_code)
-        if query.q:
-            clauses.append(exists(select(ReviewAllocation.id).join(
-                ReviewCase,
-                ReviewCase.id == ReviewAllocation.review_case_id,
-            ).join(
-                TransactionFact,
-                TransactionFact.id == ReviewAllocation.transaction_fact_id,
-            ).where(
-                ReviewAllocation.ledger_entry_id == LedgerEntry.id,
-                ReviewCase.status == 0,
-                or_(
-                    ReviewCase.title.ilike(f"%{query.q}%"),
-                    TransactionFact.counterparty_name.ilike(f"%{query.q}%"),
-                    TransactionFact.summary.ilike(f"%{query.q}%"),
-                ),
-            )))
+    def _clauses(filter_value: LedgerEntryFilter) -> list:
+        clauses = []
+        if filter_value.id:
+            clauses.append(LedgerEntry.id == filter_value.id)
+        if filter_value.occurred_time_start:
+            clauses.append(LedgerEntry.occurred_time >= filter_value.occurred_time_start)
+        if filter_value.occurred_time_end:
+            clauses.append(LedgerEntry.occurred_time < filter_value.occurred_time_end)
+        if filter_value.entry_type is not None:
+            clauses.append(LedgerEntry.entry_type == filter_value.entry_type)
+        if filter_value.currency_code:
+            clauses.append(LedgerEntry.currency_code == filter_value.currency_code)
+        if filter_value.entry_direction is not None:
+            clauses.append(LedgerEntry.entry_direction == filter_value.entry_direction)
+        if filter_value.account_code:
+            clauses.append(LedgerEntry.account_code == filter_value.account_code)
         return clauses
 
     @staticmethod

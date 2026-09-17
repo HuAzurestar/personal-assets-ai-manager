@@ -41,9 +41,10 @@ class ListQueryError(DomainError):
         self,
         message: str,
         *,
+        code: str | None = None,
         details: dict[str, Any] | None = None,
     ):
-        super().__init__(422, message, details=details)
+        super().__init__(422, message, code=code, details=details)
 
 
 class TargetReviewError(DomainError):

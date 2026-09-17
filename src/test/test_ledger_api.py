@@ -131,21 +131,20 @@ def test_ledger_lists_accept_whitelisted_filter_and_sorter_objects(economic_api)
     page = client.get(
         "/paam/ledger/v1/flow/list",
         params={
-            "filter": '{"entry_direction":1,"currency_code":["CNY"]}',
-            "sorter": '{"field":"amount","order":"asc"}',
+            "filter": '{"op":"AND","expression":[{"key":"entry_direction","op":"=","val":1},{"key":"currency_code","op":"=","val":"CNY"}]}',
+            "sorter": '[{"key":"amount","direction":"asc"}]',
         },
     ).json()["body"]
     assert page["total"] == 1
     assert page["items"][0]["amount"] == 1000
-    assert page["filter"]["entry_direction"] == CASH_DIRECTION_IN
-    assert page["sorter"] == {"field": "amount", "order": "asc"}
+    assert set(page) == {"items", "total", "page_index", "page_size"}
 
     rejected = client.get(
         "/paam/ledger/v1/flow/list",
-        params={"sorter": '{"field":"physical_column","order":"asc"}'},
+        params={"sorter": '[{"key":"physical_column","direction":"asc"}]'},
     )
     assert rejected.status_code == 422
-    assert rejected.json()["body"]["code"] == "LIST_QUERY_ERROR"
+    assert rejected.json()["body"]["code"] == "LIST_SORTER_FIELD_NOT_SUPPORTED"
 
 
 def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_api):
@@ -184,7 +183,7 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
     })
     assert response.status_code == 200, response.text
     assert response.json()["status"] == response.status_code
-    assert response.json()["message"] == "Ledger review created"
+    assert response.json()["message"] == "ok"
     case = response.json()["body"]
     assert case["status"] == 0
     assert [fact["id"] for fact in case["facts"]] == fact_ids
@@ -315,17 +314,17 @@ def test_partial_manual_reviews_keep_exact_default_coverage_and_are_idempotent(e
     candidate_page = client.get("/paam/ledger/v1/review_candidate/list").json()["body"]
     candidates = candidate_page["items"]
     assert candidate_page["total"] == 1
-    assert candidate_page["page"] == 1
+    assert candidate_page["page_index"] == 1
     assert candidate_page["page_size"] == 20
     assert [(item["id"], item["available_amount"]) for item in candidates] == [(fact_id, 6000)]
     complete_page = client.get("/paam/ledger/v1/review/list").json()["body"]
     assert complete_page["total"] == 3
     case_response = client.get(
         "/paam/ledger/v1/review/list",
-        params={"filter": '{"behavior_type":0}'},
+        params={"filter": '{"key":"behavior_type","op":"=","val":0}'},
     )
     assert case_response.json()["status"] == case_response.status_code
-    assert case_response.json()["message"] == "Ledger reviews listed"
+    assert case_response.json()["message"] == "ok"
     cases = case_response.json()["body"]
     assert cases["total"] == 3
     assert set(cases["items"][0]) == {
@@ -369,22 +368,22 @@ def test_review_candidate_list_is_paged_with_fixed_query_count(economic_api):
     event.listen(engine, "before_cursor_execute", count_selects)
     try:
         first = client.get(
-            "/paam/ledger/v1/review_candidate/list?page=1&page_size=2"
+            "/paam/ledger/v1/review_candidate/list?page_index=1&page_size=2"
         )
     finally:
         event.remove(engine, "before_cursor_execute", count_selects)
     assert first.status_code == 200, first.text
     assert first.json()["status"] == first.status_code
-    assert first.json()["message"] == "Ledger review candidates listed"
+    assert first.json()["message"] == "ok"
     page = first.json()["body"]
     assert page["total"] == 3
-    assert page["page"] == 1
+    assert page["page_index"] == 1
     assert page["page_size"] == 2
     assert len(page["items"]) == 2
     assert len(statements) == 2
 
     second = client.get(
-        "/paam/ledger/v1/review_candidate/list?page=2&page_size=2"
+        "/paam/ledger/v1/review_candidate/list?page_index=2&page_size=2"
     ).json()["body"]
     assert second["total"] == 3
     assert len(second["items"]) == 1
@@ -410,9 +409,9 @@ def test_review_list_is_database_paged_with_fixed_query_count(economic_api):
         response = client.get(
             "/paam/ledger/v1/review/list",
             params={
-                "page": 2,
+                "page_index": 2,
                 "page_size": 10,
-                "filter": '{"behavior_type":0}',
+                "filter": '{"key":"behavior_type","op":"=","val":0}',
             },
         )
     finally:
@@ -434,15 +433,13 @@ def test_review_candidate_list_supports_shared_query_contract(economic_api):
         TargetEconomicService(db).ensure_defaults(fact_ids, commit=True)
 
     response = client.get("/paam/ledger/v1/review_candidate/list", params={
-        "q": str(fact_ids[1]),
-        "filter": '{"cash_direction":1,"currency_code":"usd"}',
-        "sorter": '{"field":"available_amount","order":"asc"}',
+        "filter": '{"op":"AND","expression":[{"key":"cash_direction","op":"=","val":1},{"key":"currency_code","op":"=","val":"USD"}]}',
+        "sorter": '[{"key":"occurred_time","direction":"asc"}]',
     })
     assert response.status_code == 200, response.text
     body = response.json()["body"]
     assert [item["id"] for item in body["items"]] == [fact_ids[1]]
-    assert body["filter"]["currency_code"] == "usd"
-    assert body["sorter"] == {"field": "available_amount", "order": "asc"}
+    assert set(body) == {"items", "total", "page_index", "page_size"}
 
 
 def test_fx_review_uses_two_single_currency_account_transfers(economic_api):

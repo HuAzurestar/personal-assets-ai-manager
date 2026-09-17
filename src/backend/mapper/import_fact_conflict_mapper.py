@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import String, cast, or_, select, text, update
+from sqlalchemy import select, text, update
 from sqlalchemy.orm import Session
 
 from backend.entity import (
@@ -24,15 +24,8 @@ class ImportFactConflictMapper:
         if self.db.bind is not None and self.db.bind.dialect.name == "sqlite":
             self.db.execute(text("BEGIN IMMEDIATE"))
 
-    def rows(self, q: str = "") -> list[dict]:
+    def rows(self) -> list[dict]:
         clauses = [TransactionImportRow.issue_code == "FACT_CONFLICT"]
-        if q:
-            pattern = f"%{q}%"
-            clauses.append(or_(
-                cast(TransactionImportRow.id, String).like(pattern),
-                TransactionImportRow.issue_message.ilike(pattern),
-                TransactionImportRow.source_reference.ilike(pattern),
-            ))
         rows = self.db.execute(select(
             TransactionImportRow.id,
             TransactionImportRow.transaction_fact_id,

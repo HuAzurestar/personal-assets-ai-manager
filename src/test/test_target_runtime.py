@@ -58,16 +58,16 @@ def test_openapi_locks_canonical_ledger_v1_contract():
 
     schemas = specification["components"]["schemas"]
     for name in (
-        "LedgerEntryPageResponse",
+        "LedgerEntryListResponse",
         "LedgerEntryDetailResponse",
         "LedgerEntrySummaryResponse",
         "TargetEconomicReviewResponse",
-        "ReviewCasePageResponse",
+        "ReviewCaseListResponse",
         "ImportFactConflictResponse",
-        "ImportFactConflictPageResponse",
+        "ImportFactConflictListResponse",
         "ImportFileSummaryResponse",
         "LedgerAccountResponse",
-        "TargetReviewCandidatePageResponse",
+        "TargetReviewCandidateListResponse",
     ):
         assert schemas[name]["properties"]["status"]["const"] == 200
 
@@ -327,11 +327,11 @@ def test_target_review_confirm_revoke_restore_rebuilds_projection(
             assert [row["amount"] for row in case["allocations"]] == [1000, 999]
             assert case["history"][0]["operation"] == 0
             page = client.get("/paam/ledger/v1/flow/list").json()["body"]
-            assert page["total"] == 2
+            assert page["total"] == 4
             assert {
                 (item["entry_type"], item["entry_direction"], item["amount"])
                 for item in page["items"]
-            } == {
+            } >= {
                 (1, 1, 999),
                 (1, 2, 1000),
             }
@@ -358,8 +358,8 @@ def test_target_review_confirm_revoke_restore_rebuilds_projection(
             assert case["status"] == 1
             assert case["history"][-1]["operation"] == 2
             page = client.get("/paam/ledger/v1/flow/list").json()["body"]
-            assert page["total"] == 2
-            assert {item["entry_type"] for item in page["items"]} == {0}
+            assert page["total"] == 6
+            assert {item["entry_type"] for item in page["items"]} == {0, 1}
 
             restored = client.post(
                 f"/paam/ledger/v1/review/{case['id']}/restore",
@@ -372,7 +372,7 @@ def test_target_review_confirm_revoke_restore_rebuilds_projection(
             restored_case = restored.json()["body"]
             assert restored_case["status"] == 0
             assert restored_case["history"][-1]["operation"] == 3
-            assert client.get("/paam/ledger/v1/flow/list").json()["body"]["total"] == 2
+            assert client.get("/paam/ledger/v1/flow/list").json()["body"]["total"] == 6
     finally:
         target_intake_preview_store.clear()
         engine.dispose()

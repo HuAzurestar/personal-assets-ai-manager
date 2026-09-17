@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, time
-
-from sqlalchemy import String, cast, func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.entity import (
@@ -22,11 +20,8 @@ class TransactionFactMapper:
     """Read-only PO queries for Transaction Fact detail surfaces."""
 
     _SORT_COLUMNS = {
-        "id": TransactionFact.id,
         "occurred_time": TransactionFact.occurred_time,
         "amount": TransactionFact.amount,
-        "created_time": TransactionFact.created_time,
-        "updated_time": TransactionFact.updated_time,
     }
 
     def __init__(self, db: Session):
@@ -54,43 +49,22 @@ class TransactionFactMapper:
         *,
         page: int,
         page_size: int,
-        q: str,
         filter_value: TransactionFactFilter,
         sorter: TransactionFactSorter,
-        import_file_id: int | None = None,
     ) -> tuple[list[dict], int]:
         clauses = []
-        if import_file_id is not None:
-            imported_fact_ids = select(TransactionImportRow.transaction_fact_id).where(
-                TransactionImportRow.transaction_import_file_id == import_file_id,
-                TransactionImportRow.transaction_fact_id > 0,
-            ).distinct()
-            clauses.append(TransactionFact.id.in_(imported_fact_ids))
-        if q:
-            pattern = f"%{q}%"
-            clauses.append(or_(
-                cast(TransactionFact.id, String).like(pattern),
-                TransactionFact.fact_key.like(pattern),
-                TransactionFact.account_code.like(pattern),
-                TransactionFact.counterparty_name.like(pattern),
-                TransactionFact.summary.like(pattern),
-            ))
+        if filter_value.id:
+            clauses.append(TransactionFact.id == filter_value.id)
         if filter_value.cash_direction:
             clauses.append(TransactionFact.cash_direction == filter_value.cash_direction)
         if filter_value.currency_code:
             clauses.append(TransactionFact.currency_code == filter_value.currency_code.upper())
         if filter_value.account_code:
             clauses.append(TransactionFact.account_code == filter_value.account_code)
-        if filter_value.date_from:
-            clauses.append(TransactionFact.occurred_time >= datetime.combine(
-                filter_value.date_from,
-                time.min,
-            ))
-        if filter_value.date_to:
-            clauses.append(TransactionFact.occurred_time <= datetime.combine(
-                filter_value.date_to,
-                time.max,
-            ))
+        if filter_value.occurred_time_start:
+            clauses.append(TransactionFact.occurred_time >= filter_value.occurred_time_start)
+        if filter_value.occurred_time_end:
+            clauses.append(TransactionFact.occurred_time < filter_value.occurred_time_end)
 
         total = int(self.db.scalar(
             select(func.count(TransactionFact.id)).where(*clauses)
@@ -98,12 +72,30 @@ class TransactionFactMapper:
         column = self._SORT_COLUMNS[sorter.field]
         order = column.asc() if sorter.order == "asc" else column.desc()
         id_order = TransactionFact.id.asc() if sorter.order == "asc" else TransactionFact.id.desc()
+        orders = [order, id_order]
+        if sorter.field == "amount" and not filter_value.currency_code:
+            orders = [TransactionFact.currency_code.asc(), order, id_order]
         rows = self.db.execute(select(
             *self._fact_columns(),
-        ).where(*clauses).order_by(order, id_order).offset(
+        ).where(*clauses).order_by(*orders).offset(
             (page - 1) * page_size
         ).limit(page_size)).mappings().all()
         return [dict(row) for row in rows], total
+
+    def by_import_file(self, import_file_id: int) -> list[dict]:
+        imported_fact_ids = select(TransactionImportRow.transaction_fact_id).where(
+            TransactionImportRow.transaction_import_file_id == import_file_id,
+            TransactionImportRow.transaction_fact_id > 0,
+        ).distinct()
+        rows = self.db.execute(select(
+            *self._fact_columns(),
+        ).where(
+            TransactionFact.id.in_(imported_fact_ids),
+        ).order_by(
+            TransactionFact.occurred_time.desc(),
+            TransactionFact.id.desc(),
+        )).mappings().all()
+        return [dict(row) for row in rows]
 
     def detail(self, fact_id: int) -> dict | None:
         row = self.db.execute(select(

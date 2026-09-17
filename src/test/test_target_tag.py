@@ -128,7 +128,14 @@ def test_target_tag_dictionary_assigns_one_default_per_active_view(target_tag_ap
     assert client.put(
         f"/paam/tag/v1/view/{view['id']}", json={"status": "ARCHIVED"}
     ).status_code == 200
-    assert client.get("/paam/tag/v1/view/list").json()["body"]["items"] == []
+    archived = client.get("/paam/tag/v1/view/list").json()["body"]["items"]
+    assert [(item["id"], item["status"]) for item in archived] == [
+        (view["id"], "ARCHIVED")
+    ]
+    active = client.get("/paam/tag/v1/view/list", params={
+        "filter": '{"key":"status","op":"=","val":"ACTIVE"}',
+    }).json()["body"]
+    assert active["items"] == []
     assert client.put(
         f"/paam/tag/v1/view/{view['id']}", json={"status": "ACTIVE"}
     ).status_code == 200
@@ -140,12 +147,14 @@ def test_target_tag_dictionary_assigns_one_default_per_active_view(target_tag_ap
 
 def test_target_tag_list_query_count_is_fixed(target_tag_api):
     client, _sessions, engine = target_tag_api
+    last_view_id = 0
     for index in range(20):
         response = client.post(
             "/paam/tag/v1/view",
             json={"name": f"View {index}", "system_name": f"view_{index}"},
         )
         assert response.status_code == 200, response.text
+        last_view_id = response.json()["body"]["id"]
 
     statements = []
 
@@ -159,7 +168,7 @@ def test_target_tag_list_query_count_is_fixed(target_tag_api):
     finally:
         event.remove(engine, "before_cursor_execute", count_selects)
     body = response.json()["body"]
-    assert (body["total"], body["page"], body["page_size"]) == (20, 1, 20)
+    assert (body["total"], body["page_index"], body["page_size"]) == (20, 1, 20)
     assert len(body["items"]) == 20
     assert len(statements) == 3
     assert all("SELECT *" not in statement.upper() for statement in statements)
@@ -167,21 +176,27 @@ def test_target_tag_list_query_count_is_fixed(target_tag_api):
     filtered = client.get(
         "/paam/tag/v1/view/list",
         params={
-            "q": "View 19",
-            "filter": '{"status":"ACTIVE"}',
-            "sorter": '{"field":"name","order":"desc"}',
+            "filter": f'{{"key":"id","op":"=","val":{last_view_id}}}',
+            "sorter": '[{"key":"created_time","direction":"desc"}]',
         },
     ).json()["body"]
     assert filtered["total"] == 1
     assert filtered["items"][0]["system_name"] == "view_19"
-    assert filtered["sorter"] == {"field": "name", "order": "desc"}
+    assert set(filtered) == {"items", "total", "page_index", "page_size"}
 
     rejected = client.get(
         "/paam/tag/v1/view/list",
-        params={"sorter": '{"field":"view_id","order":"asc"}'},
+        params={"sorter": '[{"key":"view_id","direction":"asc"}]'},
     )
     assert rejected.status_code == 422
-    assert rejected.json()["body"]["code"] == "LIST_QUERY_ERROR"
+    assert rejected.json()["body"]["code"] == "LIST_SORTER_FIELD_NOT_SUPPORTED"
+
+    legacy = client.get(
+        "/paam/tag/v1/view/list",
+        params={"include_archived": "true"},
+    )
+    assert legacy.status_code == 422
+    assert legacy.json()["body"]["code"] == "LIST_PARAMETER_NOT_SUPPORTED"
 
 
 def test_ledger_tag_assignment_is_direct_and_idempotent(target_tag_api):

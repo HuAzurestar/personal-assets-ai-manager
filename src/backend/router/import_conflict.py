@@ -2,20 +2,19 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
-from backend.router.dependency import get_db
+from backend.router.dependency import get_db, validate_query_parameter_names
 from backend.router.error import DomainErrorRoute
 from backend.schema.intake import (
-    ImportFactConflictPageResponse,
+    ImportFactConflictListResponse,
     ImportFactConflictResponse,
 )
-from backend.schema.list_query import parse_query_object
+from backend.schema.list_query import parse_list_request
 from backend.schema.target_review import (
-    TargetFactConflictFilter,
+    TargetFactConflictListRequest,
     TargetFactConflictResolveRequest,
-    TargetFactConflictSorter,
     TargetReviewTransitionRequest,
 )
 from backend.service.target_fact_conflict_service import TargetFactConflictService
@@ -30,27 +29,34 @@ router = APIRouter(
 
 @router.get(
     "/fact_conflict/list",
-    response_model=ImportFactConflictPageResponse,
+    response_model=ImportFactConflictListResponse,
+    response_model_exclude_none=True,
 )
 def list_conflicts(
-    page: int = Query(default=1, ge=1),
+    http_request: Request,
+    page_index: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
-    q: str = Query(default="", max_length=200),
-    filter: str = Query(default="{}"),
-    sorter: str = Query(default='{"field":"updated_time","order":"desc"}'),
+    query: str | None = Query(default=None),
+    filter: str | None = Query(default=None),
+    sorter: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
-    filter_value = parse_query_object(filter, TargetFactConflictFilter, "filter")
-    sorter_value = parse_query_object(sorter, TargetFactConflictSorter, "sorter")
-    return ImportFactConflictPageResponse(
-        message="Fact conflicts listed",
-        body=TargetFactConflictService(db).page(
-            page,
-            page_size,
-            q.strip(),
-            filter_value,
-            sorter_value,
-        )
+    validate_query_parameter_names(
+        http_request,
+        {"page_index", "page_size", "query", "filter", "sorter"},
+    )
+    request = parse_list_request(
+        TargetFactConflictListRequest,
+        page_index=page_index,
+        page_size=page_size,
+        query=query,
+        filter=filter,
+        sorter=sorter,
+    )
+    return ImportFactConflictListResponse(
+        status=200,
+        message="ok",
+        body=TargetFactConflictService(db).page(request=request),
     )
 
 
@@ -60,6 +66,8 @@ def list_conflicts(
 )
 def conflict_detail(conflict_id: int, db: Session = Depends(get_db)):
     return ImportFactConflictResponse(
+        status=200,
+        message="ok",
         body=TargetFactConflictService(db).detail(conflict_id)
     )
 
@@ -74,7 +82,8 @@ def resolve_conflict(
     db: Session = Depends(get_db),
 ):
     return ImportFactConflictResponse(
-        message="Fact conflict resolved",
+        status=200,
+        message="ok",
         body=TargetFactConflictService(db).resolve(conflict_id, payload)
     )
 
@@ -89,7 +98,8 @@ def dismiss_conflict(
     db: Session = Depends(get_db),
 ):
     return ImportFactConflictResponse(
-        message="Fact conflict dismissed",
+        status=200,
+        message="ok",
         body=TargetFactConflictService(db).dismiss(conflict_id, payload)
     )
 
@@ -104,6 +114,7 @@ def reopen_conflict(
     db: Session = Depends(get_db),
 ):
     return ImportFactConflictResponse(
-        message="Fact conflict reopened",
+        status=200,
+        message="ok",
         body=TargetFactConflictService(db).reopen(conflict_id, payload)
     )

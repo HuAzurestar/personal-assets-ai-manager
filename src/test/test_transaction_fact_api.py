@@ -118,25 +118,17 @@ def test_transaction_fact_list_is_a_pure_server_queried_po_list(
     response = client.get(
         "/paam/ledger/v1/transaction_fact/list",
         params={
-            "page": 1,
+            "page_index": 1,
             "page_size": 20,
-            "q": "client",
-            "filter": '{"cash_direction":1,"currency_code":"usd"}',
-            "sorter": '{"field":"amount","order":"asc"}',
+            "filter": '{"op":"AND","expression":[{"key":"cash_direction","op":"=","val":1},{"key":"currency_code","op":"=","val":"USD"}]}',
+            "sorter": '[{"key":"amount","direction":"asc"}]',
         },
     )
 
     assert response.status_code == 200, response.text
     body = response.json()["body"]
-    assert (body["total"], body["page"], body["page_size"]) == (1, 1, 20)
-    assert body["filter"] == {
-        "cash_direction": CASH_DIRECTION_IN,
-        "currency_code": "usd",
-        "account_code": None,
-        "date_from": None,
-        "date_to": None,
-    }
-    assert body["sorter"] == {"field": "amount", "order": "asc"}
+    assert (body["total"], body["page_index"], body["page_size"]) == (1, 1, 20)
+    assert set(body) == {"items", "total", "page_index", "page_size"}
     assert body["items"][0]["summary"] == "Consulting"
     assert body["items"][0]["counterparty_name"] == "Client"
     assert "available_value" not in body["items"][0]
@@ -175,12 +167,12 @@ def test_transaction_fact_query_rejects_unknown_fields(transaction_fact_api):
 
     response = client.get(
         "/paam/ledger/v1/transaction_fact/list",
-        params={"sorter": '{"field":"drop_table","order":"asc"}'},
+        params={"sorter": '[{"key":"drop_table","direction":"asc"}]'},
     )
 
     assert response.status_code == 422
     assert response.json()["status"] == 422
-    assert response.json()["body"]["code"] == "LIST_QUERY_ERROR"
+    assert response.json()["body"]["code"] == "LIST_SORTER_FIELD_NOT_SUPPORTED"
 
 
 def test_transaction_fact_detail_returns_shared_not_found_error(

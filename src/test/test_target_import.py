@@ -305,7 +305,7 @@ def test_target_import_rolls_back_when_default_review_write_fails(
     ]
 
 
-def test_import_history_supports_search_pagination_and_account_filter(
+def test_import_history_supports_canonical_pagination_and_source_filter(
     target_import_api,
 ):
     client, _, _ = target_import_api
@@ -320,35 +320,27 @@ def test_import_history_supports_search_pagination_and_account_filter(
         assert _confirm(client, preview).status_code == 200
 
     first_page = client.get(
-        "/paam/import/v1/import_file/list?page=1&page_size=1"
+        "/paam/import/v1/import_file/list?page_index=1&page_size=1"
     ).json()["body"]
     assert (first_page["total"], len(first_page["items"])) == (2, 1)
     assert first_page["items"][0]["filename"] == "card-september.csv"
     second_page = client.get(
-        "/paam/import/v1/import_file/list?page=2&page_size=1"
+        "/paam/import/v1/import_file/list?page_index=2&page_size=1"
     ).json()["body"]
     assert second_page["items"][0]["filename"] == "cash-august.csv"
 
-    search = client.get(
-        "/paam/import/v1/import_file/list", params={"q": "september"}
-    ).json()["body"]
-    assert [item["filename"] for item in search["items"]] == [
-        "card-september.csv"
-    ]
     source_search = client.get(
         "/paam/import/v1/import_file/list",
-        params={"filter": '{"source_type":102}'},
+        params={"filter": '{"key":"source_type","op":"=","val":102}'},
     ).json()["body"]
     assert source_search["total"] == 2
 
-    filtered = client.get(
+    unsupported_search = client.get(
         "/paam/import/v1/import_file/list",
         params={"q": "card-september"},
-    ).json()["body"]
-    assert [item["filename"] for item in filtered["items"]] == [
-        "card-september.csv"
-    ]
-    assert "account_codes" not in filtered["items"][0]
+    )
+    assert unsupported_search.status_code == 422
+    assert "account_codes" not in first_page["items"][0]
 
 
 def test_import_history_preserves_specific_bank_source_codes(target_import_api):
@@ -387,12 +379,12 @@ def test_import_history_preserves_specific_bank_source_codes(target_import_api):
     for code, _name, _label in sources:
         filtered = client.get(
             "/paam/import/v1/import_file/list",
-            params={"filter": f'{{"source_type":{code}}}'},
+            params={"filter": f'{{"key":"source_type","op":"=","val":{code}}}'},
         ).json()["body"]
         assert [item["source_type"] for item in filtered["items"]] == [code]
 
 
-def test_import_history_rows_are_loaded_by_page(target_import_api):
+def test_import_history_child_returns_all_related_rows(target_import_api):
     client, _, _ = target_import_api
     preview = _preview(
         client,
@@ -404,21 +396,20 @@ def test_import_history_rows_are_loaded_by_page(target_import_api):
     batch_id = confirmed.json()["body"]["transaction_import_file_ids"][0]
 
     first = client.get(
-        f"/paam/import/v1/import_file/{batch_id}/transaction_fact/list",
-        params={"page": 1, "page_size": 20},
+        f"/paam/import/v1/import_file/{batch_id}/transaction_fact/list"
     ).json()["body"]
-    assert (first["total"], len(first["items"])) == (26, 20)
+    assert (first["total"], len(first["items"])) == (26, 26)
     assert first["items"][0]["id"] > 0
     assert first["items"][0]["cash_direction"] in {
         CASH_DIRECTION_IN,
         CASH_DIRECTION_OUT,
     }
 
-    second = client.get(
+    unsupported_page = client.get(
         f"/paam/import/v1/import_file/{batch_id}/transaction_fact/list",
-        params={"page": 2, "page_size": 20},
-    ).json()["body"]
-    assert (second["page"], len(second["items"])) == (2, 6)
+        params={"page_index": 2},
+    )
+    assert unsupported_page.status_code == 422
 
 
 def test_target_confirm_select_count_is_independent_of_row_count(target_import_api):

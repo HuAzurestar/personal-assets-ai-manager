@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
-from backend.router.dependency import get_db
+from backend.router.dependency import get_db, validate_query_parameter_names
 from backend.router.error import DomainErrorRoute
-from backend.schema.list_query import parse_query_object
+from backend.schema.list_query import parse_list_request
 from backend.schema.review_case import (
-    ReviewCaseFilter,
-    ReviewCasePageResponse,
-    ReviewCaseSorter,
+    ReviewCaseListRequest,
+    ReviewCaseListResponse,
 )
 from backend.schema.target_review import (
     TargetEconomicReviewCreateRequest,
@@ -34,7 +33,7 @@ def create_case(
     db: Session = Depends(get_db),
 ):
     return TargetEconomicReviewResponse(
-        message="Ledger review created",
+        message="ok",
         body=TargetEconomicService(db).create(payload),
     )
 
@@ -46,7 +45,7 @@ def revoke_case(
     db: Session = Depends(get_db),
 ):
     return TargetEconomicReviewResponse(
-        message="Ledger review revoked",
+        message="ok",
         body=TargetEconomicService(db).revoke(review_id, payload)
     )
 
@@ -58,40 +57,47 @@ def restore_case(
     db: Session = Depends(get_db),
 ):
     return TargetEconomicReviewResponse(
-        message="Ledger review restored",
+        message="ok",
         body=TargetEconomicService(db).restore(review_id, payload)
     )
 
 
-@router.get("/review/list", response_model=ReviewCasePageResponse)
+@router.get(
+    "/review/list",
+    response_model=ReviewCaseListResponse,
+    response_model_exclude_none=True,
+)
 def case_page(
-    page: int = Query(default=1, ge=1),
+    http_request: Request,
+    page_index: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
-    status: int | None = Query(default=None, ge=0, le=1),
-    q: str = Query(default="", max_length=200),
-    filter: str = Query(default="{}"),
-    sorter: str = Query(default='{"field":"updated_time","order":"desc"}'),
+    query: str | None = Query(default=None),
+    filter: str | None = Query(default=None),
+    sorter: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
-    filter_value = parse_query_object(filter, ReviewCaseFilter, "filter")
-    sorter_value = parse_query_object(sorter, ReviewCaseSorter, "sorter")
-    if status is not None and filter_value.status is None:
-        filter_value = filter_value.model_copy(update={"status": status})
-    return ReviewCasePageResponse(
-        message="Ledger reviews listed",
-        body=TargetEconomicService(db).page(
-            page,
-            page_size,
-            q.strip(),
-            filter_value,
-            sorter_value,
-        )
+    validate_query_parameter_names(
+        http_request,
+        {"page_index", "page_size", "query", "filter", "sorter"},
+    )
+    request = parse_list_request(
+        ReviewCaseListRequest,
+        page_index=page_index,
+        page_size=page_size,
+        query=query,
+        filter=filter,
+        sorter=sorter,
+    )
+    return ReviewCaseListResponse(
+        status=200,
+        message="ok",
+        body=TargetEconomicService(db).page(request=request),
     )
 
 
 @router.get("/review/{review_id}", response_model=TargetEconomicReviewResponse)
 def case_detail(review_id: int, db: Session = Depends(get_db)):
     return TargetEconomicReviewResponse(
-        message="Ledger review returned",
+        message="ok",
         body=TargetEconomicService(db).detail(review_id)
     )

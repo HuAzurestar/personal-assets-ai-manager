@@ -110,9 +110,8 @@ def test_import_file_list_is_a_pure_filterable_po_list(import_file_api):
     response = client.get(
         "/paam/import/v1/import_file/list",
         params={
-            "q": "september",
-            "filter": '{"source_type":102,"status":1}',
-            "sorter": '{"field":"filename","order":"asc"}',
+            "filter": '{"op":"AND","expression":[{"key":"source_type","op":"=","val":102},{"key":"status","op":"=","val":1}]}',
+            "sorter": '[{"key":"created_time","direction":"asc"}]',
         },
     )
 
@@ -135,8 +134,7 @@ def test_import_file_summary_uses_the_same_search_and_filter_contract(
     response = client.get(
         "/paam/import/v1/import_file/summary",
         params={
-            "q": "september",
-            "filter": '{"source_type":102,"status":1}',
+            "filter": '{"op":"AND","expression":[{"key":"source_type","op":"=","val":102},{"key":"status","op":"=","val":1}]}',
         },
     )
 
@@ -149,26 +147,17 @@ def test_import_file_summary_uses_the_same_search_and_filter_contract(
         "success_count": 1,
         "skip_count": 0,
         "issue_count": 0,
-        "q": "september",
-        "filter": {
-            "source_type": 102,
-            "file_format": None,
-            "status": 1,
-        },
     }
 
 
-def test_import_file_detail_has_a_paged_transaction_fact_subresource(
+def test_import_file_detail_has_an_unpaged_transaction_fact_subresource(
     import_file_api,
 ):
     client, sessions = import_file_api
     file_ids, fact_id = _seed(sessions)
 
     detail = client.get(f"/paam/import/v1/import_file/{file_ids[0]}")
-    facts = client.get(
-        f"/paam/import/v1/import_file/{file_ids[0]}/transaction_fact/list",
-        params={"page": 1, "page_size": 10},
-    )
+    facts = client.get(f"/paam/import/v1/import_file/{file_ids[0]}/transaction_fact/list")
 
     assert detail.status_code == 200
     assert detail.json()["body"]["import_file"]["id"] == file_ids[0]
@@ -186,7 +175,7 @@ def test_import_file_query_validates_generic_objects(import_file_api):
     )
 
     assert response.status_code == 422
-    assert response.json()["body"]["code"] == "LIST_QUERY_ERROR"
+    assert response.json()["body"]["code"] == "LIST_FILTER_OPERATOR_NOT_SUPPORTED"
 
 
 def test_import_file_detail_returns_not_found(import_file_api):

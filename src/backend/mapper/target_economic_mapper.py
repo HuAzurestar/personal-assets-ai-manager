@@ -93,7 +93,6 @@ class TargetEconomicMapper:
         self,
         page: int,
         page_size: int,
-        q: str,
         filter_value,
         sorter,
     ) -> tuple[list[dict], int]:
@@ -106,16 +105,20 @@ class TargetEconomicMapper:
             ReviewCase.updated_time,
         )
         clauses = []
-        if q:
-            pattern = f"%{q}%"
-            clauses.append(or_(
-                cast(ReviewCase.id, String).like(pattern),
-                ReviewCase.title.ilike(pattern),
-            ))
+        if filter_value.id:
+            clauses.append(ReviewCase.id == filter_value.id)
         if filter_value.status is not None:
             clauses.append(ReviewCase.status == filter_value.status)
         if filter_value.behavior_type is not None:
             clauses.append(ReviewCase.behavior_type == filter_value.behavior_type)
+        if filter_value.created_time_start:
+            clauses.append(ReviewCase.created_time >= filter_value.created_time_start)
+        if filter_value.created_time_end:
+            clauses.append(ReviewCase.created_time < filter_value.created_time_end)
+        if filter_value.updated_time_start:
+            clauses.append(ReviewCase.updated_time >= filter_value.updated_time_start)
+        if filter_value.updated_time_end:
+            clauses.append(ReviewCase.updated_time < filter_value.updated_time_end)
         query = query.where(*clauses)
         total = int(self.db.scalar(
             select(func.count()).select_from(query.order_by(None).subquery())

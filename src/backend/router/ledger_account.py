@@ -21,7 +21,8 @@ router = APIRouter(
 @router.get("/flow/{ledger_id}/account", response_model=LedgerAccountResponse)
 def get_account(ledger_id: int, db: Session = Depends(get_db)):
     return LedgerAccountResponse(
-        message="Ledger account returned",
+        status=200,
+        message="ok",
         body=LedgerAccountService(db).get(ledger_id),
     )
 
@@ -33,6 +34,7 @@ def update_account(
     db: Session = Depends(get_db),
 ):
     return LedgerAccountResponse(
-        message="Ledger account updated",
+        status=200,
+        message="ok",
         body=LedgerAccountService(db).update(ledger_id, payload),
     )

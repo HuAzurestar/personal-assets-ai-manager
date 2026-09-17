@@ -1,19 +1,18 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
-from backend.router.dependency import get_db
+from backend.router.dependency import get_db, validate_query_parameter_names
 from backend.router.error import DomainErrorRoute
-from backend.schema.list_query import parse_query_object
+from backend.schema.list_query import parse_list_request
 from backend.schema.target_tag import (
     TargetTagCreateRequest,
     TargetTagStatusRequest,
     TargetTagViewCreateRequest,
-    TargetTagViewFilter,
+    TargetTagViewListRequest,
     TargetTagViewListResponse,
     TargetTagViewResponse,
-    TargetTagViewSorter,
 )
 from backend.service.target_tag_service import TargetTagService
 
@@ -25,36 +24,44 @@ router = APIRouter(
 )
 
 
-@router.get("/view/list", response_model=TargetTagViewListResponse)
+@router.get(
+    "/view/list",
+    response_model=TargetTagViewListResponse,
+    response_model_exclude_none=True,
+)
 def list_views(
-    page: int = Query(default=1, ge=1),
+    http_request: Request,
+    page_index: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
-    include_archived: bool = False,
-    q: str = Query(default="", max_length=200),
-    filter: str = Query(default="{}"),
-    sorter: str = Query(default='{"field":"id","order":"asc"}'),
+    query: str | None = Query(default=None),
+    filter: str | None = Query(default=None),
+    sorter: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
-    filter_value = parse_query_object(filter, TargetTagViewFilter, "filter")
-    sorter_value = parse_query_object(sorter, TargetTagViewSorter, "sorter")
-    if include_archived and not filter_value.include_archived:
-        filter_value = filter_value.model_copy(update={"include_archived": True})
+    validate_query_parameter_names(
+        http_request,
+        {"page_index", "page_size", "query", "filter", "sorter"},
+    )
+    request = parse_list_request(
+        TargetTagViewListRequest,
+        page_index=page_index,
+        page_size=page_size,
+        query=query,
+        filter=filter,
+        sorter=sorter,
+    )
     return TargetTagViewListResponse(
-        message="Tag view list retrieved",
-        body=TargetTagService(db).list(
-            page,
-            page_size,
-            q.strip(),
-            filter_value,
-            sorter_value,
-        ),
+        status=200,
+        message="ok",
+        body=TargetTagService(db).list(request=request),
     )
 
 
 @router.post("/view", response_model=TargetTagViewResponse)
 def create_view(payload: TargetTagViewCreateRequest, db: Session = Depends(get_db)):
     return TargetTagViewResponse(
-        message="Tag view created",
+        status=200,
+        message="ok",
         body=TargetTagService(db).create_view(payload),
     )
 
@@ -66,7 +73,8 @@ def set_view_status(
     db: Session = Depends(get_db),
 ):
     return TargetTagViewResponse(
-        message="Tag view updated",
+        status=200,
+        message="ok",
         body=TargetTagService(db).set_view_status(view_id, payload),
     )
 
@@ -78,7 +86,8 @@ def create_tag(
     db: Session = Depends(get_db),
 ):
     return TargetTagViewResponse(
-        message="Tag created",
+        status=200,
+        message="ok",
         body=TargetTagService(db).create_tag(view_id, payload),
     )
 
@@ -91,6 +100,7 @@ def set_tag_status(
     db: Session = Depends(get_db),
 ):
     return TargetTagViewResponse(
-        message="Tag updated",
+        status=200,
+        message="ok",
         body=TargetTagService(db).set_tag_status(view_id, tag_id, payload)
     )

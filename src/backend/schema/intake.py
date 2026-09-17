@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from typing import Literal
-
 from pydantic import BaseModel, Field
 
-from backend.schema.target_review import TargetFactConflictPageRead, TargetReviewCaseRead
+from backend.schema.response import ListResponse, SuccessResponse
+from backend.schema.target_review import (
+    TargetFactConflictListBody,
+    TargetReviewCaseRead,
+)
 
 
 class IntakeUploadFileRequest(BaseModel):
@@ -28,19 +30,15 @@ class IntakeConfirmRequest(BaseModel):
     version: str = Field(min_length=1, max_length=128)
 
 
-class ImportResponse(BaseModel):
-    status: Literal[200] = 200
-    message: str = "ok"
+class ImportResponse(
+    SuccessResponse[dict[str, object] | list[dict[str, object]]]
+):
     body: dict[str, object] | list[dict[str, object]]
 
 
-class ImportFactConflictResponse(BaseModel):
-    status: Literal[200] = 200
-    message: str = "ok"
+class ImportFactConflictResponse(SuccessResponse[TargetReviewCaseRead]):
     body: TargetReviewCaseRead
 
 
-class ImportFactConflictPageResponse(BaseModel):
-    status: Literal[200] = 200
-    message: str = "ok"
-    body: TargetFactConflictPageRead
+class ImportFactConflictListResponse(ListResponse[TargetReviewCaseRead]):
+    body: TargetFactConflictListBody
