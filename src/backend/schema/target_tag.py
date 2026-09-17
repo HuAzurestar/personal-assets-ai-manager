@@ -37,6 +37,20 @@ class TargetTagCreateRequest(BaseModel):
     system_name: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
 
 
+class TargetTagSystemNamePreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=120)
+
+
+class TargetTagSystemNameRead(BaseModel):
+    system_name: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
+
+
+class TargetTagSystemNameResponse(SuccessResponse[TargetTagSystemNameRead]):
+    body: TargetTagSystemNameRead
+
+
 class TargetTagStatusRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

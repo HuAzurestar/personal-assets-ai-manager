@@ -110,6 +110,29 @@ def _assign(client, ledger_id, value):
     )
 
 
+@pytest.mark.parametrize(
+    ("display_name", "system_name"),
+    [
+        ("消费 类型", "xiao_fei_lei_xing"),
+        ("Monthly Budget", "monthly_budget"),
+        ("现金 Cash Account", "xian_jin_cash_account"),
+        ("2026 年预算", "tag_2026_nian_yu_suan"),
+    ],
+)
+def test_target_tag_system_name_preview(target_tag_api, display_name, system_name):
+    client, _sessions, _engine = target_tag_api
+    response = client.post(
+        "/paam/tag/v1/system_name/preview",
+        json={"name": display_name},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "status": 200,
+        "message": "ok",
+        "body": {"system_name": system_name},
+    }
+
+
 def test_target_tag_dictionary_assigns_one_default_per_active_view(target_tag_api):
     client, sessions, _engine = target_tag_api
     _add_facts(sessions, 2)

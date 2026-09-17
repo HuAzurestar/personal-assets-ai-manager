@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import re
+import unicodedata
 from datetime import datetime
 
+from pypinyin import Style, lazy_pinyin
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -11,6 +14,7 @@ from backend.schema.list_query import BetweenValue, iter_filter_fields
 from backend.schema.target_tag import (
     TargetTagCreateRequest,
     TargetTagStatusRequest,
+    TargetTagSystemNameRead,
     TargetTagViewCreateRequest,
     TargetTagViewFilter,
     TargetTagViewListBody,
@@ -43,6 +47,23 @@ class TargetTagService:
             self._mapper_filter(request),
             sorter,
         )
+
+    @staticmethod
+    def preview_system_name(name: str) -> TargetTagSystemNameRead:
+        normalized = unicodedata.normalize("NFKC", name).strip()
+        parts = lazy_pinyin(
+            normalized,
+            style=Style.NORMAL,
+            errors=lambda value: [value],
+        )
+        system_name = re.sub(r"[^a-z0-9]+", "_", "_".join(parts).lower())
+        system_name = system_name.strip("_")
+        if not system_name:
+            system_name = "tag"
+        elif not system_name[0].isalpha():
+            system_name = f"tag_{system_name}"
+        system_name = system_name[:64].rstrip("_")
+        return TargetTagSystemNameRead(system_name=system_name)
 
     @staticmethod
     def _mapper_filter(request: TargetTagViewListRequest) -> TargetTagViewFilter:

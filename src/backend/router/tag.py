@@ -9,6 +9,8 @@ from backend.schema.list_query import parse_list_request
 from backend.schema.target_tag import (
     TargetTagCreateRequest,
     TargetTagStatusRequest,
+    TargetTagSystemNamePreviewRequest,
+    TargetTagSystemNameResponse,
     TargetTagViewCreateRequest,
     TargetTagViewListRequest,
     TargetTagViewListResponse,
@@ -22,6 +24,15 @@ router = APIRouter(
     tags=["tag"],
     route_class=DomainErrorRoute,
 )
+
+
+@router.post("/system_name/preview", response_model=TargetTagSystemNameResponse)
+def preview_system_name(payload: TargetTagSystemNamePreviewRequest):
+    return TargetTagSystemNameResponse(
+        status=200,
+        message="ok",
+        body=TargetTagService.preview_system_name(payload.name),
+    )
 
 
 @router.get(
