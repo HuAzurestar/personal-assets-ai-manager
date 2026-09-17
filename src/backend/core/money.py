@@ -78,15 +78,3 @@ def decimal_from_amount(amount: int, currency_code: str) -> Decimal:
     if abs(amount) > MAX_ABS_AMOUNT:
         raise ValueError("金额超出支持范围")
     return Decimal(amount) * currency_quantum(currency_code)
-
-
-def cents(value: object) -> int:
-    """Compatibility shorthand for CNY input while parsers are migrated."""
-
-    return amount_from_decimal(value, "CNY")
-
-
-def money(value: int) -> Decimal:
-    """Compatibility shorthand returning exact CNY Decimal values."""
-
-    return decimal_from_amount(value, "CNY")

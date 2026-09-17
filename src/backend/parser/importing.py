@@ -4,9 +4,10 @@ import csv
 import io
 import json
 import re
-from backend.core.money import cents, money
+from backend.core.money import amount_from_decimal, decimal_from_amount
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 
 
 @dataclass(frozen=True)
@@ -14,7 +15,7 @@ class ImportedRow:
     occurred_at: datetime
     merchant: str
     note: str
-    amount: float
+    amount: Decimal
     reference: str
     account_name: str
     raw_payload: str
@@ -74,7 +75,10 @@ def _normalise(row: dict[str, str]) -> ImportedRow:
     try:
         if not re.fullmatch(r"[+-]?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?", normalised_amount):
             raise ValueError("Invalid amount")
-        amount = money(cents(normalised_amount.replace(",", "")))
+        amount = decimal_from_amount(
+            amount_from_decimal(normalised_amount.replace(",", ""), "CNY"),
+            "CNY",
+        )
     except ValueError as error:
         raise ValueError(f"Unrecognised transaction amount: {raw_amount}") from error
     direction = _value(row, "direction")

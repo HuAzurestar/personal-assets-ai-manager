@@ -22,7 +22,7 @@ from backend.parser.file_import import (
     _read_zip,
     _stringify,
 )
-from backend.core.money import cents
+from backend.core.money import amount_from_decimal
 from backend.parser.provider_template import PROVIDER_TEMPLATES, normalise_header
 
 LABELS = {
@@ -48,7 +48,7 @@ def amount_minor(value: str) -> int:
     value = str(value).strip().replace(",", "").lstrip("¥￥")
     if not re.fullmatch(r"[+-]?\d+(?:\.\d{1,2})?", value):
         raise ValueError("金额格式不明确")
-    return cents(value)
+    return amount_from_decimal(value, "CNY")
 
 
 def timestamp(value: str, clock: str = "") -> tuple[str, str]:
