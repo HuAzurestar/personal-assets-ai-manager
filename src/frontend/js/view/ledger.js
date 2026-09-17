@@ -1,13 +1,13 @@
 import { request, jsonRequest } from "../api/client.js";
 import { toast } from "../component/toast.js";
 import { table } from "../component/table.js";
-import { openInspection } from "../component/inspection.js?v=20260917.9";
+import { openInspection } from "../component/inspection.js?v=20260917.10";
 import {
   detailList, detailPager,
-} from "../component/detail.js?v=20260917.9";
+} from "../component/detail.js?v=20260917.10";
 import {
   bindDateTimeRanges, dateTimeRangeControl,
-} from "../component/date-time-range.js?v=20260917.9";
+} from "../component/date-time-range.js?v=20260917.10";
 import { now, state } from "../state/ledger.js";
 import {
   $, $$, currencyPrecision, date, decimalAmount, esc, key, money,
@@ -15,10 +15,10 @@ import {
 } from "../util/core.js";
 import {
   canonicalHash, parseHash, shellMarkup, syncNavigation,
-} from "../navigation.js?v=20260917.9";
+} from "../navigation.js?v=20260917.10";
 import {
   accountsMarkup, cursorFromParam, monthBounds,
-} from "./account.js?v=20260917.9";
+} from "./account.js?v=20260917.10";
 
 const entryTypeValues = { TRANSACTION: 0, ACCOUNT_TRANSFER: 1, CLAIM: 2 };
 const reviewBehaviorNames = { 0: "事实交易", 1: "借款与还款" };

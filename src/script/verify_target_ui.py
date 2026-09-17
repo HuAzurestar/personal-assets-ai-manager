@@ -151,9 +151,9 @@ def run() -> None:
                 history_drawer_box = history_drawer.bounding_box()
                 assert history_drawer_box is not None
                 assert history_drawer_box["width"] >= 1438, history_drawer_box
-                expect(history_drawer.locator('.inspection-related[data-kind="fact"]')).to_have_count(20)
-                expect(history_drawer).to_contain_text("关联事实")
-                expect(history_drawer).to_contain_text("显示 1–20 / 26 笔事实")
+                expect(history_drawer.locator(".inspection-import-row")).to_have_count(20)
+                expect(history_drawer).to_contain_text("来源行处理结果")
+                expect(history_drawer).to_contain_text("显示 1–20 / 26 行")
                 history_drawer.locator("[data-close]").first.click()
                 history_hash = page.evaluate("location.hash")
                 expect(page.locator('[data-form="history-filter"]')).to_be_visible()
@@ -184,7 +184,6 @@ def run() -> None:
                 expect(economic_drawer).to_contain_text(
                     "来源事实"
                 )
-                economic_drawer.locator('.inspection-action-menu > summary').click()
                 economic_drawer.locator('[data-action="edit-ledger-account"]').click()
                 account_form = page.locator('dialog[open] [data-form="ledger-account"]')
                 expect(account_form).to_be_visible()
@@ -199,7 +198,7 @@ def run() -> None:
                 page.locator('[data-action="import-file-detail"]').first.click()
                 expect(page.locator("dialog.detail-view-drawer[open]")).to_be_visible()
                 expect(page.locator("dialog.detail-view-drawer[open]")).to_contain_text(
-                    "关联事实"
+                    "来源行处理结果"
                 )
                 page.locator("dialog[open] [data-close]").first.click()
 
@@ -305,7 +304,7 @@ def run() -> None:
                 expect(page.get_by_text("浏览器测试商户").first).to_be_visible()
                 page.locator('[data-action="fact-detail"]').first.click()
                 expect(page.locator("dialog.detail-view-drawer[open]")).to_contain_text(
-                    "交易信息"
+                    "交易概览"
                 )
                 page.locator("dialog[open] [data-close]").first.click()
 

@@ -330,32 +330,27 @@ def run():
 
                     drawer = open_detail("fact", fact["id"])
                     expect(drawer.locator(".inspection-metrics")).to_contain_text("¥0.00")
-                    expect(drawer.locator('details[data-technical][open]')).to_have_count(0)
-                    expect(drawer.locator('details[data-business]').filter(has=page.locator('summary', has_text="历史分配")).first).not_to_have_attribute("open", "")
-                    drawer.locator("[data-expand]").click()
-                    expect(drawer.locator('details[data-technical][open]')).to_have_count(0)
-                    related = drawer.locator('.inspection-related[data-kind="review"]').first
-                    related.locator(":scope > summary").click()
-                    expect(related.locator(".inspection-inline-heading")).to_be_visible()
-                    related.locator("[data-promote]").first.click()
+                    expect(drawer).not_to_contain_text("事实身份键")
+                    expect(drawer).not_to_contain_text("SHA-256")
+                    related = drawer.locator('.inspection-link[data-kind="review"]').first
+                    related.click()
                     expect(drawer.locator("[data-kind-label]")).to_have_text("审查记录")
                     drawer.locator("[data-inspect-back]").click()
                     expect(drawer.locator("[data-kind-label]")).to_have_text("事实流水")
                     drawer.locator("[data-close]").click()
 
                     drawer = open_detail("file", file_id)
-                    relation_group = drawer.locator('.inspection-group').filter(has=page.locator(':scope > summary', has_text="关联事实"))
-                    expect(relation_group.locator(".inspection-related")).to_have_count(20)
-                    relation_group.locator("[data-rel-next]").click()
-                    expect(relation_group.locator(".inspection-related")).to_have_count(6)
-                    relation_group.locator("select").select_option("50")
-                    expect(relation_group.locator(".inspection-related")).to_have_count(26)
+                    row_group = drawer.locator(".inspection-file-rows")
+                    expect(row_group.locator(".inspection-import-row")).to_have_count(20)
+                    row_group.locator("[data-row-next]").click()
+                    expect(row_group.locator(".inspection-import-row")).to_have_count(6)
+                    expect(row_group).to_contain_text("显示 21–26 / 26 行")
+                    expect(row_group.locator(".inspection-json")).to_have_count(6)
                     drawer.locator("[data-close]").click()
 
                     drawer = open_detail("review", review_id)
-                    historical = drawer.locator('.inspection-group').filter(has=page.locator(':scope > summary', has_text="历史分配"))
-                    expect(historical).to_have_attribute("open", "")
-                    expect(historical.locator('.inspection-allocation')).to_have_count(2)
+                    historical = drawer.locator('.inspection-card').filter(has=page.locator(':scope > h3', has_text="历史资金关系"))
+                    expect(historical.locator('.inspection-flow')).to_have_count(2)
                     drawer.locator('[data-close]').click()
 
                     sizes = [(1440, 1000, 1), (390, 844, 1), (1080, 1080, 1), (2700, 1080, 1)]
@@ -389,7 +384,6 @@ def run():
                             if args.screenshots and scale == 1:
                                 args.screenshots.mkdir(parents=True, exist_ok=True)
                                 page.screenshot(path=str(args.screenshots / f"inspection-{kind}-{width}x{height}.png"))
-                            drawer.locator('[data-expand]').click()
                             assert drawer.evaluate("d=>d.scrollWidth-d.clientWidth") <= 1
                             drawer.locator("[data-close]").click()
                             cases += 1
@@ -420,7 +414,7 @@ def run():
                     assert not errors, errors
                     context.close()
                     browser.close()
-                    print(f"PASS: {cases} detail/viewport cases; inline traversal, history, exact totals, pagination, full-screen and list navigation", flush=True)
+                    print(f"PASS: {cases} detail/viewport cases; card navigation, history, exact totals, row pagination, full-screen and list navigation", flush=True)
         finally:
             server.should_exit = True
             thread.join(timeout=10)
