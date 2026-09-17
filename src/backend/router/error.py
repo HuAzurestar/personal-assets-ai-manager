@@ -12,6 +12,7 @@ from starlette.exceptions import HTTPException
 from starlette.responses import JSONResponse
 
 from backend.error import DomainError
+from backend.schema.response import ErrorBody, ErrorResponse
 
 
 logger = logging.getLogger(__name__)
@@ -25,17 +26,18 @@ def _error_response(
     details: Any = None,
     headers: dict[str, str] | None = None,
 ) -> JSONResponse:
-    body: dict[str, Any] = {"code": code}
-    if details is not None:
-        body["details"] = jsonable_encoder(details)
+    response = ErrorResponse(
+        status=status_code,
+        message=message,
+        body=ErrorBody(
+            code=code,
+            details=jsonable_encoder(details) if details is not None else None,
+        ),
+    )
     return JSONResponse(
         status_code=status_code,
         headers=headers,
-        content={
-            "status": status_code,
-            "message": message,
-            "body": body,
-        },
+        content=response.model_dump(mode="json"),
     )
 
 
