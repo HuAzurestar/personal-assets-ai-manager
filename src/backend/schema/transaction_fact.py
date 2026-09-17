@@ -33,7 +33,6 @@ class TransactionFactListItem(BaseModel):
     occurred_time: datetime
     cash_direction: Literal["IN", "OUT"]
     amount: int
-    amount_scale: int
     currency_code: str
     account_code: str
     counterparty: str
@@ -82,7 +81,6 @@ class TransactionFactAllocationRead(BaseModel):
     fact_id: int
     economic_id: int
     amount: int
-    amount_scale: int
     currency_code: str
 
 
@@ -102,7 +100,6 @@ class TransactionFactLedgerRead(BaseModel):
     economic_type: Literal["TRANSACTION", "ACCOUNT_TRANSFER", "CLAIM"]
     cash_direction: Literal["IN", "OUT"]
     amount: int
-    amount_scale: int
     currency_code: str
     account_code: str
     occurred_time: datetime

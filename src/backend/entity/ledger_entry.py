@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Index, Integer, SmallInteger, String
+from sqlalchemy import BigInteger, DateTime, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.core.target_database import TargetBase
@@ -17,7 +17,6 @@ class LedgerEntry(TargetTable, TargetBase):
     entry_type: Mapped[int] = mapped_column(Integer, nullable=False)
     entry_direction: Mapped[int] = mapped_column(Integer, nullable=False)
     amount: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    amount_scale: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=2)
     currency_code: Mapped[str] = mapped_column(String(12), nullable=False)
     account_code: Mapped[str] = mapped_column(String(120), nullable=False)
     counterparty_account_ref: Mapped[str] = mapped_column(

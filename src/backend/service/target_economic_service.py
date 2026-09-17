@@ -461,7 +461,6 @@ class TargetEconomicService:
                 "fact_id": fact.id,
                 "economic_key": row.economic_key,
                 "amount": row.amount,
-                "amount_scale": fact.amount_scale,
                 "currency_code": fact.currency_code,
             })
         exceeded = {
@@ -485,7 +484,6 @@ class TargetEconomicService:
                 "entry_type": ECONOMIC_TYPE_IDS[definition.economic_type],
                 "direction": fact.cash_direction,
                 "amount": row.amount,
-                "amount_scale": fact.amount_scale,
                 "currency_code": fact.currency_code,
                 "account_code": fact.account_code,
                 "occurred_time": fact.occurred_time,

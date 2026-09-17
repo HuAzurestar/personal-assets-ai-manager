@@ -15,7 +15,6 @@ class TargetReviewFactVO:
     occurred_time: datetime
     cash_direction: str
     amount: int
-    amount_scale: int
     currency_code: str
     account_code: str
     counterparty: str
@@ -58,7 +57,6 @@ class TargetReviewLineRead(BaseModel):
     role: str
     party: str
     amount: int
-    amount_scale: int
     currency_code: str
 
 
@@ -186,7 +184,6 @@ class TargetEconomicFlowRead(BaseModel):
     economic_type: Literal["TRANSACTION", "ACCOUNT_TRANSFER", "CLAIM"]
     cash_direction: Literal["IN", "OUT"]
     amount: int
-    amount_scale: int
     currency_code: str
     account_code: str
     counterparty_account_ref: str
@@ -198,7 +195,6 @@ class TargetEconomicReviewFactRead(BaseModel):
     occurred_time: datetime
     cash_direction: Literal["IN", "OUT"]
     amount: int
-    amount_scale: int
     currency_code: str
     account_code: str
     counterparty: str
@@ -210,7 +206,6 @@ class TargetFlowAllocationRead(BaseModel):
     fact_id: int
     economic_id: int
     amount: int
-    amount_scale: int
     currency_code: str
 
 
@@ -280,7 +275,6 @@ class TargetFactAllocationCandidateRead(BaseModel):
     occurred_time: datetime
     cash_direction: str
     amount: int
-    amount_scale: int
     currency_code: str
     account_code: str
     counterparty: str

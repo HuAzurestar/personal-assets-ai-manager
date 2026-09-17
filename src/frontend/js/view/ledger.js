@@ -7,7 +7,7 @@ import {
 } from "../component/detail.js";
 import { now, state } from "../state/ledger.js";
 import {
-  $, $$, date, esc, key, money,
+  $, $$, date, decimalAmount, esc, key, money,
   reviewTypeNames, roleNames, statusNames, typeNames,
 } from "../util/core.js";
 import {
@@ -169,10 +169,9 @@ async function summaryPage() {
   const activityMap = new Map();
   for (const flow of flows) {
     const day = date(flow.occurred_time).slice(0, 10);
-    const scale = flow.amount.amount_scale;
     const currency = flow.amount.currency_code;
     const trendKey = `${day}:${currency}`;
-    const trend = trendMap.get(trendKey) || { day, currency_code: currency, amount_scale: scale, income_value: 0, expense_value: 0, net_value: 0 };
+    const trend = trendMap.get(trendKey) || { day, currency_code: currency, income_value: 0, expense_value: 0, net_value: 0 };
     if (flow.economic_type === "TRANSACTION") {
       if (flow.cash_direction === "IN") trend.income_value += flow.amount.amount;
       else trend.expense_value += flow.amount.amount;
@@ -181,7 +180,7 @@ async function summaryPage() {
     trendMap.set(trendKey, trend);
     const typeCode = flow.economic_type;
     const activityKey = `${typeCode}:${currency}`;
-    const activity = activityMap.get(activityKey) || { entry_type_code: typeCode, currency_code: currency, amount_scale: scale, in_amount_value: 0, out_amount_value: 0, nettable: true };
+    const activity = activityMap.get(activityKey) || { entry_type_code: typeCode, currency_code: currency, in_amount_value: 0, out_amount_value: 0, nettable: true };
     if (flow.cash_direction === "IN") activity.in_amount_value += flow.amount.amount;
     else activity.out_amount_value += flow.amount.amount;
     activityMap.set(activityKey, activity);
@@ -332,8 +331,8 @@ async function showEconomicDetail(id) {
 function showSummaryDetail(type) {
   const item = state.detailSummaries.get(type);
   if (!item) return;
-  const incoming = money({ amount: item.in_amount_value, amount_scale: item.amount_scale, currency_code: item.currency_code });
-  const outgoing = money({ amount: item.out_amount_value, amount_scale: item.amount_scale, currency_code: item.currency_code });
+  const incoming = money({ amount: item.in_amount_value, currency_code: item.currency_code });
+  const outgoing = money({ amount: item.out_amount_value, currency_code: item.currency_code });
   detailDrawer({
     title: typeNames[item.entry_type_code] || item.entry_type_code,
     kicker: `ENTRY TYPE · ${item.entry_type_code}`,
@@ -370,9 +369,9 @@ async function showEconomicReview(id) {
   const facts = item.facts.map((fact) => `<div class="drawer-review-row"><span><strong>Fact #${fact.id} · ${esc(fact.summary || fact.counterparty || "未命名事实")}</strong><small>${date(fact.occurred_time)} · ${esc(fact.account_code)}</small></span><strong>${money(fact)}</strong></div>`).join("");
   const economics = item.economics.map((flow) => {
     const typeCode = flow.economic_type;
-    return `<div class="drawer-review-row"><span><strong>Ledger #${flow.id} · ${esc(typeNames[typeCode] || typeCode)}</strong><small>${flow.cash_direction === "IN" ? "流入" : "流出"} · ${esc(flow.currency_code)}</small></span><strong>${money({ amount: flow.amount, amount_scale: flow.amount_scale, currency_code: flow.currency_code })}</strong></div>`;
+    return `<div class="drawer-review-row"><span><strong>Ledger #${flow.id} · ${esc(typeNames[typeCode] || typeCode)}</strong><small>${flow.cash_direction === "IN" ? "流入" : "流出"} · ${esc(flow.currency_code)}</small></span><strong>${money(flow)}</strong></div>`;
   }).join("");
-  const allocations = item.allocations.map((row) => `<div class="drawer-review-row"><span><strong>Fact #${row.fact_id} → Ledger #${row.economic_id || "待确认"}</strong></span><strong>${money({ amount: row.amount, amount_scale: row.amount_scale, currency_code: row.currency_code })}</strong></div>`).join("");
+  const allocations = item.allocations.map((row) => `<div class="drawer-review-row"><span><strong>Fact #${row.fact_id} → Ledger #${row.economic_id || "待确认"}</strong></span><strong>${money(row)}</strong></div>`).join("");
   const history = item.history.map((row) => `<div class="drawer-review-row"><span><strong>v${row.version} · ${esc(row.operation)}</strong><small>${date(row.created_time)} · ${esc(row.actor)}</small></span><span>${esc(row.reason || "未填写原因")}</span></div>`).join("");
   let action = "";
   if (item.status === "PENDING") action = `<button type="button" class="primary" data-action="economic-review-transition" data-kind="confirm" data-id="${item.id}" data-version="${item.version}">确认审查</button>`;
@@ -402,7 +401,7 @@ async function openEconomicReviewEditor() {
   const factRoot = $("[data-economic-review-facts]", form);
   const definitionRoot = $("[data-economic-definitions]", form);
   const matrixRoot = $("[data-allocation-matrix]", form);
-  factRoot.innerHTML = facts.map((fact) => `<label class="review-fact-choice"><input type="checkbox" data-review-fact="${fact.id}"><span><strong>#${fact.id} · ${esc(fact.counterparty || fact.summary || "未命名事实")}</strong><small>${date(fact.occurred_time)} · ${fact.cash_direction} · 可分配 ${money({ amount: fact.available_value, amount_scale: fact.amount_scale, currency_code: fact.currency_code })}</small></span></label>`).join("");
+  factRoot.innerHTML = facts.map((fact) => `<label class="review-fact-choice"><input type="checkbox" data-review-fact="${fact.id}"><span><strong>#${fact.id} · ${esc(fact.counterparty || fact.summary || "未命名事实")}</strong><small>${date(fact.occurred_time)} · ${fact.cash_direction} · 可分配 ${money({ amount: fact.available_value, currency_code: fact.currency_code })}</small></span></label>`).join("");
   const preserveMatrix = () => {
     $$('[data-allocation-value]', matrixRoot).forEach((input) => values.set(`${input.dataset.fact}:${input.dataset.economic}`, input.value));
   };
@@ -425,7 +424,7 @@ async function openEconomicReviewEditor() {
       matrixRoot.innerHTML = '<div class="empty-state">先选择至少一条事实流水</div>';
       return;
     }
-    const rows = selectedFacts.map((fact) => `<tr><td>#${fact.id}<br><small>${fact.cash_direction} · ${esc(fact.currency_code)}</small></td>${economics.map((item) => `<td><input data-allocation-value data-fact="${fact.id}" data-economic="${item.key}" inputmode="decimal" value="${esc(values.get(`${fact.id}:${item.key}`) || "")}" placeholder="0"></td>`).join("")}<td>${money({ amount: fact.available_value, amount_scale: fact.amount_scale, currency_code: fact.currency_code })}</td></tr>`);
+    const rows = selectedFacts.map((fact) => `<tr><td>#${fact.id}<br><small>${fact.cash_direction} · ${esc(fact.currency_code)}</small></td>${economics.map((item) => `<td><input data-allocation-value data-fact="${fact.id}" data-economic="${item.key}" inputmode="decimal" value="${esc(values.get(`${fact.id}:${item.key}`) || "")}" placeholder="0"></td>`).join("")}<td>${money({ amount: fact.available_value, currency_code: fact.currency_code })}</td></tr>`);
     matrixRoot.innerHTML = table(["事实", ...economics.map((item) => esc(item.key)), "可分配"], rows);
   };
   $$('[data-review-fact]', factRoot).forEach((input) => input.onchange = () => {
@@ -451,7 +450,7 @@ async function openEconomicReviewEditor() {
       const allocations = [];
       $$('[data-allocation-value]', matrixRoot).forEach((input) => {
         const fact = facts.find((item) => item.id === Number(input.dataset.fact));
-        const amount = decimalAmount(input.value, fact.amount_scale);
+        const amount = decimalAmount(input.value, fact.currency_code);
         if (amount > 0) allocations.push({ fact_id: fact.id, economic_key: input.dataset.economic, amount: amount });
       });
       if (!allocations.length) throw new Error("至少填写一条大于 0 的分配关系");
@@ -907,7 +906,7 @@ async function showFactConflict(id) {
   const renderVersion = state.renderVersion;
   const item = await request(`/paam/import/v1/fact_conflict/${id}`);
   if (renderVersion !== state.renderVersion) return;
-  const lines = item.lines.map((line) => `<tr><td>#${line.bill_id}</td><td><strong>${esc(roleNames[line.role] || line.role)}</strong><br><small>${esc(line.role)}</small></td><td>${money({amount:line.amount,amount_scale:line.amount_scale,currency_code:line.currency_code})}</td><td>${esc(line.party || "—")}</td></tr>`);
+  const lines = item.lines.map((line) => `<tr><td>#${line.bill_id}</td><td><strong>${esc(roleNames[line.role] || line.role)}</strong><br><small>${esc(line.role)}</small></td><td>${money(line)}</td><td>${esc(line.party || "—")}</td></tr>`);
   const operationNames = { CREATE: "创建", UPDATE: "修订", CONFIRM: "确认", REVOKE: "撤销", RESTORE: "恢复", DISMISS: "忽略", REOPEN: "重新打开", ASSIGN: "分配标签", ACCOUNT_SET: "修正账户", RESOLVE: "解决冲突" };
   const history = item.history.map((event) => `<details class="review-history-event"><summary><span>v${event.version} · ${esc(operationNames[event.operation] || event.operation)}</span><small>${date(event.created_time)}</small></summary><p>${esc(event.reason || "无说明")}</p><details><summary>查看技术快照</summary><pre>${esc(JSON.stringify({request:event.request,before:event.before,after:event.after}, null, 2))}</pre></details></details>`).join("");
   let actions = "";
@@ -920,17 +919,6 @@ async function showFactConflict(id) {
   }
   const dialog = modal(`Review #${item.id}`, `<div class="review-detail-head"><div><span class="review-type-kicker">${esc(reviewTypeNames[item.review_type] || item.review_type)}</span><h3>${esc(item.title || "未填写标题")}</h3><small>${esc(statusNames[item.status] || item.status)} · ${esc(statusNames[item.allocation_status] || item.allocation_status)} · 版本 ${item.version}</small></div><div class="actions">${actions}</div></div><section><h3>涉及的账单事实</h3>${lines.length ? table(["Fact", "业务角色", "分配金额", "对象"], lines) : '<p class="muted">当前没有已接受的 Fact。</p>'}</section>${Object.keys(item.result || {}).length ? `<section><h3>类型结果</h3><pre>${esc(JSON.stringify(item.result, null, 2))}</pre></section>` : ""}<section><h3>操作历史</h3><div class="review-history">${history || '<p class="muted">没有历史。</p>'}</div></section>`);
   bindPage(dialog);
-}
-
-function decimalAmount(value, scale) {
-  const text = String(value || "").trim();
-  if (!text) return null;
-  if (!/^\d+(\.\d+)?$/.test(text)) throw new Error(`金额格式不正确：${text}`);
-  const [whole, decimal = ""] = text.split(".");
-  if (decimal.length > scale) throw new Error(`金额最多允许 ${scale} 位小数`);
-  const result = Number(`${whole}${decimal.padEnd(scale, "0")}`);
-  if (!Number.isSafeInteger(result) || result <= 0) throw new Error("金额超出可处理范围");
-  return result;
 }
 
 function beginSubmit(form) {

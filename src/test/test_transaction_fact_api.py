@@ -70,7 +70,6 @@ def _seed(sessions):
                 occurred_time=now + timedelta(days=index),
                 cash_direction={"IN": CASH_DIRECTION_IN, "OUT": CASH_DIRECTION_OUT}[direction],
                 amount=amount,
-                amount_scale=2,
                 currency_code=currency,
                 account_code=f"account-{index}",
                 counterparty_name=counterparty,

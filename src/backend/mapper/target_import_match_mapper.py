@@ -3,11 +3,11 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 from datetime import datetime, time, timedelta
-from decimal import Decimal
 
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from backend.core.money import decimal_from_amount
 from backend.entity import (
     CASH_DIRECTION_OUT,
     IMPORT_FILE_STATUS_IMPORTED,
@@ -120,16 +120,13 @@ class TargetImportMatchMapper:
             TransactionFact.occurred_time,
             TransactionFact.cash_direction,
             TransactionFact.amount,
-            TransactionFact.amount_scale,
             TransactionFact.currency_code,
         )
         query = query.where(or_(*clauses)) if clauses else query.where(False)
         fact_rows = self.db.execute(query).mappings().all()
         facts = {}
         for row in fact_rows:
-            signed = Decimal(row["amount"]) / (
-                Decimal(10) ** row["amount_scale"]
-            )
+            signed = decimal_from_amount(row["amount"], row["currency_code"])
             if row["cash_direction"] == CASH_DIRECTION_OUT:
                 signed = -signed
             facts[row["id"]] = {

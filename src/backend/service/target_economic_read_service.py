@@ -72,7 +72,6 @@ class TargetEconomicReadService:
                 economic_id=row["economic_id"],
                 amount=EconomicMoneyRead(
                     amount=row["amount"],
-                    amount_scale=row["amount_scale"],
                     currency_code=row["currency_code"],
                 ),
             ) for row in allocations],
@@ -82,7 +81,6 @@ class TargetEconomicReadService:
                 cash_direction=row["cash_direction"],
                 amount=EconomicMoneyRead(
                     amount=row["amount"],
-                    amount_scale=row["amount_scale"],
                     currency_code=row["currency_code"],
                 ),
                 account_code=row["account_code"],
@@ -95,10 +93,6 @@ class TargetEconomicReadService:
 
     def summary(self, query: EconomicSummaryQuery) -> EconomicSummaryRead:
         rows = self.mapper.summary(query)
-        scales: dict[str, int] = {}
-        for row in rows:
-            currency = row["currency_code"]
-            scales[currency] = max(scales.get(currency, row["amount_scale"]), row["amount_scale"])
         totals = defaultdict(lambda: {
             "transaction_in_value": 0,
             "transaction_out_value": 0,
@@ -109,7 +103,6 @@ class TargetEconomicReadService:
         })
         for row in rows:
             currency = row["currency_code"]
-            value = row["amount"] * (10 ** (scales[currency] - row["amount_scale"]))
             direction = row["entry_direction"]
             target = totals[currency]
             suffix = "in_value" if direction == 1 else "out_value"
@@ -118,12 +111,11 @@ class TargetEconomicReadService:
                 1: "account_transfer",
                 2: "claim_cashflow",
             }[row["entry_type"]]
-            target[f"{prefix}_{suffix}"] += value
+            target[f"{prefix}_{suffix}"] += row["amount"]
         return EconomicSummaryRead(
             entry_count=len(rows),
             totals=[EconomicCurrencySummaryRead(
                 currency_code=currency,
-                amount_scale=scales[currency],
                 **values,
             ) for currency, values in sorted(totals.items())],
         )
@@ -136,7 +128,6 @@ class TargetEconomicReadService:
             cash_direction=TargetEconomicReadService.CASH_DIRECTIONS[row["entry_direction"]],
             amount=EconomicMoneyRead(
                 amount=row["amount"],
-                amount_scale=row["amount_scale"],
                 currency_code=row["currency_code"],
             ),
             account_code=row["account_code"],

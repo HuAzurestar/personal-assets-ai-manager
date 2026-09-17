@@ -190,14 +190,12 @@ def test_target_import_writes_fact_evidence_and_hot_projection(target_import_api
         assert (
             fact.cash_direction,
             fact.amount,
-            fact.amount_scale,
             fact.currency_code,
             fact.counterparty_name,
             fact.counterparty_account_ref,
         ) == (
             CASH_DIRECTION_OUT,
             1000,
-            2,
             "CNY",
             "测试商户",
             "",

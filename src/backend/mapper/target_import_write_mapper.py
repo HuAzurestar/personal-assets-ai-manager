@@ -267,7 +267,6 @@ class TargetImportWriteMapper:
                     CASH_DIRECTION_IN if amount_minor > 0 else CASH_DIRECTION_OUT
                 ),
                 amount=abs(amount_minor),
-                amount_scale=2,
                 currency_code=row["currency"],
                 account_code=row["account"]["identity"] or "UNKNOWN",
                 counterparty_name=row["merchant"],

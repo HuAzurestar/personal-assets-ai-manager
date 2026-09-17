@@ -52,7 +52,6 @@ class EconomicSummaryQuery:
 
 class EconomicMoneyRead(BaseModel):
     amount: int
-    amount_scale: int
     currency_code: str
 
 
@@ -137,7 +136,6 @@ class EconomicFlowDetailResponse(BaseModel):
 
 class EconomicCurrencySummaryRead(BaseModel):
     currency_code: str
-    amount_scale: int
     transaction_in_value: int
     transaction_out_value: int
     account_transfer_in_value: int

@@ -53,7 +53,6 @@ def _facts(sessions, specifications):
                 occurred_time=now + timedelta(minutes=index),
                 cash_direction={"IN": CASH_DIRECTION_IN, "OUT": CASH_DIRECTION_OUT}[direction],
                 amount=1000,
-                amount_scale=2,
                 currency_code="CNY",
                 account_code=account,
                 counterparty_name="counterparty",

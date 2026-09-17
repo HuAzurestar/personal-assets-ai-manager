@@ -73,7 +73,6 @@ def _seed(sessions):
             occurred_time=now,
             cash_direction=CASH_DIRECTION_OUT,
             amount=880,
-            amount_scale=2,
             currency_code="CNY",
             account_code="wallet",
             counterparty_name="Merchant",

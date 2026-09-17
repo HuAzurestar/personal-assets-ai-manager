@@ -182,7 +182,6 @@ class TargetFactConflictService:
             "occurred_time": datetime.fromisoformat(normalized["occurred_at"]),
             "cash_direction": CASH_DIRECTION_IN if amount > 0 else CASH_DIRECTION_OUT,
             "amount": abs(amount),
-            "amount_scale": 2,
             "currency_code": normalized.get("currency", "CNY"),
             "account_code": account_code or "UNKNOWN",
             "counterparty_name": normalized.get("merchant", ""),

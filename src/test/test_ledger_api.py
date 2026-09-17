@@ -85,7 +85,6 @@ def _facts(sessions, specifications):
             occurred_time=now + timedelta(minutes=index),
             cash_direction={"IN": CASH_DIRECTION_IN, "OUT": CASH_DIRECTION_OUT}[direction],
             amount=amount,
-            amount_scale=2,
             currency_code=currency,
             account_code=f"account-{index}",
             counterparty_name="counterparty",
@@ -218,7 +217,6 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
     summary = summary_response.json()["body"]
     assert summary["totals"] == [{
         "currency_code": "CNY",
-        "amount_scale": 2,
         "transaction_in_value": 0,
         "transaction_out_value": 10000,
         "account_transfer_in_value": 40000,
@@ -642,7 +640,6 @@ def test_ledger_entry_entity_has_only_cash_projection_columns():
         "entry_type",
         "entry_direction",
         "amount",
-        "amount_scale",
         "currency_code",
         "account_code",
         "counterparty_account_ref",

@@ -7,7 +7,6 @@ from sqlalchemy import (
     CheckConstraint,
     Index,
     Integer,
-    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -30,11 +29,7 @@ class TransactionFact(TargetTable, TargetBase):
             f"cash_direction IN ({CASH_DIRECTION_IN}, {CASH_DIRECTION_OUT})",
             name="ck_transaction_fact_cash_direction",
         ),
-        CheckConstraint("amount > 0", name="ck_transaction_fact_amount_value"),
-        CheckConstraint(
-            "amount_scale BETWEEN 0 AND 8",
-            name="ck_transaction_fact_amount_scale",
-        ),
+        CheckConstraint("amount > 0", name="ck_transaction_fact_amount"),
         Index(
             "ix_transaction_fact_occurred_time_id",
             "occurred_time",
@@ -48,7 +43,6 @@ class TransactionFact(TargetTable, TargetBase):
     )
     cash_direction: Mapped[int] = mapped_column(Integer, nullable=False)
     amount: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    amount_scale: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=2)
     currency_code: Mapped[str] = mapped_column(String(12), nullable=False)
     account_code: Mapped[str] = mapped_column(String(120), nullable=False)
     counterparty_name: Mapped[str] = mapped_column(

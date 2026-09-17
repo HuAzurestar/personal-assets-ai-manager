@@ -34,7 +34,6 @@ class TargetEconomicReadMapper:
             LedgerEntry.entry_type,
             LedgerEntry.entry_direction,
             LedgerEntry.amount,
-            LedgerEntry.amount_scale,
             LedgerEntry.currency_code,
             LedgerEntry.account_code,
             LedgerEntry.counterparty_account_ref,
@@ -73,7 +72,6 @@ class TargetEconomicReadMapper:
             ReviewAllocation.transaction_fact_id.label("fact_id"),
             ReviewAllocation.ledger_entry_id.label("economic_id"),
             ReviewAllocation.amount,
-            ReviewAllocation.amount_scale,
             ReviewAllocation.currency_code,
         ).join(
             ReviewCase,
@@ -88,7 +86,6 @@ class TargetEconomicReadMapper:
             TransactionFact.occurred_time,
             TransactionFact.cash_direction,
             TransactionFact.amount,
-            TransactionFact.amount_scale,
             TransactionFact.currency_code,
             TransactionFact.account_code,
             TransactionFact.counterparty_name.label("counterparty"),
@@ -199,7 +196,6 @@ class TargetEconomicReadMapper:
             LedgerEntry.entry_type,
             LedgerEntry.entry_direction,
             LedgerEntry.amount,
-            LedgerEntry.amount_scale,
             LedgerEntry.currency_code,
         ).where(*clauses)).mappings().all()
 
