@@ -65,11 +65,11 @@ ASSET_AND_LIABILITY 目前仅表示资产与负债相关的现金流水分类，
 | `period_end` | TEXT | `''` | 文件中最晚有效流水时间，ISO-8601 |
 | `total_count` | INTEGER | `0` | 来源行总数 |
 | `success_count` | INTEGER | `0` | 接受或成功关联的行数 |
-| `skip_count` | INTEGER | `0` | 重复或明确跳过的行数 |
+| `skip_count` | INTEGER | `0` | 已保留原始证据、但未形成 Fact 的行数（如未实际记账或零金额） |
 | `issue_count` | INTEGER | `0` | 解析失败或冲突行数 |
 | `status` | INTEGER | `0` | 0=PENDING，1=IMPORTED，2=PARTIAL，3=FAILED |
 
-`sha256` 全局唯一。上传解码后先创建或复用 `PENDING` 记录，再在写事务外解析文件；解析失败转为 `FAILED`，确认事务成功后转为 `IMPORTED` 或 `PARTIAL`。`PENDING`、`FAILED` 可按同一 SHA-256 重试复用，已完成文件不重复创建。ZIP 是传输容器；例如 ZIP 内实际解析 CSV 时，`file_format=1`。`total_count = success_count + skip_count + issue_count`。
+`sha256` 全局唯一。上传解码后先创建或复用 `PENDING` 记录，再在写事务外解析文件；解析失败转为 `FAILED`，确认事务成功后转为 `IMPORTED` 或 `PARTIAL`。`PENDING`、`FAILED` 可按同一 SHA-256 重试复用，已完成文件不重复创建。重复文件是文件级幂等复用，不增加该文件的 `skip_count`。`skip_count` 只统计已经写入 `transaction_import_row`、但因未实际记账或金额为零而不生成 `transaction_fact` 的来源行。ZIP 是传输容器；例如 ZIP 内实际解析 CSV 时，`file_format=1`。`total_count = success_count + skip_count + issue_count`。
 
 ### 2. `transaction_import_row`：来源行与原始证据
 
