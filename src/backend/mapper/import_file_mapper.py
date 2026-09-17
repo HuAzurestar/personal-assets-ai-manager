@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import String, case, cast, func, literal, or_, select
+from sqlalchemy import case, func, literal, select
 from sqlalchemy.orm import Session
 
 from backend.entity import (
@@ -62,27 +62,27 @@ class ImportFileMapper:
         self.db = db
 
     @staticmethod
-    def _clauses(q: str, filter_value: ImportFileFilter):
+    def _clauses(filter_value: ImportFileFilter):
         clauses = []
-        if q:
-            pattern = f"%{q}%"
-            clauses.append(or_(
-                cast(TransactionImportFile.id, String).like(pattern),
-                TransactionImportFile.batch_code.like(pattern),
-                TransactionImportFile.filename.like(pattern),
-                cast(TransactionImportFile.source_type, String).like(pattern),
-            ))
+        if filter_value.id:
+            clauses.append(TransactionImportFile.id == filter_value.id)
         if filter_value.source_type:
             value = ImportFileMapper._SOURCE_CODES.get(filter_value.source_type.casefold())
             clauses.append(TransactionImportFile.source_type == (-1 if value is None else value))
-        if filter_value.institution_code:
-            clauses.append(False)
         if filter_value.file_format:
             value = ImportFileMapper._FORMAT_CODES.get(filter_value.file_format.upper())
             clauses.append(TransactionImportFile.file_format == (-1 if value is None else value))
         if filter_value.status:
             value = ImportFileMapper._STATUS_CODES.get(filter_value.status.upper())
             clauses.append(TransactionImportFile.status == (-1 if value is None else value))
+        if filter_value.created_time_start:
+            clauses.append(TransactionImportFile.created_time >= filter_value.created_time_start)
+        if filter_value.created_time_end:
+            clauses.append(TransactionImportFile.created_time < filter_value.created_time_end)
+        if filter_value.updated_time_start:
+            clauses.append(TransactionImportFile.updated_time >= filter_value.updated_time_start)
+        if filter_value.updated_time_end:
+            clauses.append(TransactionImportFile.updated_time < filter_value.updated_time_end)
         return clauses
 
     @staticmethod
@@ -120,11 +120,10 @@ class ImportFileMapper:
         *,
         page: int,
         page_size: int,
-        q: str,
         filter_value: ImportFileFilter,
         sorter: ImportFileSorter,
     ) -> tuple[list[dict], int]:
-        clauses = self._clauses(q, filter_value)
+        clauses = self._clauses(filter_value)
         total = int(self.db.scalar(
             select(func.count(TransactionImportFile.id)).where(*clauses)
         ) or 0)
@@ -138,7 +137,7 @@ class ImportFileMapper:
         ).limit(page_size)).mappings().all()
         return [dict(row) for row in rows], total
 
-    def summary(self, q: str, filter_value: ImportFileFilter) -> dict:
+    def summary(self, filter_value: ImportFileFilter) -> dict:
         row = self.db.execute(select(
             func.count(TransactionImportFile.id).label("import_file_count"),
             func.coalesce(func.sum(case(
@@ -149,7 +148,7 @@ class ImportFileMapper:
             func.coalesce(func.sum(TransactionImportFile.success_count), 0).label("success_count"),
             func.coalesce(func.sum(TransactionImportFile.skip_count), 0).label("skip_count"),
             func.coalesce(func.sum(TransactionImportFile.issue_count), 0).label("issue_count"),
-        ).where(*self._clauses(q, filter_value))).mappings().one()
+        ).where(*self._clauses(filter_value))).mappings().one()
         return {key: int(value) for key, value in row.items()}
 
     def detail(self, import_file_id: int) -> dict | None:

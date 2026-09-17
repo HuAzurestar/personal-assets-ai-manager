@@ -501,43 +501,37 @@ async function openEconomicReviewEditor() {
 }
 
 async function ledgerImportsPage() {
-  const q = (state.params.get("q") || "").trim();
   const sourceType = state.params.get("source_type") || "";
   const status = state.params.get("status") || "";
-  const sortField = state.params.get("sort_field") || "created_time";
+  const sortField = state.params.get("sort_field") || "id";
   const sortOrder = state.params.get("sort_order") || "desc";
-  const filter = Object.fromEntries(Object.entries({
-    source_type: sourceType,
-    status,
-  }).filter(([, value]) => value));
+  const expressions = [];
+  if (sourceType) expressions.push({ key: "source_type", op: "=", val: sourceType });
+  if (status) expressions.push({ key: "status", op: "=", val: status });
+  const filter = expressions.length > 1
+    ? { op: "AND", expression: expressions }
+    : expressions[0];
   const query = new URLSearchParams({
-    page: state.params.get("page") || "1",
+    page_index: state.params.get("page") || "1",
     page_size: state.params.get("page_size") || "20",
-    q,
-    filter: JSON.stringify(filter),
-    sorter: JSON.stringify({ field: sortField, order: sortOrder }),
+    sorter: JSON.stringify([{ key: sortField, direction: sortOrder }]),
   });
+  if (filter) query.set("filter", JSON.stringify(filter));
   const result = await request(`/paam/import/v1/import_file/list?${query}`);
   const rows = result.items.map((item) => `<tr class="detail-click-row" tabindex="0" data-import-file-row="${item.id}"><td>${date(item.created_time)}</td><td><button type="button" class="detail-primary" data-action="import-file-detail" data-id="${item.id}"><strong>${esc(item.filename)}</strong><small>Import File #${item.id} · ${esc(item.batch_code || "无批次码")}</small></button></td><td>${esc(sourceLabels[item.source_type] || item.source_type)}</td><td>${esc(item.file_format)}</td><td>${item.success_count} / ${item.total_count}</td><td><span class="badge ${item.status === "IMPORTED" ? "neutral" : "warn"}">${esc(statusLabels[item.status] || item.status)}</span></td><td class="detail-arrow">→</td></tr>`).join("");
   const sourceOptions = [...new Set(Object.entries(sourceLabels).map(([value, label]) => `<option value="${esc(value)}" ${sourceType === value ? "selected" : ""}>${esc(label)}</option>`))].join("");
-  const toolbar = `<form class="detail-filter" data-form="detail-import-filter"><label class="grow">查找<input name="q" value="${esc(q)}" placeholder="ID、文件名、来源或批次码"></label><label>来源<select name="source_type"><option value="">全部来源</option>${sourceOptions}</select></label><label>状态<select name="status"><option value="">全部状态</option>${["PENDING", "IMPORTED", "FAILED"].map((value) => `<option value="${value}" ${status === value ? "selected" : ""}>${esc(statusLabels[value] || value)}</option>`).join("")}</select></label><label>排序<select name="sort_field"><option value="created_time" ${sortField === "created_time" ? "selected" : ""}>导入时间</option><option value="filename" ${sortField === "filename" ? "selected" : ""}>文件名</option><option value="id" ${sortField === "id" ? "selected" : ""}>ID</option></select></label><label>顺序<select name="sort_order"><option value="desc" ${sortOrder === "desc" ? "selected" : ""}>降序</option><option value="asc" ${sortOrder === "asc" ? "selected" : ""}>升序</option></select></label><button type="button" class="quiet" data-action="detail-clear" data-page-id="ledger-imports">清空</button><button class="primary">查询</button></form>`;
+  const toolbar = `<form class="detail-filter" data-form="detail-import-filter"><label>来源<select name="source_type"><option value="">全部来源</option>${sourceOptions}</select></label><label>状态<select name="status"><option value="">全部状态</option>${["PENDING", "IMPORTED", "PARTIAL", "FAILED"].map((value) => `<option value="${value}" ${status === value ? "selected" : ""}>${esc(statusLabels[value] || value)}</option>`).join("")}</select></label><label>排序<select name="sort_field"><option value="id" ${sortField === "id" ? "selected" : ""}>ID</option><option value="created_time" ${sortField === "created_time" ? "selected" : ""}>创建时间</option><option value="updated_time" ${sortField === "updated_time" ? "selected" : ""}>更新时间</option></select></label><label>顺序<select name="sort_order"><option value="desc" ${sortOrder === "desc" ? "selected" : ""}>降序</option><option value="asc" ${sortOrder === "asc" ? "selected" : ""}>升序</option></select></label><button type="button" class="quiet" data-action="detail-clear" data-page-id="ledger-imports">清空</button><button class="primary">筛选</button></form>`;
   return detailListView({ active: "ledger-imports", toolbar, title: "Import File", description: "每行代表一个导入文件 PO；Transaction Fact 是只读的详情子资源。", total: result.total, headers: ["导入时间", "文件", "来源", "格式", "成功 / 总数", "状态", ""], rows, footer: detailPager(result, "ledger-imports") });
 }
 
 async function showImportFileDetail(id) {
-  const factQuery = new URLSearchParams({
-    page: "1",
-    page_size: "20",
-    filter: "{}",
-    sorter: JSON.stringify({ field: "occurred_time", order: "desc" }),
-  });
   const [detail, facts] = await Promise.all([
     request(`/paam/import/v1/import_file/${id}`),
-    request(`/paam/import/v1/import_file/${id}/transaction_fact/list?${factQuery}`),
+    request(`/paam/import/v1/import_file/${id}/transaction_fact/list`),
   ]);
   const item = detail.import_file;
   const factRows = facts.items.map((fact) => `<tr><td>#${fact.id}</td><td>${date(fact.occurred_time)}</td><td>${esc(fact.summary || fact.counterparty || "—")}</td><td>${esc(fact.cash_direction)}</td><td class="money">${money(fact)}</td><td>${esc(fact.currency_code)}</td></tr>`);
-  const childTable = factRows.length ? `${table(["Fact", "发生时间", "摘要", "方向", "金额", "币种"], factRows)}<p class="muted">显示 ${facts.items.length} / ${facts.total} 条；完整结果可通过 Transaction Fact 子资源分页查询。</p>` : "";
+  const childTable = factRows.length ? `${table(["Fact", "发生时间", "摘要", "方向", "金额", "币种"], factRows)}<p class="muted">共 ${facts.total} 条关联 Transaction Fact。</p>` : "";
   detailDrawer({
     title: item.filename || `Import File #${item.id}`,
     kicker: `IMPORT FILE #${item.id}`,
@@ -642,20 +636,19 @@ function historySummaryMarkup(summary) {
 function historyResultsMarkup(result) {
   const fileCards = result.items.map((item) => `<button type="button" class="batch-card" data-action="import-file-detail" data-id="${item.id}" aria-label="查看导入文件 ${item.id}：${esc(item.filename)}"><span class="file-type-icon">${esc(fileExtension(item.filename))}</span><span class="batch-file"><span class="history-id">Import File #${item.id}</span><strong>${esc(item.filename)}</strong><small>${esc(sourceLabels[item.source_type] || item.source_type)}</small></span><span class="batch-field batch-account"><small>文件格式</small><span>${esc(item.file_format)}</span></span><span class="batch-field"><small>成功 / 总数</small><span class="progress-count"><strong>${item.success_count}</strong> / ${item.total_count}</span></span><span class="batch-field"><small>状态</small><span><span class="badge ${item.status === "IMPORTED" ? "" : "warn"}">${esc(statusLabels[item.status] || item.status)}</span></span></span><span class="batch-field batch-time"><small>导入时间</small><span>${date(item.created_time)}</span></span><span class="batch-chevron" aria-hidden="true">›</span></button>`);
   const pages = Math.max(1, Math.ceil(result.total / result.page_size));
-  const start = result.total ? (result.page - 1) * result.page_size + 1 : 0;
-  const end = Math.min(result.page * result.page_size, result.total);
-  const historyPager = `<div class="pagination"><span class="range">显示 ${start}–${end}，共 ${result.total} 个文件</span><button data-action="history-page" data-value="${result.page - 1}" ${result.page <= 1 ? "disabled" : ""}>上一页</button><span>${result.page} / ${pages}</span><button data-action="history-page" data-value="${result.page + 1}" ${result.page >= pages ? "disabled" : ""}>下一页</button></div>`;
+  const start = result.total ? (result.page_index - 1) * result.page_size + 1 : 0;
+  const end = Math.min(result.page_index * result.page_size, result.total);
+  const historyPager = `<div class="pagination"><span class="range">显示 ${start}–${end}，共 ${result.total} 个文件</span><button data-action="history-page" data-value="${result.page_index - 1}" ${result.page_index <= 1 ? "disabled" : ""}>上一页</button><span>${result.page_index} / ${pages}</span><button data-action="history-page" data-value="${result.page_index + 1}" ${result.page_index >= pages ? "disabled" : ""}>下一页</button></div>`;
   return fileCards.length
     ? `<div class="batch-card-list">${fileCards.join("")}</div>${historyPager}`
-    : '<div class="empty-state"><span class="empty-state-icon">⌁</span><strong>没有匹配的导入记录</strong><p>调整上方关键词、来源或状态，下方结果会自动更新。</p><button class="primary" data-page="import">导入新账单</button></div>';
+    : '<div class="empty-state"><span class="empty-state-icon">⌁</span><strong>没有匹配的导入记录</strong><p>调整上方来源或状态，下方结果会自动更新。</p><button class="primary" data-page="import">导入新账单</button></div>';
 }
 
 async function importHistoryPage() {
   const initialQuery = new URLSearchParams({
-    page: "1",
+    page_index: "1",
     page_size: "10",
-    filter: "{}",
-    sorter: JSON.stringify({ field: "created_time", order: "desc" }),
+    sorter: JSON.stringify([{ key: "id", direction: "desc" }]),
   });
   const [result, summary] = await Promise.all([
     request(`/paam/import/v1/import_file/list?${initialQuery}`),
@@ -663,7 +656,7 @@ async function importHistoryPage() {
   ]);
   const sourceOptions = Object.entries(sourceLabels).map(([value, label]) => `<option value="${esc(value)}">${esc(label)}</option>`).join("");
   const statusOptions = ["PENDING", "IMPORTED", "FAILED"].map((value) => `<option value="${value}">${esc(statusLabels[value] || value)}</option>`).join("");
-  return `<div class="history-summary" data-history-summary>${historySummaryMarkup(summary)}</div><section class="panel history-panel"><div class="section-head"><div><h2>导入文件</h2><p class="import-section-help">搜索、来源和状态筛选只更新下方结果，不会刷新页面或打断输入。</p></div><button class="primary" data-page="import">＋ 导入新数据</button></div><form class="toolbar history-toolbar" data-form="history-filter"><label class="grow">搜索<input name="q" placeholder="文件名、来源或批次编号" autocomplete="off"></label><label>来源<select name="source_type"><option value="">全部来源</option>${sourceOptions}</select></label><label>状态<select name="status"><option value="">全部状态</option>${statusOptions}</select></label><span class="history-updating" data-history-updating aria-live="polite"></span></form><div data-history-results>${historyResultsMarkup(result)}</div></section>`;
+  return `<div class="history-summary" data-history-summary>${historySummaryMarkup(summary)}</div><section class="panel history-panel"><div class="section-head"><div><h2>导入文件</h2><p class="import-section-help">来源和状态筛选只更新下方结果，不会刷新页面。</p></div><button class="primary" data-page="import">＋ 导入新数据</button></div><form class="toolbar history-toolbar" data-form="history-filter"><label>来源<select name="source_type"><option value="">全部来源</option>${sourceOptions}</select></label><label>状态<select name="status"><option value="">全部状态</option>${statusOptions}</select></label><span class="history-updating" data-history-updating aria-live="polite"></span></form><div data-history-results>${historyResultsMarkup(result)}</div></section>`;
 }
 
 async function refreshHistoryResults(form, page = 1) {
@@ -673,21 +666,18 @@ async function refreshHistoryResults(form, page = 1) {
   const requestVersion = ++state.historyRequestVersion;
   state.historyRequestController = controller;
   const params = new URLSearchParams({
-    page: String(page),
+    page_index: String(page),
     page_size: "10",
-    sorter: JSON.stringify({ field: "created_time", order: "desc" }),
+    sorter: JSON.stringify([{ key: "id", direction: "desc" }]),
   });
   const summaryParams = new URLSearchParams();
-  const query = form.elements.q.value.trim();
-  const filter = Object.fromEntries(Object.entries({
-    source_type: form.elements.source_type.value,
-    status: form.elements.status.value,
-  }).filter(([, value]) => value));
-  if (query) {
-    params.set("q", query);
-    summaryParams.set("q", query);
-  }
-  if (Object.keys(filter).length) {
+  const expressions = [];
+  if (form.elements.source_type.value) expressions.push({ key: "source_type", op: "=", val: form.elements.source_type.value });
+  if (form.elements.status.value) expressions.push({ key: "status", op: "=", val: form.elements.status.value });
+  const filter = expressions.length > 1
+    ? { op: "AND", expression: expressions }
+    : expressions[0];
+  if (filter) {
     const encodedFilter = JSON.stringify(filter);
     params.set("filter", encodedFilter);
     summaryParams.set("filter", encodedFilter);
@@ -1227,10 +1217,6 @@ function bindPage(root) {
     event.preventDefault();
     refreshHistoryResults(event.currentTarget, 1);
   });
-  historyFilter?.elements.q.addEventListener("input", (event) => {
-    if (!event.isComposing) scheduleHistoryRefresh(historyFilter);
-  });
-  historyFilter?.elements.q.addEventListener("compositionend", () => scheduleHistoryRefresh(historyFilter));
   historyFilter?.elements.source_type.addEventListener("change", () => scheduleHistoryRefresh(historyFilter));
   historyFilter?.elements.status.addEventListener("change", () => scheduleHistoryRefresh(historyFilter));
   importForm?.addEventListener("submit", async (event) => { event.preventDefault(); try { await previewImport(event.currentTarget); } catch (error) { showFormError(event.currentTarget, error); } });

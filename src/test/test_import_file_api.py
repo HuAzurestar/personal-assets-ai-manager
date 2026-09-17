@@ -111,9 +111,8 @@ def test_import_file_list_is_a_pure_filterable_po_list(import_file_api):
     response = client.get(
         "/paam/import/v1/import_file/list",
         params={
-            "q": "september",
-            "filter": '{"source_type":"wechat","status":"IMPORTED"}',
-            "sorter": '{"field":"filename","order":"asc"}',
+            "filter": '{"op":"AND","expression":[{"key":"source_type","op":"=","val":"wechat"},{"key":"status","op":"=","val":"IMPORTED"}]}',
+            "sorter": '[{"key":"id","direction":"asc"}]',
         },
     )
 
@@ -127,7 +126,7 @@ def test_import_file_list_is_a_pure_filterable_po_list(import_file_api):
     }
 
 
-def test_import_file_summary_uses_the_same_search_and_filter_contract(
+def test_import_file_summary_uses_the_same_filter_contract(
     import_file_api,
 ):
     client, sessions = import_file_api
@@ -136,8 +135,7 @@ def test_import_file_summary_uses_the_same_search_and_filter_contract(
     response = client.get(
         "/paam/import/v1/import_file/summary",
         params={
-            "q": "september",
-            "filter": '{"source_type":"wechat","status":"IMPORTED"}',
+            "filter": '{"op":"AND","expression":[{"key":"source_type","op":"=","val":"wechat"},{"key":"status","op":"=","val":"IMPORTED"}]}',
         },
     )
 
@@ -150,17 +148,10 @@ def test_import_file_summary_uses_the_same_search_and_filter_contract(
         "success_count": 1,
         "skip_count": 0,
         "issue_count": 0,
-        "q": "september",
-        "filter": {
-            "source_type": "wechat",
-            "institution_code": None,
-            "file_format": None,
-            "status": "IMPORTED",
-        },
     }
 
 
-def test_import_file_detail_has_a_paged_transaction_fact_subresource(
+def test_import_file_detail_has_an_unpaged_transaction_fact_subresource(
     import_file_api,
 ):
     client, sessions = import_file_api
@@ -168,8 +159,7 @@ def test_import_file_detail_has_a_paged_transaction_fact_subresource(
 
     detail = client.get(f"/paam/import/v1/import_file/{file_ids[0]}")
     facts = client.get(
-        f"/paam/import/v1/import_file/{file_ids[0]}/transaction_fact/list",
-        params={"page": 1, "page_size": 10},
+        f"/paam/import/v1/import_file/{file_ids[0]}/transaction_fact/list"
     )
 
     assert detail.status_code == 200
@@ -177,6 +167,12 @@ def test_import_file_detail_has_a_paged_transaction_fact_subresource(
     assert facts.status_code == 200
     assert facts.json()["body"]["total"] == 1
     assert facts.json()["body"]["items"][0]["id"] == fact_id
+    rejected = client.get(
+        f"/paam/import/v1/import_file/{file_ids[0]}/transaction_fact/list",
+        params={"page_index": 1},
+    )
+    assert rejected.status_code == 422
+    assert rejected.json()["body"]["code"] == "LIST_PARAMETER_NOT_SUPPORTED"
 
 
 def test_import_file_query_validates_generic_objects(import_file_api):
@@ -184,11 +180,13 @@ def test_import_file_query_validates_generic_objects(import_file_api):
 
     response = client.get(
         "/paam/import/v1/import_file/list",
-        params={"filter": '{"account_code":"not-owned-by-import-file"}'},
+        params={
+            "filter": '{"key":"account_code","op":"=","val":"not-owned-by-import-file"}'
+        },
     )
 
     assert response.status_code == 422
-    assert response.json()["body"]["code"] == "LIST_QUERY_ERROR"
+    assert response.json()["body"]["code"] == "LIST_FILTER_FIELD_NOT_SUPPORTED"
 
 
 def test_import_file_detail_returns_not_found(import_file_api):

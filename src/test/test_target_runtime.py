@@ -41,7 +41,10 @@ def test_openapi_locks_canonical_ledger_v1_contract():
         "/paam/import/v1/fact_conflict/{conflict_id}/resolve",
         "/paam/import/v1/fact_conflict/{conflict_id}/dismiss",
         "/paam/import/v1/fact_conflict/{conflict_id}/reopen",
+        "/paam/import/v1/import_file/list",
         "/paam/import/v1/import_file/summary",
+        "/paam/import/v1/import_file/{import_file_id}",
+        "/paam/import/v1/import_file/{import_file_id}/transaction_fact/list",
     } <= paths
     assert "/paam/review/v1/case/page" not in paths
     assert "/paam/review/v1/case/detail/{case_id}" not in paths
@@ -65,7 +68,10 @@ def test_openapi_locks_canonical_ledger_v1_contract():
         "TargetEconomicReviewListResponse",
         "ImportFactConflictResponse",
         "ImportFactConflictPageResponse",
+        "ImportFileListResponse",
         "ImportFileSummaryResponse",
+        "ImportFileDetailResponse",
+        "ImportFileTransactionFactListResponse",
         "LedgerAccountResponse",
         "TargetReviewCandidatePageResponse",
     ):
@@ -120,6 +126,20 @@ def test_openapi_locks_canonical_ledger_v1_contract():
         "filter",
         "sorter",
     ]
+    import_file_parameters = specification["paths"][
+        "/paam/import/v1/import_file/list"
+    ]["get"]["parameters"]
+    assert [item["name"] for item in import_file_parameters] == [
+        "page_index",
+        "page_size",
+        "query",
+        "filter",
+        "sorter",
+    ]
+    relationship_parameters = specification["paths"][
+        "/paam/import/v1/import_file/{import_file_id}/transaction_fact/list"
+    ]["get"]["parameters"]
+    assert [item["name"] for item in relationship_parameters] == ["import_file_id"]
 
     assert specification["paths"]["/paam/ledger/v1/flow/list"]["get"]["tags"] == [
         "ledger-flow"

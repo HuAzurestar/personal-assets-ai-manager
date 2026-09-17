@@ -5,20 +5,19 @@ from sqlalchemy.orm import Session
 from backend.error import TargetIntakeError
 from backend.mapper.import_file_mapper import ImportFileMapper
 from backend.mapper.transaction_fact_mapper import TransactionFactMapper
+from backend.schema.list_query import BetweenValue, iter_filter_fields
 from backend.schema.import_file import (
     ImportFileDetailRead,
     ImportFileFilter,
-    ImportFilePageRead,
+    ImportFileListBody,
+    ImportFileListRequest,
     ImportFileRead,
     ImportFileSorter,
     ImportFileSummaryRead,
-    ImportFileTransactionFactPageRead,
+    ImportFileTransactionFactListRead,
+    parse_import_file_time,
 )
-from backend.schema.transaction_fact import (
-    TransactionFactFilter,
-    TransactionFactListItem,
-    TransactionFactSorter,
-)
+from backend.schema.transaction_fact import TransactionFactListItem
 
 
 class ImportFileService:
@@ -31,40 +30,33 @@ class ImportFileService:
     def page(
         self,
         *,
-        page: int,
-        page_size: int,
-        q: str,
-        filter_value: ImportFileFilter,
-        sorter: ImportFileSorter,
-    ) -> ImportFilePageRead:
+        request: ImportFileListRequest,
+    ) -> ImportFileListBody:
+        filter_value = self._mapper_filter(request)
+        sorter_expression = request.sorter[0] if request.sorter else None
+        sorter = ImportFileSorter(
+            field=sorter_expression.key if sorter_expression else "id",
+            order=sorter_expression.direction if sorter_expression else "desc",
+        )
         rows, total = self.mapper.page(
-            page=page,
-            page_size=page_size,
-            q=q,
+            page=request.page_index,
+            page_size=request.page_size,
             filter_value=filter_value,
             sorter=sorter,
         )
-        return ImportFilePageRead(
+        return ImportFileListBody(
             items=[ImportFileRead(**row) for row in rows],
             total=total,
-            page=page,
-            page_size=page_size,
-            q=q,
-            filter=filter_value,
-            sorter=sorter,
+            page_index=request.page_index,
+            page_size=request.page_size,
         )
 
     def summary(
         self,
         *,
-        q: str,
-        filter_value: ImportFileFilter,
+        request: ImportFileListRequest,
     ) -> ImportFileSummaryRead:
-        return ImportFileSummaryRead(
-            **self.mapper.summary(q, filter_value),
-            q=q,
-            filter=filter_value,
-        )
+        return ImportFileSummaryRead(**self.mapper.summary(self._mapper_filter(request)))
 
     def detail(self, import_file_id: int) -> ImportFileDetailRead:
         row = self.mapper.detail(import_file_id)
@@ -72,32 +64,43 @@ class ImportFileService:
             raise TargetIntakeError(404, f"import file {import_file_id} not found")
         return ImportFileDetailRead(import_file=ImportFileRead(**row))
 
-    def transaction_fact_page(
+    def transaction_facts(
         self,
         import_file_id: int,
-        *,
-        page: int,
-        page_size: int,
-        q: str,
-        filter_value: TransactionFactFilter,
-        sorter: TransactionFactSorter,
-    ) -> ImportFileTransactionFactPageRead:
+    ) -> ImportFileTransactionFactListRead:
         if self.mapper.detail(import_file_id) is None:
             raise TargetIntakeError(404, f"import file {import_file_id} not found")
-        rows, total = self.fact_mapper.page(
-            page=page,
-            page_size=page_size,
-            q=q,
-            filter_value=filter_value,
-            sorter=sorter,
-            import_file_id=import_file_id,
-        )
-        return ImportFileTransactionFactPageRead(
+        rows = self.fact_mapper.by_import_file(import_file_id)
+        return ImportFileTransactionFactListRead(
             items=[TransactionFactListItem(**row) for row in rows],
-            total=total,
-            page=page,
-            page_size=page_size,
-            q=q,
-            filter=filter_value,
-            sorter=sorter,
+            total=len(rows),
         )
+
+    @staticmethod
+    def _mapper_filter(request: ImportFileListRequest) -> ImportFileFilter:
+        values: dict[str, object] = {}
+        for expression in iter_filter_fields(request.filter):
+            if expression.key in {"created_time", "updated_time"}:
+                if expression.op == "between":
+                    between = BetweenValue.model_validate(expression.val)
+                    values[f"{expression.key}_start"] = parse_import_file_time(
+                        between.start,
+                        expression.key,
+                    )
+                    values[f"{expression.key}_end"] = parse_import_file_time(
+                        between.end,
+                        expression.key,
+                    )
+                elif expression.op == ">=":
+                    values[f"{expression.key}_start"] = parse_import_file_time(
+                        expression.val,
+                        expression.key,
+                    )
+                else:
+                    values[f"{expression.key}_end"] = parse_import_file_time(
+                        expression.val,
+                        expression.key,
+                    )
+            else:
+                values[expression.key] = expression.val
+        return ImportFileFilter.model_validate(values)

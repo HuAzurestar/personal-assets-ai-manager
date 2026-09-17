@@ -306,50 +306,53 @@ def test_target_import_rolls_back_when_default_review_write_fails(
     ]
 
 
-def test_import_history_supports_search_pagination_and_account_filter(
+def test_import_history_supports_canonical_filter_and_pagination(
     target_import_api,
 ):
     client, _, _ = target_import_api
     cash_rows = _rows(prefix="cash")
     card_rows = _rows(prefix="card")
     card_rows[0][6] = "建设银行储蓄卡(1234)"
+    file_ids = []
     for filename, rows in [
         ("cash-august.csv", cash_rows),
         ("card-september.csv", card_rows),
     ]:
         preview = _preview(client, filename, _csv(rows))
-        assert _confirm(client, preview).status_code == 200
+        confirmed = _confirm(client, preview)
+        assert confirmed.status_code == 200
+        file_ids.extend(confirmed.json()["body"]["transaction_import_file_ids"])
 
     first_page = client.get(
-        "/paam/import/v1/import_file/list?page=1&page_size=1"
+        "/paam/import/v1/import_file/list?page_index=1&page_size=1"
     ).json()["body"]
     assert (first_page["total"], len(first_page["items"])) == (2, 1)
     assert first_page["items"][0]["filename"] == "card-september.csv"
     second_page = client.get(
-        "/paam/import/v1/import_file/list?page=2&page_size=1"
+        "/paam/import/v1/import_file/list?page_index=2&page_size=1"
     ).json()["body"]
     assert second_page["items"][0]["filename"] == "cash-august.csv"
 
-    search = client.get(
-        "/paam/import/v1/import_file/list", params={"q": "september"}
-    ).json()["body"]
-    assert [item["filename"] for item in search["items"]] == [
-        "card-september.csv"
-    ]
     source_search = client.get(
         "/paam/import/v1/import_file/list",
-        params={"filter": '{"source_type":"wechat"}'},
+        params={"filter": '{"key":"source_type","op":"=","val":"wechat"}'},
     ).json()["body"]
     assert source_search["total"] == 2
 
     filtered = client.get(
         "/paam/import/v1/import_file/list",
-        params={"q": "card-september"},
+        params={"filter": f'{{"key":"id","op":"=","val":{file_ids[1]}}}'},
     ).json()["body"]
     assert [item["filename"] for item in filtered["items"]] == [
         "card-september.csv"
     ]
     assert "account_codes" not in filtered["items"][0]
+    unsupported_query = client.get(
+        "/paam/import/v1/import_file/list",
+        params={"query": '[{"key":"filename","word":"september"}]'},
+    )
+    assert unsupported_query.status_code == 422
+    assert unsupported_query.json()["body"]["code"] == "LIST_QUERY_NOT_SUPPORTED"
 
 
 def test_import_history_preserves_specific_bank_source_codes(target_import_api):
@@ -387,13 +390,15 @@ def test_import_history_preserves_specific_bank_source_codes(target_import_api):
     }
     for _code, name, label in sources:
         filtered = client.get(
-            "/paam/import/v1/import_file/list",
-            params={"filter": f'{{"source_type":"{name}"}}'},
+                "/paam/import/v1/import_file/list",
+                params={
+                    "filter": f'{{"key":"source_type","op":"=","val":"{name}"}}'
+                },
         ).json()["body"]
         assert [item["source_type"] for item in filtered["items"]] == [name]
 
 
-def test_import_history_rows_are_loaded_by_page(target_import_api):
+def test_import_history_relationship_returns_all_rows(target_import_api):
     client, _, _ = target_import_api
     preview = _preview(
         client,
@@ -404,19 +409,12 @@ def test_import_history_rows_are_loaded_by_page(target_import_api):
     assert confirmed.status_code == 200, confirmed.text
     batch_id = confirmed.json()["body"]["transaction_import_file_ids"][0]
 
-    first = client.get(
-        f"/paam/import/v1/import_file/{batch_id}/transaction_fact/list",
-        params={"page": 1, "page_size": 20},
+    facts = client.get(
+        f"/paam/import/v1/import_file/{batch_id}/transaction_fact/list"
     ).json()["body"]
-    assert (first["total"], len(first["items"])) == (26, 20)
-    assert first["items"][0]["id"] > 0
-    assert first["items"][0]["cash_direction"] in {"IN", "OUT"}
-
-    second = client.get(
-        f"/paam/import/v1/import_file/{batch_id}/transaction_fact/list",
-        params={"page": 2, "page_size": 20},
-    ).json()["body"]
-    assert (second["page"], len(second["items"])) == (2, 6)
+    assert (facts["total"], len(facts["items"])) == (26, 26)
+    assert facts["items"][0]["id"] > 0
+    assert facts["items"][0]["cash_direction"] in {"IN", "OUT"}
 
 
 def test_target_confirm_select_count_is_independent_of_row_count(target_import_api):

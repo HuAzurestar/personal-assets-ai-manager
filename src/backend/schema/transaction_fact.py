@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError, model_validator
@@ -26,21 +26,10 @@ class TransactionFactFilter(BaseModel):
     amount_scale: int | None = None
     occurred_time_start: datetime | None = None
     occurred_time_end: datetime | None = None
-    # Temporary compatibility for the Import File relationship route.
-    date_from: date | None = None
-    date_to: date | None = None
 
 
 class TransactionFactSorter(ListSorter):
-    # Only occurred_time and amount_value are exposed by the canonical Fact API.
-    # The remaining values stay internal until the Import File route migrates.
-    field: Literal[
-        "id",
-        "occurred_time",
-        "amount_value",
-        "created_time",
-        "updated_time",
-    ] = "occurred_time"
+    field: Literal["occurred_time", "amount_value"] = "occurred_time"
 
 
 class TransactionFactListRequest(ListRequest):
