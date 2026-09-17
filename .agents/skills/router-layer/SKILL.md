@@ -331,9 +331,17 @@ description: Change PAAM FastAPI routers, URL modules or versions, HTTP endpoint
   Remove `include_archived`, name sorting, and system-name sorting. A PO
   inspection list does not silently hide archived records; Filter by status
   when desired. Default to `id DESC`.
+- Review Candidate is a creation aid rather than a PO list. Its paged endpoint
+  still uses the shared list envelope, supports equality Filters for
+  `cash_direction`, `currency_code`, and `account_code`, and supports only the
+  `occurred_time` Sorter. Default to `occurred_time DESC` plus stable Fact ID.
+- Fact Conflict supports Filters for `id`, `status`, `created_time`, and
+  `updated_time`, and Sorters for `id`, `created_time`, and `updated_time`.
+  Default to `updated_time DESC` plus stable conflict ID.
 - The standard Transaction Fact, Ledger, Review, Import File, and Tag View
-  lists currently expose no Query fields. A supplied non-empty Query therefore
-  returns `LIST_QUERY_NOT_SUPPORTED` until explicit search behavior is added.
+  lists, Review Candidate, and Fact Conflict currently expose no Query fields.
+  A supplied non-empty Query therefore returns `LIST_QUERY_NOT_SUPPORTED`
+  until explicit search behavior is added.
 
 ## Detail workspace contract
 
