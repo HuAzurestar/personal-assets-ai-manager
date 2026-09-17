@@ -167,9 +167,7 @@ class LedgerEntrySummaryRead(BaseModel):
     activities: list[LedgerActivitySummaryRead]
 
 
-class LedgerEntrySummaryResponse(BaseModel):
-    status: Literal[200] = 200
-    message: str = "ok"
+class LedgerEntrySummaryResponse(SuccessResponse[LedgerEntrySummaryRead]):
     body: LedgerEntrySummaryRead
 
 

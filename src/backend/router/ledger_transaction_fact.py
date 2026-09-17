@@ -60,7 +60,7 @@ def transaction_fact_list(
         if "currency_code" not in equality_fields:
             warnings.append(ResponseWarning(
                 code="LIST_AMOUNT_SORT_GROUPED",
-                message="Amounts are grouped by currency and scale before sorting",
+                message="Amounts are grouped by currency before sorting",
                 details={
                     "order": [
                         "currency_code asc",

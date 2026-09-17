@@ -66,7 +66,8 @@ def ledger_entry_summary(
     if date_from and date_to and date_from > date_to:
         raise HTTPException(status_code=422, detail="date_from must be before date_to")
     return LedgerEntrySummaryResponse(
-        message="Ledger entry summary returned",
+        status=200,
+        message="ok",
         body=LedgerEntryService(db).summary(LedgerEntrySummaryQuery(
             date_from=date_from,
             date_to=date_to,
