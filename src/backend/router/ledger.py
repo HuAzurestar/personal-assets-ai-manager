@@ -17,7 +17,7 @@ from backend.schema.target_economic import (
     EconomicSummaryQuery,
     EconomicSummaryResponse,
 )
-from backend.service.target_economic_read_service import TargetEconomicReadService
+from backend.service.ledger_entry_service import LedgerEntryService
 
 
 router = APIRouter(
@@ -60,7 +60,7 @@ def list_economic_flows(
             raise ValueError(f"unknown economic types: {invalid}")
         return EconomicFlowPageResponse(
             message="Ledger flows listed",
-            body=TargetEconomicReadService(db).page(EconomicPageQuery(
+            body=LedgerEntryService(db).page(EconomicPageQuery(
                 page=page,
                 page_size=page_size,
                 date_from=effective_date_from,
@@ -88,7 +88,7 @@ def economic_summary(
         raise HTTPException(status_code=422, detail="date_from must be before date_to")
     return EconomicSummaryResponse(
         message="Ledger flow summary returned",
-        body=TargetEconomicReadService(db).summary(EconomicSummaryQuery(
+        body=LedgerEntryService(db).summary(EconomicSummaryQuery(
             date_from=date_from,
             date_to=date_to,
         )),
@@ -97,7 +97,7 @@ def economic_summary(
 
 @router.get("/flow/{ledger_id}", response_model=EconomicFlowDetailResponse)
 def economic_flow_detail(ledger_id: int, db: Session = Depends(get_db)):
-    result = TargetEconomicReadService(db).detail(ledger_id)
+    result = LedgerEntryService(db).detail(ledger_id)
     if result is None:
         raise HTTPException(status_code=404, detail="Economic flow not found")
     return EconomicFlowDetailResponse(

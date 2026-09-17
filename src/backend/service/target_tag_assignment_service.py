@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from backend.error import TargetTagError
 from backend.mapper.target_tag_assignment_mapper import TargetTagAssignmentMapper
 from backend.schema.target_tag import TargetTagAssignmentRead, TargetTagAssignmentRequest
-from backend.service.target_economic_read_service import TargetEconomicReadService
+from backend.service.ledger_entry_service import LedgerEntryService
 from backend.service.target_tag_projection_service import TargetTagProjectionService
 
 
@@ -34,7 +34,7 @@ class TargetTagAssignmentService:
                 self.mapper.commit()
                 return TargetTagAssignmentRead(ledger_id=ledger_id, tag_state=state)
             if (
-                TargetEconomicReadService.projection_version(current["updated_time"])
+                LedgerEntryService.projection_version(current["updated_time"])
                 != payload.expected_projection_version
             ):
                 raise TargetTagError(

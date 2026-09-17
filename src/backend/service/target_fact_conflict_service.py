@@ -27,7 +27,7 @@ from backend.schema.target_review import (
     TargetReviewCaseRead,
     TargetReviewTransitionRequest,
 )
-from backend.service.target_economic_read_service import TargetEconomicReadService
+from backend.service.ledger_entry_service import LedgerEntryService
 from backend.service.target_economic_service import TargetEconomicService
 
 
@@ -201,7 +201,7 @@ class TargetFactConflictService:
             review_type="FACT_CONFLICT",
             status=status,
             allocation_status="CONFLICT" if status == "PENDING" else "COMPLETE",
-            version=TargetEconomicReadService.projection_version(row["updated_time"]),
+            version=LedgerEntryService.projection_version(row["updated_time"]),
             title=row["issue_message"] or "Fact conflict",
             result={
                 "transaction_import_row_id": row["id"],

@@ -4,7 +4,7 @@ from collections import defaultdict
 
 from sqlalchemy.orm import Session
 
-from backend.mapper.target_economic_read_mapper import TargetEconomicReadMapper
+from backend.mapper.ledger_entry_mapper import LedgerEntryMapper
 from backend.schema.target_economic import (
     EconomicAllocationEvidenceRead,
     EconomicCurrencySummaryRead,
@@ -22,7 +22,7 @@ from backend.schema.target_economic import (
 )
 
 
-class TargetEconomicReadService:
+class LedgerEntryService:
     ECONOMIC_TYPES = {
         0: "TRANSACTION",
         1: "ACCOUNT_TRANSFER",
@@ -31,7 +31,7 @@ class TargetEconomicReadService:
     CASH_DIRECTIONS = {1: "IN", 2: "OUT"}
 
     def __init__(self, db: Session):
-        self.mapper = TargetEconomicReadMapper(db)
+        self.mapper = LedgerEntryMapper(db)
 
     def page(self, query: EconomicPageQuery) -> EconomicFlowPageRead:
         invalid = sorted(set(query.entry_type) - {0, 1, 2})
@@ -124,15 +124,15 @@ class TargetEconomicReadService:
     def _flow(row) -> EconomicFlowListItem:
         return EconomicFlowListItem(
             id=row["id"],
-            economic_type=TargetEconomicReadService.ECONOMIC_TYPES[row["entry_type"]],
-            cash_direction=TargetEconomicReadService.CASH_DIRECTIONS[row["entry_direction"]],
+            economic_type=LedgerEntryService.ECONOMIC_TYPES[row["entry_type"]],
+            cash_direction=LedgerEntryService.CASH_DIRECTIONS[row["entry_direction"]],
             amount=EconomicMoneyRead(
                 amount=row["amount"],
                 currency_code=row["currency_code"],
             ),
             account_code=row["account_code"],
             counterparty_account_ref=row["counterparty_account_ref"],
-            projection_version=TargetEconomicReadService.projection_version(
+            projection_version=LedgerEntryService.projection_version(
                 row["updated_time"]
             ),
             occurred_time=row["occurred_time"],

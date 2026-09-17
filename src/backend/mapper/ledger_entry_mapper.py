@@ -21,7 +21,7 @@ from backend.entity import (
 from backend.schema.target_economic import EconomicPageQuery, EconomicSummaryQuery
 
 
-class TargetEconomicReadMapper:
+class LedgerEntryMapper:
     """Explicit-column reads for confirmed Ledger entries."""
 
     def __init__(self, db: Session):
@@ -201,7 +201,7 @@ class TargetEconomicReadMapper:
 
     @staticmethod
     def _clauses(query: EconomicPageQuery) -> list:
-        clauses = TargetEconomicReadMapper._active_clauses()
+        clauses = LedgerEntryMapper._active_clauses()
         if query.date_from:
             clauses.append(
                 LedgerEntry.occurred_time >= datetime.combine(query.date_from, time.min)

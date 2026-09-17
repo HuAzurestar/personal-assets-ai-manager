@@ -24,7 +24,7 @@
 | `app/mappers/target_account_mapper.py` | `src/backend/mapper/target_account_mapper.py` |
 | `app/mappers/target_account_projection_mapper.py` | `src/backend/mapper/target_account_projection_mapper.py` |
 | `app/mappers/target_economic_mapper.py` | `src/backend/mapper/target_economic_mapper.py` |
-| `app/mappers/target_economic_read_mapper.py` | `src/backend/mapper/target_economic_read_mapper.py` |
+| `app/mappers/ledger_entry_mapper.py` | `src/backend/mapper/ledger_entry_mapper.py` |
 | `app/mappers/target_fact_conflict_mapper.py` | `src/backend/mapper/target_fact_conflict_mapper.py` |
 | `app/mappers/target_intake_mapper.py` | `src/backend/mapper/target_import_{read,match,write}_mapper.py` |
 | `app/mappers/target_ledger_mapper.py` | `src/backend/mapper/target_ledger_mapper.py` |
@@ -48,7 +48,7 @@
 | `app/services/__init__.py` | `src/backend/service/__init__.py` |
 | `app/services/target_account_projection_service.py` | `src/backend/service/target_account_projection_service.py` |
 | `app/services/target_account_service.py` | `src/backend/service/target_account_service.py` |
-| `app/services/target_economic_read_service.py` | `src/backend/service/target_economic_read_service.py` |
+| `app/services/ledger_entry_service.py` | `src/backend/service/ledger_entry_service.py` |
 | `app/services/target_economic_service.py` | `src/backend/service/target_economic_service.py` |
 | `app/services/target_fact_conflict_service.py` | `src/backend/service/target_fact_conflict_service.py` |
 | `app/services/target_intake_service.py` | `src/backend/service/target_intake_service.py` |
