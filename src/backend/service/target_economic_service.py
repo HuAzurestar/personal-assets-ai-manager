@@ -24,7 +24,8 @@ from backend.schema.target_review import (
     TargetEconomicReviewUpdateRequest,
     TargetFactAllocationCandidateRead,
     TargetReviewCandidateFilter,
-    TargetReviewCandidatePageRead,
+    TargetReviewCandidateListBody,
+    TargetReviewCandidateListRequest,
     TargetReviewCandidateSorter,
     TargetReviewFactVO,
     TargetReviewTransitionRequest,
@@ -128,25 +129,30 @@ class TargetEconomicService:
 
     def fact_candidate_page(
         self,
-        page: int,
-        page_size: int,
-        q: str = "",
-        filter_value: TargetReviewCandidateFilter | None = None,
-        sorter: TargetReviewCandidateSorter | None = None,
-    ) -> TargetReviewCandidatePageRead:
-        filter_value = filter_value or TargetReviewCandidateFilter()
-        sorter = sorter or TargetReviewCandidateSorter()
-        rows, total = self.mapper.fact_candidate_page(
-            page, page_size, q, filter_value, sorter
+        *,
+        request: TargetReviewCandidateListRequest,
+    ) -> TargetReviewCandidateListBody:
+        filter_values = {
+            expression.key: expression.val
+            for expression in iter_filter_fields(request.filter)
+        }
+        filter_value = TargetReviewCandidateFilter.model_validate(filter_values)
+        sorter_expression = request.sorter[0] if request.sorter else None
+        sorter = TargetReviewCandidateSorter(
+            field=sorter_expression.key if sorter_expression else "occurred_time",
+            order=sorter_expression.direction if sorter_expression else "desc",
         )
-        return TargetReviewCandidatePageRead(
+        rows, total = self.mapper.fact_candidate_page(
+            request.page_index,
+            request.page_size,
+            filter_value,
+            sorter,
+        )
+        return TargetReviewCandidateListBody(
             items=[TargetFactAllocationCandidateRead(**row) for row in rows],
             total=total,
-            page=page,
-            page_size=page_size,
-            q=q,
-            filter=filter_value,
-            sorter=sorter,
+            page_index=request.page_index,
+            page_size=request.page_size,
         )
 
     review_candidate_page = fact_candidate_page

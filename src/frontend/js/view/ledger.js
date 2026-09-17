@@ -258,7 +258,7 @@ async function loadFactCandidates(maxItems) {
   const pageSize = Math.min(maxItems, 100);
   let page = 1;
   while (items.length < maxItems) {
-    const result = await request(`/paam/ledger/v1/review_candidate/list?${new URLSearchParams({ page, page_size: pageSize })}`);
+    const result = await request(`/paam/ledger/v1/review_candidate/list?${new URLSearchParams({ page_index: page, page_size: pageSize })}`);
     items.push(...result.items);
     if (!result.items.length || items.length >= result.total) break;
     page += 1;
@@ -900,12 +900,12 @@ async function reviewsPage() {
     }));
   }
   const conflictQuery = new URLSearchParams({
-    page: state.params.get("conflict_page") || "1",
+    page_index: state.params.get("conflict_page") || "1",
     page_size: "25",
   });
   const [result, candidatePage, pending, conflicts] = await Promise.all([
     request(`/paam/ledger/v1/review/list?${reviewQuery}`),
-    request("/paam/ledger/v1/review_candidate/list?page=1&page_size=1"),
+    request("/paam/ledger/v1/review_candidate/list?page_index=1&page_size=1"),
     request(`/paam/ledger/v1/review/list?${new URLSearchParams({ page_index: "1", page_size: "1", filter: JSON.stringify({ key: "status", op: "=", val: "PENDING" }) })}`),
     request(`/paam/import/v1/fact_conflict/list?${conflictQuery}`),
   ]);
@@ -914,7 +914,7 @@ async function reviewsPage() {
   const paging = `<div class="pagination"><span>共 ${result.total} 条 · 第 ${result.page_index}/${pages} 页</span><button data-action="review-page" data-param="review_page" data-value="${result.page_index - 1}" ${result.page_index <= 1 ? "disabled" : ""}>上一页</button><button data-action="review-page" data-param="review_page" data-value="${result.page_index + 1}" ${result.page_index >= pages ? "disabled" : ""}>下一页</button></div>`;
   const conflictRows = conflicts.items.map((item) => `<tr><td>${item.id}</td><td><strong>${esc(item.title || "事实冲突")}</strong><br><small>${item.lines.length} 条候选事实</small></td><td><span class="badge ${item.status === "PENDING" ? "warn" : "neutral"}">${esc(statusNames[item.status] || item.status)}</span></td><td>v${item.version}</td><td><button data-action="fact-conflict-detail" data-id="${item.id}">处理 / 详情</button></td></tr>`);
   const conflictPages = Math.max(1, Math.ceil(conflicts.total / conflicts.page_size));
-  const conflictPaging = `<div class="pagination"><span>共 ${conflicts.total} 条 · 第 ${conflicts.page}/${conflictPages} 页</span><button data-action="review-page" data-param="conflict_page" data-value="${conflicts.page - 1}" ${conflicts.page <= 1 ? "disabled" : ""}>上一页</button><button data-action="review-page" data-param="conflict_page" data-value="${conflicts.page + 1}" ${conflicts.page >= conflictPages ? "disabled" : ""}>下一页</button></div>`;
+  const conflictPaging = `<div class="pagination"><span>共 ${conflicts.total} 条 · 第 ${conflicts.page_index}/${conflictPages} 页</span><button data-action="review-page" data-param="conflict_page" data-value="${conflicts.page_index - 1}" ${conflicts.page_index <= 1 ? "disabled" : ""}>上一页</button><button data-action="review-page" data-param="conflict_page" data-value="${conflicts.page_index + 1}" ${conflicts.page_index >= conflictPages ? "disabled" : ""}>下一页</button></div>`;
   const launchers = `<section class="task-launchers" aria-label="常用工作">
     <article><span class="task-number">01</span><div><span class="eyebrow">IMPORT</span><h2>账单导入</h2><p>上传文件、核对预览，再写入不可变的账单事实。</p></div><div class="task-meta"><span>${candidatePage.total} 条可分配事实</span><span>支持 CSV / XLSX / PDF / ZIP</span></div><button type="button" class="primary" data-page="import">进入账单导入</button></article>
     <article><span class="task-number">02</span><div><span class="eyebrow">REVIEW</span><h2>创建经济审查</h2><p>用明确的 Allocation 描述事实如何形成最终账本流水。</p></div><div class="task-meta"><span>${pending.total} 个待确认审查</span><span>确认后才生成账本流水</span></div><button type="button" class="primary" data-action="new-economic-review">新建经济审查</button></article>

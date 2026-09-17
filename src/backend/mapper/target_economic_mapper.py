@@ -5,7 +5,7 @@ import json
 from collections import defaultdict
 from datetime import datetime
 
-from sqlalchemy import String, case, cast, delete, exists, func, or_, select, text
+from sqlalchemy import case, delete, exists, func, select, text
 from sqlalchemy.orm import Session
 
 from backend.entity import (
@@ -189,16 +189,8 @@ class TargetEconomicMapper:
         ).limit(page_size)).mappings().all()
         return [dict(row) for row in rows], total
 
-    def _fact_candidate_query(self, q: str = "", filter_value=None):
+    def _fact_candidate_query(self, filter_value=None):
         clauses = [ReviewCase.status == 0, self._system_case_exists()]
-        if q:
-            pattern = f"%{q}%"
-            clauses.append(or_(
-                cast(TransactionFact.id, String).like(pattern),
-                TransactionFact.account_code.ilike(pattern),
-                TransactionFact.counterparty_name.ilike(pattern),
-                TransactionFact.summary.ilike(pattern),
-            ))
         if filter_value is not None:
             if filter_value.cash_direction:
                 clauses.append(TransactionFact.cash_direction == {
@@ -237,23 +229,15 @@ class TargetEconomicMapper:
         self,
         page: int,
         page_size: int,
-        q: str = "",
         filter_value=None,
         sorter=None,
     ) -> tuple[list[dict], int]:
-        query = self._fact_candidate_query(q, filter_value)
+        query = self._fact_candidate_query(filter_value)
         total = int(self.db.scalar(
             select(func.count()).select_from(query.order_by(None).subquery())
         ) or 0)
-        sort_field = sorter.field if sorter is not None else "occurred_time"
         sort_order = sorter.order if sorter is not None else "desc"
-        columns = {
-            "id": TransactionFact.id,
-            "occurred_time": TransactionFact.occurred_time,
-            "amount_value": TransactionFact.amount_value,
-            "available_value": func.sum(ReviewAllocation.amount_value),
-        }
-        column = columns[sort_field]
+        column = TransactionFact.occurred_time
         order = column.asc() if sort_order == "asc" else column.desc()
         id_order = (
             TransactionFact.id.asc() if sort_order == "asc" else TransactionFact.id.desc()

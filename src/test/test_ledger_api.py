@@ -385,7 +385,7 @@ def test_partial_manual_reviews_keep_exact_default_coverage_and_are_idempotent(e
     candidate_page = client.get("/paam/ledger/v1/review_candidate/list").json()["body"]
     candidates = candidate_page["items"]
     assert candidate_page["total"] == 1
-    assert candidate_page["page"] == 1
+    assert candidate_page["page_index"] == 1
     assert candidate_page["page_size"] == 20
     assert [(item["id"], item["available_value"]) for item in candidates] == [(fact_id, 6000)]
     complete_page = client.get("/paam/ledger/v1/review/list").json()["body"]
@@ -448,22 +448,22 @@ def test_review_candidate_list_is_paged_with_fixed_query_count(economic_api):
     event.listen(engine, "before_cursor_execute", count_selects)
     try:
         first = client.get(
-            "/paam/ledger/v1/review_candidate/list?page=1&page_size=2"
+            "/paam/ledger/v1/review_candidate/list?page_index=1&page_size=2"
         )
     finally:
         event.remove(engine, "before_cursor_execute", count_selects)
     assert first.status_code == 200, first.text
     assert first.json()["status"] == first.status_code
-    assert first.json()["message"] == "Ledger review candidates listed"
+    assert first.json()["message"] == "ok"
     page = first.json()["body"]
     assert page["total"] == 3
-    assert page["page"] == 1
+    assert page["page_index"] == 1
     assert page["page_size"] == 2
     assert len(page["items"]) == 2
     assert len(statements) == 2
 
     second = client.get(
-        "/paam/ledger/v1/review_candidate/list?page=2&page_size=2"
+        "/paam/ledger/v1/review_candidate/list?page_index=2&page_size=2"
     ).json()["body"]
     assert second["total"] == 3
     assert len(second["items"]) == 1
@@ -516,7 +516,7 @@ def test_review_list_is_database_paged_with_fixed_query_count(economic_api):
     assert len(statements) == 2
 
 
-def test_review_candidate_list_supports_shared_query_contract(economic_api):
+def test_review_candidate_list_supports_declared_filter_contract(economic_api):
     client, sessions = economic_api
     fact_ids = _facts(sessions, [
         ("OUT", 1000, "CNY"),
@@ -526,15 +526,13 @@ def test_review_candidate_list_supports_shared_query_contract(economic_api):
         TargetEconomicService(db).ensure_defaults(fact_ids, commit=True)
 
     response = client.get("/paam/ledger/v1/review_candidate/list", params={
-        "q": str(fact_ids[1]),
-        "filter": '{"cash_direction":"IN","currency_code":"usd"}',
-        "sorter": '{"field":"available_value","order":"asc"}',
+        "filter": '{"op":"AND","expression":[{"key":"cash_direction","op":"=","val":"IN"},{"key":"currency_code","op":"=","val":"usd"}]}',
+        "sorter": '[{"key":"occurred_time","direction":"asc"}]',
     })
     assert response.status_code == 200, response.text
     body = response.json()["body"]
     assert [item["id"] for item in body["items"]] == [fact_ids[1]]
-    assert body["filter"]["currency_code"] == "usd"
-    assert body["sorter"] == {"field": "available_value", "order": "asc"}
+    assert set(body) == {"items", "total", "page_index", "page_size"}
 
 
 def test_fx_review_uses_two_single_currency_account_transfers(economic_api):

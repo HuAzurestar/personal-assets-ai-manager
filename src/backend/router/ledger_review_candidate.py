@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
-from backend.router.dependency import get_db
+from backend.router.dependency import get_db, validate_query_parameter_names
 from backend.router.error import DomainErrorRoute
-from backend.schema.list_query import parse_query_object
+from backend.schema.list_query import parse_list_request
 from backend.schema.target_review import (
-    TargetReviewCandidateFilter,
-    TargetReviewCandidatePageResponse,
-    TargetReviewCandidateSorter,
+    TargetReviewCandidateListRequest,
+    TargetReviewCandidateListResponse,
 )
 from backend.service.target_economic_service import TargetEconomicService
 
@@ -23,24 +22,34 @@ router = APIRouter(
 )
 
 
-@router.get("/review_candidate/list", response_model=TargetReviewCandidatePageResponse)
+@router.get(
+    "/review_candidate/list",
+    response_model=TargetReviewCandidateListResponse,
+    response_model_exclude_none=True,
+)
 def review_candidate_list(
-    page: int = Query(default=1, ge=1),
+    http_request: Request,
+    page_index: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
-    q: str = Query(default="", max_length=200),
-    filter: str = Query(default="{}"),
-    sorter: str = Query(default='{"field":"occurred_time","order":"desc"}'),
+    query: str | None = Query(default=None),
+    filter: str | None = Query(default=None),
+    sorter: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
-    filter_value = parse_query_object(filter, TargetReviewCandidateFilter, "filter")
-    sorter_value = parse_query_object(sorter, TargetReviewCandidateSorter, "sorter")
-    return TargetReviewCandidatePageResponse(
-        message="Ledger review candidates listed",
-        body=TargetEconomicService(db).review_candidate_page(
-            page,
-            page_size,
-            q.strip(),
-            filter_value,
-            sorter_value,
-        ),
+    validate_query_parameter_names(
+        http_request,
+        {"page_index", "page_size", "query", "filter", "sorter"},
+    )
+    request = parse_list_request(
+        TargetReviewCandidateListRequest,
+        page_index=page_index,
+        page_size=page_size,
+        query=query,
+        filter=filter,
+        sorter=sorter,
+    )
+    return TargetReviewCandidateListResponse(
+        status=200,
+        message="ok",
+        body=TargetEconomicService(db).review_candidate_page(request=request),
     )

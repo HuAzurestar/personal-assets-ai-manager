@@ -68,13 +68,13 @@ def test_openapi_locks_canonical_ledger_v1_contract():
         "TargetEconomicReviewResponse",
         "TargetEconomicReviewListResponse",
         "ImportFactConflictResponse",
-        "ImportFactConflictPageResponse",
+        "ImportFactConflictListResponse",
         "ImportFileListResponse",
         "ImportFileSummaryResponse",
         "ImportFileDetailResponse",
         "ImportFileTransactionFactListResponse",
         "LedgerAccountResponse",
-        "TargetReviewCandidatePageResponse",
+        "TargetReviewCandidateListResponse",
         "TargetTagViewListResponse",
     ):
         assert schemas[name]["properties"]["status"]["const"] == 200
@@ -146,6 +146,26 @@ def test_openapi_locks_canonical_ledger_v1_contract():
         "/paam/tag/v1/view/list"
     ]["get"]["parameters"]
     assert [item["name"] for item in tag_view_parameters] == [
+        "page_index",
+        "page_size",
+        "query",
+        "filter",
+        "sorter",
+    ]
+    candidate_parameters = specification["paths"][
+        "/paam/ledger/v1/review_candidate/list"
+    ]["get"]["parameters"]
+    assert [item["name"] for item in candidate_parameters] == [
+        "page_index",
+        "page_size",
+        "query",
+        "filter",
+        "sorter",
+    ]
+    conflict_parameters = specification["paths"][
+        "/paam/import/v1/fact_conflict/list"
+    ]["get"]["parameters"]
+    assert [item["name"] for item in conflict_parameters] == [
         "page_index",
         "page_size",
         "query",

@@ -519,7 +519,21 @@ def test_target_fact_conflict_stays_on_import_row(target_import_api):
             IMPORT_ROW_STATUS_INVALID,
             0,
         )
+        conflict_id = raw.id
         assert db.query(ReviewCase).count() == 1
+
+    listed = client.get("/paam/import/v1/fact_conflict/list", params={
+        "filter": '{"key":"status","op":"=","val":"PENDING"}',
+        "sorter": '[{"key":"updated_time","direction":"desc"}]',
+    })
+    assert listed.status_code == 200, listed.text
+    body = listed.json()["body"]
+    assert set(body) == {"items", "total", "page_index", "page_size"}
+    assert [item["id"] for item in body["items"]] == [conflict_id]
+
+    legacy = client.get("/paam/import/v1/fact_conflict/list", params={"page": 1})
+    assert legacy.status_code == 422
+    assert legacy.json()["body"]["code"] == "LIST_PARAMETER_NOT_SUPPORTED"
 
 
 def test_source_override_cannot_contradict_statement_content():

@@ -19,13 +19,16 @@ from backend.mapper.import_fact_conflict_mapper import (
     CONFLICT_STATUS_CODES,
     ImportFactConflictMapper,
 )
+from backend.schema.list_query import BetweenValue, iter_filter_fields
 from backend.schema.target_review import (
     TargetFactConflictFilter,
-    TargetFactConflictPageRead,
+    TargetFactConflictListBody,
+    TargetFactConflictListRequest,
     TargetFactConflictResolveRequest,
     TargetFactConflictSorter,
     TargetReviewCaseRead,
     TargetReviewTransitionRequest,
+    parse_review_time,
 )
 from backend.service.target_economic_read_service import TargetEconomicReadService
 from backend.service.target_economic_service import TargetEconomicService
@@ -40,29 +43,82 @@ class TargetFactConflictService:
 
     def page(
         self,
-        page: int,
-        page_size: int,
-        q: str,
-        filter_value: TargetFactConflictFilter,
-        sorter: TargetFactConflictSorter,
-    ) -> TargetFactConflictPageRead:
-        items = [self._read(row) for row in self.mapper.rows(q)]
+        *,
+        request: TargetFactConflictListRequest,
+    ) -> TargetFactConflictListBody:
+        filter_value = self._mapper_filter(request)
+        sorter_expression = request.sorter[0] if request.sorter else None
+        sorter = TargetFactConflictSorter(
+            field=sorter_expression.key if sorter_expression else "updated_time",
+            order=sorter_expression.direction if sorter_expression else "desc",
+        )
+        items = [self._read(row) for row in self.mapper.rows()]
+        if filter_value.id:
+            items = [item for item in items if item.id == filter_value.id]
         if filter_value.status:
             items = [item for item in items if item.status == filter_value.status]
+        if filter_value.created_time_start:
+            items = [
+                item for item in items
+                if item.created_time >= filter_value.created_time_start
+            ]
+        if filter_value.created_time_end:
+            items = [
+                item for item in items
+                if item.created_time < filter_value.created_time_end
+            ]
+        if filter_value.updated_time_start:
+            items = [
+                item for item in items
+                if item.updated_time >= filter_value.updated_time_start
+            ]
+        if filter_value.updated_time_end:
+            items = [
+                item for item in items
+                if item.updated_time < filter_value.updated_time_end
+            ]
         reverse = sorter.order == "desc"
-        field = "updated_time" if sorter.field == "version" else sorter.field
-        items.sort(key=lambda item: (getattr(item, field), item.id), reverse=reverse)
-        total = len(items)
-        offset = (page - 1) * page_size
-        return TargetFactConflictPageRead(
-            items=items[offset:offset + page_size],
-            total=total,
-            page=page,
-            page_size=page_size,
-            q=q,
-            filter=filter_value,
-            sorter=sorter,
+        items.sort(
+            key=lambda item: (getattr(item, sorter.field), item.id),
+            reverse=reverse,
         )
+        total = len(items)
+        offset = (request.page_index - 1) * request.page_size
+        return TargetFactConflictListBody(
+            items=items[offset:offset + request.page_size],
+            total=total,
+            page_index=request.page_index,
+            page_size=request.page_size,
+        )
+
+    @staticmethod
+    def _mapper_filter(request: TargetFactConflictListRequest) -> TargetFactConflictFilter:
+        values: dict[str, object] = {}
+        for expression in iter_filter_fields(request.filter):
+            if expression.key in {"created_time", "updated_time"}:
+                if expression.op == "between":
+                    between = BetweenValue.model_validate(expression.val)
+                    values[f"{expression.key}_start"] = parse_review_time(
+                        between.start,
+                        expression.key,
+                    )
+                    values[f"{expression.key}_end"] = parse_review_time(
+                        between.end,
+                        expression.key,
+                    )
+                elif expression.op == ">=":
+                    values[f"{expression.key}_start"] = parse_review_time(
+                        expression.val,
+                        expression.key,
+                    )
+                else:
+                    values[f"{expression.key}_end"] = parse_review_time(
+                        expression.val,
+                        expression.key,
+                    )
+            else:
+                values[expression.key] = expression.val
+        return TargetFactConflictFilter.model_validate(values)
 
     def detail(self, conflict_id: int) -> TargetReviewCaseRead:
         row = self.mapper.row(conflict_id)
