@@ -109,18 +109,20 @@ def test_ledger_v1_exposes_only_confirmed_cash_entry_fields(economic_api):
     item = page.json()["body"]["items"][0]
     assert set(item) == {
         "id",
-        "economic_type",
-        "cash_direction",
+        "entry_type",
+        "entry_direction",
         "amount",
+        "currency_code",
         "account_code",
         "counterparty_account_ref",
-        "projection_version",
         "occurred_time",
+        "created_time",
+        "updated_time",
     }
-    assert (item["economic_type"], item["cash_direction"]) == ("TRANSACTION", "OUT")
+    assert (item["entry_type"], item["entry_direction"]) == (0, CASH_DIRECTION_OUT)
     detail = client.get(f"/paam/ledger/v1/flow/{item['id']}").json()["body"]
     assert "role" not in detail["allocations"][0]
-    assert detail["flow"] == {**item, "tags": []}
+    assert detail["ledger_entry"] == {**item, "tags": []}
     assert client.get("/paam/economy/v1/flow/list").status_code == 404
     assert client.get("/paam/economy/v1/flow/detail/1").status_code == 404
     assert client.get("/paam/economy/v1/summary").status_code == 404
@@ -139,13 +141,13 @@ def test_ledger_lists_accept_whitelisted_filter_and_sorter_objects(economic_api)
     page = client.get(
         "/paam/ledger/v1/flow/list",
         params={
-            "filter": '{"cash_direction":"IN","currency_code":["CNY"]}',
+            "filter": '{"entry_direction":1,"currency_code":["CNY"]}',
             "sorter": '{"field":"amount","order":"asc"}',
         },
     ).json()["body"]
     assert page["total"] == 1
-    assert page["items"][0]["amount"]["amount"] == 1000
-    assert page["filter"]["cash_direction"] == "IN"
+    assert page["items"][0]["amount"] == 1000
+    assert page["filter"]["entry_direction"] == CASH_DIRECTION_IN
     assert page["sorter"] == {"field": "amount", "order": "asc"}
 
     rejected = client.get(
@@ -217,12 +219,12 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
     summary = summary_response.json()["body"]
     assert summary["totals"] == [{
         "currency_code": "CNY",
-        "transaction_in_value": 0,
-        "transaction_out_value": 10000,
-        "account_transfer_in_value": 40000,
-        "account_transfer_out_value": 40000,
-        "claim_cashflow_in_value": 0,
-        "claim_cashflow_out_value": 0,
+        "income_and_expense_in_amount": 0,
+        "income_and_expense_out_amount": 10000,
+        "internal_transfer_in_amount": 40000,
+        "internal_transfer_out_amount": 40000,
+        "asset_and_liability_in_amount": 0,
+        "asset_and_liability_out_amount": 0,
     }]
     with sessions() as db:
         assert db.scalar(select(func.count(LedgerEntry.id))) == 11
@@ -244,10 +246,10 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
     )
     assert revoked.status_code == 200, revoked.text
     summary = client.get("/paam/ledger/v1/flow/summary").json()["body"]["totals"][0]
-    assert summary["transaction_in_value"] == 40000
-    assert summary["transaction_out_value"] == 50000
-    assert summary["account_transfer_in_value"] == 0
-    assert summary["account_transfer_out_value"] == 0
+    assert summary["income_and_expense_in_amount"] == 40000
+    assert summary["income_and_expense_out_amount"] == 50000
+    assert summary["internal_transfer_in_amount"] == 0
+    assert summary["internal_transfer_out_amount"] == 0
     with sessions() as db:
         assert db.scalar(select(func.count(LedgerEntry.id))) == 16
         assert len(list(db.scalars(select(ReviewAllocation.ledger_entry_id).where(
@@ -303,8 +305,8 @@ def test_loan_uses_one_claim_cashflow_entry_per_fact(economic_api):
         300000, 300000, 400000, 500000, 500000,
     ]
     summary = client.get("/paam/ledger/v1/flow/summary").json()["body"]["totals"][0]
-    assert summary["claim_cashflow_out_value"] == 1000000
-    assert summary["claim_cashflow_in_value"] == 1000000
+    assert summary["asset_and_liability_out_amount"] == 1000000
+    assert summary["asset_and_liability_in_amount"] == 1000000
 
 
 def test_one_economic_cannot_allocate_multiple_facts(economic_api):
@@ -496,7 +498,7 @@ def test_fx_review_uses_two_single_currency_account_transfers(economic_api):
     totals = client.get(
         "/paam/ledger/v1/flow/summary"
     ).json()["body"]["totals"]
-    assert {(item["currency_code"], item["account_transfer_in_value"], item["account_transfer_out_value"]) for item in totals} == {
+    assert {(item["currency_code"], item["internal_transfer_in_amount"], item["internal_transfer_out_amount"]) for item in totals} == {
         ("CNY", 0, 12000),
         ("USD", 2000, 0),
     }
@@ -561,7 +563,9 @@ def test_tag_sync_uses_allocations_for_every_split_ledger_entry(economic_api):
     detail = client.get(f"/paam/ledger/v1/flow/{ledger_ids[0]}").json()["body"]
     assigned = client.put(f"/paam/tag/v1/assignment/{ledger_ids[0]}", json={
         "tag_state": {"category": "food"},
-        "expected_projection_version": detail["flow"]["projection_version"],
+        "expected_projection_version": client.get(
+            f"/paam/ledger/v1/flow/{ledger_ids[0]}/account"
+        ).json()["body"]["projection_version"],
     })
     assert assigned.status_code == 200, assigned.text
     assert assigned.json()["body"]["tag_state"] == {"category": "food"}
@@ -569,8 +573,8 @@ def test_tag_sync_uses_allocations_for_every_split_ledger_entry(economic_api):
         client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]
         for ledger_id in ledger_ids
     ]
-    assert details[0]["flow"]["tags"][0]["tag_system_name"] == "food"
-    assert details[1]["flow"]["tags"][0]["tag_system_name"] == "unclassified"
+    assert details[0]["ledger_entry"]["tags"][0]["tag_system_name"] == "food"
+    assert details[1]["ledger_entry"]["tags"][0]["tag_system_name"] == "unclassified"
 
     archived = client.put(f"/paam/tag/v1/view/{view['id']}", json={
         "status": "ARCHIVED",
@@ -623,12 +627,11 @@ def test_ledger_account_update_changes_only_selected_split_ledger(economic_api):
         client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]
         for ledger_id in ledger_ids
     ]
-    assert details[0]["flow"]["account_code"] == "checked-bank"
-    assert details[1]["flow"]["account_code"] == "account-1"
+    assert details[0]["ledger_entry"]["account_code"] == "checked-bank"
+    assert details[1]["ledger_entry"]["account_code"] == "account-1"
     assert all(item["facts"][0]["account_code"] == "account-1" for item in details)
     assert all(
-        {review["review_type"] for review in item["reviews"]}
-        == {"SPLIT_PURCHASE"}
+        {review["behavior_type"] for review in item["reviews"]} == {0}
         for item in details
     )
     with sessions() as db:

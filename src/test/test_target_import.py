@@ -16,6 +16,7 @@ from backend.core import target_database
 from backend import target_main
 from backend.core.intake_preview_store import target_intake_preview_store
 from backend.entity import (
+    CASH_DIRECTION_IN,
     CASH_DIRECTION_OUT,
     IMPORT_FILE_FORMAT_CSV,
     IMPORT_FILE_STATUS_FAILED,
@@ -227,8 +228,8 @@ def test_target_import_writes_fact_evidence_and_hot_projection(target_import_api
     ledger_v2 = client.get("/paam/ledger/v1/flow/list")
     assert ledger_v2.status_code == 200, ledger_v2.text
     assert ledger_v2.json()["body"]["total"] == 1
-    assert ledger_v2.json()["body"]["items"][0]["economic_type"] == "TRANSACTION"
-    assert ledger_v2.json()["body"]["items"][0]["amount"]["amount"] == 1000
+    assert ledger_v2.json()["body"]["items"][0]["entry_type"] == 0
+    assert ledger_v2.json()["body"]["items"][0]["amount"] == 1000
 
     repeated = _preview(client, "renamed.csv", _csv())
     assert repeated["counts"]["duplicate_file"] == 1
@@ -336,7 +337,7 @@ def test_import_history_supports_search_pagination_and_account_filter(
     ]
     source_search = client.get(
         "/paam/import/v1/import_file/list",
-        params={"filter": '{"source_type":"wechat"}'},
+        params={"filter": '{"source_type":102}'},
     ).json()["body"]
     assert source_search["total"] == 2
 
@@ -379,16 +380,16 @@ def test_import_history_preserves_specific_bank_source_codes(target_import_api):
         "/paam/import/v1/import_file/list", params={"page_size": 100}
     ).json()["body"]
     assert {item["source_type"] for item in history["items"]} == {
-        "ccb",
-        "abc",
-        "cmb",
+        IMPORT_SOURCE_CCB_BANK,
+        IMPORT_SOURCE_ABC_BANK,
+        IMPORT_SOURCE_CMB_BANK,
     }
-    for _code, name, label in sources:
+    for code, _name, _label in sources:
         filtered = client.get(
             "/paam/import/v1/import_file/list",
-            params={"filter": f'{{"source_type":"{name}"}}'},
+            params={"filter": f'{{"source_type":{code}}}'},
         ).json()["body"]
-        assert [item["source_type"] for item in filtered["items"]] == [name]
+        assert [item["source_type"] for item in filtered["items"]] == [code]
 
 
 def test_import_history_rows_are_loaded_by_page(target_import_api):
@@ -408,7 +409,10 @@ def test_import_history_rows_are_loaded_by_page(target_import_api):
     ).json()["body"]
     assert (first["total"], len(first["items"])) == (26, 20)
     assert first["items"][0]["id"] > 0
-    assert first["items"][0]["cash_direction"] in {"IN", "OUT"}
+    assert first["items"][0]["cash_direction"] in {
+        CASH_DIRECTION_IN,
+        CASH_DIRECTION_OUT,
+    }
 
     second = client.get(
         f"/paam/import/v1/import_file/{batch_id}/transaction_fact/list",

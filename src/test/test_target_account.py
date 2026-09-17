@@ -101,7 +101,7 @@ def test_ledger_account_is_independent_from_transaction_fact(target_account_api)
     with sessions() as db:
         assert db.get(TransactionFact, fact_id).account_code == "fact-wallet"
     detail = client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]
-    assert detail["flow"]["account_code"] == "ledger-wallet"
+    assert detail["ledger_entry"]["account_code"] == "ledger-wallet"
     assert detail["facts"][0]["account_code"] == "fact-wallet"
 
 

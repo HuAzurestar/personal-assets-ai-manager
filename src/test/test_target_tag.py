@@ -19,6 +19,7 @@ from backend.entity import (
 )
 from backend.router.dependency import get_db
 from backend.router.ledger import router as ledger_router
+from backend.router.ledger_account import router as ledger_account_router
 from backend.router.tag import router as tag_router
 from backend.router.tag_assignment import router as tag_assignment_router
 from backend.service.target_economic_service import TargetEconomicService
@@ -36,6 +37,7 @@ def target_tag_api(tmp_path):
     api.include_router(tag_router)
     api.include_router(tag_assignment_router)
     api.include_router(ledger_router)
+    api.include_router(ledger_account_router)
 
     def override_db():
         with sessions() as db:
@@ -111,8 +113,8 @@ def _assign(client, ledger_id, version, value):
 
 def _projection_version(client, ledger_id):
     return client.get(
-        f"/paam/ledger/v1/flow/{ledger_id}"
-    ).json()["body"]["flow"]["projection_version"]
+        f"/paam/ledger/v1/flow/{ledger_id}/account"
+    ).json()["body"]["projection_version"]
 
 
 def test_target_tag_dictionary_assigns_one_default_per_active_view(target_tag_api):
@@ -217,8 +219,8 @@ def test_ledger_tag_assignment_is_direct_and_idempotent(target_tag_api):
     ).status_code == 200
 
     detail = client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]
-    assert detail["flow"]["tags"][0]["tag_system_name"] == "food"
-    assert all(item["review_type"] != "TAG" for item in detail["reviews"])
+    assert detail["ledger_entry"]["tags"][0]["tag_system_name"] == "food"
+    assert all("review_type" not in item for item in detail["reviews"])
     with sessions() as db:
         assignment = db.scalar(
             select(LedgerEntryTag).where(LedgerEntryTag.ledger_id == ledger_id)
@@ -265,11 +267,12 @@ def test_archived_tag_invalidates_assignment_and_advances_projection(target_tag_
     assert archived.status_code == 200, archived.text
     invalidated = client.get(
         f"/paam/ledger/v1/flow/{ledger_id}"
-    ).json()["body"]["flow"]
-    assert invalidated["projection_version"] > assigned_version
+    ).json()["body"]["ledger_entry"]
+    invalidated_version = _projection_version(client, ledger_id)
+    assert invalidated_version > assigned_version
     assert invalidated["tags"][0]["tag_system_name"] == "unclassified"
     assert _assign(
-        client, ledger_id, invalidated["projection_version"], "food"
+        client, ledger_id, invalidated_version, "food"
     ).status_code == 422
 
     restored = client.put(
@@ -279,5 +282,5 @@ def test_archived_tag_invalidates_assignment_and_advances_projection(target_tag_
     assert restored.status_code == 200, restored.text
     after_restore = client.get(
         f"/paam/ledger/v1/flow/{ledger_id}"
-    ).json()["body"]["flow"]
+    ).json()["body"]["ledger_entry"]
     assert after_restore["tags"][0]["tag_system_name"] == "unclassified"

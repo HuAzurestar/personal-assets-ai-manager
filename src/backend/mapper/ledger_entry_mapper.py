@@ -1,24 +1,20 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime, time
 
-from sqlalchemy import case, exists, func, literal, or_, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.orm import Session
 
 from backend.entity import (
-    CASH_DIRECTION_IN,
-    CASH_DIRECTION_OUT,
     LedgerEntry,
     LedgerEntryTag,
     ReviewAllocation,
     ReviewCase,
-    ReviewRevision,
     TargetTag,
     TargetTagView,
     TransactionFact,
 )
-from backend.schema.target_economic import EconomicPageQuery, EconomicSummaryQuery
+from backend.schema.ledger_entry import LedgerEntryPageQuery, LedgerEntrySummaryQuery
 
 
 class LedgerEntryMapper:
@@ -38,17 +34,19 @@ class LedgerEntryMapper:
             LedgerEntry.account_code,
             LedgerEntry.counterparty_account_ref,
             LedgerEntry.occurred_time,
+            LedgerEntry.created_time,
             LedgerEntry.updated_time,
         )
 
-    def page(self, query: EconomicPageQuery):
+    def page(self, query: LedgerEntryPageQuery):
         clauses = self._clauses(query)
         total = self.db.scalar(select(func.count(LedgerEntry.id)).where(*clauses)) or 0
         sort_columns = {
             "id": LedgerEntry.id,
             "occurred_time": LedgerEntry.occurred_time,
             "amount": LedgerEntry.amount,
-            "projection_version": LedgerEntry.updated_time,
+            "created_time": LedgerEntry.created_time,
+            "updated_time": LedgerEntry.updated_time,
         }
         column = sort_columns[query.sort_field]
         order = column.asc() if query.sort_order == "asc" else column.desc()
@@ -68,9 +66,9 @@ class LedgerEntryMapper:
             return None
         allocations = self.db.execute(select(
             ReviewAllocation.id,
-            ReviewAllocation.review_case_id.label("review_id"),
-            ReviewAllocation.transaction_fact_id.label("fact_id"),
-            ReviewAllocation.ledger_entry_id.label("economic_id"),
+            ReviewAllocation.review_case_id,
+            ReviewAllocation.transaction_fact_id,
+            ReviewAllocation.ledger_entry_id,
             ReviewAllocation.amount,
             ReviewAllocation.currency_code,
         ).join(
@@ -80,7 +78,7 @@ class LedgerEntryMapper:
             ReviewAllocation.ledger_entry_id == ledger_id,
             ReviewCase.status == 0,
         ).order_by(ReviewAllocation.id)).mappings().all()
-        fact_ids = sorted({row["fact_id"] for row in allocations})
+        fact_ids = sorted({row["transaction_fact_id"] for row in allocations})
         facts = self.db.execute(select(
             TransactionFact.id,
             TransactionFact.occurred_time,
@@ -88,60 +86,23 @@ class LedgerEntryMapper:
             TransactionFact.amount,
             TransactionFact.currency_code,
             TransactionFact.account_code,
-            TransactionFact.counterparty_name.label("counterparty"),
+            TransactionFact.counterparty_name,
+            TransactionFact.counterparty_account_ref,
             TransactionFact.summary,
         ).where(
             TransactionFact.id.in_(fact_ids)
         ).order_by(TransactionFact.id)).mappings().all() if fact_ids else []
-        facts = [self._fact_values(row) for row in facts]
-        review_ids = sorted({row["review_id"] for row in allocations})
+        review_ids = sorted({row["review_case_id"] for row in allocations})
         reviews = self.db.execute(select(
             ReviewCase.id,
-            literal("ECONOMIC").label("review_type"),
-            case(
-                (ReviewCase.behavior_type == 0, "DEFAULT"),
-                (ReviewCase.behavior_type == 1, "BORROW_AND_REPAY"),
-                else_="UNKNOWN",
-            ).label("behavior_code"),
-            case(
-                (ReviewCase.status == 0, "CONFIRMED"),
-                (ReviewCase.status == 1, "REVOKED"),
-                else_="UNKNOWN",
-            ).label("status"),
+            ReviewCase.behavior_type,
+            ReviewCase.status,
             ReviewCase.title,
+            ReviewCase.created_time,
+            ReviewCase.updated_time,
         ).where(
             ReviewCase.id.in_(review_ids),
         ).order_by(ReviewCase.id)).mappings().all() if review_ids else []
-        review_versions = dict(self.db.execute(select(
-            ReviewRevision.review_case_id,
-            func.count(ReviewRevision.id),
-        ).where(
-            ReviewRevision.review_case_id.in_(review_ids),
-        ).group_by(ReviewRevision.review_case_id)).all()) if review_ids else {}
-        behavior_codes = {}
-        if review_ids:
-            revision_rows = self.db.execute(select(
-                ReviewRevision.review_case_id,
-                ReviewRevision.request_json,
-            ).where(
-                ReviewRevision.review_case_id.in_(review_ids),
-            ).order_by(ReviewRevision.id.desc())).mappings().all()
-            for revision in revision_rows:
-                payload = json.loads(revision["request_json"] or "{}")
-                if (
-                    revision["review_case_id"] not in behavior_codes
-                    and payload.get("behavior_code")
-                ):
-                    behavior_codes[revision["review_case_id"]] = payload["behavior_code"]
-        reviews = [
-            {
-                **dict(row),
-                "review_type": behavior_codes.get(row["id"], row["behavior_code"]),
-                "behavior_code": behavior_codes.get(row["id"], row["behavior_code"]),
-                "version": max(1, int(review_versions.get(row["id"], 0))),
-            }
-            for row in reviews
-        ]
         return (
             flow,
             allocations,
@@ -181,7 +142,7 @@ class LedgerEntryMapper:
             })
         return result
 
-    def summary(self, query: EconomicSummaryQuery):
+    def summary(self, query: LedgerEntrySummaryQuery):
         clauses = self._active_clauses()
         if query.date_from:
             clauses.append(
@@ -200,7 +161,7 @@ class LedgerEntryMapper:
         ).where(*clauses)).mappings().all()
 
     @staticmethod
-    def _clauses(query: EconomicPageQuery) -> list:
+    def _clauses(query: LedgerEntryPageQuery) -> list:
         clauses = LedgerEntryMapper._active_clauses()
         if query.date_from:
             clauses.append(
@@ -214,8 +175,8 @@ class LedgerEntryMapper:
             clauses.append(LedgerEntry.entry_type.in_(query.entry_type))
         if query.currency_code:
             clauses.append(LedgerEntry.currency_code.in_(query.currency_code))
-        if query.cash_direction:
-            clauses.append(LedgerEntry.entry_direction == query.cash_direction)
+        if query.entry_direction:
+            clauses.append(LedgerEntry.entry_direction == query.entry_direction)
         if query.account_code:
             clauses.append(LedgerEntry.account_code == query.account_code)
         if query.q:
@@ -251,18 +212,3 @@ class LedgerEntryMapper:
                 ReviewCase.status == 0,
             )),
         ]
-
-    @staticmethod
-    def _fact_values(row) -> dict:
-        values = dict(row)
-        direction = {
-            CASH_DIRECTION_IN: "IN",
-            CASH_DIRECTION_OUT: "OUT",
-        }.get(values["cash_direction"])
-        if direction is None:
-            raise ValueError(
-                f"unknown transaction_fact cash_direction: "
-                f"{values['cash_direction']}"
-            )
-        values["cash_direction"] = direction
-        return values
