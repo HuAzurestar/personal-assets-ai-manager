@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import String, case, cast, func, literal, or_, select
+from sqlalchemy import String, case, cast, func, or_, select
 from sqlalchemy.orm import Session
 
 from backend.entity import (
@@ -72,17 +72,12 @@ class ImportFileMapper:
                 TransactionImportFile.filename.like(pattern),
                 cast(TransactionImportFile.source_type, String).like(pattern),
             ))
-        if filter_value.source_type:
-            value = ImportFileMapper._SOURCE_CODES.get(filter_value.source_type.casefold())
-            clauses.append(TransactionImportFile.source_type == (-1 if value is None else value))
-        if filter_value.institution_code:
-            clauses.append(False)
-        if filter_value.file_format:
-            value = ImportFileMapper._FORMAT_CODES.get(filter_value.file_format.upper())
-            clauses.append(TransactionImportFile.file_format == (-1 if value is None else value))
-        if filter_value.status:
-            value = ImportFileMapper._STATUS_CODES.get(filter_value.status.upper())
-            clauses.append(TransactionImportFile.status == (-1 if value is None else value))
+        if filter_value.source_type is not None:
+            clauses.append(TransactionImportFile.source_type == filter_value.source_type)
+        if filter_value.file_format is not None:
+            clauses.append(TransactionImportFile.file_format == filter_value.file_format)
+        if filter_value.status is not None:
+            clauses.append(TransactionImportFile.status == filter_value.status)
         return clauses
 
     @staticmethod
@@ -90,16 +85,9 @@ class ImportFileMapper:
         return (
             TransactionImportFile.id,
             TransactionImportFile.batch_code,
-            case(
-                *[(TransactionImportFile.source_type == code, name) for name, code in ImportFileMapper._SOURCE_CODES.items()],
-                else_="unknown",
-            ).label("source_type"),
-            literal("").label("institution_code"),
+            TransactionImportFile.source_type,
             TransactionImportFile.filename,
-            case(
-                *[(TransactionImportFile.file_format == code, name) for name, code in ImportFileMapper._FORMAT_CODES.items()],
-                else_="UNKNOWN",
-            ).label("file_format"),
+            TransactionImportFile.file_format,
             TransactionImportFile.sha256,
             TransactionImportFile.period_start,
             TransactionImportFile.period_end,
@@ -107,10 +95,7 @@ class ImportFileMapper:
             TransactionImportFile.success_count,
             TransactionImportFile.skip_count,
             TransactionImportFile.issue_count,
-            case(
-                *[(TransactionImportFile.status == code, name) for name, code in ImportFileMapper._STATUS_CODES.items()],
-                else_="PENDING",
-            ).label("status"),
+            TransactionImportFile.status,
             TransactionImportFile.created_time,
             TransactionImportFile.updated_time,
         )

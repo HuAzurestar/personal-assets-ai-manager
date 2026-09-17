@@ -111,7 +111,7 @@ def test_import_file_list_is_a_pure_filterable_po_list(import_file_api):
         "/paam/import/v1/import_file/list",
         params={
             "q": "september",
-            "filter": '{"source_type":"wechat","status":"IMPORTED"}',
+            "filter": '{"source_type":102,"status":1}',
             "sorter": '{"field":"filename","order":"asc"}',
         },
     )
@@ -136,7 +136,7 @@ def test_import_file_summary_uses_the_same_search_and_filter_contract(
         "/paam/import/v1/import_file/summary",
         params={
             "q": "september",
-            "filter": '{"source_type":"wechat","status":"IMPORTED"}',
+            "filter": '{"source_type":102,"status":1}',
         },
     )
 
@@ -151,10 +151,9 @@ def test_import_file_summary_uses_the_same_search_and_filter_contract(
         "issue_count": 0,
         "q": "september",
         "filter": {
-            "source_type": "wechat",
-            "institution_code": None,
+            "source_type": 102,
             "file_format": None,
-            "status": "IMPORTED",
+            "status": 1,
         },
     }
 

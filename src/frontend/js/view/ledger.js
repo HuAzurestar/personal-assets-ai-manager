@@ -486,8 +486,8 @@ async function ledgerImportsPage() {
   const sortField = state.params.get("sort_field") || "created_time";
   const sortOrder = state.params.get("sort_order") || "desc";
   const filter = Object.fromEntries(Object.entries({
-    source_type: sourceType,
-    status,
+    source_type: sourceType === "" ? "" : Number(sourceType),
+    status: status === "" ? "" : Number(status),
   }).filter(([, value]) => value));
   const query = new URLSearchParams({
     page: state.params.get("page") || "1",
@@ -497,9 +497,9 @@ async function ledgerImportsPage() {
     sorter: JSON.stringify({ field: sortField, order: sortOrder }),
   });
   const result = await request(`/paam/import/v1/import_file/list?${query}`);
-  const rows = result.items.map((item) => `<tr class="detail-click-row" tabindex="0" data-import-file-row="${item.id}"><td>${date(item.created_time)}</td><td><button type="button" class="detail-primary" data-action="import-file-detail" data-id="${item.id}"><strong>${esc(item.filename)}</strong><small>Import File #${item.id} · ${esc(item.batch_code || "无批次码")}</small></button></td><td>${esc(sourceLabels[item.source_type] || item.source_type)}</td><td>${esc(item.file_format)}</td><td>${item.success_count} / ${item.total_count}</td><td><span class="badge ${item.status === "IMPORTED" ? "neutral" : "warn"}">${esc(statusLabels[item.status] || item.status)}</span></td><td class="detail-arrow">→</td></tr>`).join("");
+  const rows = result.items.map((item) => `<tr class="detail-click-row" tabindex="0" data-import-file-row="${item.id}"><td>${date(item.created_time)}</td><td><button type="button" class="detail-primary" data-action="import-file-detail" data-id="${item.id}"><strong>${esc(item.filename)}</strong><small>Import File #${item.id} · ${esc(item.batch_code || "无批次码")}</small></button></td><td>${esc(sourceLabels[item.source_type] || item.source_type)}</td><td>${esc(fileFormatLabels[item.file_format] || item.file_format)}</td><td>${item.success_count} / ${item.total_count}</td><td><span class="badge ${item.status === 1 ? "neutral" : "warn"}">${esc(statusLabels[item.status] || item.status)}</span></td><td class="detail-arrow">→</td></tr>`).join("");
   const sourceOptions = [...new Set(Object.entries(sourceLabels).map(([value, label]) => `<option value="${esc(value)}" ${sourceType === value ? "selected" : ""}>${esc(label)}</option>`))].join("");
-  const toolbar = `<form class="detail-filter" data-form="detail-import-filter"><label class="grow">查找<input name="q" value="${esc(q)}" placeholder="ID、文件名、来源或批次码"></label><label>来源<select name="source_type"><option value="">全部来源</option>${sourceOptions}</select></label><label>状态<select name="status"><option value="">全部状态</option>${["PENDING", "IMPORTED", "FAILED"].map((value) => `<option value="${value}" ${status === value ? "selected" : ""}>${esc(statusLabels[value] || value)}</option>`).join("")}</select></label><label>排序<select name="sort_field"><option value="created_time" ${sortField === "created_time" ? "selected" : ""}>导入时间</option><option value="filename" ${sortField === "filename" ? "selected" : ""}>文件名</option><option value="id" ${sortField === "id" ? "selected" : ""}>ID</option></select></label><label>顺序<select name="sort_order"><option value="desc" ${sortOrder === "desc" ? "selected" : ""}>降序</option><option value="asc" ${sortOrder === "asc" ? "selected" : ""}>升序</option></select></label><button type="button" class="quiet" data-action="detail-clear" data-page-id="ledger-imports">清空</button><button class="primary">查询</button></form>`;
+  const toolbar = `<form class="detail-filter" data-form="detail-import-filter"><label class="grow">查找<input name="q" value="${esc(q)}" placeholder="ID、文件名、来源或批次码"></label><label>来源<select name="source_type"><option value="">全部来源</option>${sourceOptions}</select></label><label>状态<select name="status"><option value="">全部状态</option>${[0, 1, 2, 3].map((value) => `<option value="${value}" ${status === String(value) ? "selected" : ""}>${esc(statusLabels[value])}</option>`).join("")}</select></label><label>排序<select name="sort_field"><option value="created_time" ${sortField === "created_time" ? "selected" : ""}>导入时间</option><option value="filename" ${sortField === "filename" ? "selected" : ""}>文件名</option><option value="id" ${sortField === "id" ? "selected" : ""}>ID</option></select></label><label>顺序<select name="sort_order"><option value="desc" ${sortOrder === "desc" ? "selected" : ""}>降序</option><option value="asc" ${sortOrder === "asc" ? "selected" : ""}>升序</option></select></label><button type="button" class="quiet" data-action="detail-clear" data-page-id="ledger-imports">清空</button><button class="primary">查询</button></form>`;
   return detailListView({ active: "ledger-imports", toolbar, title: "Import File", description: "每行代表一个导入文件 PO；Transaction Fact 是只读的详情子资源。", total: result.total, headers: ["导入时间", "文件", "来源", "格式", "成功 / 总数", "状态", ""], rows, footer: detailPager(result, "ledger-imports") });
 }
 
@@ -521,7 +521,7 @@ async function showImportFileDetail(id) {
     title: item.filename || `Import File #${item.id}`,
     kicker: `IMPORT FILE #${item.id}`,
     subtitle: `${esc(sourceLabels[item.source_type] || item.source_type)} · ${esc(statusLabels[item.status] || item.status)}`,
-    body: `${detailSection("Import File", detailFields([["Batch Code", item.batch_code], ["机构", item.institution_code], ["文件格式", item.file_format], ["SHA-256", item.sha256], ["覆盖期间", `${item.period_start || "—"} – ${item.period_end || "—"}`], ["总行数", item.total_count], ["成功", item.success_count], ["跳过", item.skip_count], ["异常", item.issue_count], ["创建时间", date(item.created_time)], ["更新时间", date(item.updated_time)]]))}${detailSection("Transaction Fact", childTable, "没有关联 Transaction Fact")}`,
+    body: `${detailSection("Import File", detailFields([["Batch Code", item.batch_code], ["文件格式", fileFormatLabels[item.file_format] || item.file_format], ["SHA-256", item.sha256], ["覆盖期间", `${item.period_start || "—"} – ${item.period_end || "—"}`], ["总行数", item.total_count], ["成功", item.success_count], ["跳过", item.skip_count], ["异常", item.issue_count], ["创建时间", date(item.created_time)], ["更新时间", date(item.updated_time)]]))}${detailSection("Transaction Fact", childTable, "没有关联 Transaction Fact")}`,
   });
 }
 
@@ -563,12 +563,13 @@ function importPage() {
 }
 
 const sourceLabels = {
-  alipay: "支付宝", wechat: "微信支付", ccb: "建设银行", abc: "农业银行", cmb: "招商银行",
+  0: "未知", 1: "手工", 101: "支付宝", 102: "微信支付", 201: "建设银行", 202: "农业银行", 203: "招商银行",
 };
+const fileFormatLabels = { 0: "UNKNOWN", 1: "CSV", 2: "XLS", 3: "XLSX", 4: "PDF" };
 const actionLabels = {
   new: "新增", supplement: "补充证据", duplicate_file: "重复文件", record: "仅保留记录", ambiguous: "待确认", error: "有错误",
 };
-const statusLabels = { IMPORTED: "已导入", PARTIAL: "部分导入", FAILED: "失败" };
+const statusLabels = { 0: "待确认", 1: "已导入", 2: "部分导入", 3: "失败" };
 
 function fileExtension(filename) {
   return String(filename || "FILE").split(".").pop().slice(0, 4).toUpperCase();
