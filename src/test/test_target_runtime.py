@@ -42,6 +42,7 @@ def test_openapi_locks_canonical_ledger_v1_contract():
         "/paam/import/v1/fact_conflict/{conflict_id}/dismiss",
         "/paam/import/v1/fact_conflict/{conflict_id}/reopen",
         "/paam/import/v1/import_file/summary",
+        "/paam/import/v1/import_file/{import_file_id}/row/list",
     } <= paths
     assert "/paam/review/v1/case/page" not in paths
     assert "/paam/review/v1/case/detail/{case_id}" not in paths

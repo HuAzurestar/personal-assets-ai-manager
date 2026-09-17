@@ -25,6 +25,7 @@ from backend.entity import (
     ReviewAllocation,
     ReviewCase,
     LedgerEntry,
+    TransactionFact,
 )
 from backend.schema.import_file import ImportFileFilter, ImportFileSorter
 
@@ -180,3 +181,75 @@ class ImportFileMapper:
             relations.c.currency_code, relations.c.entry_direction,
         )).mappings().all()
         return {**dict(counts), "totals": [dict(row) for row in totals]}
+
+    def row_page(
+        self,
+        import_file_id: int,
+        *,
+        page: int,
+        page_size: int,
+        row_status: int | None,
+        order: str,
+    ) -> tuple[list[dict], int]:
+        clauses = [TransactionImportRow.transaction_import_file_id == import_file_id]
+        if row_status is not None:
+            clauses.append(TransactionImportRow.row_status == row_status)
+        total = int(self.db.scalar(
+            select(func.count(TransactionImportRow.id)).where(*clauses)
+        ) or 0)
+        source_order = (
+            TransactionImportRow.source_row_number.asc()
+            if order == "asc"
+            else TransactionImportRow.source_row_number.desc()
+        )
+        rows = self.db.execute(select(
+            TransactionImportRow.source_row_number,
+            TransactionImportRow.row_status,
+            TransactionImportRow.source_reference,
+            TransactionImportRow.issue_code,
+            TransactionImportRow.issue_message,
+            TransactionImportRow.raw_payload,
+            TransactionFact.id.label("fact_id"),
+            TransactionFact.occurred_time.label("fact_occurred_time"),
+            TransactionFact.cash_direction.label("fact_cash_direction"),
+            TransactionFact.amount.label("fact_amount"),
+            TransactionFact.currency_code.label("fact_currency_code"),
+            TransactionFact.account_code.label("fact_account_code"),
+            TransactionFact.counterparty_name.label("fact_counterparty_name"),
+            TransactionFact.counterparty_account_ref.label("fact_counterparty_account_ref"),
+            TransactionFact.summary.label("fact_summary"),
+            TransactionFact.created_time.label("fact_created_time"),
+            TransactionFact.updated_time.label("fact_updated_time"),
+        ).outerjoin(
+            TransactionFact,
+            TransactionFact.id == TransactionImportRow.transaction_fact_id,
+        ).where(*clauses).order_by(source_order).offset(
+            (page - 1) * page_size
+        ).limit(page_size)).mappings().all()
+        result = []
+        for row in rows:
+            item = {
+                "source_row_number": row["source_row_number"],
+                "row_status": row["row_status"],
+                "source_reference": row["source_reference"],
+                "issue_code": row["issue_code"],
+                "issue_message": row["issue_message"],
+                "raw_payload": row["raw_payload"],
+                "transaction_fact": None,
+            }
+            if row["fact_id"] is not None:
+                item["transaction_fact"] = {
+                    "id": row["fact_id"],
+                    "occurred_time": row["fact_occurred_time"],
+                    "cash_direction": row["fact_cash_direction"],
+                    "amount": row["fact_amount"],
+                    "currency_code": row["fact_currency_code"],
+                    "account_code": row["fact_account_code"],
+                    "counterparty_name": row["fact_counterparty_name"],
+                    "counterparty_account_ref": row["fact_counterparty_account_ref"],
+                    "summary": row["fact_summary"],
+                    "created_time": row["fact_created_time"],
+                    "updated_time": row["fact_updated_time"],
+                }
+            result.append(item)
+        return result, total

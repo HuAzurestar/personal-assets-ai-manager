@@ -128,6 +128,53 @@ class ImportFileTransactionFactListResponse(
     body: ImportFileTransactionFactListRead
 
 
+class ImportFileRowListRequest(ListRequest):
+    @model_validator(mode="after")
+    def validate_capabilities(self) -> "ImportFileRowListRequest":
+        validate_list_capabilities(
+            self,
+            query_fields=(),
+            filter_operators={"row_status": ("=",)},
+            sorter_fields=("source_row_number",),
+            logical_operators=("AND",),
+            max_sorters=1,
+        )
+        expressions = list(iter_filter_fields(self.filter))
+        if len(expressions) > 1:
+            raise ListQueryError(
+                "Import File Row status may be filtered only once",
+                code="LIST_COMBINATION_NOT_SUPPORTED",
+                details={"component": "filter", "duplicate_fields": ["row_status"]},
+            )
+        for expression in expressions:
+            value = expression.val
+            if not isinstance(value, int) or isinstance(value, bool) or value not in {1, 2, 3}:
+                raise ListQueryError(
+                    "Invalid Import File Row status",
+                    code="LIST_FILTER_VALUE_INVALID",
+                    details={"component": "filter", "key": "row_status", "value": value},
+                )
+        return self
+
+
+class ImportFileRowRead(BaseModel):
+    source_row_number: int
+    row_status: int
+    source_reference: str
+    issue_code: str
+    issue_message: str
+    raw_payload: str | None = None
+    transaction_fact: TransactionFactListItem | None = None
+
+
+class ImportFileRowListBody(ListBody[ImportFileRowRead]):
+    pass
+
+
+class ImportFileRowListResponse(ListResponse[ImportFileRowRead]):
+    body: ImportFileRowListBody
+
+
 _DATETIME_ADAPTER = TypeAdapter(datetime)
 
 

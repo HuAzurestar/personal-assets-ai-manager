@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from backend.core.target_database import init_target_db
@@ -12,6 +12,7 @@ from backend.entity import (
     IMPORT_FILE_FORMAT_CSV,
     IMPORT_FILE_STATUS_IMPORTED,
     IMPORT_ROW_STATUS_ACCEPTED,
+    IMPORT_ROW_STATUS_SKIPPED,
     IMPORT_SOURCE_ALIPAY,
     IMPORT_SOURCE_WECHAT,
     TransactionFact,
@@ -164,6 +165,120 @@ def test_import_file_detail_has_an_unpaged_transaction_fact_subresource(
     assert facts.status_code == 200
     assert facts.json()["body"]["total"] == 1
     assert facts.json()["body"]["items"][0]["id"] == fact_id
+
+
+def test_import_file_rows_show_fact_links_skips_and_raw_json(import_file_api):
+    client, sessions = import_file_api
+    file_ids, fact_id = _seed(sessions)
+    now = datetime(2026, 9, 17, 9)
+    with sessions() as db:
+        file = db.get(TransactionImportFile, file_ids[0])
+        file.total_count = 2
+        file.skip_count = 1
+        db.add(TransactionImportRow(
+            transaction_fact_id=0,
+            transaction_import_file_id=file_ids[0],
+            source_row_number=2,
+            source_reference="zero-amount-row",
+            raw_payload='{"normalized":{"action":"record","amount_minor":0},"raw":{"amount":"0.00"}}',
+            raw_hash="f" * 64,
+            row_status=IMPORT_ROW_STATUS_SKIPPED,
+            issue_code="",
+            issue_message="",
+            created_time=now,
+            updated_time=now,
+        ))
+        db.commit()
+
+    all_rows = client.get(
+        f"/paam/import/v1/import_file/{file_ids[0]}/row/list",
+        params={"page_size": 1},
+    )
+    skipped = client.get(
+        f"/paam/import/v1/import_file/{file_ids[0]}/row/list",
+        params={
+            "filter": '{"key":"row_status","op":"=","val":2}',
+            "sorter": '[{"key":"source_row_number","direction":"desc"}]',
+        },
+    )
+
+    assert all_rows.status_code == 200, all_rows.text
+    assert all_rows.json()["body"] == {
+        "items": [{
+            "source_row_number": 1,
+            "row_status": IMPORT_ROW_STATUS_ACCEPTED,
+            "source_reference": f"ref-{file_ids[0]}",
+            "issue_code": "",
+            "issue_message": "",
+            "raw_payload": "{}",
+            "transaction_fact": {
+                "id": fact_id,
+                "occurred_time": "2026-09-16T08:00:00",
+                "cash_direction": CASH_DIRECTION_OUT,
+                "amount": 880,
+                "currency_code": "CNY",
+                "account_code": "wallet",
+                "counterparty_name": "Merchant",
+                "counterparty_account_ref": "",
+                "summary": "Lunch",
+                "created_time": "2026-09-16T08:00:00",
+                "updated_time": "2026-09-16T08:00:00",
+            },
+        }],
+        "total": 2,
+        "page_index": 1,
+        "page_size": 1,
+    }
+    assert skipped.status_code == 200, skipped.text
+    skipped_body = skipped.json()["body"]
+    assert skipped_body["total"] == 1
+    assert skipped_body["items"][0]["source_row_number"] == 2
+    assert "transaction_fact" not in skipped_body["items"][0]
+    assert '"amount":"0.00"' in skipped_body["items"][0]["raw_payload"]
+
+
+def test_import_file_row_list_rejects_unknown_filters(import_file_api):
+    client, sessions = import_file_api
+    file_ids, _fact_id = _seed(sessions)
+
+    response = client.get(
+        f"/paam/import/v1/import_file/{file_ids[0]}/row/list",
+        params={"filter": '{"key":"sha256","op":"=","val":"hidden"}'},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["body"]["code"] == "LIST_FILTER_FIELD_NOT_SUPPORTED"
+
+
+def test_import_file_row_list_query_count_is_fixed(import_file_api):
+    client, sessions = import_file_api
+    file_ids, _fact_id = _seed(sessions)
+    selects = []
+
+    def count_selects(_connection, _cursor, statement, _parameters, _context, _many):
+        if statement.lstrip().upper().startswith("SELECT"):
+            selects.append(statement)
+
+    engine = sessions.kw["bind"]
+    event.listen(engine, "before_cursor_execute", count_selects)
+    try:
+        first = client.get(
+            f"/paam/import/v1/import_file/{file_ids[0]}/row/list",
+            params={"page_size": 1},
+        )
+        first_count = len(selects)
+        selects.clear()
+        second = client.get(
+            f"/paam/import/v1/import_file/{file_ids[0]}/row/list",
+            params={"page_size": 100},
+        )
+        second_count = len(selects)
+    finally:
+        event.remove(engine, "before_cursor_execute", count_selects)
+
+    assert first.status_code == second.status_code == 200
+    assert first_count == second_count == 3
+    assert all("SELECT *" not in statement.upper() for statement in selects)
 
 
 def test_import_file_query_validates_generic_objects(import_file_api):

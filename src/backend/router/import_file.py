@@ -11,6 +11,8 @@ from backend.schema.import_file import (
     ImportFileDetailResponse,
     ImportFileListRequest,
     ImportFileListResponse,
+    ImportFileRowListRequest,
+    ImportFileRowListResponse,
     ImportFileSummaryResponse,
     ImportFileTransactionFactListResponse,
 )
@@ -99,4 +101,38 @@ def import_file_transaction_fact_list(
         status=200,
         message="ok",
         body=ImportFileService(db).transaction_facts(import_file_id),
+    )
+
+
+@router.get(
+    "/import_file/{import_file_id}/row/list",
+    response_model=ImportFileRowListResponse,
+    response_model_exclude_none=True,
+)
+def import_file_row_list(
+    import_file_id: int,
+    http_request: Request,
+    page_index: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    query: str | None = Query(default=None),
+    filter: str | None = Query(default=None),
+    sorter: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    validate_query_parameter_names(
+        http_request,
+        {"page_index", "page_size", "query", "filter", "sorter"},
+    )
+    request = parse_list_request(
+        ImportFileRowListRequest,
+        page_index=page_index,
+        page_size=page_size,
+        query=query,
+        filter=filter,
+        sorter=sorter,
+    )
+    return ImportFileRowListResponse(
+        status=200,
+        message="ok",
+        body=ImportFileService(db).rows(import_file_id, request=request),
     )

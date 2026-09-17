@@ -12,6 +12,9 @@ from backend.schema.import_file import (
     ImportFileListBody,
     ImportFileListRequest,
     ImportFileRead,
+    ImportFileRowListBody,
+    ImportFileRowListRequest,
+    ImportFileRowRead,
     ImportFileSorter,
     ImportFileSummaryRead,
     ImportFileTransactionFactListRead,
@@ -77,6 +80,33 @@ class ImportFileService:
         return ImportFileTransactionFactListRead(
             items=[TransactionFactListItem(**row) for row in rows],
             total=len(rows),
+        )
+
+    def rows(
+        self,
+        import_file_id: int,
+        *,
+        request: ImportFileRowListRequest,
+    ) -> ImportFileRowListBody:
+        if self.mapper.detail(import_file_id) is None:
+            raise TargetIntakeError(404, f"import file {import_file_id} not found")
+        row_status = next(
+            (expression.val for expression in iter_filter_fields(request.filter)),
+            None,
+        )
+        sorter = request.sorter[0] if request.sorter else None
+        rows, total = self.mapper.row_page(
+            import_file_id,
+            page=request.page_index,
+            page_size=request.page_size,
+            row_status=row_status,
+            order=sorter.direction if sorter else "asc",
+        )
+        return ImportFileRowListBody(
+            items=[ImportFileRowRead(**row) for row in rows],
+            total=total,
+            page_index=request.page_index,
+            page_size=request.page_size,
         )
 
     @staticmethod
