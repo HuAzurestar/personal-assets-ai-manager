@@ -58,7 +58,7 @@ def test_openapi_locks_canonical_ledger_v1_contract():
 
     schemas = specification["components"]["schemas"]
     for name in (
-        "EconomicFlowPageResponse",
+        "EconomicFlowListResponse",
         "EconomicFlowDetailResponse",
         "EconomicSummaryResponse",
         "TargetEconomicReviewResponse",

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, time
 
-from sqlalchemy import case, exists, func, literal, or_, select
+from sqlalchemy import case, exists, func, literal, select
 from sqlalchemy.orm import Session
 
 from backend.entity import (
@@ -46,17 +46,25 @@ class TargetEconomicReadMapper:
         clauses = self._clauses(query)
         total = self.db.scalar(select(func.count(LedgerEntry.id)).where(*clauses)) or 0
         sort_columns = {
-            "id": LedgerEntry.id,
             "occurred_time": LedgerEntry.occurred_time,
             "amount_value": LedgerEntry.amount_value,
-            "projection_version": LedgerEntry.updated_time,
         }
         column = sort_columns[query.sort_field]
         order = column.asc() if query.sort_order == "asc" else column.desc()
         id_order = LedgerEntry.id.asc() if query.sort_order == "asc" else LedgerEntry.id.desc()
+        orders = [order, id_order]
+        if (
+            query.sort_field == "amount_value"
+            and not (query.currency_code and query.amount_scale is not None)
+        ):
+            orders = [
+                LedgerEntry.currency_code.asc(),
+                LedgerEntry.amount_scale.asc(),
+                order,
+                id_order,
+            ]
         rows = self.db.execute(select(*self._flow_columns()).where(*clauses).order_by(
-            order,
-            id_order,
+            *orders,
         ).offset((query.page - 1) * query.page_size).limit(query.page_size)).mappings().all()
         return rows, total
 
@@ -206,38 +214,22 @@ class TargetEconomicReadMapper:
     @staticmethod
     def _clauses(query: EconomicPageQuery) -> list:
         clauses = TargetEconomicReadMapper._active_clauses()
-        if query.date_from:
-            clauses.append(
-                LedgerEntry.occurred_time >= datetime.combine(query.date_from, time.min)
-            )
-        if query.date_to:
-            clauses.append(
-                LedgerEntry.occurred_time <= datetime.combine(query.date_to, time.max)
-            )
-        if query.entry_type:
-            clauses.append(LedgerEntry.entry_type.in_(query.entry_type))
+        if query.id:
+            clauses.append(LedgerEntry.id == query.id)
+        if query.occurred_time_start:
+            clauses.append(LedgerEntry.occurred_time >= query.occurred_time_start)
+        if query.occurred_time_end:
+            clauses.append(LedgerEntry.occurred_time < query.occurred_time_end)
+        if query.entry_type is not None:
+            clauses.append(LedgerEntry.entry_type == query.entry_type)
         if query.currency_code:
-            clauses.append(LedgerEntry.currency_code.in_(query.currency_code))
+            clauses.append(LedgerEntry.currency_code == query.currency_code)
         if query.cash_direction:
             clauses.append(LedgerEntry.entry_direction == query.cash_direction)
         if query.account_code:
             clauses.append(LedgerEntry.account_code == query.account_code)
-        if query.q:
-            clauses.append(exists(select(ReviewAllocation.id).join(
-                ReviewCase,
-                ReviewCase.id == ReviewAllocation.review_case_id,
-            ).join(
-                TransactionFact,
-                TransactionFact.id == ReviewAllocation.transaction_fact_id,
-            ).where(
-                ReviewAllocation.ledger_entry_id == LedgerEntry.id,
-                ReviewCase.status == 0,
-                or_(
-                    ReviewCase.title.ilike(f"%{query.q}%"),
-                    TransactionFact.counterparty_name.ilike(f"%{query.q}%"),
-                    TransactionFact.summary.ilike(f"%{query.q}%"),
-                ),
-            )))
+        if query.amount_scale is not None:
+            clauses.append(LedgerEntry.amount_scale == query.amount_scale)
         return clauses
 
     @staticmethod

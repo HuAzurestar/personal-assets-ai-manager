@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import timezone
 
 from sqlalchemy.orm import Session
 
@@ -11,15 +12,18 @@ from backend.schema.target_economic import (
     EconomicFactBriefRead,
     EconomicFlowDetailItem,
     EconomicFlowDetailRead,
+    EconomicFlowListBody,
     EconomicFlowListItem,
-    EconomicFlowPageRead,
+    EconomicFlowListRequest,
     EconomicMoneyRead,
     EconomicPageQuery,
     EconomicReviewBriefRead,
     EconomicSummaryQuery,
     EconomicSummaryRead,
     EconomicTagRead,
+    parse_economic_flow_time,
 )
+from backend.schema.list_query import BetweenValue, iter_filter_fields
 
 
 class TargetEconomicReadService:
@@ -33,27 +37,64 @@ class TargetEconomicReadService:
     def __init__(self, db: Session):
         self.mapper = TargetEconomicReadMapper(db)
 
-    def page(self, query: EconomicPageQuery) -> EconomicFlowPageRead:
-        invalid = sorted(set(query.entry_type) - {0, 1, 2})
-        if invalid:
-            raise ValueError(f"unknown ledger entry types: {invalid}")
+    def page(self, request: EconomicFlowListRequest) -> EconomicFlowListBody:
+        query = self._page_query(request)
         rows, total = self.mapper.page(query)
-        return EconomicFlowPageRead(
+        return EconomicFlowListBody(
             items=[self._flow(row) for row in rows],
             total=total,
-            page=query.page,
+            page_index=query.page,
             page_size=query.page_size,
-            q=query.q,
-            filter={
-                "date_from": query.date_from,
-                "date_to": query.date_to,
-                "economic_type": [self.ECONOMIC_TYPES[value] for value in query.entry_type],
-                "cash_direction": self.CASH_DIRECTIONS.get(query.cash_direction),
-                "currency_code": list(query.currency_code),
-                "account_code": query.account_code or None,
-            },
-            sorter={"field": query.sort_field, "order": query.sort_order},
         )
+
+    @staticmethod
+    def _page_query(request: EconomicFlowListRequest) -> EconomicPageQuery:
+        values: dict[str, object] = {
+            "page": request.page_index,
+            "page_size": request.page_size,
+        }
+        type_codes = {
+            "TRANSACTION": 0,
+            "ACCOUNT_TRANSFER": 1,
+            "CLAIM": 2,
+        }
+        for expression in iter_filter_fields(request.filter):
+            if expression.key == "occurred_time":
+                if expression.op == "between":
+                    between = BetweenValue.model_validate(expression.val)
+                    start = parse_economic_flow_time(between.start)
+                    end = parse_economic_flow_time(between.end)
+                    values["occurred_time_start"] = start.astimezone(
+                        timezone.utc
+                    ).replace(tzinfo=None)
+                    values["occurred_time_end"] = end.astimezone(
+                        timezone.utc
+                    ).replace(tzinfo=None)
+                else:
+                    parsed = parse_economic_flow_time(expression.val).astimezone(
+                        timezone.utc
+                    ).replace(tzinfo=None)
+                    values[
+                        "occurred_time_start"
+                        if expression.op == ">="
+                        else "occurred_time_end"
+                    ] = parsed
+            elif expression.key == "economic_type":
+                values["entry_type"] = type_codes[str(expression.val)]
+            elif expression.key == "cash_direction":
+                values["cash_direction"] = {"IN": 1, "OUT": 2}[
+                    str(expression.val)
+                ]
+            elif expression.key == "currency_code":
+                values["currency_code"] = str(expression.val).strip().upper()
+            elif expression.key == "account_code":
+                values["account_code"] = str(expression.val).strip()
+            else:
+                values[expression.key] = expression.val
+        sorter = request.sorter[0] if request.sorter else None
+        values["sort_field"] = sorter.key if sorter else "occurred_time"
+        values["sort_order"] = sorter.direction if sorter else "desc"
+        return EconomicPageQuery(**values)
 
     def detail(self, economic_id: int) -> EconomicFlowDetailRead | None:
         data = self.mapper.detail(economic_id)

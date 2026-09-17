@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta
 from uuid import uuid4
 
@@ -137,24 +138,62 @@ def test_ledger_lists_accept_whitelisted_filter_and_sorter_objects(economic_api)
     with sessions() as db:
         TargetEconomicService(db).ensure_defaults(fact_ids, commit=True)
 
-    page = client.get(
+    response = client.get(
         "/paam/ledger/v1/flow/list",
         params={
-            "filter": '{"cash_direction":"IN","currency_code":["CNY"]}',
-            "sorter": '{"field":"amount_value","order":"asc"}',
+            "filter": json.dumps({
+                "op": "AND",
+                "expression": [
+                    {"key": "cash_direction", "op": "=", "val": "IN"},
+                    {"key": "currency_code", "op": "=", "val": "CNY"},
+                    {
+                        "key": "occurred_time",
+                        "op": "between",
+                        "val": {
+                            "start": "2026-09-13T00:00:00+00:00",
+                            "end": "2026-09-14T00:00:00+00:00",
+                        },
+                    },
+                ],
+            }),
+            "sorter": '[{"key":"amount_value","direction":"asc"}]',
         },
-    ).json()["body"]
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["message"] == "ok"
+    assert payload["warnings"][0]["code"] == "LIST_AMOUNT_SORT_GROUPED"
+    page = payload["body"]
     assert page["total"] == 1
     assert page["items"][0]["amount"]["amount_value"] == 1000
-    assert page["filter"]["cash_direction"] == "IN"
-    assert page["sorter"] == {"field": "amount_value", "order": "asc"}
+    assert set(page) == {"items", "total", "page_index", "page_size"}
 
     rejected = client.get(
         "/paam/ledger/v1/flow/list",
-        params={"sorter": '{"field":"physical_column","order":"asc"}'},
+        params={
+            "sorter": '[{"key":"physical_column","direction":"asc"}]',
+        },
     )
     assert rejected.status_code == 422
-    assert rejected.json()["body"]["code"] == "LIST_QUERY_ERROR"
+    assert rejected.json()["body"]["code"] == "LIST_SORTER_FIELD_NOT_SUPPORTED"
+
+    legacy = client.get(
+        "/paam/ledger/v1/flow/list",
+        params={"page": 1, "date_from": "2026-09-01"},
+    )
+    assert legacy.status_code == 422
+    assert legacy.json()["body"]["code"] == "LIST_PARAMETER_NOT_SUPPORTED"
+
+    operation = client.get("/openapi.json").json()["paths"][
+        "/paam/ledger/v1/flow/list"
+    ]["get"]
+    assert [parameter["name"] for parameter in operation["parameters"]] == [
+        "page_index",
+        "page_size",
+        "query",
+        "filter",
+        "sorter",
+    ]
 
 
 def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_api):

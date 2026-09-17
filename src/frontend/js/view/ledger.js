@@ -157,7 +157,14 @@ function renderPageActions(page) {
 async function summaryPage() {
   state.accountMonth = cursorFromParam(state.params.get("month"), state.accountMonth);
   const range = monthBounds(state.accountMonth);
-  const makePath = (page) => `/paam/ledger/v1/flow/list?${new URLSearchParams({ page, page_size: "100", date_from: range.from, date_to: range.to })}`;
+  const flowFilter = JSON.stringify({
+    op: "AND",
+    expression: [
+      { key: "occurred_time", op: ">=", val: dayBoundary(range.from) },
+      { key: "occurred_time", op: "<", val: dayBoundary(range.to, true) },
+    ],
+  });
+  const makePath = (page) => `/paam/ledger/v1/flow/list?${new URLSearchParams({ page_index: page, page_size: "100", filter: flowFilter })}`;
   const [economicSummary, first] = await Promise.all([
     request(`/paam/ledger/v1/flow/summary?${new URLSearchParams({ date_from: range.from, date_to: range.to })}`),
     request(makePath(1)),
@@ -233,6 +240,19 @@ function detailListView(options) {
   return detailList({ tabs: detailTabItems, ...options });
 }
 
+function dayBoundary(value, nextDay = false) {
+  const boundary = new Date(`${value}T00:00:00`);
+  if (nextDay) boundary.setDate(boundary.getDate() + 1);
+  const offset = -boundary.getTimezoneOffset();
+  const sign = offset >= 0 ? "+" : "-";
+  const hours = String(Math.floor(Math.abs(offset) / 60)).padStart(2, "0");
+  const minutes = String(Math.abs(offset) % 60).padStart(2, "0");
+  const selected = nextDay
+    ? `${boundary.getFullYear()}-${String(boundary.getMonth() + 1).padStart(2, "0")}-${String(boundary.getDate()).padStart(2, "0")}`
+    : value;
+  return `${selected}T00:00:00${sign}${hours}:${minutes}`;
+}
+
 async function loadFactCandidates(maxItems) {
   const items = [];
   const pageSize = Math.min(maxItems, 100);
@@ -254,18 +274,6 @@ async function ledgerPage() {
   const pageSize = Math.min(100, Math.max(1, Number(state.params.get("page_size") || 20)));
   const sortField = state.params.get("sort_field") || "occurred_time";
   const sortOrder = state.params.get("sort_order") || "desc";
-  const dayBoundary = (value, nextDay = false) => {
-    const boundary = new Date(`${value}T00:00:00`);
-    if (nextDay) boundary.setDate(boundary.getDate() + 1);
-    const offset = -boundary.getTimezoneOffset();
-    const sign = offset >= 0 ? "+" : "-";
-    const hours = String(Math.floor(Math.abs(offset) / 60)).padStart(2, "0");
-    const minutes = String(Math.abs(offset) % 60).padStart(2, "0");
-    const selected = nextDay
-      ? `${boundary.getFullYear()}-${String(boundary.getMonth() + 1).padStart(2, "0")}-${String(boundary.getDate()).padStart(2, "0")}`
-      : value;
-    return `${selected}T00:00:00${sign}${hours}:${minutes}`;
-  };
   const expressions = [];
   if (currency) expressions.push({ key: "currency_code", op: "=", val: currency });
   if (dateFrom) expressions.push({ key: "occurred_time", op: ">=", val: dayBoundary(dateFrom) });
@@ -304,30 +312,32 @@ async function showFactDetail(id) {
 }
 
 async function economicPage() {
-  const q = (state.params.get("q") || "").trim();
   const selectedType = state.params.get("economic_type") || "";
   const currency = (state.params.get("currency_code") || "").trim().toUpperCase();
+  const dateFrom = state.params.get("date_from") || "";
+  const dateTo = state.params.get("date_to") || "";
   const sortField = state.params.get("sort_field") || "occurred_time";
   const sortOrder = state.params.get("sort_order") || "desc";
-  const filter = Object.fromEntries(Object.entries({
-    economic_type: selectedType in entryTypeValues ? [selectedType] : [],
-    currency_code: currency ? [currency] : [],
-    date_from: state.params.get("date_from") || "",
-    date_to: state.params.get("date_to") || "",
-  }).filter(([, value]) => Array.isArray(value) ? value.length : value));
+  const expressions = [];
+  if (selectedType in entryTypeValues) expressions.push({ key: "economic_type", op: "=", val: selectedType });
+  if (currency) expressions.push({ key: "currency_code", op: "=", val: currency });
+  if (dateFrom) expressions.push({ key: "occurred_time", op: ">=", val: dayBoundary(dateFrom) });
+  if (dateTo) expressions.push({ key: "occurred_time", op: "<", val: dayBoundary(dateTo, true) });
+  const filter = expressions.length > 1
+    ? { op: "AND", expression: expressions }
+    : expressions[0];
   const query = new URLSearchParams({
-    page: state.params.get("page") || "1",
+    page_index: state.params.get("page") || "1",
     page_size: state.params.get("page_size") || "20",
-    q,
-    filter: JSON.stringify(filter),
-    sorter: JSON.stringify({ field: sortField, order: sortOrder }),
+    sorter: JSON.stringify([{ key: sortField, direction: sortOrder }]),
   });
+  if (filter) query.set("filter", JSON.stringify(filter));
   const result = await request(`/paam/ledger/v1/flow/list?${query}`);
   state.detailEconomics = new Map(result.items.map((item) => [item.id, item]));
   const rows = result.items.map((item) => `<tr class="detail-click-row" tabindex="0" data-economic-row="${item.id}">
     <td>${date(item.occurred_time)}</td><td><button type="button" class="detail-primary" data-action="economic-detail" data-id="${item.id}"><strong>账本流水 #${item.id}</strong><small>${esc(item.account_code)}</small></button></td><td>${esc(typeNames[item.economic_type] || item.economic_type)}</td><td>${item.cash_direction === "IN" ? "流入" : "流出"}</td><td class="money ${item.cash_direction === "IN" ? "income" : "expense"}">${signedMoney(item.amount, item.cash_direction)}</td><td>v${item.projection_version}</td><td class="detail-arrow">→</td>
   </tr>`).join("");
-  const toolbar = `<form class="detail-filter" data-form="economic-filter"><label class="grow">查找<input name="q" value="${esc(q)}" placeholder="审查说明、交易方或摘要"></label><label>账本类型<select name="economic_type"><option value="">全部类型</option>${Object.keys(entryTypeValues).map((value) => `<option value="${value}" ${selectedType === value ? "selected" : ""}>${esc(typeNames[value] || value)}</option>`).join("")}</select></label><label>币种<input name="currency_code" maxlength="12" value="${esc(currency)}" placeholder="全部币种"></label><label>排序<select name="sort_field"><option value="occurred_time" ${sortField === "occurred_time" ? "selected" : ""}>发生时间</option><option value="amount_value" ${sortField === "amount_value" ? "selected" : ""}>金额</option><option value="projection_version" ${sortField === "projection_version" ? "selected" : ""}>投影版本</option><option value="id" ${sortField === "id" ? "selected" : ""}>ID</option></select></label><label>顺序<select name="sort_order"><option value="desc" ${sortOrder === "desc" ? "selected" : ""}>降序</option><option value="asc" ${sortOrder === "asc" ? "selected" : ""}>升序</option></select></label><button type="button" class="quiet" data-action="detail-clear" data-page-id="economy">清空</button><button class="primary">查询</button></form>`;
+  const toolbar = `<form class="detail-filter" data-form="economic-filter"><label>账本类型<select name="economic_type"><option value="">全部类型</option>${Object.keys(entryTypeValues).map((value) => `<option value="${value}" ${selectedType === value ? "selected" : ""}>${esc(typeNames[value] || value)}</option>`).join("")}</select></label><label>币种<input name="currency_code" maxlength="12" value="${esc(currency)}" placeholder="全部币种"></label><label>开始日期<input type="date" name="date_from" value="${esc(dateFrom)}"></label><label>结束日期<input type="date" name="date_to" value="${esc(dateTo)}"></label><label>排序<select name="sort_field"><option value="occurred_time" ${sortField === "occurred_time" ? "selected" : ""}>发生时间</option><option value="amount_value" ${sortField === "amount_value" ? "selected" : ""}>金额</option></select></label><label>顺序<select name="sort_order"><option value="desc" ${sortOrder === "desc" ? "selected" : ""}>降序</option><option value="asc" ${sortOrder === "asc" ? "selected" : ""}>升序</option></select></label><button type="button" class="quiet" data-action="detail-clear" data-page-id="economy">清空</button><button class="primary">筛选</button></form>`;
   return detailListView({ active: "economy", toolbar, title: "Ledger", description: "已生效的最终账本 PO；Tag 等关系仅在详情中显示。", total: result.total, headers: ["发生时间", "账本", "类型", "方向", "金额", "投影版本", ""], rows, footer: detailPager(result, "economy") });
 }
 

@@ -4,42 +4,53 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError, model_validator
 
-from backend.schema.list_query import ListSorter
-
-
-class EconomicFlowFilter(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    economic_type: list[Literal["TRANSACTION", "ACCOUNT_TRANSFER", "CLAIM"]] = Field(default_factory=list)
-    cash_direction: Literal["IN", "OUT"] | None = None
-    currency_code: list[str] = Field(default_factory=list)
-    account_code: str | None = None
-    date_from: date | None = None
-    date_to: date | None = None
+from backend.error import ListQueryError
+from backend.schema.list_query import (
+    BetweenValue,
+    ListRequest,
+    iter_filter_fields,
+    validate_list_capabilities,
+)
+from backend.schema.response import ListBody, ListResponse, SuccessResponse
 
 
-class EconomicFlowSorter(ListSorter):
-    field: Literal[
-        "id",
-        "occurred_time",
-        "amount_value",
-        "projection_version",
-    ] = "occurred_time"
+class EconomicFlowListRequest(ListRequest):
+    @model_validator(mode="after")
+    def validate_capabilities(self) -> "EconomicFlowListRequest":
+        validate_list_capabilities(
+            self,
+            query_fields=(),
+            filter_operators={
+                "id": ("=",),
+                "occurred_time": (">=", "<", "between"),
+                "economic_type": ("=",),
+                "cash_direction": ("=",),
+                "currency_code": ("=",),
+                "account_code": ("=",),
+                "amount_scale": ("=",),
+            },
+            sorter_fields=("occurred_time", "amount_value"),
+            logical_operators=("AND",),
+            max_sorters=1,
+        )
+        _validate_economic_flow_filter_values(self)
+        return self
 
 
 @dataclass(frozen=True, slots=True)
 class EconomicPageQuery:
     page: int = 1
     page_size: int = 20
-    date_from: date | None = None
-    date_to: date | None = None
-    entry_type: tuple[int, ...] = ()
-    currency_code: tuple[str, ...] = ()
+    id: int | None = None
+    occurred_time_start: datetime | None = None
+    occurred_time_end: datetime | None = None
+    entry_type: int | None = None
+    currency_code: str = ""
     cash_direction: int | None = None
     account_code: str = ""
-    q: str = ""
+    amount_scale: int | None = None
     sort_field: str = "occurred_time"
     sort_order: str = "desc"
 
@@ -74,20 +85,12 @@ class EconomicFlowListItem(BaseModel):
     occurred_time: datetime
 
 
-class EconomicFlowPageRead(BaseModel):
-    items: list[EconomicFlowListItem]
-    total: int
-    page: int
-    page_size: int
-    q: str
-    filter: EconomicFlowFilter
-    sorter: EconomicFlowSorter
+class EconomicFlowListBody(ListBody[EconomicFlowListItem]):
+    pass
 
 
-class EconomicFlowPageResponse(BaseModel):
-    status: Literal[200] = 200
-    message: str = "ok"
-    body: EconomicFlowPageRead
+class EconomicFlowListResponse(ListResponse[EconomicFlowListItem]):
+    body: EconomicFlowListBody
 
 
 class EconomicAllocationEvidenceRead(BaseModel):
@@ -129,9 +132,7 @@ class EconomicFlowDetailRead(BaseModel):
     reviews: list[EconomicReviewBriefRead]
 
 
-class EconomicFlowDetailResponse(BaseModel):
-    status: Literal[200] = 200
-    message: str = "ok"
+class EconomicFlowDetailResponse(SuccessResponse[EconomicFlowDetailRead]):
     body: EconomicFlowDetailRead
 
 
@@ -152,7 +153,93 @@ class EconomicSummaryRead(BaseModel):
     basis_version: str = "economic-flow-v1"
 
 
-class EconomicSummaryResponse(BaseModel):
-    status: Literal[200] = 200
-    message: str = "ok"
+class EconomicSummaryResponse(SuccessResponse[EconomicSummaryRead]):
     body: EconomicSummaryRead
+
+
+_DATETIME_ADAPTER = TypeAdapter(datetime)
+
+
+def parse_economic_flow_time(value: object) -> datetime:
+    try:
+        parsed = _DATETIME_ADAPTER.validate_python(value)
+    except ValidationError as error:
+        raise ListQueryError(
+            "Invalid Ledger occurred_time filter",
+            code="LIST_FILTER_VALUE_INVALID",
+            details={"component": "filter", "key": "occurred_time"},
+        ) from error
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ListQueryError(
+            "Ledger occurred_time filter requires a timezone",
+            code="LIST_FILTER_VALUE_INVALID",
+            details={"component": "filter", "key": "occurred_time"},
+        )
+    return parsed
+
+
+def _validate_economic_flow_filter_values(
+    request: EconomicFlowListRequest,
+) -> None:
+    fields = list(iter_filter_fields(request.filter))
+    counts: dict[str, int] = {}
+    time_operators: set[str] = set()
+    for expression in fields:
+        counts[expression.key] = counts.get(expression.key, 0) + 1
+        value = expression.val
+        if expression.key == "id":
+            valid = isinstance(value, int) and not isinstance(value, bool) and value >= 1
+        elif expression.key == "occurred_time":
+            time_operators.add(expression.op)
+            if expression.op == "between":
+                between = BetweenValue.model_validate(value)
+                start = parse_economic_flow_time(between.start)
+                end = parse_economic_flow_time(between.end)
+                valid = start < end
+            else:
+                parse_economic_flow_time(value)
+                valid = True
+        elif expression.key == "economic_type":
+            valid = isinstance(value, str) and value in {
+                "TRANSACTION",
+                "ACCOUNT_TRANSFER",
+                "CLAIM",
+            }
+        elif expression.key == "cash_direction":
+            valid = isinstance(value, str) and value in {"IN", "OUT"}
+        elif expression.key == "currency_code":
+            valid = isinstance(value, str) and 1 <= len(value.strip()) <= 12
+        elif expression.key == "account_code":
+            valid = isinstance(value, str) and 1 <= len(value.strip()) <= 120
+        else:
+            valid = (
+                isinstance(value, int)
+                and not isinstance(value, bool)
+                and 0 <= value <= 8
+            )
+        if not valid:
+            raise ListQueryError(
+                "Invalid Ledger filter value",
+                code="LIST_FILTER_VALUE_INVALID",
+                details={
+                    "component": "filter",
+                    "key": expression.key,
+                    "value": value,
+                },
+            )
+    duplicate_fields = sorted(
+        key for key, count in counts.items() if key != "occurred_time" and count > 1
+    )
+    invalid_time_combination = (
+        "between" in time_operators and len(time_operators) > 1
+    ) or len(time_operators) != counts.get("occurred_time", 0)
+    if duplicate_fields or invalid_time_combination:
+        raise ListQueryError(
+            "Filter combination is not supported",
+            code="LIST_COMBINATION_NOT_SUPPORTED",
+            details={
+                "component": "filter",
+                "duplicate_fields": duplicate_fields,
+                "time_operators": sorted(time_operators),
+            },
+        )
