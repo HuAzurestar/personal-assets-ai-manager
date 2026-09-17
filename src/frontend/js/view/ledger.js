@@ -546,11 +546,19 @@ async function ledgerTagsPage() {
 
 async function editTags(ledgerId) {
   const renderVersion = state.renderVersion;
+  const activeViews = new URLSearchParams({
+    page_index: "1",
+    page_size: "100",
+    filter: JSON.stringify({ key: "status", op: "=", val: "ACTIVE" }),
+  });
   const [viewPage, detail] = await Promise.all([
-    request("/paam/tag/v1/view/list?page=1&page_size=100"),
+    request(`/paam/tag/v1/view/list?${activeViews}`),
     request(`/paam/ledger/v1/flow/${ledgerId}`),
   ]);
-  const views = viewPage.items;
+  const views = viewPage.items.map((view) => ({
+    ...view,
+    tags: view.tags.filter((tag) => tag.status === "ACTIVE"),
+  }));
   if (renderVersion !== state.renderVersion) return;
   if (!views.length) return toast("请先创建标签维度", true);
   const current = Object.fromEntries(detail.flow.tags.map((item) => [item.view_system_name, item.tag_system_name]));
@@ -862,7 +870,7 @@ async function reviseImport(event) {
 }
 
 async function tagsPage() {
-  const viewPage = await request("/paam/tag/v1/view/list?page=1&page_size=100&include_archived=true");
+  const viewPage = await request("/paam/tag/v1/view/list?page_index=1&page_size=100");
   const views = viewPage.items;
   const activeCount = views.filter((view) => view.status === "ACTIVE").length;
   const cards = views.map((view) => {

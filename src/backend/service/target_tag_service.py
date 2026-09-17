@@ -7,14 +7,17 @@ from sqlalchemy.orm import Session
 
 from backend.error import TargetTagError
 from backend.mapper.target_tag_mapper import TargetTagMapper
+from backend.schema.list_query import BetweenValue, iter_filter_fields
 from backend.schema.target_tag import (
     TargetTagCreateRequest,
     TargetTagStatusRequest,
     TargetTagViewCreateRequest,
     TargetTagViewFilter,
-    TargetTagViewPageRead,
+    TargetTagViewListBody,
+    TargetTagViewListRequest,
     TargetTagViewRead,
     TargetTagViewSorter,
+    parse_tag_view_time,
 )
 from backend.service.target_tag_projection_service import TargetTagProjectionService
 
@@ -26,13 +29,49 @@ class TargetTagService:
 
     def list(
         self,
-        page: int,
-        page_size: int,
-        q: str,
-        filter_value: TargetTagViewFilter,
-        sorter: TargetTagViewSorter,
-    ) -> TargetTagViewPageRead:
-        return self.mapper.list(page, page_size, q, filter_value, sorter)
+        *,
+        request: TargetTagViewListRequest,
+    ) -> TargetTagViewListBody:
+        sorter_expression = request.sorter[0] if request.sorter else None
+        sorter = TargetTagViewSorter(
+            field=sorter_expression.key if sorter_expression else "id",
+            order=sorter_expression.direction if sorter_expression else "desc",
+        )
+        return self.mapper.list(
+            request.page_index,
+            request.page_size,
+            self._mapper_filter(request),
+            sorter,
+        )
+
+    @staticmethod
+    def _mapper_filter(request: TargetTagViewListRequest) -> TargetTagViewFilter:
+        values: dict[str, object] = {}
+        for expression in iter_filter_fields(request.filter):
+            if expression.key in {"created_time", "updated_time"}:
+                if expression.op == "between":
+                    between = BetweenValue.model_validate(expression.val)
+                    values[f"{expression.key}_start"] = parse_tag_view_time(
+                        between.start,
+                        expression.key,
+                    )
+                    values[f"{expression.key}_end"] = parse_tag_view_time(
+                        between.end,
+                        expression.key,
+                    )
+                elif expression.op == ">=":
+                    values[f"{expression.key}_start"] = parse_tag_view_time(
+                        expression.val,
+                        expression.key,
+                    )
+                else:
+                    values[f"{expression.key}_end"] = parse_tag_view_time(
+                        expression.val,
+                        expression.key,
+                    )
+            else:
+                values[expression.key] = expression.val
+        return TargetTagViewFilter.model_validate(values)
 
     def create_view(self, payload: TargetTagViewCreateRequest) -> TargetTagViewRead:
         try:

@@ -32,6 +32,7 @@ def test_openapi_locks_canonical_ledger_v1_contract():
         "/paam/ledger/v1/review/{review_id}/restore",
         "/paam/ledger/v1/review_candidate/list",
         "/paam/ledger/v1/flow/{ledger_id}/account",
+        "/paam/tag/v1/view/list",
     } <= paths
     assert not any(path.startswith("/paam/economy/") for path in paths)
     assert not any(path.startswith("/paam/review/v2") for path in paths)
@@ -74,6 +75,7 @@ def test_openapi_locks_canonical_ledger_v1_contract():
         "ImportFileTransactionFactListResponse",
         "LedgerAccountResponse",
         "TargetReviewCandidatePageResponse",
+        "TargetTagViewListResponse",
     ):
         assert schemas[name]["properties"]["status"]["const"] == 200
 
@@ -140,6 +142,16 @@ def test_openapi_locks_canonical_ledger_v1_contract():
         "/paam/import/v1/import_file/{import_file_id}/transaction_fact/list"
     ]["get"]["parameters"]
     assert [item["name"] for item in relationship_parameters] == ["import_file_id"]
+    tag_view_parameters = specification["paths"][
+        "/paam/tag/v1/view/list"
+    ]["get"]["parameters"]
+    assert [item["name"] for item in tag_view_parameters] == [
+        "page_index",
+        "page_size",
+        "query",
+        "filter",
+        "sorter",
+    ]
 
     assert specification["paths"]["/paam/ledger/v1/flow/list"]["get"]["tags"] == [
         "ledger-flow"
