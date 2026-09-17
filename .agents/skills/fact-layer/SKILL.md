@@ -11,8 +11,17 @@ Use `src/doc/data-model.md` as the target schema contract.
 - Persist or reuse its `PENDING` row before parsing. Parse outside the write transaction, mark parse failures `FAILED`, and finalize it with Fact rows and default Review coverage in one confirmation transaction.
 - `transaction_import_row` represents one immutable source row. `(transaction_import_file_id, source_row_number)` is unique. Multiple raw rows may point to the same `transaction_fact`.
 - `transaction_fact` contains only stable normalized accounting facts. Optional export fields remain raw evidence.
+- Persist money as one integer `amount` plus `currency_code`; do not persist or
+  expose `amount_scale`. The currency code owns the quantum: for example `CNY`
+  means units of `0.01 CNY`, while `CNY_4` means units of `0.0001 CNY`.
+- Define the default quantum and explicit precision suffixes in one shared
+  currency-unit registry. Parsers use exact decimal arithmetic and convert to
+  integer `amount` at the input boundary; floating-point money is forbidden.
+- Reject values that cannot be represented exactly by their declared
+  `currency_code`. Do not silently round, infer another precision, or scatter
+  currency-suffix parsing across individual parsers and Mappers.
 - A richer repeat export adds another raw row; it does not overwrite the first raw row or accepted fact.
-- Core conflicts create an `INVALID` raw row with `issue_code=FACT_CONFLICT` and require Review. Never silently replace amount, direction, time, or currency.
+- Core conflicts create an `INVALID` raw row with `issue_code=FACT_CONFLICT` and require Review. Never silently replace amount, direction, time, or currency unit.
 - Keep row parsing set-oriented. Batch-check source references/fingerprints and batch-write accepted rows.
 - A preview first derives the current upload's identity keys, references, and
   date bounds. Query only matching raw evidence, imported files, and candidate
