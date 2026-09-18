@@ -371,6 +371,9 @@ export async function openInspection(kind, id, bindActions) {
   window.addEventListener("hashchange", closeOnRoute);
   window.addEventListener("resize", resize, { passive: true });
   dialog.querySelector("[data-close]").onclick = () => dialog.close();
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog && ["right", "bottom"].includes(dialog.dataset.layout)) dialog.close();
+  });
   dialog.querySelector("[data-inspect-full]").onclick = () => { full = !full; syncLayout(); };
   dialog.querySelector("[data-inspect-back]").onclick = async () => { const previous = stack.pop(); if (previous) { await navigate(previous.kind, previous.id, false); body.scrollTop = previous.scroll; } };
   for (const [selector, delta] of [["[data-inspect-prev]", -1], ["[data-inspect-next]", 1]]) dialog.querySelector(selector).onclick = () => { const index = rail.findIndex(row => row.kind === selected.kind && row.id === selected.id); const row = rail[index + delta]; if (row) navigate(row.kind, row.id); };

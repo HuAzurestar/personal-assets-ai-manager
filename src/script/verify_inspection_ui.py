@@ -398,7 +398,14 @@ def run():
                                 args.screenshots.mkdir(parents=True, exist_ok=True)
                                 page.screenshot(path=str(args.screenshots / f"inspection-{kind}-{width}x{height}.png"))
                             assert drawer.evaluate("d=>d.scrollWidth-d.clientWidth") <= 1
-                            drawer.locator("[data-close]").click()
+                            if expected_layout == "right":
+                                page.mouse.click(4, height / 2)
+                                expect(page.locator("dialog.inspection-workspace[open]")).to_have_count(0)
+                            elif expected_layout == "bottom":
+                                page.mouse.click(width / 2, 4)
+                                expect(page.locator("dialog.inspection-workspace[open]")).to_have_count(0)
+                            else:
+                                drawer.locator("[data-close]").click()
                             cases += 1
 
                     # All supported palettes share the same structural layout.
