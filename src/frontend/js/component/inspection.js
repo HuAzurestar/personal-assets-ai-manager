@@ -214,6 +214,7 @@ async function load(kind, id) {
 
 let current = null;
 let backgroundOverflow = null;
+let backgroundPaddingRight = null;
 
 function readListContext() {
   const buttons = [...document.querySelectorAll('#page-content .detail-primary[data-action]')]
@@ -249,8 +250,17 @@ export async function openInspection(kind, id, bindActions) {
   dialog.setAttribute("aria-labelledby", "inspection-title");
   dialog.innerHTML = '<div class="inspection-shell"><aside class="inspection-rail" aria-label="当前列表页"><h2>当前列表</h2><div data-rail></div><footer class="inspection-rail-pager"><button data-rail-page="previous">上一页</button><span data-rail-page-label></span><button data-rail-page="next">下一页</button></footer></aside><div class="inspection-main"><header class="inspection-header"><div class="inspection-controls"><button data-inspect-back disabled>返回上层</button><button data-inspect-prev>上一条</button><button data-inspect-next>下一条</button><button data-inspect-full aria-pressed="false">全屏查看</button><button data-close>返回列表</button></div><div class="inspection-heading" tabindex="-1"><div><span data-kind-label></span><h2 id="inspection-title">正在加载…</h2><p data-inspect-subtitle></p></div><strong data-inspect-hero></strong></div><div class="inspection-tools" data-inspect-actions></div></header><div class="detail-view-drawer-body inspection-body" tabindex="0" aria-label="详情内容"></div></div></div>';
   document.body.append(dialog);
-  if (backgroundOverflow === null) backgroundOverflow = document.body.style.overflow;
+  const contentWidth = document.documentElement.clientWidth;
+  if (backgroundOverflow === null) {
+    backgroundOverflow = document.body.style.overflow;
+    backgroundPaddingRight = document.body.style.paddingRight;
+  }
   document.body.style.overflow = "hidden";
+  const releasedScrollbarWidth = Math.max(0, document.documentElement.clientWidth - contentWidth);
+  if (releasedScrollbarWidth) {
+    const paddingRight = Number.parseFloat(getComputedStyle(document.body).paddingRight) || 0;
+    document.body.style.paddingRight = `${paddingRight + releasedScrollbarWidth}px`;
+  }
   dialog.showModal();
   const railRoot = dialog.querySelector("[data-rail]");
   const body = dialog.querySelector(".inspection-body");
@@ -364,7 +374,9 @@ export async function openInspection(kind, id, bindActions) {
     if (current?.dialog === dialog) current = null;
     if (!document.querySelector(".inspection-workspace[open]")) {
       document.body.style.overflow = backgroundOverflow ?? "";
+      document.body.style.paddingRight = backgroundPaddingRight ?? "";
       backgroundOverflow = null;
+      backgroundPaddingRight = null;
     }
     if (opener?.isConnected && !document.querySelector("dialog[open]")) opener.focus({ preventScroll: true });
   });

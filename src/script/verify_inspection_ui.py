@@ -305,9 +305,26 @@ def run():
                         print(f"Real statement inspection passed: {real_cases} file/fact/review/ledger chains", flush=True)
 
                     # Exercise the real list binding and navigation, not just the renderer.
+                    list_geometry = page.evaluate("""() => {
+                        const box = selector => {
+                            const rect = document.querySelector(selector).getBoundingClientRect();
+                            return {x: rect.x, width: rect.width};
+                        };
+                        return {navigation: box('#secondary-nav'), list: box('.detail-list-surface')};
+                    }""")
                     page.locator('[data-action="fact-detail"]').first.click()
                     drawer = page.locator("dialog.inspection-workspace[open]")
                     expect(drawer.locator(".inspection-metrics").first).to_be_visible()
+                    open_geometry = page.evaluate("""() => {
+                        const box = selector => {
+                            const rect = document.querySelector(selector).getBoundingClientRect();
+                            return {x: rect.x, width: rect.width};
+                        };
+                        return {navigation: box('#secondary-nav'), list: box('.detail-list-surface')};
+                    }""")
+                    for region in ("navigation", "list"):
+                        assert abs(list_geometry[region]["x"] - open_geometry[region]["x"]) <= .5
+                        assert abs(list_geometry[region]["width"] - open_geometry[region]["width"]) <= .5
                     expect(drawer.locator(".inspection-rail")).to_be_visible()
                     title = drawer.locator("#inspection-title").inner_text()
                     drawer.locator("[data-inspect-next]").click()
