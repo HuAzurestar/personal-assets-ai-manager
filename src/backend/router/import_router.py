@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from backend.router.dependency import get_db
 from backend.router.error import DomainErrorRoute
+from backend.error import TargetIntakeError
 from backend.schema.intake import (
     ImportResponse,
     IntakeConfirmRequest,
@@ -25,10 +28,17 @@ router = APIRouter(
 
 @router.post("/preview", response_model=ImportResponse)
 def preview(payload: IntakePreviewRequest, db: Session = Depends(get_db)):
+    try:
+        source_timezone = ZoneInfo(payload.timezone)
+    except (ValueError, ZoneInfoNotFoundError) as error:
+        raise TargetIntakeError(422, "无效的 IANA 时区") from error
     return ImportResponse(
         status=200,
         message="ok",
-        body=TargetIntakeService(db).preview(payload),
+        body=TargetIntakeService(db).preview(
+            payload,
+            source_timezone=source_timezone,
+        ),
     )
 
 

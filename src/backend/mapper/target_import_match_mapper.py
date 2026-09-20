@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
@@ -105,9 +105,13 @@ class TargetImportMatchMapper:
         identity_fact_ids = set(identities.values())
         clauses = []
         if occurred_values:
-            first_day = datetime.combine(min(occurred_values).date(), time.min)
+            first_day = datetime.combine(
+                min(occurred_values).date(), time.min, tzinfo=timezone.utc
+            )
             last_day = datetime.combine(
-                max(occurred_values).date() + timedelta(days=1), time.min
+                max(occurred_values).date() + timedelta(days=1),
+                time.min,
+                tzinfo=timezone.utc,
             )
             clauses.append(
                 (TransactionFact.occurred_time >= first_day)

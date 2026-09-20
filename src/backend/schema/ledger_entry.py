@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone, tzinfo
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
@@ -57,8 +57,9 @@ class LedgerEntrySorter(ListSorter):
 
 @dataclass(frozen=True, slots=True)
 class LedgerEntrySummaryQuery:
-    date_from: date | None = None
-    date_to: date | None = None
+    occurred_time_start: datetime | None = None
+    occurred_time_end: datetime | None = None
+    display_timezone: tzinfo | None = None
 
 
 class LedgerEntryTagRead(BaseModel):
@@ -192,7 +193,7 @@ def parse_ledger_entry_time(value: object) -> datetime:
             code="LIST_FILTER_VALUE_INVALID",
             details={"component": "filter", "key": "occurred_time"},
         )
-    return parsed
+    return parsed.astimezone(timezone.utc)
 
 
 def _validate_ledger_entry_filter_values(request: LedgerEntryListRequest) -> None:

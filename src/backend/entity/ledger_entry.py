@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Index, Integer, String
+from sqlalchemy import BigInteger, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.core.target_database import TargetBase
 
-from backend.entity.base import TargetTable
+from backend.entity.base import TargetTable, UTCISO8601DateTime
 
 
 class LedgerEntry(TargetTable, TargetBase):
@@ -23,5 +23,5 @@ class LedgerEntry(TargetTable, TargetBase):
         String(200), nullable=False, default=""
     )
     occurred_time: Mapped[datetime] = mapped_column(
-        DateTime(timezone=False), nullable=False
+        UTCISO8601DateTime(), nullable=False
     )

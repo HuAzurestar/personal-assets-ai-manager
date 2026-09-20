@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from backend.error import TargetEconomicError
+from backend.entity.base import utc_now
 from backend.mapper.target_economic_mapper import (
     ECONOMIC_TYPE_IDS,
     TargetEconomicMapper,
@@ -62,7 +63,7 @@ class TargetEconomicService:
                 raise TargetEconomicError(409, f"fact {fact.id} is over-allocated")
             if allocated < fact.amount:
                 defaults.append((fact, fact.amount - allocated, fact.account_code))
-        self.mapper.create_defaults(defaults, datetime.now())
+        self.mapper.create_defaults(defaults, utc_now())
         self._assert_exact(facts)
         self.tags.sync_ledgers(list(self.mapper.active_economic_facts(fact_ids)))
         if commit:
@@ -206,7 +207,7 @@ class TargetEconomicService:
                 actor=payload.actor,
                 reason=payload.reason,
                 idempotency_key=payload.idempotency_key,
-                now=datetime.now(),
+                now=utc_now(),
             )
             self._assert_exact(facts)
             self.tags.sync_ledgers(list(self.mapper.active_economic_facts(fact_ids)))
@@ -259,7 +260,7 @@ class TargetEconomicService:
                 actor=payload.actor,
                 reason=payload.reason,
                 idempotency_key=payload.idempotency_key,
-                now=datetime.now(),
+                now=utc_now(),
             ):
                 raise TargetEconomicError(409, "review is not confirmed")
             self._assert_exact(facts)
@@ -339,7 +340,7 @@ class TargetEconomicService:
                 actor=payload.actor,
                 reason=payload.reason,
                 idempotency_key=payload.idempotency_key,
-                now=datetime.now(),
+                now=utc_now(),
             ):
                 raise TargetEconomicError(409, "review is not revoked")
             self._assert_exact(facts)

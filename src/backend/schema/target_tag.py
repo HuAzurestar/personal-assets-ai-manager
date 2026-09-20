@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 from pydantic import (
@@ -156,7 +156,7 @@ def parse_tag_view_time(value: object, key: str) -> datetime:
             code="LIST_FILTER_VALUE_INVALID",
             details={"component": "filter", "key": key},
         )
-    return parsed
+    return parsed.astimezone(timezone.utc)
 
 
 def _validate_tag_view_filter_values(request: TargetTagViewListRequest) -> None:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import CheckConstraint, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.core.target_database import TargetBase
@@ -20,26 +20,6 @@ class TransactionImportRow(TargetTable, TargetBase):
             "transaction_import_file_id",
             "source_row_number",
             name="uq_transaction_import_row_file_row",
-        ),
-        CheckConstraint(
-            "transaction_fact_id >= 0",
-            name="ck_transaction_import_row_fact_id",
-        ),
-        CheckConstraint(
-            "transaction_import_file_id > 0",
-            name="ck_transaction_import_row_file_id",
-        ),
-        CheckConstraint(
-            "source_row_number > 0",
-            name="ck_transaction_import_row_source_row_number",
-        ),
-        CheckConstraint(
-            "row_status IN (0, 1, 2, 3)",
-            name="ck_transaction_import_row_status",
-        ),
-        CheckConstraint(
-            "raw_payload IS NULL OR json_valid(raw_payload)",
-            name="ck_transaction_import_row_raw_payload_json",
         ),
         Index(
             "ix_transaction_import_row_fact_id",

@@ -135,7 +135,9 @@ def build_plan(
             occurrences[base] += 1
             row["_candidate_keys"] = identity_keys(row, ordinal)
             lookup_keys.update(row["_candidate_keys"])
-            occurred_values.append(datetime.fromisoformat(row["occurred_at"]))
+            occurred_values.append(datetime.fromisoformat(
+                row["occurred_at"].replace("Z", "+00:00")
+            ))
             source_types.add(row["source_type"])
             if row.get("reference"):
                 references.add(row["reference"])

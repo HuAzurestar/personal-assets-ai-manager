@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -44,7 +44,7 @@ def target_account_api(tmp_path):
 
 
 def _facts(sessions, specifications):
-    now = datetime(2026, 9, 12, 12)
+    now = datetime(2026, 9, 12, 12, tzinfo=timezone.utc)
     with sessions() as db:
         facts = []
         for index, (direction, account) in enumerate(specifications):

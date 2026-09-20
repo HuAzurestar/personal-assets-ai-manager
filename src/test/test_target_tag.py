@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -50,7 +50,7 @@ def target_tag_api(tmp_path):
 
 
 def _add_facts(sessions, count):
-    now = datetime(2026, 9, 12, 12)
+    now = datetime(2026, 9, 12, 12, tzinfo=timezone.utc)
     with sessions() as db:
         facts = [
             TransactionFact(

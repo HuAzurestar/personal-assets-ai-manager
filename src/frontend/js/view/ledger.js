@@ -12,6 +12,7 @@ import { now, state } from "../state/ledger.js";
 import {
   $, $$, currencyPrecision, date, decimalAmount, esc, key, money,
   reviewTypeNames, roleNames, statusNames, typeNames,
+  selectedTimeZone, setSelectedTimeZone, zonedISOString,
 } from "../util/core.js";
 import {
   canonicalHash, parseHash, shellMarkup, syncNavigation,
@@ -70,6 +71,12 @@ function detailDrawer({ title, kicker = "DETAIL", subtitle = "查看完整信息
 }
 
 $("#app").innerHTML = shellMarkup();
+const timezoneSelect = $('[data-timezone]');
+timezoneSelect.value = selectedTimeZone();
+timezoneSelect.addEventListener("change", () => {
+  setSelectedTimeZone(timezoneSelect.value);
+  render();
+});
 
 const pageInfo = {
   economy: ["明细", "查看最终经济流水，并追溯对应的审查、分配关系与事实。"],
@@ -148,7 +155,7 @@ function renderPageActions() {
 async function summaryPage() {
   state.accountMonth = cursorFromParam(state.params.get("month"), state.accountMonth);
   const range = monthBounds(state.accountMonth);
-  const economicSummary = await request(`/paam/ledger/v1/flow/summary?${new URLSearchParams({ date_from: range.from, date_to: range.to })}`);
+  const economicSummary = await request(`/paam/ledger/v1/flow/summary?${new URLSearchParams({ date_from: range.from, date_to: range.to, timezone: selectedTimeZone() })}`);
   const summary = {
     entry_count: economicSummary.entry_count,
     provisional_count: 0,
@@ -187,16 +194,7 @@ function detailListView(options) {
 }
 
 function filterBoundary(value, exclusiveEnd = false) {
-  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
-  const boundary = new Date(dateOnly ? `${value}T00:00:00` : value);
-  if (exclusiveEnd) boundary.setMinutes(boundary.getMinutes() + (dateOnly ? 24 * 60 : 1));
-  const offset = -boundary.getTimezoneOffset();
-  const sign = offset >= 0 ? "+" : "-";
-  const hours = String(Math.floor(Math.abs(offset) / 60)).padStart(2, "0");
-  const minutes = String(Math.abs(offset) % 60).padStart(2, "0");
-  const selected = `${boundary.getFullYear()}-${String(boundary.getMonth() + 1).padStart(2, "0")}-${String(boundary.getDate()).padStart(2, "0")}`;
-  const time = `${String(boundary.getHours()).padStart(2, "0")}:${String(boundary.getMinutes()).padStart(2, "0")}:00`;
-  return `${selected}T${time}${sign}${hours}:${minutes}`;
+  return zonedISOString(value, exclusiveEnd);
 }
 
 const commonCurrencies = ["CNY", "USD", "HKD", "EUR", "GBP", "JPY"];
@@ -650,7 +648,7 @@ function importPage() {
     ["cmb", "招商银行", "银行卡流水", "招", "red"],
   ];
   const sourceCards = sources.map(([value, label, note, icon, tone], index) => `<button type="button" class="source-card${index === 0 ? " selected" : ""}" data-action="import-source" data-value="${value}" data-tone="${tone}" aria-pressed="${index === 0}"><span class="source-icon" aria-hidden="true">${icon}</span><span><strong>${label}</strong><small>${note}</small></span><span class="source-check" aria-hidden="true">✓</span></button>`).join("");
-  return `<div class="import-workflow" data-import-workflow data-step="1"><nav class="import-stepper" aria-label="数据导入步骤"><button type="button" class="import-step active" data-action="import-step" data-step="1" aria-current="step"><span>1</span><strong>选择来源</strong><small>确认账单平台</small></button><button type="button" class="import-step" data-action="import-step" data-step="2"><span>2</span><strong>添加文件</strong><small>上传待导入账单</small></button><button type="button" class="import-step" data-action="import-step" data-step="3" disabled><span>3</span><strong>预览确认</strong><small>核对后写入</small></button></nav><form data-form="import-preview"><section class="panel import-source-panel" data-import-step-panel="1"><div class="section-head"><div><span class="step-kicker">步骤 1 / 3</span><h2 tabindex="-1">选择数据来源</h2></div><button type="button" class="quiet" data-page="import-history">查看导入历史 →</button></div><p class="import-section-help">不确定时选择自动识别，系统会从文件表头与内容判断来源。</p><div class="source-card-grid" role="group" aria-label="数据来源">${sourceCards}</div><label class="visually-hidden">数据来源<select name="source_type"><option value="">自动识别</option><option value="alipay">支付宝</option><option value="wechat">微信</option><option value="ccb">建设银行</option><option value="abc">农业银行</option><option value="cmb">招商银行</option></select></label><div class="step-nav-actions"><span>已选择：<strong data-selected-source>自动识别</strong></span><button type="button" class="primary" data-action="import-step" data-step="2">下一步：添加文件 →</button></div></section><section class="panel import-upload-panel" data-import-step-panel="2" hidden><div class="section-head"><div><span class="step-kicker">步骤 2 / 3</span><h2 tabindex="-1">添加账单文件</h2></div><span class="format-note">CSV · XLS · XLSX · PDF · ZIP</span></div><label class="import-dropzone" data-import-dropzone><input class="visually-hidden" type="file" name="files" multiple required accept=".csv,.xls,.xlsx,.zip,.pdf"><span class="dropzone-icon" aria-hidden="true">↥</span><strong>拖放账单到这里，或点击选择文件</strong><small>单个文件不超过 25 MB，最多同时处理 100 个文件</small><span class="dropzone-button">选择文件</span></label><div id="selected-files" class="selected-files"><div class="selected-files-empty">选择文件后，将在这里显示待预览清单。</div></div><details class="import-options"><summary>加密文件与高级选项</summary><div class="import-option-body"><label>ZIP / PDF 密码<input type="password" name="password" autocomplete="off" placeholder="仅用于本次解析，不会保存"><small>密码只随本次预览请求使用。</small></label></div></details><div class="import-submit-row"><button type="button" class="quiet" data-action="import-step" data-step="1">← 返回选择来源</button><div class="import-submit-copy"><strong>先预览，再写入</strong><small>确认前不会修改任何账本数据。</small></div><button class="primary" data-action="preview-import">生成导入预览</button></div></section></form><section id="import-preview" data-import-step-panel="3" hidden></section></div>`;
+  return `<div class="import-workflow" data-import-workflow data-step="1"><nav class="import-stepper" aria-label="数据导入步骤"><button type="button" class="import-step active" data-action="import-step" data-step="1" aria-current="step"><span>1</span><strong>选择来源</strong><small>确认账单平台</small></button><button type="button" class="import-step" data-action="import-step" data-step="2"><span>2</span><strong>添加文件</strong><small>上传待导入账单</small></button><button type="button" class="import-step" data-action="import-step" data-step="3" disabled><span>3</span><strong>预览确认</strong><small>核对后写入</small></button></nav><form data-form="import-preview"><section class="panel import-source-panel" data-import-step-panel="1"><div class="section-head"><div><span class="step-kicker">步骤 1 / 3</span><h2 tabindex="-1">选择数据来源</h2></div><button type="button" class="quiet" data-page="import-history">查看导入历史 →</button></div><p class="import-section-help">不确定时选择自动识别，系统会从文件表头与内容判断来源。</p><div class="source-card-grid" role="group" aria-label="数据来源">${sourceCards}</div><label class="visually-hidden">数据来源<select name="source_type"><option value="">自动识别</option><option value="alipay">支付宝</option><option value="wechat">微信</option><option value="ccb">建设银行</option><option value="abc">农业银行</option><option value="cmb">招商银行</option></select></label><div class="step-nav-actions"><span>已选择：<strong data-selected-source>自动识别</strong></span><button type="button" class="primary" data-action="import-step" data-step="2">下一步：添加文件 →</button></div></section><section class="panel import-upload-panel" data-import-step-panel="2" hidden><div class="section-head"><div><span class="step-kicker">步骤 2 / 3</span><h2 tabindex="-1">添加账单文件</h2></div><span class="format-note">CSV · XLS · XLSX · PDF · ZIP</span></div><label class="import-dropzone" data-import-dropzone><input class="visually-hidden" type="file" name="files" multiple required accept=".csv,.xls,.xlsx,.zip,.pdf"><span class="dropzone-icon" aria-hidden="true">↥</span><strong>拖放账单到这里，或点击选择文件</strong><small>单个文件不超过 25 MB，最多同时处理 100 个文件</small><span class="dropzone-button">选择文件</span></label><div id="selected-files" class="selected-files"><div class="selected-files-empty">选择文件后，将在这里显示待预览清单。</div></div><details class="import-options"><summary>加密文件与高级选项</summary><div class="import-option-body"><label>账单时区<select name="timezone"><option value="Asia/Hong_Kong" ${selectedTimeZone() === "Asia/Hong_Kong" ? "selected" : ""}>香港</option><option value="Asia/Shanghai" ${selectedTimeZone() === "Asia/Shanghai" ? "selected" : ""}>上海</option><option value="Asia/Tokyo" ${selectedTimeZone() === "Asia/Tokyo" ? "selected" : ""}>东京</option><option value="Europe/London" ${selectedTimeZone() === "Europe/London" ? "selected" : ""}>伦敦</option><option value="America/New_York" ${selectedTimeZone() === "America/New_York" ? "selected" : ""}>纽约</option><option value="UTC" ${selectedTimeZone() === "UTC" ? "selected" : ""}>UTC</option></select><small>用于解释账单中没有时区的交易时间，默认香港。</small></label><label>ZIP / PDF 密码<input type="password" name="password" autocomplete="off" placeholder="仅用于本次解析，不会保存"><small>密码只随本次预览请求使用。</small></label></div></details><div class="import-submit-row"><button type="button" class="quiet" data-action="import-step" data-step="1">← 返回选择来源</button><div class="import-submit-copy"><strong>先预览，再写入</strong><small>确认前不会修改任何账本数据。</small></div><button class="primary" data-action="preview-import">生成导入预览</button></div></section></form><section id="import-preview" data-import-step-panel="3" hidden></section></div>`;
 }
 
 const sourceLabels = {
@@ -707,8 +705,9 @@ function showImportStep(step, focusHeading = true) {
   if (focusHeading) $(`[data-import-step-panel="${target}"] h2`, workflow)?.focus({ preventScroll: true });
 }
 
-function historySummaryMarkup(summary) {
-  return `<div class="history-metric"><span>匹配文件</span><strong>${summary.import_file_count}</strong><small>当前筛选结果</small></div><div class="history-metric"><span>完整导入</span><strong>${summary.imported_file_count}</strong><small>无异常完成</small></div><div class="history-metric"><span>已写入记录</span><strong>${summary.success_count}</strong><small>当前结果合计</small></div>`;
+function historySummaryMarkup(summary, pendingConflicts = null) {
+  const conflictMetric = pendingConflicts === null ? "" : `<div class="history-metric"><span>待处理冲突</span><strong>${pendingConflicts}</strong><small>需要人工确认</small></div>`;
+  return `<div class="history-metric"><span>匹配文件</span><strong>${summary.import_file_count}</strong><small>当前筛选结果</small></div><div class="history-metric"><span>完整导入</span><strong>${summary.imported_file_count}</strong><small>无异常完成</small></div><div class="history-metric"><span>已写入记录</span><strong>${summary.success_count}</strong><small>当前结果合计</small></div>${conflictMetric}`;
 }
 function historyResultsMarkup(result) {
   const fileCards = result.items.map((item) => `<button type="button" class="batch-card" data-action="import-file-detail" data-id="${item.id}" aria-label="查看导入文件 ${item.id}：${esc(item.filename)}"><span class="file-type-icon">${esc(fileExtension(item.filename))}</span><span class="batch-file"><span class="history-id">Import File #${item.id}</span><strong>${esc(item.filename)}</strong><small>${esc(sourceLabels[item.source_type] || item.source_type)}</small></span><span class="batch-field batch-account"><small>文件格式</small><span>${esc(fileFormatLabels[item.file_format] || item.file_format)}</span></span><span class="batch-field"><small>成功 / 总数</small><span class="progress-count"><strong>${item.success_count}</strong> / ${item.total_count}</span></span><span class="batch-field"><small>状态</small><span><span class="badge ${item.status === 1 ? "" : "warn"}">${esc(statusLabels[item.status] || item.status)}</span></span></span><span class="batch-field batch-time"><small>导入时间</small><span>${date(item.created_time)}</span></span><span class="batch-chevron" aria-hidden="true">›</span></button>`);
@@ -727,13 +726,17 @@ async function importHistoryPage() {
     page_size: "10",
     sorter: JSON.stringify([{ key: "created_time", direction: "desc" }]),
   });
-  const [result, summary] = await Promise.all([
+  const conflictFilter = encodeURIComponent(JSON.stringify({ key: "status", op: "=", val: "PENDING" }));
+  const [result, summary, conflicts] = await Promise.all([
     request(`/paam/import/v1/import_file/list?${initialQuery}`),
     request("/paam/import/v1/import_file/summary"),
+    request(`/paam/import/v1/fact_conflict/list?page_index=1&page_size=20&filter=${conflictFilter}`),
   ]);
   const sourceOptions = Object.entries(sourceLabels).map(([value, label]) => `<option value="${esc(value)}">${esc(label)}</option>`).join("");
   const statusOptions = [0, 1, 2, 3].map((value) => `<option value="${value}">${esc(statusLabels[value])}</option>`).join("");
-  return `<div class="history-summary" data-history-summary>${historySummaryMarkup(summary)}</div><section class="panel history-panel"><div class="section-head"><div><h2>导入文件</h2><p class="import-section-help">来源和状态筛选只更新下方结果。</p></div><button class="primary" data-page="import">＋ 导入新数据</button></div><form class="toolbar history-toolbar" data-form="history-filter"><label>来源<select name="source_type"><option value="">全部来源</option>${sourceOptions}</select></label><label>状态<select name="status"><option value="">全部状态</option>${statusOptions}</select></label><span class="history-updating" data-history-updating aria-live="polite"></span></form><div data-history-results>${historyResultsMarkup(result)}</div></section>`;
+  const conflictRows = conflicts.items.map((item) => `<button type="button" class="batch-card" data-action="fact-conflict-detail" data-id="${item.id}"><span class="file-type-icon">!</span><span class="batch-file"><span class="history-id">Fact Conflict #${item.id}</span><strong>${esc(item.title)}</strong><small>等待人工处理</small></span><span class="batch-field batch-time"><small>更新时间</small><span>${date(item.updated_time)}</span></span><span class="batch-chevron" aria-hidden="true">›</span></button>`).join("");
+  const conflictPanel = conflicts.total ? `<section class="panel history-panel"><div class="section-head"><div><h2>待处理事实冲突</h2><p class="import-section-help">显示最近 ${conflicts.items.length} / ${conflicts.total} 条，进入详情后可关联、创建或忽略。</p></div></div><div class="batch-card-list">${conflictRows}</div></section>` : "";
+  return `<div class="history-summary" data-history-summary>${historySummaryMarkup(summary, conflicts.total)}</div>${conflictPanel}<section class="panel history-panel"><div class="section-head"><div><h2>导入文件</h2><p class="import-section-help">来源和状态筛选只更新下方结果。</p></div><button class="primary" data-page="import">＋ 导入新数据</button></div><form class="toolbar history-toolbar" data-form="history-filter"><label>来源<select name="source_type"><option value="">全部来源</option>${sourceOptions}</select></label><label>状态<select name="status"><option value="">全部状态</option>${statusOptions}</select></label><span class="history-updating" data-history-updating aria-live="polite"></span></form><div data-history-results>${historyResultsMarkup(result)}</div></section>`;
 }
 
 async function refreshHistoryResults(form, page = 1) {
@@ -800,7 +803,10 @@ async function previewImport(form) {
   if (!files.length) { endSubmit(form); throw new Error("请选择至少一个账单文件"); }
   const source = form.elements.source_type.value || null;
   const password = form.elements.password.value || null;
-  const payload = { files: await Promise.all(files.map(async (file) => ({
+  const timezone = form.elements.timezone.value || "Asia/Hong_Kong";
+  setSelectedTimeZone(timezone);
+  timezoneSelect.value = timezone;
+  const payload = { timezone, files: await Promise.all(files.map(async (file) => ({
     filename: file.name, content_base64: await fileBase64(file), source_type: source, password,
   }))) };
   try {
@@ -1377,7 +1383,7 @@ async function transitionConflict(button) {
   if (button.disabled) return;
   button.disabled = true;
   try {
-    await jsonRequest(`/paam/import/v1/fact_conflict/${button.dataset.id}/${button.dataset.kind}`, "POST", { expected_version: Number(button.dataset.version), reason: "用户处理事实冲突", idempotency_key: key() });
+    await jsonRequest(`/paam/import/v1/fact_conflict/${button.dataset.id}/${button.dataset.kind}`, "POST", { expected_version: Number(button.dataset.version), reason: "用户处理事实冲突" });
     closeDialogs(); toast("冲突状态已更新"); await render();
   } catch (error) { button.disabled = false; throw error; }
 }
@@ -1386,9 +1392,9 @@ function conflictDialog(button) {
 }
 async function submitConflict(event) {
   event.preventDefault(); const form = event.currentTarget; const data = Object.fromEntries(new FormData(form));
-  const idempotencyKey = beginSubmit(form); if (!idempotencyKey) return;
+  if (!beginSubmit(form)) return;
   data.existing_bill_id = data.existing_bill_id ? Number(data.existing_bill_id) : 0;
-  try { await jsonRequest(`/paam/import/v1/fact_conflict/${form.dataset.id}/resolve`, "POST", { ...data, expected_version: Number(form.dataset.version), idempotency_key: idempotencyKey }); closeDialogs(); toast("事实冲突已解决"); await render(); } catch (error) { endSubmit(form); showFormError(form, error); }
+  try { await jsonRequest(`/paam/import/v1/fact_conflict/${form.dataset.id}/resolve`, "POST", { ...data, expected_version: Number(form.dataset.version) }); closeDialogs(); toast("事实冲突已解决"); await render(); } catch (error) { endSubmit(form); showFormError(form, error); }
 }
 
 $$('[data-page]').forEach((button) => button.onclick = () => route(button.dataset.page));

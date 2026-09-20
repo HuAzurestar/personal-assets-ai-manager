@@ -116,14 +116,17 @@ function importRow(row) {
   const normalized = payload?.normalized || {};
   const fact = row.transaction_fact;
   const title = fact ? businessTitle(fact) : normalized.note || normalized.merchant || `来源第 ${row.source_row_number} 行`;
-  return `<article class="inspection-import-row status-${row.row_status}"><div class="inspection-row-number">第 ${row.source_row_number} 行</div><div class="inspection-row-content"><span class="inspection-status status-${row.row_status}">${esc(rowStates[row.row_status] || "状态未识别")}</span><strong>${esc(title)}</strong><p>${esc(rowReason(row, normalized))}</p>${fact ? `<small>${esc(`${when(fact.occurred_time)} · ${fact.counterparty_name || "交易方未提供"}`)}</small>` : ""}</div>${fact ? `<div class="inspection-row-money">${esc(amount(fact))}${relationButton("fact", fact.id, "查看事实流水")}</div>` : ""}<div class="inspection-row-json">${jsonPayload(row.raw_payload)}</div></article>`;
+  const conflict = row.issue_code === "FACT_CONFLICT"
+    ? `<button type="button" class="inspection-link" data-action="fact-conflict-detail" data-id="${row.id}">处理事实冲突</button>`
+    : "";
+  return `<article class="inspection-import-row status-${row.row_status}"><div class="inspection-row-number">第 ${row.source_row_number} 行</div><div class="inspection-row-content"><span class="inspection-status status-${row.row_status}">${esc(rowStates[row.row_status] || "状态未识别")}</span><strong>${esc(title)}</strong><p>${esc(rowReason(row, normalized))}</p>${fact ? `<small>${esc(`${when(fact.occurred_time)} · ${fact.counterparty_name || "交易方未提供"}`)}</small>` : ""}</div>${fact ? `<div class="inspection-row-money">${esc(amount(fact))}${relationButton("fact", fact.id, "查看事实流水")}</div>` : conflict}<div class="inspection-row-json">${jsonPayload(row.raw_payload)}</div></article>`;
 }
 
 function fileRowsCard(fileId, initial) {
   return `<section class="inspection-card inspection-wide inspection-file-rows" data-file-rows="${fileId}"><header><div><h3>来源行处理结果</h3><p>逐行显示是否生成事实；原始 JSON 按需展开。</p></div><label>显示 <select data-row-status><option value="">全部来源行</option><option value="1">已关联事实</option><option value="2">已跳过</option><option value="3">待处理异常</option></select></label></header><div data-row-items>${initial.items.length ? `<div class="inspection-record-list">${initial.items.map(importRow).join("")}</div>` : '<p class="inspection-empty">没有来源行</p>'}</div><nav class="inspection-pagination" data-row-pager><span></span><button data-row-prev>上一页</button><button data-row-next>下一页</button></nav></section>`;
 }
 
-async function mountFileRows(root, initial) {
+async function mountFileRows(root, initial, bindActions) {
   const panel = root.querySelector("[data-file-rows]");
   if (!panel) return;
   const fileId = panel.dataset.fileRows;
@@ -134,6 +137,7 @@ async function mountFileRows(root, initial) {
   let data = initial;
   const paint = () => {
     items.innerHTML = data.items.length ? `<div class="inspection-record-list">${data.items.map(importRow).join("")}</div>` : '<p class="inspection-empty">当前条件下没有来源行</p>';
+    bindActions(items);
     const start = data.total ? (data.page_index - 1) * data.page_size + 1 : 0;
     pager.querySelector("span").textContent = `显示 ${start}–${Math.min(data.page_index * data.page_size, data.total)} / ${data.total} 行`;
     pager.querySelector("[data-row-prev]").disabled = data.page_index <= 1;
@@ -325,7 +329,7 @@ export async function openInspection(kind, id, bindActions) {
       bindActions(actions);
       body.innerHTML = view.body;
       view.presentation.mount(body);
-      if (view.kind === "file") mountFileRows(body, data.rows);
+      if (view.kind === "file") mountFileRows(body, data.rows, bindActions);
       body.scrollTop = 0;
       dialog.dataset.renderVersion = String(ticket);
       dialog.querySelector(".inspection-heading").focus({ preventScroll: true });

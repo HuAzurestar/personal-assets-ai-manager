@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import FastAPI
@@ -45,7 +45,7 @@ def import_file_api(tmp_path):
 
 
 def _seed(sessions):
-    now = datetime(2026, 9, 16, 8)
+    now = datetime(2026, 9, 16, 8, tzinfo=timezone.utc)
     with sessions() as db:
         files = [
             TransactionImportFile(
@@ -170,7 +170,7 @@ def test_import_file_detail_has_an_unpaged_transaction_fact_subresource(
 def test_import_file_rows_show_fact_links_skips_and_raw_json(import_file_api):
     client, sessions = import_file_api
     file_ids, fact_id = _seed(sessions)
-    now = datetime(2026, 9, 17, 9)
+    now = datetime(2026, 9, 17, 9, tzinfo=timezone.utc)
     with sessions() as db:
         file = db.get(TransactionImportFile, file_ids[0])
         file.total_count = 2
@@ -205,6 +205,7 @@ def test_import_file_rows_show_fact_links_skips_and_raw_json(import_file_api):
     assert all_rows.status_code == 200, all_rows.text
     assert all_rows.json()["body"] == {
         "items": [{
+            "id": 1,
             "source_row_number": 1,
             "row_status": IMPORT_ROW_STATUS_ACCEPTED,
             "source_reference": f"ref-{file_ids[0]}",
@@ -213,7 +214,7 @@ def test_import_file_rows_show_fact_links_skips_and_raw_json(import_file_api):
             "raw_payload": "{}",
             "transaction_fact": {
                 "id": fact_id,
-                "occurred_time": "2026-09-16T08:00:00",
+                "occurred_time": "2026-09-16T08:00:00Z",
                 "cash_direction": CASH_DIRECTION_OUT,
                 "amount": 880,
                 "currency_code": "CNY",
@@ -221,8 +222,8 @@ def test_import_file_rows_show_fact_links_skips_and_raw_json(import_file_api):
                 "counterparty_name": "Merchant",
                 "counterparty_account_ref": "",
                 "summary": "Lunch",
-                "created_time": "2026-09-16T08:00:00",
-                "updated_time": "2026-09-16T08:00:00",
+                "created_time": "2026-09-16T08:00:00Z",
+                "updated_time": "2026-09-16T08:00:00Z",
             },
         }],
         "total": 2,
@@ -309,7 +310,7 @@ def test_file_relation_summary_deduplicates_source_rows_and_excludes_revoked(imp
 
     client, sessions = import_file_api
     file_ids, fact_id = _seed(sessions)
-    now = datetime(2026, 9, 17, 8)
+    now = datetime(2026, 9, 17, 8, tzinfo=timezone.utc)
     with sessions() as db:
         # A repeated source row must not multiply the same fact's money.
         db.add(TransactionImportRow(

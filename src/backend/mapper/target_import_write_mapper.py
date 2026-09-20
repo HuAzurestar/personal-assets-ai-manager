@@ -31,6 +31,7 @@ from backend.entity import (
     TransactionImportFile,
     TransactionImportRow,
 )
+from backend.entity.base import utc_now
 from backend.parser.statement_parser import digest
 from backend.smart_import import dump
 
@@ -101,7 +102,7 @@ class TargetImportWriteMapper:
             row["sha256"]: {"id": row["id"], "status": row["status"]}
             for row in rows
         }
-        now = datetime.now()
+        now = utc_now()
         reset = []
         for sha256, record in result.items():
             if record["status"] not in {
@@ -160,7 +161,7 @@ class TargetImportWriteMapper:
     ) -> None:
         """Persist parse metadata while successful files remain PENDING."""
 
-        now = datetime.now()
+        now = utc_now()
         mappings: dict[int, dict[str, object]] = {}
         for document in documents:
             file_id = document.get("transaction_import_file_id")
@@ -199,7 +200,7 @@ class TargetImportWriteMapper:
         file_ids = sorted(set(transaction_import_file_ids))
         if not file_ids:
             return
-        now = datetime.now()
+        now = utc_now()
         self.db.execute(update(TransactionImportFile), [
             {
                 "id": file_id,
@@ -215,7 +216,7 @@ class TargetImportWriteMapper:
         batch_code: str,
     ) -> dict[str, object]:
         documents = [doc for doc in plan["documents"] if not doc.get("duplicate")]
-        now = datetime.now()
+        now = utc_now()
         file_ids = [doc.get("transaction_import_file_id") for doc in documents]
         if any(not isinstance(file_id, int) for file_id in file_ids):
             raise ValueError("confirmed import documents require pending file IDs")
@@ -262,7 +263,9 @@ class TargetImportWriteMapper:
             ])
             fact = TransactionFact(
                 fact_key=fact_key,
-                occurred_time=datetime.fromisoformat(row["occurred_at"]),
+                occurred_time=datetime.fromisoformat(
+                    row["occurred_at"].replace("Z", "+00:00")
+                ),
                 cash_direction=(
                     CASH_DIRECTION_IN if amount_minor > 0 else CASH_DIRECTION_OUT
                 ),

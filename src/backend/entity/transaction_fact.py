@@ -4,7 +4,6 @@ from datetime import datetime
 
 from sqlalchemy import (
     BigInteger,
-    CheckConstraint,
     Index,
     Integer,
     String,
@@ -25,11 +24,6 @@ class TransactionFact(TargetTable, TargetBase):
     __tablename__ = "transaction_fact"
     __table_args__ = (
         UniqueConstraint("fact_key", name="uq_transaction_fact_key"),
-        CheckConstraint(
-            f"cash_direction IN ({CASH_DIRECTION_IN}, {CASH_DIRECTION_OUT})",
-            name="ck_transaction_fact_cash_direction",
-        ),
-        CheckConstraint("amount > 0", name="ck_transaction_fact_amount"),
         Index(
             "ix_transaction_fact_occurred_time_id",
             "occurred_time",

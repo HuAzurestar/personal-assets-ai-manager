@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -68,7 +68,7 @@ def test_review_request_rejects_mapper_era_history_payload():
         "idempotency_key": "stored-history",
         })
 def _facts(sessions, specifications):
-    now = datetime(2026, 9, 13, 10)
+    now = datetime(2026, 9, 13, 10, tzinfo=timezone.utc)
     with sessions() as db:
         rows = [TransactionFact(
             fact_key=f"ledger-api-{uuid4().hex}",
@@ -123,6 +123,49 @@ def test_ledger_v1_exposes_only_confirmed_cash_entry_fields(economic_api):
     assert client.get("/paam/economy/v1/flow/list").status_code == 404
     assert client.get("/paam/economy/v1/flow/detail/1").status_code == 404
     assert client.get("/paam/economy/v1/summary").status_code == 404
+
+
+def test_ledger_summary_uses_the_selected_timezone_day_boundary(economic_api):
+    client, sessions = economic_api
+    created = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    with sessions() as db:
+        facts = [
+            TransactionFact(
+                fact_key=f"summary-boundary-{index}",
+                occurred_time=occurred_time,
+                cash_direction=CASH_DIRECTION_IN,
+                amount=amount,
+                currency_code="CNY",
+                account_code="wallet",
+                counterparty_name="boundary",
+                counterparty_account_ref="",
+                summary="boundary",
+                created_time=created,
+                updated_time=created,
+            )
+            for index, (occurred_time, amount) in enumerate((
+                (datetime(2026, 8, 31, 15, 59, tzinfo=timezone.utc), 100),
+                (datetime(2026, 8, 31, 16, 0, tzinfo=timezone.utc), 200),
+            ))
+        ]
+        db.add_all(facts)
+        db.flush()
+        TargetEconomicService(db).ensure_defaults([fact.id for fact in facts])
+        db.commit()
+
+    response = client.get(
+        "/paam/ledger/v1/flow/summary",
+        params={
+            "date_from": "2026-09-01",
+            "date_to": "2026-09-01",
+            "timezone": "Asia/Hong_Kong",
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()["body"]
+    assert body["entry_count"] == 1
+    assert body["totals"][0]["income_and_expense_in_amount"] == 200
+    assert body["trend"][0]["day"] == "2026-09-01"
 
 
 def test_ledger_lists_accept_whitelisted_filter_and_sorter_objects(economic_api):

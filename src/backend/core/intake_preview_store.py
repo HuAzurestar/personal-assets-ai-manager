@@ -7,6 +7,8 @@ from datetime import datetime, timedelta
 from threading import RLock
 from typing import Iterator
 
+from backend.entity.base import utc_now
+
 
 @dataclass(slots=True)
 class IntakePreviewState:
@@ -16,11 +18,11 @@ class IntakePreviewState:
     accounts: dict[str, str] = field(default_factory=dict)
     decisions: dict[str, str] = field(default_factory=dict)
     result: dict[str, object] | None = None
-    created_time: datetime = field(default_factory=datetime.now)
+    created_time: datetime = field(default_factory=utc_now)
 
     @property
     def expired(self) -> bool:
-        return self.created_time < datetime.now() - timedelta(hours=24)
+        return self.created_time < utc_now() - timedelta(hours=24)
 
 
 class IntakePreviewStore:

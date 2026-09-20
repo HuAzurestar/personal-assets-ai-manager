@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError, model_validator
@@ -88,7 +88,7 @@ def parse_review_case_time(value: object, key: str) -> datetime:
             code="LIST_FILTER_VALUE_INVALID",
             details={"component": "filter", "key": key},
         )
-    return parsed
+    return parsed.astimezone(timezone.utc)
 
 
 def _validate_review_case_filter_values(request: ReviewCaseListRequest) -> None:

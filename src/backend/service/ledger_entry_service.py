@@ -136,7 +136,12 @@ class LedgerEntryService:
             activity_key = (row["entry_type"], row["currency_code"])
             activities[activity_key][f"{direction}_amount"] += row["amount"]
             if row["entry_type"] == 0:
-                day_key = (row["occurred_time"].date(), row["currency_code"])
+                local_time = (
+                    row["occurred_time"].astimezone(query.display_timezone)
+                    if query.display_timezone is not None
+                    else row["occurred_time"]
+                )
+                day_key = (local_time.date(), row["currency_code"])
                 trend[day_key]["income_amount" if direction == "in" else "expense_amount"] += row["amount"]
         return LedgerEntrySummaryRead(
             entry_count=len(rows),

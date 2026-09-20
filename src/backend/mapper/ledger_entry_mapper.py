@@ -162,13 +162,13 @@ class LedgerEntryMapper:
 
     def summary(self, query: LedgerEntrySummaryQuery):
         clauses = self._active_clauses()
-        if query.date_from:
+        if query.occurred_time_start:
             clauses.append(
-                LedgerEntry.occurred_time >= datetime.combine(query.date_from, time.min)
+                LedgerEntry.occurred_time >= query.occurred_time_start
             )
-        if query.date_to:
+        if query.occurred_time_end:
             clauses.append(
-                LedgerEntry.occurred_time <= datetime.combine(query.date_to, time.max)
+                LedgerEntry.occurred_time < query.occurred_time_end
             )
         return self.db.execute(select(
             LedgerEntry.id,

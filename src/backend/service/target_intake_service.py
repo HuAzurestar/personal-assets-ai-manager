@@ -4,6 +4,7 @@ import base64
 import hashlib
 import logging
 from pathlib import Path
+from datetime import tzinfo
 from uuid import uuid4
 
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -41,7 +42,12 @@ class TargetIntakeService:
         self.write_mapper = TargetImportWriteMapper(db)
         self.store = target_intake_preview_store
 
-    def preview(self, payload: IntakePreviewRequest) -> dict[str, object]:
+    def preview(
+        self,
+        payload: IntakePreviewRequest,
+        *,
+        source_timezone: tzinfo,
+    ) -> dict[str, object]:
         if sum(len(item.content_base64) for item in payload.files) > 140_000_000:
             raise TargetIntakeError(413, "一次最多上传约 100 MB 文件")
         token = uuid4().hex
@@ -87,6 +93,7 @@ class TargetIntakeService:
                     item.filename,
                     item.password,
                     item.source_type,
+                    source_timezone=source_timezone,
                 )
             except (ValueError, TypeError) as error:
                 document = {

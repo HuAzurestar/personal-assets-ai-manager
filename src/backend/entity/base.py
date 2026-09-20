@@ -17,18 +17,25 @@ class UTCISO8601DateTime(TypeDecorator[datetime]):
         del dialect
         if value is None:
             return None
-        if value.tzinfo is not None:
-            value = value.astimezone(timezone.utc).replace(tzinfo=None)
-        return value.isoformat(timespec="milliseconds") + "Z"
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("UTC timestamp must include timezone information")
+        value = value.astimezone(timezone.utc)
+        return value.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
     def process_result_value(self, value: str | datetime | None, dialect):
         del dialect
-        if value is None or isinstance(value, datetime):
+        if value is None:
             return value
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        if parsed.tzinfo is not None:
-            parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
-        return parsed
+        parsed = value if isinstance(value, datetime) else datetime.fromisoformat(
+            value.replace("Z", "+00:00")
+        )
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError("Stored UTC timestamp is missing timezone information")
+        return parsed.astimezone(timezone.utc)
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 class TargetTable:

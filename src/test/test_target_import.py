@@ -2,6 +2,8 @@ import base64
 import csv
 import io
 import json
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import openpyxl
 import pyzipper
@@ -194,12 +196,14 @@ def test_target_import_writes_fact_evidence_and_hot_projection(target_import_api
             fact.currency_code,
             fact.counterparty_name,
             fact.counterparty_account_ref,
+            fact.occurred_time,
         ) == (
             CASH_DIRECTION_OUT,
             1000,
             "CNY",
             "测试商户",
             "",
+            datetime(2026, 8, 1, 4, tzinfo=timezone.utc),
         )
         import_row = db.scalar(select(TransactionImportRow))
         assert (
@@ -510,13 +514,82 @@ def test_target_fact_conflict_stays_on_import_row(target_import_api):
         raw = db.scalar(select(TransactionImportRow).where(
             TransactionImportRow.issue_code == "FACT_CONFLICT"
         ))
+        conflict_id = raw.id
+        existing_fact_id = db.scalar(select(TransactionFact.id))
         assert (raw.row_status, raw.transaction_fact_id) == (
             IMPORT_ROW_STATUS_INVALID,
             0,
         )
         assert db.query(ReviewCase).count() == 1
 
+    listed = client.get(
+        "/paam/import/v1/fact_conflict/list",
+        params={
+            "page_size": 1,
+            "filter": '{"key":"status","op":"=","val":"PENDING"}',
+        },
+    )
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["body"]["total"] == 1
+    assert listed.json()["body"]["items"][0]["id"] == conflict_id
+    detail = client.get(f"/paam/import/v1/fact_conflict/{conflict_id}").json()["body"]
+
+    dismissed = client.post(
+        f"/paam/import/v1/fact_conflict/{conflict_id}/dismiss",
+        json={"expected_version": detail["version"], "reason": "not the same fact"},
+    )
+    assert dismissed.status_code == 200, dismissed.text
+    assert dismissed.json()["body"]["status"] == "REJECTED"
+    stale = client.post(
+        f"/paam/import/v1/fact_conflict/{conflict_id}/reopen",
+        json={"expected_version": detail["version"]},
+    )
+    assert stale.status_code == 409
+
+    rejected = dismissed.json()["body"]
+    reopened = client.post(
+        f"/paam/import/v1/fact_conflict/{conflict_id}/reopen",
+        json={"expected_version": rejected["version"]},
+    )
+    assert reopened.status_code == 200, reopened.text
+    resolved = client.post(
+        f"/paam/import/v1/fact_conflict/{conflict_id}/resolve",
+        json={
+            "resolution_type": "LINK_EXISTING",
+            "existing_bill_id": existing_fact_id,
+            "expected_version": reopened.json()["body"]["version"],
+        },
+    )
+    assert resolved.status_code == 200, resolved.text
+    assert resolved.json()["body"]["status"] == "CONFIRMED"
+
+    unsupported = client.get(
+        "/paam/import/v1/fact_conflict/list",
+        params={"sorter": '[{"key":"updated_time","direction":"desc"}]'},
+    )
+    assert unsupported.status_code == 422
+
 
 def test_source_override_cannot_contradict_statement_content():
     with pytest.raises(ValueError):
-        parse_statement(_csv(), "statement.csv", source="alipay")
+        parse_statement(
+            _csv(),
+            "statement.csv",
+            source="alipay",
+            source_timezone=ZoneInfo("Asia/Hong_Kong"),
+        )
+
+
+def test_import_router_rejects_unknown_source_timezone(target_import_api):
+    client, _, _ = target_import_api
+    response = client.post(
+        "/paam/import/v1/preview",
+        json={
+            "timezone": "Mars/Olympus_Mons",
+            "files": [{
+                "filename": "statement.csv",
+                "content_base64": base64.b64encode(_csv()).decode(),
+            }],
+        },
+    )
+    assert response.status_code == 422

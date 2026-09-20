@@ -18,6 +18,7 @@ class IntakeUploadFileRequest(BaseModel):
 
 class IntakePreviewRequest(BaseModel):
     files: list[IntakeUploadFileRequest] = Field(min_length=1, max_length=100)
+    timezone: str = Field(default="Asia/Hong_Kong", min_length=1, max_length=120)
 
 
 class IntakeReviseRequest(BaseModel):

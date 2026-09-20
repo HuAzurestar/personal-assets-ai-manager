@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
@@ -40,23 +40,25 @@ class TargetReviewIdempotencyVO:
     request_json: str
 
 
-class TargetReviewTransitionRequest(BaseModel):
+class TargetTransitionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     actor: str = Field(default="local-user", min_length=1, max_length=120)
     reason: str = Field(default="", max_length=2000)
+
+
+class TargetReviewTransitionRequest(TargetTransitionRequest):
     idempotency_key: str = Field(min_length=1, max_length=120)
 
 
-class TargetFactConflictResolveRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class TargetVersionedTransitionRequest(TargetTransitionRequest):
+    expected_version: int = Field(ge=1)
+
+
+class TargetFactConflictResolveRequest(TargetVersionedTransitionRequest):
 
     resolution_type: Literal["LINK_EXISTING", "CREATE_NEW"]
     existing_bill_id: int = Field(default=0, ge=0)
-    expected_version: int = Field(ge=1)
-    actor: str = Field(default="local-user", min_length=1, max_length=120)
-    reason: str = Field(default="", max_length=2000)
-    idempotency_key: str = Field(min_length=1, max_length=120)
 
 
 class TargetReviewLineRead(BaseModel):
@@ -97,13 +99,8 @@ class TargetFactConflictListRequest(ListRequest):
         validate_list_capabilities(
             self,
             query_fields=(),
-            filter_operators={
-                "id": ("=",),
-                "status": ("=",),
-                "created_time": (">=", "<", "between"),
-                "updated_time": (">=", "<", "between"),
-            },
-            sorter_fields=("id", "created_time", "updated_time"),
+            filter_operators={"status": ("=",)},
+            sorter_fields=(),
             logical_operators=("AND",),
             max_sorters=1,
         )
@@ -114,16 +111,7 @@ class TargetFactConflictListRequest(ListRequest):
 class TargetFactConflictFilter(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    id: int | None = None
     status: Literal["PENDING", "REJECTED", "CONFIRMED"] | None = None
-    created_time_start: datetime | None = None
-    created_time_end: datetime | None = None
-    updated_time_start: datetime | None = None
-    updated_time_end: datetime | None = None
-
-
-class TargetFactConflictSorter(ListSorter):
-    field: Literal["id", "created_time", "updated_time", "version"] = "updated_time"
 
 
 class TargetFactConflictListBody(ListBody[TargetReviewCaseRead]):
@@ -286,7 +274,7 @@ def parse_review_time(value: object, key: str) -> datetime:
             code="LIST_FILTER_VALUE_INVALID",
             details={"component": "filter", "key": key},
         )
-    return parsed
+    return parsed.astimezone(timezone.utc)
 
 
 def _validate_fact_conflict_filter_values(request: TargetFactConflictListRequest) -> None:

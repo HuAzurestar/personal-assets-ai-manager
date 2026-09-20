@@ -117,6 +117,7 @@ export function shellMarkup() {
       </a>
       <nav class="module-nav" aria-label="主要模块">${nav}</nav>
       <div class="topbar-actions">
+        <label class="timezone-control">时区<select data-timezone aria-label="显示和导入时区"><option value="Asia/Hong_Kong">香港</option><option value="Asia/Shanghai">上海</option><option value="Asia/Tokyo">东京</option><option value="Europe/London">伦敦</option><option value="America/New_York">纽约</option><option value="UTC">UTC</option></select></label>
         <span class="connection"><i></i><span data-live-label>本地账本已连接</span></span>
         <button type="button" class="primary compact" data-page="import">导入账单</button>
       </div>

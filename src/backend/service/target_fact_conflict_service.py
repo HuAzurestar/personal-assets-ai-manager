@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
@@ -15,20 +15,19 @@ from backend.entity import (
     IMPORT_ROW_STATUS_SKIPPED,
 )
 from backend.error import TargetReviewError
+from backend.entity.base import utc_now
 from backend.mapper.import_fact_conflict_mapper import (
     CONFLICT_STATUS_CODES,
     ImportFactConflictMapper,
 )
-from backend.schema.list_query import BetweenValue, iter_filter_fields
+from backend.schema.list_query import iter_filter_fields
 from backend.schema.target_review import (
     TargetFactConflictFilter,
     TargetFactConflictListBody,
     TargetFactConflictListRequest,
     TargetFactConflictResolveRequest,
-    TargetFactConflictSorter,
     TargetReviewCaseRead,
-    TargetReviewTransitionRequest,
-    parse_review_time,
+    TargetVersionedTransitionRequest,
 )
 from backend.service.target_economic_service import TargetEconomicService
 
@@ -46,45 +45,17 @@ class TargetFactConflictService:
         request: TargetFactConflictListRequest,
     ) -> TargetFactConflictListBody:
         filter_value = self._mapper_filter(request)
-        sorter_expression = request.sorter[0] if request.sorter else None
-        sorter = TargetFactConflictSorter(
-            field=sorter_expression.key if sorter_expression else "updated_time",
-            order=sorter_expression.direction if sorter_expression else "desc",
+        rows, total = self.mapper.page(
+            row_status=(
+                CONFLICT_STATUS_CODES[filter_value.status]
+                if filter_value.status
+                else None
+            ),
+            page_index=request.page_index,
+            page_size=request.page_size,
         )
-        items = [self._read(row) for row in self.mapper.rows()]
-        if filter_value.id:
-            items = [item for item in items if item.id == filter_value.id]
-        if filter_value.status:
-            items = [item for item in items if item.status == filter_value.status]
-        if filter_value.created_time_start:
-            items = [
-                item for item in items
-                if item.created_time >= filter_value.created_time_start
-            ]
-        if filter_value.created_time_end:
-            items = [
-                item for item in items
-                if item.created_time < filter_value.created_time_end
-            ]
-        if filter_value.updated_time_start:
-            items = [
-                item for item in items
-                if item.updated_time >= filter_value.updated_time_start
-            ]
-        if filter_value.updated_time_end:
-            items = [
-                item for item in items
-                if item.updated_time < filter_value.updated_time_end
-            ]
-        reverse = sorter.order == "desc"
-        items.sort(
-            key=lambda item: (getattr(item, sorter.field), item.id),
-            reverse=reverse,
-        )
-        total = len(items)
-        offset = (request.page_index - 1) * request.page_size
         return TargetFactConflictListBody(
-            items=items[offset:offset + request.page_size],
+            items=[self._read(row) for row in rows],
             total=total,
             page_index=request.page_index,
             page_size=request.page_size,
@@ -94,29 +65,7 @@ class TargetFactConflictService:
     def _mapper_filter(request: TargetFactConflictListRequest) -> TargetFactConflictFilter:
         values: dict[str, object] = {}
         for expression in iter_filter_fields(request.filter):
-            if expression.key in {"created_time", "updated_time"}:
-                if expression.op == "between":
-                    between = BetweenValue.model_validate(expression.val)
-                    values[f"{expression.key}_start"] = parse_review_time(
-                        between.start,
-                        expression.key,
-                    )
-                    values[f"{expression.key}_end"] = parse_review_time(
-                        between.end,
-                        expression.key,
-                    )
-                elif expression.op == ">=":
-                    values[f"{expression.key}_start"] = parse_review_time(
-                        expression.val,
-                        expression.key,
-                    )
-                else:
-                    values[f"{expression.key}_end"] = parse_review_time(
-                        expression.val,
-                        expression.key,
-                    )
-            else:
-                values[expression.key] = expression.val
+            values[expression.key] = expression.val
         return TargetFactConflictFilter.model_validate(values)
 
     def detail(self, conflict_id: int) -> TargetReviewCaseRead:
@@ -149,7 +98,7 @@ class TargetFactConflictService:
                 previous_updated_time=row["updated_time"],
                 row_status=IMPORT_ROW_STATUS_ACCEPTED,
                 transaction_fact_id=fact_id,
-                now=datetime.now(),
+                now=self._next_update_time(row["updated_time"]),
             ):
                 raise TargetReviewError(409, "conflict changed; reload before writing")
             self.economic.ensure_defaults([fact_id])
@@ -168,7 +117,7 @@ class TargetFactConflictService:
     def dismiss(
         self,
         conflict_id: int,
-        payload: TargetReviewTransitionRequest,
+        payload: TargetVersionedTransitionRequest,
     ) -> TargetReviewCaseRead:
         return self._transition(
             conflict_id, payload, "PENDING", IMPORT_ROW_STATUS_SKIPPED
@@ -177,7 +126,7 @@ class TargetFactConflictService:
     def reopen(
         self,
         conflict_id: int,
-        payload: TargetReviewTransitionRequest,
+        payload: TargetVersionedTransitionRequest,
     ) -> TargetReviewCaseRead:
         return self._transition(
             conflict_id, payload, "REJECTED", IMPORT_ROW_STATUS_INVALID
@@ -192,7 +141,7 @@ class TargetFactConflictService:
                 previous_updated_time=row["updated_time"],
                 row_status=row_status,
                 transaction_fact_id=0,
-                now=datetime.now(),
+                now=self._next_update_time(row["updated_time"]),
             ):
                 raise TargetReviewError(409, "conflict changed; reload before writing")
             self.mapper.commit()
@@ -218,6 +167,10 @@ class TargetFactConflictService:
             raise TargetReviewError(409, "conflict changed; reload before writing")
         return row
 
+    @staticmethod
+    def _next_update_time(previous: datetime) -> datetime:
+        return max(utc_now(), previous + timedelta(milliseconds=1))
+
     def _create_fact(self, row: dict) -> int:
         envelope = json.loads(row["raw_payload"] or "{}")
         normalized = envelope["normalized"]
@@ -234,7 +187,9 @@ class TargetFactConflictService:
             "fact_key": hashlib.sha256(
                 f"resolved-conflict:{row['id']}:{row['raw_hash']}".encode()
             ).hexdigest(),
-            "occurred_time": datetime.fromisoformat(normalized["occurred_at"]),
+            "occurred_time": datetime.fromisoformat(
+                normalized["occurred_at"].replace("Z", "+00:00")
+            ),
             "cash_direction": CASH_DIRECTION_IN if amount > 0 else CASH_DIRECTION_OUT,
             "amount": abs(amount),
             "currency_code": normalized.get("currency", "CNY"),
@@ -242,7 +197,7 @@ class TargetFactConflictService:
             "counterparty_name": normalized.get("merchant", ""),
             "counterparty_account_ref": "",
             "summary": normalized.get("note", ""),
-        }, datetime.now())
+        }, utc_now())
 
     @staticmethod
     def _read(row: dict) -> TargetReviewCaseRead:

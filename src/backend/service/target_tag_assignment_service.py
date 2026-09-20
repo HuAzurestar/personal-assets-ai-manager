@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from backend.error import TargetTagError
+from backend.entity.base import utc_now
 from backend.mapper.target_tag_assignment_mapper import TargetTagAssignmentMapper
 from backend.schema.target_tag import TargetTagAssignmentRead, TargetTagAssignmentRequest
 from backend.service.target_tag_projection_service import TargetTagProjectionService
@@ -33,7 +34,7 @@ class TargetTagAssignmentService:
                 self.mapper.commit()
                 return TargetTagAssignmentRead(ledger_id=ledger_id, tag_state=state)
             self.mapper.replace(ledger_id, list(tag_ids))
-            self.mapper.touch(ledger_id, datetime.now())
+            self.mapper.touch(ledger_id, utc_now())
             self.mapper.commit()
             return TargetTagAssignmentRead(
                 ledger_id=ledger_id,

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
+import pytest
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 
@@ -17,6 +19,7 @@ from backend.entity import (
     TransactionImportFile,
     TransactionImportRow,
 )
+from backend.entity.base import UTCISO8601DateTime
 from backend.mapper.target_economic_mapper import TargetEconomicMapper
 
 
@@ -56,6 +59,32 @@ def test_target_sql_assets_create_the_reviewed_tables():
         assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     finally:
         connection.close()
+
+
+def test_target_sql_assets_have_no_check_constraints():
+    connection = _create_target_schema()
+    try:
+        for table in EXPECTED_TABLES:
+            create_sql = connection.execute(
+                "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?",
+                (table,),
+            ).fetchone()[0]
+            assert "CHECK" not in create_sql.upper()
+    finally:
+        connection.close()
+
+
+def test_utc_iso_type_rejects_naive_values_and_normalizes_offsets():
+    column_type = UTCISO8601DateTime()
+    with pytest.raises(ValueError, match="timezone"):
+        column_type.process_bind_param(datetime(2026, 9, 1, 0, 0), None)
+    stored = column_type.process_bind_param(
+        datetime(2026, 9, 1, 0, 0, tzinfo=ZoneInfo("Asia/Hong_Kong")),
+        None,
+    )
+    assert stored == "2026-08-31T16:00:00.000Z"
+    loaded = column_type.process_result_value(stored, None)
+    assert loaded == datetime(2026, 8, 31, 16, 0, tzinfo=timezone.utc)
 
 
 def test_every_target_table_has_common_columns_and_inline_comments():
@@ -162,16 +191,6 @@ def test_review_case_is_a_minimal_published_lifecycle():
         ).fetchone()
         assert row == (0, 0, "")
 
-        for statement in (
-            "INSERT INTO review_case (behavior_type) VALUES (2)",
-            "INSERT INTO review_case (status) VALUES (2)",
-        ):
-            try:
-                connection.execute(statement)
-            except sqlite3.IntegrityError:
-                pass
-            else:
-                raise AssertionError(f"review_case accepted invalid value: {statement}")
     finally:
         connection.close()
 
@@ -193,31 +212,6 @@ def test_review_allocation_only_stores_published_relationships():
             "updated_time",
         }
 
-        for column in (
-            "review_case_id",
-            "transaction_fact_id",
-            "ledger_entry_id",
-            "amount",
-        ):
-            try:
-                connection.execute(
-                    f"""
-                    INSERT INTO review_allocation (
-                        review_case_id, transaction_fact_id, ledger_entry_id,
-                        amount, currency_code
-                    ) VALUES (
-                        {0 if column == 'review_case_id' else 1},
-                        {0 if column == 'transaction_fact_id' else 1},
-                        {0 if column == 'ledger_entry_id' else 1},
-                        {0 if column == 'amount' else 1},
-                        'CNY'
-                    )
-                    """
-                )
-            except sqlite3.IntegrityError:
-                pass
-            else:
-                raise AssertionError(f"review_allocation accepted invalid {column}")
     finally:
         connection.close()
 
@@ -250,18 +244,11 @@ def test_review_revision_is_append_only_audit_without_business_version():
             ) VALUES (1, 0, '{"behavior_type":0}', '{"status":0}', 'create:1')
             """
         )
-        for statement in (
-            "INSERT INTO review_revision (review_case_id) VALUES (0)",
-            "INSERT INTO review_revision (review_case_id, operation) VALUES (1, 4)",
-            "INSERT INTO review_revision (review_case_id, request_json) VALUES (1, 'bad json')",
-            "INSERT INTO review_revision (review_case_id, idempotency_key) VALUES (1, 'create:1')",
-        ):
-            try:
-                connection.execute(statement)
-            except sqlite3.IntegrityError:
-                pass
-            else:
-                raise AssertionError(f"review_revision accepted invalid row: {statement}")
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO review_revision (review_case_id, idempotency_key) "
+                "VALUES (1, 'create:1')"
+            )
     finally:
         connection.close()
 
@@ -281,7 +268,7 @@ def test_transaction_fact_sql_asset_matches_entity_and_mapper(tmp_path):
         with Session(engine) as db:
             fact = TransactionFact(
                 fact_key="sql-asset-transaction-fact",
-                occurred_time=datetime(2026, 9, 16, 12, 30),
+                occurred_time=datetime(2026, 9, 16, 12, 30, tzinfo=timezone.utc),
                 cash_direction=CASH_DIRECTION_OUT,
                 amount=500000,
                 currency_code="CNY",

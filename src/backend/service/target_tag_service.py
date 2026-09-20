@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.error import TargetTagError
+from backend.entity.base import utc_now
 from backend.mapper.target_tag_mapper import TargetTagMapper
 from backend.schema.list_query import BetweenValue, iter_filter_fields
 from backend.schema.target_tag import (
@@ -97,7 +98,7 @@ class TargetTagService:
     def create_view(self, payload: TargetTagViewCreateRequest) -> TargetTagViewRead:
         try:
             view_id = self.mapper.create_view(
-                payload.name.strip(), payload.system_name, datetime.now()
+                payload.name.strip(), payload.system_name, utc_now()
             )
             self.projection.sync_all()
             self.mapper.commit()
@@ -117,7 +118,7 @@ class TargetTagService:
             raise TargetTagError(422, "unclassified is managed by the tag view")
         try:
             self.mapper.create_tag(
-                view_id, payload.name.strip(), payload.system_name, datetime.now()
+                view_id, payload.name.strip(), payload.system_name, utc_now()
             )
             self.mapper.commit()
             return self._required(view_id)
@@ -131,7 +132,7 @@ class TargetTagService:
         payload: TargetTagStatusRequest,
     ) -> TargetTagViewRead:
         try:
-            if not self.mapper.set_view_status(view_id, payload.status, datetime.now()):
+            if not self.mapper.set_view_status(view_id, payload.status, utc_now()):
                 raise TargetTagError(404, "tag view not found")
             self.projection.sync_all()
             self.mapper.commit()
@@ -158,7 +159,7 @@ class TargetTagService:
                 raise TargetTagError(404, "tag not found in this view")
             if tag.system_name == "unclassified" and payload.status != "ACTIVE":
                 raise TargetTagError(422, "unclassified tag cannot be archived")
-            if not self.mapper.set_tag_status(view_id, tag_id, payload.status, datetime.now()):
+            if not self.mapper.set_tag_status(view_id, tag_id, payload.status, utc_now()):
                 raise TargetTagError(404, "tag not found in this view")
             self.projection.sync_all()
             self.mapper.commit()

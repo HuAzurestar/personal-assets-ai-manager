@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import select, text, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.orm import Session
 
 from backend.entity import (
@@ -24,8 +24,19 @@ class ImportFactConflictMapper:
         if self.db.bind is not None and self.db.bind.dialect.name == "sqlite":
             self.db.execute(text("BEGIN IMMEDIATE"))
 
-    def rows(self) -> list[dict]:
+    def page(
+        self,
+        *,
+        row_status: int | None,
+        page_index: int,
+        page_size: int,
+    ) -> tuple[list[dict], int]:
         clauses = [TransactionImportRow.issue_code == "FACT_CONFLICT"]
+        if row_status is not None:
+            clauses.append(TransactionImportRow.row_status == row_status)
+        total = int(self.db.scalar(
+            select(func.count(TransactionImportRow.id)).where(*clauses)
+        ) or 0)
         rows = self.db.execute(select(
             TransactionImportRow.id,
             TransactionImportRow.transaction_fact_id,
@@ -36,8 +47,12 @@ class ImportFactConflictMapper:
             TransactionImportRow.issue_message,
             TransactionImportRow.created_time,
             TransactionImportRow.updated_time,
-        ).where(*clauses)).mappings().all()
-        return [dict(row) for row in rows]
+        ).where(*clauses).order_by(
+            TransactionImportRow.id.desc()
+        ).offset(
+            (page_index - 1) * page_size
+        ).limit(page_size)).mappings().all()
+        return [dict(row) for row in rows], total
 
     def row(self, conflict_id: int) -> dict | None:
         rows = self.db.execute(select(

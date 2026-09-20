@@ -15,7 +15,7 @@ from backend.schema.list_query import parse_list_request
 from backend.schema.target_review import (
     TargetFactConflictListRequest,
     TargetFactConflictResolveRequest,
-    TargetReviewTransitionRequest,
+    TargetVersionedTransitionRequest,
 )
 from backend.service.target_fact_conflict_service import TargetFactConflictService
 
@@ -94,7 +94,7 @@ def resolve_conflict(
 )
 def dismiss_conflict(
     conflict_id: int,
-    payload: TargetReviewTransitionRequest,
+    payload: TargetVersionedTransitionRequest,
     db: Session = Depends(get_db),
 ):
     return ImportFactConflictResponse(
@@ -110,7 +110,7 @@ def dismiss_conflict(
 )
 def reopen_conflict(
     conflict_id: int,
-    payload: TargetReviewTransitionRequest,
+    payload: TargetVersionedTransitionRequest,
     db: Session = Depends(get_db),
 ):
     return ImportFactConflictResponse(

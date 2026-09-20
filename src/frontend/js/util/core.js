@@ -6,17 +6,76 @@ export const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => 
 })[char]);
 
 export const key = () => crypto.randomUUID();
+
+const DEFAULT_TIME_ZONE = "Asia/Hong_Kong";
+const TIME_ZONE_STORAGE_KEY = "paam.timezone";
+
+function validTimeZone(value) {
+  try {
+    new Intl.DateTimeFormat("en", { timeZone: value }).format();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function selectedTimeZone() {
+  const stored = globalThis.localStorage?.getItem(TIME_ZONE_STORAGE_KEY);
+  return stored && validTimeZone(stored) ? stored : DEFAULT_TIME_ZONE;
+}
+
+export function setSelectedTimeZone(value) {
+  if (!validTimeZone(value)) throw new Error(`不支持的时区：${value}`);
+  globalThis.localStorage?.setItem(TIME_ZONE_STORAGE_KEY, value);
+}
+
+function wallClockParts(timestamp, timeZone) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(timestamp));
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return ["year", "month", "day", "hour", "minute", "second"].map((key) => Number(values[key]));
+}
+
+export function zonedISOString(value, exclusiveEnd = false) {
+  const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (!match) throw new Error(`无效的本地日期时间：${value}`);
+  const dateOnly = match[4] === undefined;
+  let wallTimestamp = Date.UTC(
+    Number(match[1]), Number(match[2]) - 1, Number(match[3]),
+    Number(match[4] || 0), Number(match[5] || 0), Number(match[6] || 0),
+  );
+  if (exclusiveEnd) wallTimestamp += dateOnly ? 86_400_000 : 60_000;
+  const target = new Date(wallTimestamp);
+  const desired = Date.UTC(
+    target.getUTCFullYear(), target.getUTCMonth(), target.getUTCDate(),
+    target.getUTCHours(), target.getUTCMinutes(), target.getUTCSeconds(),
+  );
+  const timeZone = selectedTimeZone();
+  let instant = desired;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const parts = wallClockParts(instant, timeZone);
+    const represented = Date.UTC(parts[0], parts[1] - 1, parts[2], parts[3], parts[4], parts[5]);
+    instant += desired - represented;
+  }
+  return new Date(instant).toISOString();
+}
+
 export function date(value) {
   if (!value) return "未提供";
   const text = String(value);
   if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
-  // The current importer/API also emits naive source-local timestamps. Do not
-  // infer an offset and shift those historical values. Explicit offsets alone
-  // can be converted safely; all views use this same presentation policy.
-  if (!/(?:Z|[+-]\d{2}:\d{2})$/i.test(text)) return text.replace("T", " ").slice(0, 16);
+  if (!/(?:Z|[+-]\d{2}:\d{2})$/i.test(text)) return "时间缺少时区";
   const parsed = new Date(text);
   if (!Number.isFinite(parsed.getTime())) return text;
-  return new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Hong_Kong", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(parsed);
+  return new Intl.DateTimeFormat("sv-SE", { timeZone: selectedTimeZone(), year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(parsed);
 }
 
 export const typeNames = {

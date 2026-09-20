@@ -8,7 +8,7 @@ import io
 import json
 import re
 import zipfile
-from datetime import datetime
+from datetime import datetime, timezone, tzinfo
 from pathlib import Path
 
 import openpyxl
@@ -51,7 +51,7 @@ def amount_minor(value: str) -> int:
     return amount_from_decimal(value, "CNY")
 
 
-def timestamp(value: str, clock: str = "") -> tuple[str, str]:
+def timestamp(value: str, clock: str, source_timezone: tzinfo) -> tuple[str, str]:
     value = value.strip()
     if re.fullmatch(r"\d{8}\.0", value):
         value = value[:-2]
@@ -70,7 +70,14 @@ def timestamp(value: str, clock: str = "") -> tuple[str, str]:
     ]
     for pattern, precision in patterns:
         try:
-            return datetime.strptime(value, pattern).isoformat(), precision
+            local_time = datetime.strptime(value, pattern).replace(
+                tzinfo=source_timezone
+            )
+            utc_time = local_time.astimezone(timezone.utc)
+            return (
+                utc_time.isoformat(timespec="seconds").replace("+00:00", "Z"),
+                precision,
+            )
         except ValueError:
             pass
     raise ValueError("交易日期或时间无法识别")
@@ -301,6 +308,8 @@ def parse_statement(
     filename: str,
     password: str | None = None,
     source: str | None = None,
+    *,
+    source_timezone: tzinfo,
 ) -> dict:
     if not content or len(content) > MAX_UPLOAD_BYTES:
         raise ValueError("文件为空或超过 25 MB")
@@ -395,7 +404,13 @@ def parse_statement(
                 if not currency_match:
                     raise ValueError("农行文档缺少币种信息")
                 raw = {**raw, "币种": currency_match.group(1)}
-            row = normalise_statement_row(provider, raw, profile, account)
+            row = normalise_statement_row(
+                provider,
+                raw,
+                profile,
+                account,
+                source_timezone,
+            )
             row.update(row_number=n, raw=raw, error=None)
         except ValueError as error:
             row = {
@@ -427,11 +442,16 @@ def parse_statement(
         "account": account,
         "rows": rows,
         "parser_version": 1,
+        "source_timezone": getattr(source_timezone, "key", str(source_timezone)),
     }
 
 
 def normalise_statement_row(
-    provider: str, raw: dict, profile: str, account: dict
+    provider: str,
+    raw: dict,
+    profile: str,
+    account: dict,
+    source_timezone: tzinfo,
 ) -> dict:
     bank = provider in BANKS
 
@@ -442,7 +462,9 @@ def normalise_statement_row(
 
     if bank:
         occurred, precision = timestamp(
-            value("记账日期", "交易日期"), value("交易时间")
+            value("记账日期", "交易日期"),
+            value("交易时间"),
+            source_timezone,
         )
         amount = amount_minor(value("交易金额"))
         balance = value("账户余额", "本次余额", "联机余额")
@@ -484,7 +506,11 @@ def normalise_statement_row(
             nature = "refund"
     else:
         template = PROVIDER_TEMPLATES[provider]
-        occurred, precision = timestamp(value(*template["occurred_at"]))
+        occurred, precision = timestamp(
+            value(*template["occurred_at"]),
+            "",
+            source_timezone,
+        )
         amount = abs(amount_minor(value(*template["amount"])))
         merchant = value(*template["merchant"])
         note = value(*template["note"])

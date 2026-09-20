@@ -14,6 +14,7 @@ from backend.entity import (
     TargetTag,
     TargetTagView,
 )
+from backend.entity.base import utc_now
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,5 +129,5 @@ class TargetTagProjectionMapper:
         ])
         self.db.execute(update(LedgerEntry).where(
             LedgerEntry.id.in_(changed)
-        ).values(updated_time=datetime.now()))
+        ).values(updated_time=utc_now()))
         self.db.flush()

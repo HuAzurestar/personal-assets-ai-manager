@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError, model_validator
@@ -158,6 +158,7 @@ class ImportFileRowListRequest(ListRequest):
 
 
 class ImportFileRowRead(BaseModel):
+    id: int
     source_row_number: int
     row_status: int
     source_reference: str
@@ -193,7 +194,7 @@ def parse_import_file_time(value: object, key: str) -> datetime:
             code="LIST_FILTER_VALUE_INVALID",
             details={"component": "filter", "key": key},
         )
-    return parsed
+    return parsed.astimezone(timezone.utc)
 
 
 def _validate_import_file_filter_values(request: ImportFileListRequest) -> None:

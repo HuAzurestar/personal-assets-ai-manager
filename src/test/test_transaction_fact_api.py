@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import FastAPI
@@ -46,7 +46,7 @@ def transaction_fact_api(tmp_path):
 
 
 def _seed(sessions):
-    now = datetime(2026, 9, 16, 9)
+    now = datetime(2026, 9, 16, 9, tzinfo=timezone.utc)
     with sessions() as db:
         imported = TransactionImportFile(
             batch_code="batch-1",

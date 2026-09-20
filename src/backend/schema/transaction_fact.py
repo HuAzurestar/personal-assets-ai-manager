@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError, model_validator
@@ -152,7 +152,7 @@ def parse_transaction_fact_time(value: object) -> datetime:
             code="LIST_FILTER_VALUE_INVALID",
             details={"component": "filter", "key": "occurred_time"},
         )
-    return parsed
+    return parsed.astimezone(timezone.utc)
 
 
 def _validate_transaction_fact_filter_values(

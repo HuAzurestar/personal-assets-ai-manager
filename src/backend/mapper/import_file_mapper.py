@@ -203,6 +203,7 @@ class ImportFileMapper:
             else TransactionImportRow.source_row_number.desc()
         )
         rows = self.db.execute(select(
+            TransactionImportRow.id,
             TransactionImportRow.source_row_number,
             TransactionImportRow.row_status,
             TransactionImportRow.source_reference,
@@ -229,6 +230,7 @@ class ImportFileMapper:
         result = []
         for row in rows:
             item = {
+                "id": row["id"],
                 "source_row_number": row["source_row_number"],
                 "row_status": row["row_status"],
                 "source_reference": row["source_reference"],

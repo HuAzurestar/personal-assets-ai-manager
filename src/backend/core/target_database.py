@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
@@ -38,16 +40,28 @@ TARGET_TABLE_NAMES = (
     "ledger_entry_tag",
 )
 
+SQL_ASSET_DIR = Path(__file__).resolve().parents[2] / "asset" / "sql"
+
 
 def ensure_target_schema(bind=None) -> None:
-    """Create the current schema; existing databases are not upgraded."""
+    """Create the reviewed SQLite schema from the authoritative SQL assets."""
 
     target_bind = engine if bind is None else bind
-    for table_name in TARGET_TABLE_NAMES:
-        TargetBase.metadata.tables[table_name].create(
-            bind=target_bind,
-            checkfirst=True,
-        )
+    if target_bind.dialect.name != "sqlite":
+        raise RuntimeError("PAAM target schema currently supports SQLite only")
+    connection = target_bind.raw_connection()
+    try:
+        driver = getattr(connection, "driver_connection", connection)
+        driver.execute("PRAGMA encoding = 'UTF-8'")
+        for table_name in TARGET_TABLE_NAMES:
+            path = SQL_ASSET_DIR / f"{table_name}.sql"
+            driver.executescript(path.read_text(encoding="utf-8"))
+        encoding = driver.execute("PRAGMA encoding").fetchone()[0]
+        if encoding.upper().replace("-", "") != "UTF8":
+            raise RuntimeError(f"SQLite database encoding is {encoding}, expected UTF-8")
+        driver.commit()
+    finally:
+        connection.close()
 
 
 def init_target_db(bind=None) -> None:

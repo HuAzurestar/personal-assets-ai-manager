@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
@@ -61,16 +62,34 @@ def list_ledger_entries(
 def ledger_entry_summary(
     date_from: date | None = None,
     date_to: date | None = None,
+    timezone_name: str = Query(default="Asia/Hong_Kong", alias="timezone"),
     db: Session = Depends(get_db),
 ):
     if date_from and date_to and date_from > date_to:
         raise HTTPException(status_code=422, detail="date_from must be before date_to")
+    try:
+        display_timezone = ZoneInfo(timezone_name)
+    except (ValueError, ZoneInfoNotFoundError) as error:
+        raise HTTPException(status_code=422, detail="invalid IANA timezone") from error
+    start = (
+        datetime.combine(date_from, time.min, tzinfo=display_timezone)
+        .astimezone(timezone.utc)
+        if date_from
+        else None
+    )
+    end = (
+        datetime.combine(date_to + timedelta(days=1), time.min, tzinfo=display_timezone)
+        .astimezone(timezone.utc)
+        if date_to
+        else None
+    )
     return LedgerEntrySummaryResponse(
         status=200,
         message="ok",
         body=LedgerEntryService(db).summary(LedgerEntrySummaryQuery(
-            date_from=date_from,
-            date_to=date_to,
+            occurred_time_start=start,
+            occurred_time_end=end,
+            display_timezone=display_timezone,
         )),
     )
 

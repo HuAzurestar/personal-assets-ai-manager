@@ -988,6 +988,9 @@
 .module-heading h1 { margin:4px 0 7px; font-size:clamp(25px,2.2vw,34px); }
 .module-heading p { max-width:720px; }
 .page-actions { display:flex; align-items:center; justify-content:flex-end; }
+
+.timezone-control { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); }
+.timezone-control select { min-width:86px; }
 .module-subbar {
   display:grid;
   grid-template-columns:minmax(0,1fr) minmax(360px,.72fr);
