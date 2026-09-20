@@ -59,13 +59,23 @@ export function zonedISOString(value, exclusiveEnd = false) {
     target.getUTCHours(), target.getUTCMinutes(), target.getUTCSeconds(),
   );
   const timeZone = selectedTimeZone();
-  let instant = desired;
-  for (let attempt = 0; attempt < 3; attempt++) {
+  const wallClockValue = (instant) => {
     const parts = wallClockParts(instant, timeZone);
-    const represented = Date.UTC(parts[0], parts[1] - 1, parts[2], parts[3], parts[4], parts[5]);
-    instant += desired - represented;
+    return Date.UTC(parts[0], parts[1] - 1, parts[2], parts[3], parts[4], parts[5]);
+  };
+  const offsets = new Set();
+  for (let hours = -36; hours <= 36; hours += 6) {
+    const sample = desired + hours * 3_600_000;
+    offsets.add(wallClockValue(sample) - sample);
   }
-  return new Date(instant).toISOString();
+  const matches = [...new Set(
+    [...offsets]
+      .map((offset) => desired - offset)
+      .filter((instant) => wallClockValue(instant) === desired),
+  )];
+  if (!matches.length) throw new Error(`本地时间在 ${timeZone} 不存在：${value}`);
+  if (matches.length > 1) throw new Error(`本地时间在 ${timeZone} 不唯一：${value}`);
+  return new Date(matches[0]).toISOString();
 }
 
 export function date(value) {

@@ -93,14 +93,19 @@ class TargetFactConflictService:
                 if payload.existing_bill_id:
                     raise TargetReviewError(422, "CREATE_NEW does not accept existing_bill_id")
                 fact_id = self._create_fact(row)
+            now = self._next_update_time(row["updated_time"])
             if not self.mapper.update_status(
                 conflict_id,
                 previous_updated_time=row["updated_time"],
                 row_status=IMPORT_ROW_STATUS_ACCEPTED,
                 transaction_fact_id=fact_id,
-                now=self._next_update_time(row["updated_time"]),
+                now=now,
             ):
                 raise TargetReviewError(409, "conflict changed; reload before writing")
+            if not self.mapper.refresh_file_summary(
+                row["transaction_import_file_id"], now
+            ):
+                raise TargetReviewError(409, "import file is missing; reload before writing")
             self.economic.ensure_defaults([fact_id])
             self.mapper.commit()
             return self.detail(conflict_id)
@@ -136,14 +141,19 @@ class TargetFactConflictService:
         try:
             self.mapper.begin_write()
             row = self._current(conflict_id, payload.expected_version, expected_status)
+            now = self._next_update_time(row["updated_time"])
             if not self.mapper.update_status(
                 conflict_id,
                 previous_updated_time=row["updated_time"],
                 row_status=row_status,
                 transaction_fact_id=0,
-                now=self._next_update_time(row["updated_time"]),
+                now=now,
             ):
                 raise TargetReviewError(409, "conflict changed; reload before writing")
+            if not self.mapper.refresh_file_summary(
+                row["transaction_import_file_id"], now
+            ):
+                raise TargetReviewError(409, "import file is missing; reload before writing")
             self.mapper.commit()
             return self.detail(conflict_id)
         except TargetReviewError:

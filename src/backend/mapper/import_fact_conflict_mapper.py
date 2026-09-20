@@ -2,14 +2,18 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import func, select, text, update
+from sqlalchemy import case, func, select, text, update
 from sqlalchemy.orm import Session
 
 from backend.entity import (
+    IMPORT_FILE_STATUS_FAILED,
+    IMPORT_FILE_STATUS_IMPORTED,
+    IMPORT_FILE_STATUS_PARTIAL,
     IMPORT_ROW_STATUS_ACCEPTED,
     IMPORT_ROW_STATUS_INVALID,
     IMPORT_ROW_STATUS_SKIPPED,
     TransactionFact,
+    TransactionImportFile,
     TransactionImportRow,
 )
 
@@ -58,6 +62,7 @@ class ImportFactConflictMapper:
         rows = self.db.execute(select(
             TransactionImportRow.id,
             TransactionImportRow.transaction_fact_id,
+            TransactionImportRow.transaction_import_file_id,
             TransactionImportRow.raw_payload,
             TransactionImportRow.raw_hash,
             TransactionImportRow.row_status,
@@ -95,6 +100,43 @@ class ImportFactConflictMapper:
         ).values(
             row_status=row_status,
             transaction_fact_id=transaction_fact_id,
+            updated_time=now,
+        ))
+        return result.rowcount == 1
+
+    def refresh_file_summary(self, import_file_id: int, now: datetime) -> bool:
+        summary = self.db.execute(select(
+            func.count(TransactionImportRow.id).label("total_count"),
+            func.coalesce(func.sum(case(
+                (TransactionImportRow.row_status == IMPORT_ROW_STATUS_ACCEPTED, 1),
+                else_=0,
+            )), 0).label("success_count"),
+            func.coalesce(func.sum(case(
+                (TransactionImportRow.row_status == IMPORT_ROW_STATUS_SKIPPED, 1),
+                else_=0,
+            )), 0).label("skip_count"),
+        ).where(
+            TransactionImportRow.transaction_import_file_id == import_file_id
+        )).mappings().one()
+        total_count = int(summary["total_count"])
+        success_count = int(summary["success_count"])
+        skip_count = int(summary["skip_count"])
+        issue_count = total_count - success_count - skip_count
+        status = (
+            IMPORT_FILE_STATUS_FAILED
+            if issue_count and not success_count
+            else IMPORT_FILE_STATUS_PARTIAL
+            if issue_count
+            else IMPORT_FILE_STATUS_IMPORTED
+        )
+        result = self.db.execute(update(TransactionImportFile).where(
+            TransactionImportFile.id == import_file_id
+        ).values(
+            total_count=total_count,
+            success_count=success_count,
+            skip_count=skip_count,
+            issue_count=issue_count,
+            status=status,
             updated_time=now,
         ))
         return result.rowcount == 1

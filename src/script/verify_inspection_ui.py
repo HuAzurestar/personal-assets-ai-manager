@@ -76,8 +76,11 @@ def verify_filters(page, base):
         query = parse_qs(urlparse(response.url).query)
         expressions = json.loads(query["filter"][0])["expression"]
         end = next(item["val"] for item in expressions if item["op"] == "<")
-        assert "T10:16:00" in end, end
-        assert all("2026-09-17T00:00" <= row["occurred_time"] < "2026-09-17T10:16" for row in response.json()["body"]["items"])
+        assert end == "2026-09-17T02:16:00.000Z", end
+        assert all(
+            "2026-09-16T16:00" <= row["occurred_time"] < "2026-09-17T02:16"
+            for row in response.json()["body"]["items"]
+        )
         page.wait_for_load_state("networkidle")
         page.locator('[data-action="detail-clear"]').click()
         page.wait_for_load_state("networkidle")
@@ -210,15 +213,16 @@ def run():
                 assert summary["allocation_count"] == 26
                 assert summary["totals"] == [{"currency_code": "CNY", "entry_direction": 2, "amount": sum(row["amount"] for row in facts)}]
 
-                from datetime import datetime
+                from datetime import datetime, timezone
                 from backend.entity import TransactionFact
                 from backend.service.target_economic_service import TargetEconomicService
                 with target_database.SessionLocal() as db:
+                    mixed_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
                     mixed_facts = [TransactionFact(
-                        fact_key=f"inspection-{currency}", occurred_time=datetime(2026, 1, 1),
+                        fact_key=f"inspection-{currency}", occurred_time=mixed_time,
                         cash_direction=flow_direction, amount=value, currency_code=currency,
                         account_code="a" * 64, counterparty_name="", counterparty_account_ref="", summary="",
-                        created_time=datetime(2026, 1, 1), updated_time=datetime(2026, 1, 1),
+                        created_time=mixed_time, updated_time=mixed_time,
                     ) for currency, flow_direction, value in [("CNY_4", 1, 12345), ("USD", 2, 456)]]
                     db.add_all(mixed_facts)
                     db.commit()
@@ -244,7 +248,7 @@ def run():
                         const {date}=await import('/static/js/util/core.js');
                         return [date('2026-09-17T10:26:00'),date('2026-09-17T10:26:00Z')];
                     }""")
-                    assert displayed_dates == ['2026-09-17 10:26', '2026-09-17 18:26']
+                    assert displayed_dates == ['时间缺少时区', '2026-09-17 18:26']
 
                     def open_detail(kind, record_id):
                         page.evaluate("""async ({kind,id}) => {

@@ -77,6 +77,24 @@ def run() -> None:
                 errors: list[str] = []
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 page.goto(base_url)
+                timezone_result = page.evaluate("""async () => {
+                    const time = await import('/static/js/util/core.js');
+                    time.setSelectedTimeZone('Europe/London');
+                    const result = {
+                        normal: time.zonedISOString('2026-03-30T01:30'),
+                        gap: '',
+                        overlap: '',
+                    };
+                    try { time.zonedISOString('2026-03-29T01:30'); }
+                    catch (error) { result.gap = error.message; }
+                    try { time.zonedISOString('2026-10-25T01:30'); }
+                    catch (error) { result.overlap = error.message; }
+                    time.setSelectedTimeZone('Asia/Hong_Kong');
+                    return result;
+                }""")
+                assert timezone_result["normal"] == "2026-03-30T00:30:00.000Z"
+                assert "不存在" in timezone_result["gap"]
+                assert "不唯一" in timezone_result["overlap"]
                 expect(page.locator('[data-form="fact-filter"]')).to_be_visible()
                 expect(page.locator(".module-heading")).to_be_hidden()
                 expect(page.locator(".module-nav [data-module]")).to_have_count(3)

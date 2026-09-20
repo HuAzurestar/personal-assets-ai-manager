@@ -40,7 +40,7 @@ from backend.entity import (
 from backend.mapper.target_import_match_mapper import TargetImportMatchMapper
 from backend.mapper.target_import_read_mapper import TargetImportReadMapper
 from backend.mapper.target_import_write_mapper import TargetImportWriteMapper
-from backend.parser.statement_parser import parse_statement
+from backend.parser.statement_parser import parse_statement, timestamp
 from backend.service.target_economic_service import TargetEconomicService
 
 
@@ -515,12 +515,20 @@ def test_target_fact_conflict_stays_on_import_row(target_import_api):
             TransactionImportRow.issue_code == "FACT_CONFLICT"
         ))
         conflict_id = raw.id
+        conflict_file_id = raw.transaction_import_file_id
         existing_fact_id = db.scalar(select(TransactionFact.id))
         assert (raw.row_status, raw.transaction_fact_id) == (
             IMPORT_ROW_STATUS_INVALID,
             0,
         )
         assert db.query(ReviewCase).count() == 1
+        import_file = db.get(TransactionImportFile, conflict_file_id)
+        assert (
+            import_file.success_count,
+            import_file.skip_count,
+            import_file.issue_count,
+            import_file.status,
+        ) == (0, 0, 1, IMPORT_FILE_STATUS_FAILED)
 
     listed = client.get(
         "/paam/import/v1/fact_conflict/list",
@@ -540,6 +548,14 @@ def test_target_fact_conflict_stays_on_import_row(target_import_api):
     )
     assert dismissed.status_code == 200, dismissed.text
     assert dismissed.json()["body"]["status"] == "REJECTED"
+    with sessions() as db:
+        import_file = db.get(TransactionImportFile, conflict_file_id)
+        assert (
+            import_file.success_count,
+            import_file.skip_count,
+            import_file.issue_count,
+            import_file.status,
+        ) == (0, 1, 0, IMPORT_FILE_STATUS_IMPORTED)
     stale = client.post(
         f"/paam/import/v1/fact_conflict/{conflict_id}/reopen",
         json={"expected_version": detail["version"]},
@@ -552,6 +568,14 @@ def test_target_fact_conflict_stays_on_import_row(target_import_api):
         json={"expected_version": rejected["version"]},
     )
     assert reopened.status_code == 200, reopened.text
+    with sessions() as db:
+        import_file = db.get(TransactionImportFile, conflict_file_id)
+        assert (
+            import_file.success_count,
+            import_file.skip_count,
+            import_file.issue_count,
+            import_file.status,
+        ) == (0, 0, 1, IMPORT_FILE_STATUS_FAILED)
     resolved = client.post(
         f"/paam/import/v1/fact_conflict/{conflict_id}/resolve",
         json={
@@ -562,6 +586,14 @@ def test_target_fact_conflict_stays_on_import_row(target_import_api):
     )
     assert resolved.status_code == 200, resolved.text
     assert resolved.json()["body"]["status"] == "CONFIRMED"
+    with sessions() as db:
+        import_file = db.get(TransactionImportFile, conflict_file_id)
+        assert (
+            import_file.success_count,
+            import_file.skip_count,
+            import_file.issue_count,
+            import_file.status,
+        ) == (1, 0, 0, IMPORT_FILE_STATUS_IMPORTED)
 
     unsupported = client.get(
         "/paam/import/v1/fact_conflict/list",
@@ -593,3 +625,11 @@ def test_import_router_rejects_unknown_source_timezone(target_import_api):
         },
     )
     assert response.status_code == 422
+
+
+def test_statement_timestamp_rejects_dst_gap_and_overlap():
+    london = ZoneInfo("Europe/London")
+    with pytest.raises(ValueError, match="不存在"):
+        timestamp("2026-03-29 01:30", "", london)
+    with pytest.raises(ValueError, match="重复"):
+        timestamp("2026-10-25 01:30", "", london)

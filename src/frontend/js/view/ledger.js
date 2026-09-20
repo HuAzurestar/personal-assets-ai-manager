@@ -1105,6 +1105,13 @@ function bindPage(root) {
       event.preventDefault();
       const params = new URLSearchParams();
       const data = new FormData(form);
+      try {
+        if (data.get("date_from")) filterBoundary(data.get("date_from"));
+        if (data.get("date_to")) filterBoundary(data.get("date_to"), true);
+      } catch (error) {
+        showFormError(form, error);
+        return;
+      }
       for (const [name, value] of data) if (value && name !== "sort") params.set(name, value);
       const [sortField, sortOrder] = String(data.get("sort") || "").split(".");
       if (sortField && sortOrder) {

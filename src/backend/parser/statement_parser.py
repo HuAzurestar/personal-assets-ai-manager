@@ -51,6 +51,22 @@ def amount_minor(value: str) -> int:
     return amount_from_decimal(value, "CNY")
 
 
+def _statement_utc_time(local_time: datetime, source_timezone: tzinfo) -> datetime:
+    candidates = set()
+    for fold in (0, 1):
+        candidate = local_time.replace(
+            tzinfo=source_timezone,
+            fold=fold,
+        ).astimezone(timezone.utc)
+        if candidate.astimezone(source_timezone).replace(tzinfo=None) == local_time:
+            candidates.add(candidate)
+    if not candidates:
+        raise ValueError("交易时间处于时区切换的不存在区间")
+    if len(candidates) > 1:
+        raise ValueError("交易时间处于夏令时重复区间，账单缺少明确偏移")
+    return candidates.pop()
+
+
 def timestamp(value: str, clock: str, source_timezone: tzinfo) -> tuple[str, str]:
     value = value.strip()
     if re.fullmatch(r"\d{8}\.0", value):
@@ -70,16 +86,14 @@ def timestamp(value: str, clock: str, source_timezone: tzinfo) -> tuple[str, str
     ]
     for pattern, precision in patterns:
         try:
-            local_time = datetime.strptime(value, pattern).replace(
-                tzinfo=source_timezone
-            )
-            utc_time = local_time.astimezone(timezone.utc)
-            return (
-                utc_time.isoformat(timespec="seconds").replace("+00:00", "Z"),
-                precision,
-            )
+            local_time = datetime.strptime(value, pattern)
         except ValueError:
-            pass
+            continue
+        utc_time = _statement_utc_time(local_time, source_timezone)
+        return (
+            utc_time.isoformat(timespec="seconds").replace("+00:00", "Z"),
+            precision,
+        )
     raise ValueError("交易日期或时间无法识别")
 
 
