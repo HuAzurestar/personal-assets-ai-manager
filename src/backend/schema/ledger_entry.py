@@ -30,6 +30,7 @@ class LedgerEntryListRequest(ListRequest):
                 "entry_direction": ("=",),
                 "currency_code": ("=",),
                 "account_code": ("=",),
+                "active": ("=",),
             },
             sorter_fields=("occurred_time", "amount"),
             logical_operators=("AND",),
@@ -47,6 +48,7 @@ class LedgerEntryFilter(BaseModel):
     entry_direction: int | None = None
     currency_code: str | None = None
     account_code: str | None = None
+    active: bool | None = None
     occurred_time_start: datetime | None = None
     occurred_time_end: datetime | None = None
 
@@ -71,6 +73,7 @@ class LedgerEntryTagRead(BaseModel):
 
 class LedgerEntryListItem(BaseModel):
     id: int
+    active: bool
     summary: str
     review_behavior_type: int
     entry_type: int
@@ -213,6 +216,8 @@ def _validate_ledger_entry_filter_values(request: LedgerEntryListRequest) -> Non
             else:
                 parse_ledger_entry_time(value)
                 valid = True
+        elif expression.key == "active":
+            valid = isinstance(value, bool)
         elif expression.key == "entry_type":
             valid = isinstance(value, int) and not isinstance(value, bool) and value in {0, 1, 2}
         elif expression.key == "entry_direction":

@@ -152,6 +152,7 @@ def test_transaction_fact_detail_follows_allocation_relationships(
     assert allocation["transaction_fact_id"] == fact_id
     assert allocation["review_case_id"] == body["reviews"][0]["id"]
     assert allocation["ledger_entry_id"] == body["ledgers"][0]["id"]
+    assert body["ledgers"][0]["active"] is True
 
     with sessions() as db:
         mapper = TargetEconomicMapper(db)

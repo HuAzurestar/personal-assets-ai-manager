@@ -73,7 +73,9 @@ def test_openapi_locks_canonical_ledger_v1_contract():
         assert schemas[name]["properties"]["status"]["const"] == 200
 
     entry_properties = set(schemas["LedgerEntryListItem"]["properties"])
-    assert {"entry_type", "entry_direction", "amount", "currency_code"} <= entry_properties
+    assert {
+        "active", "entry_type", "entry_direction", "amount", "currency_code"
+    } <= entry_properties
     assert {"economic_type", "cash_direction", "projection_version"}.isdisjoint(entry_properties)
     detail_properties = set(schemas["LedgerEntryDetailRead"]["properties"])
     assert "ledger_entry" in detail_properties
@@ -104,6 +106,8 @@ def test_openapi_locks_canonical_ledger_v1_contract():
     )
     assert {"review_case_id", "transaction_fact_id", "ledger_entry_id"} <= review_allocation_properties
     assert {"fact_id", "economic_id"}.isdisjoint(review_allocation_properties)
+    assert "active" in schemas["TargetEconomicFlowRead"]["properties"]
+    assert "active" in schemas["TransactionFactLedgerRead"]["properties"]
 
     for path in ("/paam/ledger/v1/flow/list", "/paam/ledger/v1/review/list"):
         parameters = specification["paths"][path]["get"]["parameters"]
@@ -357,10 +361,17 @@ def test_target_review_confirm_revoke_restore_rebuilds_projection(
             assert revoked.status_code == 200, revoked.text
             case = revoked.json()["body"]
             assert case["status"] == 1
+            assert all(not row["active"] for row in case["ledger_entries"])
             assert case["history"][-1]["operation"] == 2
             page = client.get("/paam/ledger/v1/flow/list").json()["body"]
             assert page["total"] == 6
             assert {item["entry_type"] for item in page["items"]} == {0, 1}
+            assert sum(item["active"] for item in page["items"]) == 2
+            for fact_id in fact_ids:
+                fact_detail = client.get(
+                    f"/paam/ledger/v1/transaction_fact/{fact_id}"
+                ).json()["body"]
+                assert sum(row["active"] for row in fact_detail["ledgers"]) == 1
 
             restored = client.post(
                 f"/paam/ledger/v1/review/{case['id']}/restore",

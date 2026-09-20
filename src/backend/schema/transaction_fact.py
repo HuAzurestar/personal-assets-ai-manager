@@ -114,6 +114,7 @@ class TransactionFactReviewRead(BaseModel):
 
 class TransactionFactLedgerRead(BaseModel):
     id: int
+    active: bool
     entry_type: int
     entry_direction: int
     amount: int

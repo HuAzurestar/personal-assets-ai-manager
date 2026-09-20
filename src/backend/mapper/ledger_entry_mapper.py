@@ -64,6 +64,7 @@ class LedgerEntryMapper:
             orders = [LedgerEntry.currency_code.asc(), order, id_order]
         rows = self.db.execute(select(
             *self._flow_columns(),
+            (ReviewCase.status == 0).label("active"),
             TransactionFact.summary.label("summary"),
             ReviewCase.behavior_type.label("review_behavior_type"),
         ).join(
@@ -196,6 +197,14 @@ class LedgerEntryMapper:
             clauses.append(LedgerEntry.entry_direction == filter_value.entry_direction)
         if filter_value.account_code:
             clauses.append(LedgerEntry.account_code == filter_value.account_code)
+        if filter_value.active is not None:
+            clauses.append(exists(select(ReviewAllocation.id).join(
+                ReviewCase,
+                ReviewCase.id == ReviewAllocation.review_case_id,
+            ).where(
+                ReviewAllocation.ledger_entry_id == LedgerEntry.id,
+                ReviewCase.status == (0 if filter_value.active else 1),
+            )))
         return clauses
 
     @staticmethod

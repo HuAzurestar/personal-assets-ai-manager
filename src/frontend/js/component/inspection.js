@@ -85,15 +85,17 @@ function allocationSection(presentation, allocations, facts, ledgers, reviews, c
   const factMap = new Map(facts.map(row => [row.id, row]));
   const ledgerMap = new Map(ledgers.map(row => [row.id, row]));
   const reviewMap = new Map(reviews.map(row => [row.id, row]));
+  const isActive = row => ledgerMap.get(row.ledger_entry_id)?.active
+    ?? (reviewMap.get(row.review_case_id)?.status === 0);
   const render = row => {
     const fact = factMap.get(row.transaction_fact_id);
     const ledger = ledgerMap.get(row.ledger_entry_id);
     const review = reviewMap.get(row.review_case_id);
-    const active = review?.status === 0;
-    return `<article class="inspection-flow ${active ? "is-active" : "is-history"}"><div class="inspection-flow-main"><span>${active ? "当前生效" : "历史记录"}</span><strong>${esc(amount(row))}</strong><p>${esc(businessTitle(fact || review || {}))}</p><small>${esc(`${behavior[review?.behavior_type] || "类型未识别"} → ${typeNames[ledger?.entry_type] || "账本分类未识别"} · ${direction(ledger?.entry_direction)}`)}</small></div><div class="inspection-flow-actions">${context.kind === "fact" ? "" : relationButton("fact", row.transaction_fact_id, "查看来源事实")}${context.kind === "review" ? "" : relationButton("review", row.review_case_id, "查看审查")}${context.kind === "ledger" ? "" : relationButton("ledger", row.ledger_entry_id, "查看账本结果")}</div></article>`;
+    const active = isActive(row);
+    return `<article class="inspection-flow ${active ? "is-active" : "is-history"}"><div class="inspection-flow-main"><span>${active ? "Ledger 有效" : "Ledger 已停用"}</span><strong>${esc(amount(row))}</strong><p>${esc(businessTitle(fact || review || {}))}</p><small>${esc(`${behavior[review?.behavior_type] || "类型未识别"} → ${typeNames[ledger?.entry_type] || "账本分类未识别"} · ${direction(ledger?.entry_direction)}`)}</small></div><div class="inspection-flow-actions">${context.kind === "fact" ? "" : relationButton("fact", row.transaction_fact_id, "查看来源事实")}${context.kind === "review" ? "" : relationButton("review", row.review_case_id, "查看审查")}${context.kind === "ledger" ? "" : relationButton("ledger", row.ledger_entry_id, "查看账本结果")}</div></article>`;
   };
-  const active = allocations.filter(row => reviewMap.get(row.review_case_id)?.status === 0);
-  const history = allocations.filter(row => reviewMap.get(row.review_case_id)?.status !== 0);
+  const active = allocations.filter(isActive);
+  const history = allocations.filter(row => !isActive(row));
   let result = card("当前资金关系", presentation.collection(active, render, "条关系"), { tone: "accent" });
   if (history.length) result += card("历史资金关系", presentation.collection(history, render, "条历史关系"), { tone: "muted" });
   return result;
@@ -175,12 +177,11 @@ function describe(kind, data) {
     item = data.ledger_entry;
     const fact = data.facts[0];
     title = businessTitle(fact || item);
-    const effective = data.reviews.some(row => row.status === 0);
-    subtitle = `${typeNames[item.entry_type] || "分类未识别"} · ${effective ? "当前生效" : "历史记录"} · ${direction(item.entry_direction)}`;
+    subtitle = `${typeNames[item.entry_type] || "分类未识别"} · ${item.active ? "Ledger 有效" : "Ledger 已停用"} · ${direction(item.entry_direction)}`;
     hero = amount(item);
     body = metrics([["账本金额", amount(item), "accent"], ["来源事实金额", fact ? amount(fact) : "未提供"], ["占来源事实", fact?.amount > 0 && fact.currency_code === item.currency_code ? `${(item.amount / fact.amount * 100).toFixed(2)}%` : "不适用"]])
       + '<div class="inspection-dashboard">'
-      + card("账本概览", fields([["摘要", item.summary], ["经济分类", typeNames[item.entry_type]], ["本方账户", readableAccount(item.account_code)], ["发生时间", when(item.occurred_time)]]), { tone: "accent" })
+      + card("账本概览", fields([["摘要", item.summary], ["有效状态", item.active ? "有效" : "已停用"], ["经济分类", typeNames[item.entry_type]], ["本方账户", readableAccount(item.account_code)], ["发生时间", when(item.occurred_time)]]), { tone: "accent" })
       + card("分类标签", item.tags.length ? `<div class="inspection-tags">${item.tags.map(tag => `<span><small>${esc(tag.view_name)}</small>${esc(tag.tag_name)}</span>`).join("")}</div>` : '<p class="inspection-empty">暂无标签</p>')
       + allocationSection(p, data.allocations, data.facts, [item], data.reviews, { kind, id: item.id }) + "</div>";
     actions = `<button data-action="edit-ledger-account" data-id="${item.id}">编辑账户</button><button data-action="edit-tags" data-id="${item.id}">编辑标签</button>`;
@@ -188,7 +189,7 @@ function describe(kind, data) {
     item = data;
     title = reviewTitle(item, item.facts);
     subtitle = `${behavior[item.behavior_type] || "类型未识别"} · ${statusNames[item.status] || "状态未识别"}`;
-    body = metrics([["涉及事实", item.facts.length], ["账本结果", item.ledger_entries.length, "accent"], ["最近更新", when(item.updated_time)]])
+    body = metrics([["涉及事实", item.facts.length], ["有效 Ledger", item.ledger_entries.filter(row => row.active).length, "accent"], ["账本结果", item.ledger_entries.length], ["最近更新", when(item.updated_time)]])
       + totals(item.ledger_entries, "entry_direction") + '<div class="inspection-dashboard">'
       + allocationSection(p, item.allocations, item.facts, item.ledger_entries, [item], { kind, id: item.id })
       + card(`变更记录 · ${item.history.length}`, p.collection(item.history, row => `<article class="inspection-history"><strong>${esc(operations[row.operation] || "操作未识别")}</strong><time>${esc(when(row.created_time))}</time><p>${esc(row.reason === "ensure exact accepted-fact coverage" ? "系统建立默认分配，确保事实金额完整入账" : row.reason || "未填写原因")}</p></article>`, "次变更")) + "</div>";

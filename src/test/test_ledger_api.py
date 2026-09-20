@@ -100,6 +100,7 @@ def test_ledger_v1_exposes_only_confirmed_cash_entry_fields(economic_api):
     item = page.json()["body"]["items"][0]
     assert set(item) == {
         "id",
+        "active",
         "summary",
         "review_behavior_type",
         "entry_type",
@@ -114,6 +115,7 @@ def test_ledger_v1_exposes_only_confirmed_cash_entry_fields(economic_api):
         "tags",
     }
     assert item["tags"] == []
+    assert item["active"] is True
     assert item["summary"] == "事实交易"
     assert item["review_behavior_type"] == 0
     assert (item["entry_type"], item["entry_direction"]) == (0, CASH_DIRECTION_OUT)
@@ -197,6 +199,13 @@ def test_ledger_lists_accept_whitelisted_filter_and_sorter_objects(economic_api)
     assert rejected.status_code == 422
     assert rejected.json()["body"]["code"] == "LIST_SORTER_FIELD_NOT_SUPPORTED"
 
+    rejected_active = client.get(
+        "/paam/ledger/v1/flow/list",
+        params={"filter": '{"key":"active","op":"=","val":1}'},
+    )
+    assert rejected_active.status_code == 422
+    assert rejected_active.json()["body"]["code"] == "LIST_FILTER_VALUE_INVALID"
+
 
 def test_ledger_list_loads_sparse_tags_with_fixed_query_count(economic_api):
     client, sessions = economic_api
@@ -260,6 +269,7 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
     assert response.json()["message"] == "ok"
     case = response.json()["body"]
     assert case["status"] == 0
+    assert all(row["active"] for row in case["ledger_entries"])
     assert [fact["id"] for fact in case["facts"]] == fact_ids
     assert len(case["ledger_entries"]) == 6
     assert len(case["allocations"]) == 6
@@ -294,6 +304,22 @@ def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_a
         json={"idempotency_key": "advance-revoke"},
     )
     assert revoked.status_code == 200, revoked.text
+    assert all(not row["active"] for row in revoked.json()["body"]["ledger_entries"])
+    active_page = client.get(
+        "/paam/ledger/v1/flow/list",
+        params={"filter": '{"key":"active","op":"=","val":true}'},
+    ).json()["body"]
+    inactive_page = client.get(
+        "/paam/ledger/v1/flow/list",
+        params={
+            "page_size": 100,
+            "filter": '{"key":"active","op":"=","val":false}',
+        },
+    ).json()["body"]
+    assert active_page["total"] == 5
+    assert all(row["active"] for row in active_page["items"])
+    assert inactive_page["total"] == 11
+    assert all(not row["active"] for row in inactive_page["items"])
     summary = client.get("/paam/ledger/v1/flow/summary").json()["body"]["totals"][0]
     assert summary["income_and_expense_in_amount"] == 40000
     assert summary["income_and_expense_out_amount"] == 50000

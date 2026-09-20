@@ -150,6 +150,7 @@ class TargetEconomicReviewCreateRequest(BaseModel):
 
 class TargetEconomicFlowRead(BaseModel):
     id: int
+    active: bool
     entry_type: int
     entry_direction: int
     amount: int

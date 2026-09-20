@@ -294,6 +294,7 @@ async function showFactDetail(id) {
 
 async function economicPage() {
   const selectedType = state.params.get("economic_type") || "";
+  const active = state.params.get("active") || "";
   const currency = (state.params.get("currency_code") || "").trim().toUpperCase();
   const direction = state.params.get("entry_direction") || "";
   const dateFrom = state.params.get("date_from") || "";
@@ -302,6 +303,7 @@ async function economicPage() {
   const sortOrder = state.params.get("sort_order") || "desc";
   const expressions = [];
   if (selectedType in entryTypeValues) expressions.push({ key: "entry_type", op: "=", val: entryTypeValues[selectedType] });
+  if (["true", "false"].includes(active)) expressions.push({ key: "active", op: "=", val: active === "true" });
   if (currency) expressions.push({ key: "currency_code", op: "=", val: currency });
   if (["1", "2"].includes(direction)) expressions.push({ key: "entry_direction", op: "=", val: Number(direction) });
   if (dateFrom) expressions.push({ key: "occurred_time", op: ">=", val: filterBoundary(dateFrom) });
@@ -319,11 +321,11 @@ async function economicPage() {
     const tags = (item.tags || []).filter((tag) => tag.tag_system_name !== "unclassified");
     const tagMarkup = tags.length ? `<small class="ledger-row-tags">${tags.map((tag) => `<span title="${esc(tag.view_name)}">${esc(tag.tag_name)}</span>`).join("")}</small>` : "";
     return `<tr class="detail-click-row" tabindex="0" data-economic-row="${item.id}">
-    <td><button type="button" class="detail-primary" data-action="economic-detail" data-id="${item.id}" data-inspect-title="${esc(item.summary || "未填写摘要")}" data-inspect-amount="${esc(compactAmount(item, item.entry_direction))}"><strong>${esc(item.summary || "未填写摘要")}</strong><small>Ledger #${item.id}</small>${tagMarkup}</button></td><td title="${esc(item.counterparty_account_ref || "")}">${esc(compactAccount(item.counterparty_account_ref) || "—")}</td><td class="mono fact-account" title="${esc(item.account_code)}">${esc(compactAccount(item.account_code))}</td><td class="fact-amount ${item.entry_direction === 1 ? "inflow" : "outflow"}">${esc(compactAmount(item, item.entry_direction))}</td><td>${date(item.occurred_time)}</td><td class="detail-arrow">→</td>
+    <td><button type="button" class="detail-primary" data-action="economic-detail" data-id="${item.id}" data-inspect-title="${esc(item.summary || "未填写摘要")}" data-inspect-amount="${esc(compactAmount(item, item.entry_direction))}"><strong>${esc(item.summary || "未填写摘要")}</strong><small>Ledger #${item.id}</small>${tagMarkup}</button></td><td><span class="badge ${item.active ? "" : "warn"}">${item.active ? "有效" : "已停用"}</span></td><td title="${esc(item.counterparty_account_ref || "")}">${esc(compactAccount(item.counterparty_account_ref) || "—")}</td><td class="mono fact-account" title="${esc(item.account_code)}">${esc(compactAccount(item.account_code))}</td><td class="fact-amount ${item.entry_direction === 1 ? "inflow" : "outflow"}">${esc(compactAmount(item, item.entry_direction))}</td><td>${date(item.occurred_time)}</td><td class="detail-arrow">→</td>
   </tr>`;
   }).join("");
-  const toolbar = `<form class="detail-filter ledger-detail-filter" data-form="economic-filter"><label>账本类型<select name="economic_type"><option value="">全部类型</option>${Object.keys(entryTypeValues).map((value) => `<option value="${value}" ${selectedType === value ? "selected" : ""}>${esc(typeNames[value] || value)}</option>`).join("")}</select></label><label>收支方向${directionSelect("entry_direction", direction)}</label><label>币种${currencySelect(currency)}</label>${dateTimeRangeControl(dateFrom, dateTo)}<label class="grow">排序${sortPresetSelect(sortField, sortOrder)}</label><div class="detail-filter-actions"><button type="button" class="quiet" data-action="detail-clear" data-page-id="economy">清空</button></div></form>`;
-  return detailListView({ active: "economy", toolbar, title: "Ledger", description: "数据库中的 Ledger PO；摘要来自关联 Fact，行为类型来自创建它的 Review。", total: result.total, headers: ["摘要", "对手账户", "本方账户", "金额", "发生时间", ""], rows, footer: detailPager(result, "economy") });
+  const toolbar = `<form class="detail-filter ledger-detail-filter" data-form="economic-filter"><label>账本类型<select name="economic_type"><option value="">全部类型</option>${Object.keys(entryTypeValues).map((value) => `<option value="${value}" ${selectedType === value ? "selected" : ""}>${esc(typeNames[value] || value)}</option>`).join("")}</select></label><label>有效状态<select name="active"><option value="">全部状态</option><option value="true" ${active === "true" ? "selected" : ""}>有效</option><option value="false" ${active === "false" ? "selected" : ""}>已停用</option></select></label><label>收支方向${directionSelect("entry_direction", direction)}</label><label>币种${currencySelect(currency)}</label>${dateTimeRangeControl(dateFrom, dateTo)}<label class="grow">排序${sortPresetSelect(sortField, sortOrder)}</label><div class="detail-filter-actions"><button type="button" class="quiet" data-action="detail-clear" data-page-id="economy">清空</button></div></form>`;
+  return detailListView({ active: "economy", toolbar, title: "Ledger", description: "数据库中的 Ledger PO；摘要来自关联 Fact，行为类型与有效状态来自创建它的 Review。", total: result.total, headers: ["摘要", "有效状态", "对手账户", "本方账户", "金额", "发生时间", ""], rows, footer: detailPager(result, "economy") });
 }
 
 async function showEconomicDetail(id) {

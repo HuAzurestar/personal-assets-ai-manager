@@ -92,6 +92,7 @@ class LedgerEntryService:
         return LedgerEntryDetailRead(
             ledger_entry=LedgerEntryDetailItem(
                 **ledger_entry,
+                active=any(review["status"] == 0 for review in reviews),
                 summary=self._summary(
                     facts[0]["summary"], reviews[0]["behavior_type"]
                 ),

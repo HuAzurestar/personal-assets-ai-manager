@@ -56,6 +56,14 @@ def verify_filters(page, base):
             assert json.loads(query["filter"][0]) == {"key": direction, "op": "=", "val": int(value)}
         body, _ = change(form, "currency_code", "CNY", endpoint)
         assert all(row["currency_code"] == "CNY" for row in body["items"])
+        if route == "economy":
+            expect(page.locator(".detail-data-table thead")).to_contain_text("有效状态")
+            for value in ["true", "false"]:
+                body, query = change(form, "active", value, endpoint)
+                expected = value == "true"
+                assert all(row["active"] is expected for row in body["items"])
+                expressions = json.loads(query["filter"][0])["expression"]
+                assert {"key": "active", "op": "=", "val": expected} in expressions
         for value in ["amount.asc", "amount.desc", "occurred_time.asc", "occurred_time.desc"]:
             body, query = change(form, "sort", value, endpoint)
             field, order = value.split(".")
@@ -356,6 +364,8 @@ def run():
 
                     drawer = open_detail("fact", fact["id"])
                     expect(drawer.locator(".inspection-metrics")).to_contain_text("¥0.00")
+                    expect(drawer.locator(".inspection-body")).to_contain_text("Ledger 有效")
+                    expect(drawer.locator(".inspection-body")).to_contain_text("Ledger 已停用")
                     expect(drawer).not_to_contain_text("事实身份键")
                     expect(drawer).not_to_contain_text("SHA-256")
                     related = drawer.locator('.inspection-link[data-kind="review"]').first
@@ -375,6 +385,7 @@ def run():
                     drawer.locator("[data-close]").click()
 
                     drawer = open_detail("review", review_id)
+                    expect(drawer.locator(".inspection-body")).to_contain_text("Ledger 已停用")
                     historical = drawer.locator('.inspection-card').filter(has=page.locator(':scope > h3', has_text="历史资金关系"))
                     expect(historical.locator('.inspection-flow')).to_have_count(2)
                     drawer.locator('[data-close]').click()

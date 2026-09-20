@@ -554,6 +554,7 @@ class TargetEconomicMapper:
             ) for fact in facts],
             ledger_entries=[TargetEconomicFlowRead(
                 id=row["id"],
+                active=case["status"] == 0,
                 entry_type=row["entry_type"],
                 entry_direction=row["entry_direction"],
                 amount=row["amount"],

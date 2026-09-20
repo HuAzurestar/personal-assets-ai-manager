@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from backend.entity import (
     LedgerEntry,
+    ReviewAllocation,
     ReviewCase,
     TransactionFact,
     TransactionImportFile,
@@ -148,12 +149,19 @@ class TransactionFactMapper:
             return []
         rows = self.db.execute(select(
             LedgerEntry.id,
+            (ReviewCase.status == 0).label("active"),
             LedgerEntry.entry_type,
             LedgerEntry.entry_direction,
             LedgerEntry.amount,
             LedgerEntry.currency_code,
             LedgerEntry.account_code,
             LedgerEntry.occurred_time,
+        ).join(
+            ReviewAllocation,
+            ReviewAllocation.ledger_entry_id == LedgerEntry.id,
+        ).join(
+            ReviewCase,
+            ReviewCase.id == ReviewAllocation.review_case_id,
         ).where(
             LedgerEntry.id.in_(economic_ids),
         ).order_by(LedgerEntry.occurred_time.desc(), LedgerEntry.id.desc())).mappings().all()
