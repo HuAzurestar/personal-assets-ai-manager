@@ -12,8 +12,12 @@ Schema conventions:
   text uses `NOT NULL DEFAULT ''`; optional JSON alone may use `NULL`.
 - Integer enum comments list every persisted value. `DEFAULT 0` is used only when
   zero is a valid domain state, never to bypass a required relationship or amount.
-- Times are ISO-8601 text. Generated audit timestamps use UTC with a `Z` suffix;
-  source occurrence times must be normalized before persistence.
+- Times are ISO-8601 text with exactly six fractional digits. Generated audit
+  timestamps use UTC with a `Z` suffix; source occurrence times must be
+  normalized before persistence. SQLite defaults zero-fill digits unavailable
+  from its clock, while application writes preserve all available microseconds.
+  Database initialization pads legacy millisecond values to six fractional
+  digits so text ordering and optimistic-lock equality remain valid.
 
 These files describe the destination schema. Runtime entities and migrations move
 to it in separate, green commits so an intermediate commit never silently changes

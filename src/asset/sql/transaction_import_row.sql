@@ -11,8 +11,8 @@ CREATE TABLE IF NOT EXISTS transaction_import_row /* 来源文件中的一行不
     row_status INTEGER NOT NULL DEFAULT 0 /* 行处理状态：0=UNKNOWN，1=ACCEPTED，2=SKIPPED，3=INVALID */,
     issue_code TEXT NOT NULL DEFAULT '' /* 稳定的机器错误代码 */,
     issue_message TEXT NOT NULL DEFAULT '' /* 用户可读的错误说明 */,
-    created_time TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) /* 创建时间，UTC ISO-8601 */,
-    updated_time TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) /* 仅处理状态和关联变化时更新 */,
+    created_time TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')) /* 创建时间，UTC ISO-8601 微秒格式 */,
+    updated_time TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')) /* 仅处理状态和关联变化时更新 */,
     UNIQUE (transaction_import_file_id, source_row_number)
 );
 

@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS transaction_import_file /* 一次交易数据导入�
     skip_count INTEGER NOT NULL DEFAULT 0 /* 重复或明确跳过的行数 */,
     issue_count INTEGER NOT NULL DEFAULT 0 /* 解析失败或冲突的行数 */,
     status INTEGER NOT NULL DEFAULT 0 /* 导入状态：0=PENDING，1=IMPORTED，2=PARTIAL，3=FAILED */,
-    created_time TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) /* 创建时间，UTC ISO-8601 */,
-    updated_time TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) /* 最后更新时间，UTC ISO-8601 */,
+    created_time TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')) /* 创建时间，UTC ISO-8601 微秒格式 */,
+    updated_time TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')) /* 最后更新时间，UTC ISO-8601 微秒格式 */,
     UNIQUE (sha256)
 );

@@ -533,10 +533,11 @@ async function mountEconomicReviewEditor(root) {
     if (!selected.size) throw new Error("请选择至少一条待审查流水");
     if (!ledgers.length) throw new Error("请至少配置一条 Ledger");
     const totals = new Map();
-    const allocations = ledgers.map((item) => {
+    const allocations = ledgers.map((item, index) => {
       const fact = facts.get(item.factId);
       if (!selected.has(item.factId) || !fact) throw new Error("Ledger 必须关联已选择的 Fact");
       const amountValue = decimalAmount(item.amount, fact.currency_code);
+      if (amountValue === null) throw new Error(`Ledger ${index + 1} 请填写分配金额`);
       totals.set(fact.id, (totals.get(fact.id) || 0) + amountValue);
       return { fact_id: fact.id, economic_key: item.key, amount: amountValue };
     });

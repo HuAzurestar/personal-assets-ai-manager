@@ -74,4 +74,4 @@ class TargetTagAssignmentService:
     def _next_update_time(previous: datetime | None) -> datetime:
         if previous is None:
             return utc_now()
-        return max(utc_now(), previous + timedelta(milliseconds=1))
+        return max(utc_now(), previous + timedelta(microseconds=1))

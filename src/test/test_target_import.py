@@ -2,7 +2,7 @@ import base64
 import csv
 import io
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import openpyxl
@@ -17,10 +17,12 @@ import backend.service.target_intake_service as target_intake_service_module
 from backend.core import target_database
 from backend import target_main
 from backend.core.intake_preview_store import (
+    IMPORT_PREVIEW_TIMEOUT,
     IntakePreviewState,
     IntakePreviewStore,
     target_intake_preview_store,
 )
+from backend.entity.base import utc_now
 from backend.entity import (
     CASH_DIRECTION_IN,
     CASH_DIRECTION_OUT,
@@ -46,6 +48,7 @@ from backend.mapper.target_import_read_mapper import TargetImportReadMapper
 from backend.mapper.target_import_write_mapper import TargetImportWriteMapper
 from backend.parser.statement_parser import parse_statement, timestamp
 from backend.service.target_economic_service import TargetEconomicService
+from backend.service.target_intake_service import TargetIntakeService
 
 
 HEADERS = [
@@ -128,6 +131,49 @@ def test_intake_preview_store_rejects_stale_replacement():
     assert retained.updated_time > stale.updated_time
     assert retained.result == {"status": "confirmed"}
     assert retained.plan == {"version": "initial"}
+
+
+def test_intake_preview_timeout_defaults_to_thirty_minutes():
+    state = IntakePreviewState(token="preview-token", documents=[], plan={})
+    assert state.timeout == timedelta(minutes=30)
+    assert state.timeout == IMPORT_PREVIEW_TIMEOUT
+
+
+def test_timed_out_preview_can_still_be_confirmed(target_import_api):
+    client, sessions, _engine = target_import_api
+    preview = _preview(client, "expired.csv", _csv())
+    with target_intake_preview_store.locked(preview["token"]) as state:
+        assert state is not None
+        state.updated_time = utc_now() - IMPORT_PREVIEW_TIMEOUT - timedelta(seconds=1)
+    with sessions() as db:
+        import_file = db.scalar(select(TransactionImportFile))
+        import_file.updated_time = (
+            utc_now() - IMPORT_PREVIEW_TIMEOUT - timedelta(seconds=1)
+        )
+        db.commit()
+        assert TargetIntakeService(db).fail_expired_pending_files() == 1
+    with sessions() as db:
+        assert db.scalar(select(TransactionImportFile.status)) == (
+            IMPORT_FILE_STATUS_FAILED
+        )
+
+    response = _confirm(client, preview)
+    assert response.status_code == 200, response.text
+    with sessions() as db:
+        import_file = db.scalar(select(TransactionImportFile))
+        assert import_file.status == IMPORT_FILE_STATUS_IMPORTED
+
+
+def test_restart_orphaned_preview_is_marked_failed(target_import_api):
+    client, sessions, _engine = target_import_api
+    _preview(client, "restart-orphan.csv", _csv())
+    target_intake_preview_store.clear()
+
+    with sessions() as db:
+        assert TargetIntakeService(db).fail_orphaned_pending_files() == 1
+    with sessions() as db:
+        import_file = db.scalar(select(TransactionImportFile))
+        assert import_file.status == IMPORT_FILE_STATUS_FAILED
 
 
 def _workbook(extension: str) -> bytes:

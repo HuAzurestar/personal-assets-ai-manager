@@ -9,8 +9,8 @@ CREATE TABLE IF NOT EXISTS ledger_entry /* 已确认 Review 发布的单方向�
     account_code TEXT NOT NULL /* 本条流水对应的本方账户代码 */,
     counterparty_account_ref TEXT NOT NULL DEFAULT '' /* 对手方账户引用；未知时为空串 */,
     occurred_time TEXT NOT NULL /* 现金流发生时间，UTC ISO-8601；禁止用默认时间伪造 */,
-    created_time TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) /* 创建时间，UTC ISO-8601 */,
-    updated_time TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) /* 最后一次投影更新时间，UTC ISO-8601 */
+    created_time TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')) /* 创建时间，UTC ISO-8601 微秒格式 */,
+    updated_time TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')) /* 最后一次投影更新时间，UTC ISO-8601 微秒格式 */
 );
 
 CREATE INDEX IF NOT EXISTS ix_ledger_entry_occurred_time_id

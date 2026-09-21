@@ -47,9 +47,11 @@ description: Change PAAM ledger projections, summaries, tags, DTOs/VOs, Services
   Ledger. New Ledgers and newly activated Views receive the active
   `unclassified` value until explicitly assigned.
 - Ledger-owned Account and Tag writes use the application's short serialized
-  SQLite write transaction. Do not expose `projection_version` or require an
-  optimistic-lock token in these local single-user APIs. Replacing an already
-  effective complete Tag state remains an idempotent success.
+  SQLite write transaction. When stale-write protection is required, reuse the
+  exact persisted `updated_time` as the optimistic-lock token; do not expose a
+  separate `projection_version`. Replacing an already effective complete Tag
+  state with its current token remains an idempotent success. Follow
+  `.agents/skills/write-concurrency/SKILL.md` for precision and retry rules.
 - Add query-count tests for list endpoints. Returned row count must not increase SQL statement count.
 - The Ledger Details list represents Ledger projection rows only. Ledger detail
   may include the Allocation, Review, Transaction Fact, and Tag relationships

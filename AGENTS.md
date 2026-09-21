@@ -58,5 +58,6 @@ Read the relevant layer or Router skill before changing that area:
 - `.agents/skills/fact-layer/SKILL.md`
 - `.agents/skills/review-layer/SKILL.md`
 - `.agents/skills/ledger-api/SKILL.md`
+- `.agents/skills/write-concurrency/SKILL.md`
 
 The authoritative 10-table dictionary and layer boundaries are in `src/doc/data-model.md`.

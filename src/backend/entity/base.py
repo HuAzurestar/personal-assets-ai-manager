@@ -20,7 +20,7 @@ class UTCISO8601DateTime(TypeDecorator[datetime]):
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("UTC timestamp must include timezone information")
         value = value.astimezone(timezone.utc)
-        return value.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        return value.isoformat(timespec="microseconds").replace("+00:00", "Z")
 
     def process_result_value(self, value: str | datetime | None, dialect):
         del dialect
@@ -43,10 +43,10 @@ class TargetTable:
     created_time: Mapped[datetime] = mapped_column(
         UTCISO8601DateTime(),
         nullable=False,
-        server_default=text("(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"),
+        server_default=text("(strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'))"),
     )
     updated_time: Mapped[datetime] = mapped_column(
         UTCISO8601DateTime(),
         nullable=False,
-        server_default=text("(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"),
+        server_default=text("(strftime('%Y-%m-%dT%H:%M:%f000Z', 'now'))"),
     )

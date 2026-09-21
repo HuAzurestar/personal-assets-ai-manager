@@ -179,7 +179,7 @@ class TargetFactConflictService:
 
     @staticmethod
     def _next_update_time(previous: datetime) -> datetime:
-        return max(utc_now(), previous + timedelta(milliseconds=1))
+        return max(utc_now(), previous + timedelta(microseconds=1))
 
     def _create_fact(self, row: dict) -> int:
         envelope = json.loads(row["raw_payload"] or "{}")

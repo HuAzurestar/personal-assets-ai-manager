@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from backend.entity import (
@@ -23,6 +23,10 @@ class TargetTagMapper:
 
     def __init__(self, db: Session):
         self.db = db
+
+    def begin_write(self) -> None:
+        if self.db.bind is not None and self.db.bind.dialect.name == "sqlite":
+            self.db.execute(text("BEGIN IMMEDIATE"))
 
     def view_count(self) -> int:
         return int(self.db.scalar(select(func.count(TargetTagView.id))) or 0)

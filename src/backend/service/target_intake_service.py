@@ -11,10 +11,12 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from backend.core.intake_preview_store import (
+    IMPORT_PREVIEW_TIMEOUT,
     IntakePreviewState,
     target_intake_preview_store,
 )
 from backend.entity import IMPORT_FILE_STATUS_PENDING
+from backend.entity.base import utc_now
 from backend.error import TargetIntakeError
 from backend.mapper.target_import_match_mapper import TargetImportMatchMapper
 from backend.mapper.target_import_read_mapper import TargetImportReadMapper
@@ -48,6 +50,7 @@ class TargetIntakeService:
         *,
         source_timezone: tzinfo,
     ) -> dict[str, object]:
+        self.fail_expired_pending_files()
         if sum(len(item.content_base64) for item in payload.files) > 140_000_000:
             raise TargetIntakeError(413, "一次最多上传约 100 MB 文件")
         token = uuid4().hex
@@ -110,17 +113,25 @@ class TargetIntakeService:
             documents,
             self.read_mapper.known_accounts(),
         )
-        self.store.put(IntakePreviewState(
+        removed = self.store.put(IntakePreviewState(
             token=token,
             documents=documents,
             plan=plan,
         ))
+        if removed:
+            self._mark_pending_files_failed([
+                document
+                for state in removed
+                for document in state.documents
+            ])
         return public_plan(token, plan)
 
     def revise(self, token: str, payload: IntakeReviseRequest) -> dict[str, object]:
         state = self.store.get(token)
-        if state is None or state.result is not None or state.expired:
+        if state is None or state.result is not None:
             raise TargetIntakeError(409, "预览已失效，请重新上传")
+        if state.timed_out:
+            self._mark_pending_files_failed(state.documents)
         expected_updated_time = state.updated_time
         try:
             plan = self.match_mapper.plan(
@@ -139,6 +150,7 @@ class TargetIntakeService:
             expected_updated_time=expected_updated_time,
         ):
             raise TargetIntakeError(409, "预览已变化，请核对最新预览")
+        self._refresh_preview_files(state.documents)
         return public_plan(token, plan)
 
     def confirm(self, token: str, payload: IntakeConfirmRequest) -> dict[str, object]:
@@ -149,8 +161,8 @@ class TargetIntakeService:
                 if payload.version != state.plan["version"]:
                     raise TargetIntakeError(409, "确认版本不符")
                 return state.result
-            if state.expired:
-                raise TargetIntakeError(409, "预览已过期，请重新上传")
+            if state.timed_out:
+                self._mark_pending_files_failed(state.documents)
             if payload.version != state.plan["version"]:
                 raise TargetIntakeError(409, "预览已变化，请核对最新预览")
             try:
@@ -211,6 +223,29 @@ class TargetIntakeService:
             self.write_mapper.rollback()
             raise
 
+    def fail_expired_pending_files(self) -> int:
+        try:
+            self.write_mapper.begin_write()
+            count = self.write_mapper.fail_expired_pending_files(
+                utc_now() - IMPORT_PREVIEW_TIMEOUT
+            )
+            self.write_mapper.commit()
+            return count
+        except Exception:
+            self.write_mapper.rollback()
+            raise
+
+    def fail_orphaned_pending_files(self) -> int:
+        """Fail previews lost with the previous process; the state is advisory."""
+        try:
+            self.write_mapper.begin_write()
+            count = self.write_mapper.fail_all_pending_files()
+            self.write_mapper.commit()
+            return count
+        except Exception:
+            self.write_mapper.rollback()
+            raise
+
     def _update_preview_files(
         self,
         batch_code: str,
@@ -247,6 +282,27 @@ class TargetIntakeService:
             self.write_mapper.commit()
         except Exception:
             self.write_mapper.rollback()
+
+    def _refresh_preview_files(
+        self,
+        documents: list[dict[str, object]],
+    ) -> None:
+        file_ids = [
+            document["transaction_import_file_id"]
+            for document in documents
+            if not document.get("error")
+            and isinstance(document.get("transaction_import_file_id"), int)
+        ]
+        if not file_ids:
+            return
+        try:
+            self.write_mapper.begin_write()
+            self.write_mapper.refresh_preview_files(file_ids)
+            self.write_mapper.commit()
+        except Exception:
+            self.write_mapper.rollback()
+            logger.exception("Failed to refresh advisory preview file status")
+            raise
 
     def history(
         self,

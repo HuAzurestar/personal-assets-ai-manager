@@ -7,7 +7,11 @@ from datetime import datetime, timedelta
 from threading import RLock
 from typing import Iterator
 
+from backend.core.config import IMPORT_PREVIEW_TIMEOUT_MINUTES
 from backend.entity.base import utc_now
+
+
+IMPORT_PREVIEW_TIMEOUT = timedelta(minutes=IMPORT_PREVIEW_TIMEOUT_MINUTES)
 
 
 @dataclass(slots=True)
@@ -20,10 +24,15 @@ class IntakePreviewState:
     result: dict[str, object] | None = None
     created_time: datetime = field(default_factory=utc_now)
     updated_time: datetime = field(default_factory=utc_now)
+    timeout: timedelta = IMPORT_PREVIEW_TIMEOUT
+
+    def __post_init__(self) -> None:
+        if self.timeout <= timedelta(0):
+            raise ValueError("preview timeout must be positive")
 
     @property
-    def expired(self) -> bool:
-        return self.created_time < utc_now() - timedelta(hours=24)
+    def timed_out(self) -> bool:
+        return self.updated_time < utc_now() - self.timeout
 
 
 class IntakePreviewStore:
@@ -34,13 +43,14 @@ class IntakePreviewStore:
         self._states: dict[str, IntakePreviewState] = {}
         self._lock = RLock()
 
-    def put(self, state: IntakePreviewState) -> None:
+    def put(self, state: IntakePreviewState) -> tuple[IntakePreviewState, ...]:
         with self._lock:
-            self._purge()
+            removed = []
             if len(self._states) >= self.maximum:
                 oldest = min(self._states.values(), key=lambda item: item.created_time)
-                self._states.pop(oldest.token, None)
+                removed.append(self._states.pop(oldest.token))
             self._states[state.token] = copy.deepcopy(state)
+            return tuple(copy.deepcopy(item) for item in removed)
 
     def get(self, token: str) -> IntakePreviewState | None:
         with self._lock:
@@ -80,14 +90,9 @@ class IntakePreviewStore:
         with self._lock:
             self._states.clear()
 
-    def _purge(self) -> None:
-        expired = [token for token, state in self._states.items() if state.expired]
-        for token in expired:
-            self._states.pop(token, None)
-
     @staticmethod
     def _next_update_time(previous: datetime) -> datetime:
-        return max(utc_now(), previous + timedelta(milliseconds=1))
+        return max(utc_now(), previous + timedelta(microseconds=1))
 
 
 target_intake_preview_store = IntakePreviewStore()

@@ -31,9 +31,15 @@ Use `src/doc/data-model.md` as the target schema contract.
 - Alternate bank/wallet exports may share one fact. Persist each source row in
   `transaction_import_row`, link it by `transaction_fact_id`, and keep only the accepted canonical identity
   in `transaction_fact.fact_key`; do not add a parallel identity/evidence table.
-- Import previews are bounded, expiring application command state rather than a
+- Import previews are bounded, process-local application command state rather than a
   ledger table. Never read previews, raw payloads, or verbose account details in
   ledger list/summary paths.
+- Import preview timeout is 30 minutes by default. The timeout is a named,
+  configurable setting so special workloads may extend it. Timed-out, evicted,
+  or restart-orphaned previews move their still-PENDING Import Files to FAILED
+  for user-facing lifecycle clarity. This FAILED state is advisory: a preview
+  still held by the process may be revised or confirmed, and timeout never
+  deletes evidence or creates accounting data.
 - Multi-source import writes `transaction_import_file`, `transaction_import_row`, and `transaction_fact` in the
   Fact layer, then creates exact DEFAULT Review/INCOME_AND_EXPENSE/Allocation coverage
   before the same transaction commits.

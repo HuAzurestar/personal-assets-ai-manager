@@ -7,8 +7,8 @@ CREATE TABLE IF NOT EXISTS review_allocation /* Review、Transaction Fact 与 Le
     ledger_entry_id INTEGER NOT NULL DEFAULT 0 /* ledger_entry.id 逻辑外键；草稿不入库，因此必须为正数 */,
     amount INTEGER NOT NULL DEFAULT 0 /* 按 currency_code 对应最小单位表示的本次分配正整数金额 */,
     currency_code TEXT NOT NULL DEFAULT '' /* 币种与精度单位；必须与 Fact 和 Ledger Entry 完全一致 */,
-    created_time TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) /* 创建时间，UTC ISO-8601 */,
-    updated_time TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) /* 最后更新时间；已发布分配原则上不可变 */,
+    created_time TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')) /* 创建时间，UTC ISO-8601 微秒格式 */,
+    updated_time TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')) /* 最后更新时间；已发布分配原则上不可变 */,
     UNIQUE (ledger_entry_id) /* 一条 Ledger Entry 必须且只能对应一个 Fact */
 );
 

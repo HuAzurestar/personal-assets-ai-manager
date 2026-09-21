@@ -11,8 +11,8 @@ CREATE TABLE IF NOT EXISTS transaction_fact /* 接受后的不可变规范交易
     counterparty_name TEXT NOT NULL DEFAULT '' /* 规范化交易对手名称 */,
     counterparty_account_ref TEXT NOT NULL DEFAULT '' /* 来源可识别的对手方账户引用；未知时为空串 */,
     summary TEXT NOT NULL DEFAULT '' /* 不包含原始证据的规范交易摘要 */,
-    created_time TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) /* 创建时间，UTC ISO-8601 */,
-    updated_time TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) /* 保留统一字段；事实业务字段不可变 */,
+    created_time TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')) /* 创建时间，UTC ISO-8601 微秒格式 */,
+    updated_time TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')) /* 保留统一字段；事实业务字段不可变 */,
     UNIQUE (fact_key)
 );
 

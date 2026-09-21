@@ -5,7 +5,7 @@ import unicodedata
 from datetime import datetime
 
 from pypinyin import Style, lazy_pinyin
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from backend.error import TargetTagError
@@ -98,37 +98,57 @@ class TargetTagService:
         return TargetTagViewFilter.model_validate(values)
 
     def create_view(self, payload: TargetTagViewCreateRequest) -> TargetTagViewRead:
-        if self.mapper.view_count() >= self.MAX_VIEWS:
-            raise TargetTagError(422, "tag view limit is 100")
         try:
+            self.mapper.begin_write()
+            if self.mapper.view_count() >= self.MAX_VIEWS:
+                raise TargetTagError(422, "tag view limit is 100")
             view_id = self.mapper.create_view(
                 payload.name.strip(), payload.system_name, utc_now()
             )
             self.projection.sync_all()
             self.mapper.commit()
             return self._required(view_id)
+        except TargetTagError:
+            self.mapper.rollback()
+            raise
         except IntegrityError as error:
             self.mapper.rollback()
             raise TargetTagError(409, "tag view system name already exists") from error
+        except OperationalError as error:
+            self.mapper.rollback()
+            raise TargetTagError(409, "tag view write conflict; retry") from error
+        except Exception:
+            self.mapper.rollback()
+            raise
 
     def create_tag(
         self,
         view_id: int,
         payload: TargetTagCreateRequest,
     ) -> TargetTagViewRead:
-        if self.mapper.view(view_id) is None:
-            raise TargetTagError(404, "tag view not found")
         if payload.system_name == "unclassified":
             raise TargetTagError(422, "unclassified is managed by the tag view")
         try:
+            self.mapper.begin_write()
+            if self.mapper.view(view_id) is None:
+                raise TargetTagError(404, "tag view not found")
             self.mapper.create_tag(
                 view_id, payload.name.strip(), payload.system_name, utc_now()
             )
             self.mapper.commit()
             return self._required(view_id)
+        except TargetTagError:
+            self.mapper.rollback()
+            raise
         except IntegrityError as error:
             self.mapper.rollback()
             raise TargetTagError(409, "tag system name already exists in this view") from error
+        except OperationalError as error:
+            self.mapper.rollback()
+            raise TargetTagError(409, "tag write conflict; retry") from error
+        except Exception:
+            self.mapper.rollback()
+            raise
 
     def set_view_status(
         self,
@@ -136,6 +156,7 @@ class TargetTagService:
         payload: TargetTagStatusRequest,
     ) -> TargetTagViewRead:
         try:
+            self.mapper.begin_write()
             if not self.mapper.set_view_status(view_id, payload.status, utc_now()):
                 raise TargetTagError(404, "tag view not found")
             self.projection.sync_all()
@@ -149,6 +170,12 @@ class TargetTagService:
             raise TargetTagError(
                 409, f"tag view status conflicts with current ledger tags: {error}"
             ) from error
+        except (IntegrityError, OperationalError) as error:
+            self.mapper.rollback()
+            raise TargetTagError(409, "tag view write conflict; retry") from error
+        except Exception:
+            self.mapper.rollback()
+            raise
 
     def set_tag_status(
         self,
@@ -157,6 +184,7 @@ class TargetTagService:
         payload: TargetTagStatusRequest,
     ) -> TargetTagViewRead:
         try:
+            self.mapper.begin_write()
             view = self._required(view_id)
             tag = next((item for item in view.tags if item.id == tag_id), None)
             if tag is None:
@@ -176,6 +204,12 @@ class TargetTagService:
             raise TargetTagError(
                 409, f"tag status conflicts with current ledger tags: {error}"
             ) from error
+        except (IntegrityError, OperationalError) as error:
+            self.mapper.rollback()
+            raise TargetTagError(409, "tag write conflict; retry") from error
+        except Exception:
+            self.mapper.rollback()
+            raise
 
     def _required(self, view_id: int) -> TargetTagViewRead:
         view = self.mapper.view(view_id)

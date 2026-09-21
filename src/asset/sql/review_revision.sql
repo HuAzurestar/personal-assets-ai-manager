@@ -10,8 +10,8 @@ CREATE TABLE IF NOT EXISTS review_revision /* Review 的追加式变更、撤销
     actor TEXT NOT NULL DEFAULT '' /* 发起操作的用户或系统主体 */,
     reason TEXT NOT NULL DEFAULT '' /* 操作原因 */,
     idempotency_key TEXT NOT NULL DEFAULT '' /* 非空时全局唯一的命令幂等键 */,
-    created_time TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) /* 操作发生时间，UTC ISO-8601；记录只追加不更新 */,
-    updated_time TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) /* 保留统一字段；追加式记录不应更新 */
+    created_time TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')) /* 操作发生时间，UTC ISO-8601 微秒格式；记录只追加不更新 */,
+    updated_time TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')) /* 保留统一字段；追加式记录不应更新 */
 );
 
 CREATE INDEX IF NOT EXISTS ix_review_revision_case_id

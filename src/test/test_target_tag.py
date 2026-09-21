@@ -1,4 +1,6 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from threading import Barrier
 from uuid import uuid4
 
 import pytest
@@ -8,6 +10,7 @@ from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 
 from backend.core.target_database import init_target_db
+from backend.error import TargetTagError
 from backend.entity import (
     CASH_DIRECTION_OUT,
     LedgerEntry,
@@ -24,7 +27,9 @@ from backend.router.ledger_account import router as ledger_account_router
 from backend.router.tag import router as tag_router
 from backend.router.tag_assignment import router as tag_assignment_router
 from backend.schema.target_review import TargetReviewTransitionRequest
+from backend.schema.target_tag import TargetTagViewCreateRequest
 from backend.service.target_economic_service import TargetEconomicService
+from backend.service.target_tag_service import TargetTagService
 
 
 @pytest.fixture
@@ -260,6 +265,44 @@ def test_target_tag_view_count_is_limited_to_100(target_tag_api):
     assert rejected.json()["message"] == "tag view limit is 100"
 
 
+def test_target_tag_view_limit_is_atomic_under_concurrent_creates(target_tag_api):
+    _client, sessions, _engine = target_tag_api
+    now = datetime(2026, 9, 12, 12, tzinfo=timezone.utc)
+    with sessions() as db:
+        db.add_all([
+            TargetTagView(
+                name=f"View {index}",
+                system_name=f"view_{index}",
+                status="ACTIVE",
+                created_time=now,
+                updated_time=now,
+            )
+            for index in range(99)
+        ])
+        db.commit()
+
+    barrier = Barrier(2)
+
+    def create(index: int) -> int:
+        with sessions() as db:
+            barrier.wait()
+            try:
+                TargetTagService(db).create_view(TargetTagViewCreateRequest(
+                    name=f"Concurrent {index}",
+                    system_name=f"concurrent_{index}",
+                ))
+                return 200
+            except TargetTagError as error:
+                return error.status_code
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        statuses = sorted(executor.map(create, range(2)))
+
+    assert statuses == [200, 422]
+    with sessions() as db:
+        assert db.query(TargetTagView).count() == 100
+
+
 def test_ledger_tag_assignment_is_direct_and_idempotent(target_tag_api):
     client, sessions, _engine = target_tag_api
     fact_id = _add_facts(sessions, 1)[0]
@@ -275,6 +318,17 @@ def test_ledger_tag_assignment_is_direct_and_idempotent(target_tag_api):
     assert assigned_body["ledger_id"] == ledger_id
     assert assigned_body["tag_state"] == {"category": "food"}
     assert assigned_body["updated_time"] > opened["updated_time"]
+    immediate_replay = _assign(
+        client,
+        ledger_id,
+        "food",
+        assigned_body["updated_time"],
+    )
+    assert immediate_replay.status_code == 200, immediate_replay.text
+    assert (
+        immediate_replay.json()["body"]["updated_time"]
+        == assigned_body["updated_time"]
+    )
     replay = _assign(client, ledger_id, "food")
     assert replay.status_code == 200
     assert replay.json()["body"]["tag_state"] == {"category": "food"}

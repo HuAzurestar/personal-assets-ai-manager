@@ -66,6 +66,9 @@ PAAM/
 Mapper 方法和导入计划的现有调用关系不变。
 源码运行的数据仍位于项目根目录 `data/`，打包后的数据位于可执行文件旁的
 `data/`；`PAAM_DATA_DIR` 和 `PAAM_DATABASE_URL` 仍可覆盖默认值。
+导入预览的提示性超时默认是 30 分钟，可用
+`PAAM_IMPORT_PREVIEW_TIMEOUT_MINUTES` 为特殊任务延长；超时只会把尚未确认的
+Import File 标记为 `FAILED`，仍在当前进程中的预览仍可继续修订或确认。
 前端通过 `/static/` 提供，图片通过 `/asset/` 提供。
 
 不存在 Repository 层、显式 SQL 外键、DTO 内 SQL、循环 `get(id)` 或列表 `SELECT *`。金额使用整数值、精度与币种；经济层只允许 `INCOME_AND_EXPENSE`、`INTERNAL_TRANSFER`、`ASSET_AND_LIABILITY`，不保存汇率，也不跨币种汇总。

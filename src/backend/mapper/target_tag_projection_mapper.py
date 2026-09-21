@@ -132,7 +132,7 @@ class TargetTagProjectionMapper:
         updated_times = {
             ledger_id: max(
                 current_time,
-                previous_updated_times[ledger_id] + timedelta(milliseconds=1),
+                previous_updated_times[ledger_id] + timedelta(microseconds=1),
             ) if previous_updated_times[ledger_id] is not None else current_time
             for ledger_id in changed
         }

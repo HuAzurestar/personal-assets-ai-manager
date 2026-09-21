@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 
+from backend.core.target_database import init_target_db
 from backend.entity import (
     CASH_DIRECTION_OUT,
     IMPORT_FILE_FORMAT_CSV,
@@ -79,12 +80,63 @@ def test_utc_iso_type_rejects_naive_values_and_normalizes_offsets():
     with pytest.raises(ValueError, match="timezone"):
         column_type.process_bind_param(datetime(2026, 9, 1, 0, 0), None)
     stored = column_type.process_bind_param(
-        datetime(2026, 9, 1, 0, 0, tzinfo=ZoneInfo("Asia/Hong_Kong")),
+        datetime(
+            2026,
+            9,
+            1,
+            0,
+            0,
+            0,
+            123456,
+            tzinfo=ZoneInfo("Asia/Hong_Kong"),
+        ),
         None,
     )
-    assert stored == "2026-08-31T16:00:00.000Z"
+    assert stored == "2026-08-31T16:00:00.123456Z"
     loaded = column_type.process_result_value(stored, None)
-    assert loaded == datetime(2026, 8, 31, 16, 0, tzinfo=timezone.utc)
+    assert loaded == datetime(
+        2026, 8, 31, 16, 0, 0, 123456, tzinfo=timezone.utc
+    )
+
+
+def test_sql_default_timestamps_use_the_shared_microsecond_format():
+    connection = _create_target_schema()
+    try:
+        connection.execute("INSERT INTO review_case DEFAULT VALUES")
+        created_time, updated_time = connection.execute(
+            "SELECT created_time, updated_time FROM review_case"
+        ).fetchone()
+        assert len(created_time) == len("2026-09-21T12:34:56.123456Z")
+        assert len(updated_time) == len("2026-09-21T12:34:56.123456Z")
+        assert created_time.endswith("000Z")
+        assert updated_time.endswith("000Z")
+    finally:
+        connection.close()
+
+
+def test_target_schema_normalizes_legacy_millisecond_timestamps(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'legacy-time.db'}")
+    try:
+        init_target_db(bind=engine)
+        with engine.begin() as connection:
+            connection.execute(text(
+                "INSERT INTO tag_view "
+                "(name, system_name, created_time, updated_time) VALUES "
+                "('Legacy', 'legacy', "
+                "'2026-09-21T12:34:56.123Z', '2026-09-21T12:34:56.947Z')"
+            ))
+        init_target_db(bind=engine)
+        with engine.connect() as connection:
+            row = connection.execute(text(
+                "SELECT created_time, updated_time FROM tag_view "
+                "WHERE system_name = 'legacy'"
+            )).one()
+        assert row == (
+            "2026-09-21T12:34:56.123000Z",
+            "2026-09-21T12:34:56.947000Z",
+        )
+    finally:
+        engine.dispose()
 
 
 def test_every_target_table_has_common_columns_and_inline_comments():
@@ -292,7 +344,7 @@ def test_transaction_fact_sql_asset_matches_entity_and_mapper(tmp_path):
                 "FROM transaction_fact WHERE id = :fact_id"
             ), {"fact_id": fact_id}).mappings().one()
             assert stored["cash_direction"] == CASH_DIRECTION_OUT
-            assert stored["occurred_time"] == "2026-09-16T12:30:00.000Z"
+            assert stored["occurred_time"] == "2026-09-16T12:30:00.000000Z"
             assert "T" in stored["created_time"]
             assert stored["created_time"].endswith("Z")
     finally:

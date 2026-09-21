@@ -201,14 +201,47 @@ class TargetImportWriteMapper:
         if not file_ids:
             return
         now = utc_now()
-        self.db.execute(update(TransactionImportFile), [
-            {
-                "id": file_id,
-                "status": IMPORT_FILE_STATUS_FAILED,
-                "updated_time": now,
-            }
-            for file_id in file_ids
-        ])
+        self.db.execute(update(TransactionImportFile).where(
+            TransactionImportFile.id.in_(file_ids),
+            TransactionImportFile.status == IMPORT_FILE_STATUS_PENDING,
+        ).values(
+            status=IMPORT_FILE_STATUS_FAILED,
+            updated_time=now,
+        ))
+
+    def fail_expired_pending_files(self, cutoff: datetime) -> int:
+        result = self.db.execute(update(TransactionImportFile).where(
+            TransactionImportFile.status == IMPORT_FILE_STATUS_PENDING,
+            TransactionImportFile.updated_time < cutoff,
+        ).values(
+            status=IMPORT_FILE_STATUS_FAILED,
+            updated_time=utc_now(),
+        ))
+        return result.rowcount
+
+    def fail_all_pending_files(self) -> int:
+        result = self.db.execute(update(TransactionImportFile).where(
+            TransactionImportFile.status == IMPORT_FILE_STATUS_PENDING,
+        ).values(
+            status=IMPORT_FILE_STATUS_FAILED,
+            updated_time=utc_now(),
+        ))
+        return result.rowcount
+
+    def refresh_preview_files(self, transaction_import_file_ids: list[int]) -> None:
+        file_ids = sorted(set(transaction_import_file_ids))
+        if not file_ids:
+            return
+        self.db.execute(update(TransactionImportFile).where(
+            TransactionImportFile.id.in_(file_ids),
+            TransactionImportFile.status.in_((
+                IMPORT_FILE_STATUS_PENDING,
+                IMPORT_FILE_STATUS_FAILED,
+            )),
+        ).values(
+            status=IMPORT_FILE_STATUS_PENDING,
+            updated_time=utc_now(),
+        ))
 
     def write_plan(
         self,
