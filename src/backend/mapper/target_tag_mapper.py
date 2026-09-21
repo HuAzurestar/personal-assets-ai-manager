@@ -2,14 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import exists, func, insert, literal, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.entity import (
-    LedgerEntry,
-    LedgerEntryTag,
-    ReviewAllocation,
-    ReviewCase,
     TargetTag,
     TargetTagView,
 )
@@ -27,6 +23,9 @@ class TargetTagMapper:
 
     def __init__(self, db: Session):
         self.db = db
+
+    def view_count(self) -> int:
+        return int(self.db.scalar(select(func.count(TargetTagView.id))) or 0)
 
     def list(
         self,
@@ -143,7 +142,6 @@ class TargetTagMapper:
         )
         self.db.add(tag)
         self.db.flush()
-        self._assign_missing(view.id, tag.id)
         return view.id
 
     def create_tag(self, view_id: int, name: str, system_name: str, now: datetime) -> None:
@@ -163,14 +161,6 @@ class TargetTagMapper:
             return False
         view.status = status
         view.updated_time = now
-        if status == "ACTIVE":
-            tag_id = self.db.scalar(select(TargetTag.id).where(
-                TargetTag.view_id == view_id,
-                TargetTag.system_name == "unclassified",
-                TargetTag.status == "ACTIVE",
-            ))
-            if tag_id:
-                self._assign_missing(view_id, tag_id)
         self.db.flush()
         return True
 
@@ -182,28 +172,6 @@ class TargetTagMapper:
         tag.updated_time = now
         self.db.flush()
         return True
-
-    def _assign_missing(self, view_id: int, tag_id: int) -> None:
-        existing = exists(select(LedgerEntryTag.id).join(
-            TargetTag,
-            TargetTag.id == LedgerEntryTag.tag_id,
-        ).where(
-            LedgerEntryTag.ledger_id == LedgerEntry.id,
-            TargetTag.view_id == view_id,
-        ))
-        self.db.execute(insert(LedgerEntryTag).from_select(
-            ["ledger_id", "tag_id"],
-            select(LedgerEntry.id, literal(tag_id)).join(
-                ReviewAllocation,
-                ReviewAllocation.ledger_entry_id == LedgerEntry.id,
-            ).join(
-                ReviewCase,
-                ReviewCase.id == ReviewAllocation.review_case_id,
-            ).where(
-                ReviewCase.status == 0,
-                ~existing,
-            ).distinct(),
-        ))
 
     def commit(self) -> None:
         self.db.commit()

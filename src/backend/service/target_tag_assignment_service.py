@@ -19,6 +19,16 @@ class TargetTagAssignmentService:
         self.mapper = TargetTagAssignmentMapper(db)
         self.projection = TargetTagProjectionService(db)
 
+    def get(self, ledger_id: int) -> TargetTagAssignmentRead:
+        if not self.mapper.ledger_exists(ledger_id):
+            raise TargetTagError(404, "ledger entry not found")
+        current = self.mapper.assignment(ledger_id)
+        return TargetTagAssignmentRead(
+            ledger_id=ledger_id,
+            tag_state=self.projection.effective_state(current["tag_state"]),
+            updated_time=current["updated_time"],
+        )
+
     def assign(
         self,
         ledger_id: int,
@@ -26,24 +36,26 @@ class TargetTagAssignmentService:
     ) -> TargetTagAssignmentRead:
         try:
             self.mapper.begin_write()
-            current = self.mapper.ledger(ledger_id)
-            if current is None:
+            if not self.mapper.ledger_exists(ledger_id):
                 raise TargetTagError(404, "ledger entry not found")
+            current = self.mapper.assignment(ledger_id)
+            if current["updated_time"] != payload.expected_updated_time:
+                raise TargetTagError(409, "tag assignment changed; reload before writing")
             state, tag_ids = self.projection.assignment(payload.tag_state)
-            if self.mapper.current_tag_ids(ledger_id) == tuple(sorted(tag_ids)):
+            if current["tag_ids"] == tuple(sorted(tag_ids)):
                 self.mapper.commit()
-                return TargetTagAssignmentRead(ledger_id=ledger_id, tag_state=state)
-            self.mapper.replace(ledger_id, list(tag_ids))
-            if not self.mapper.touch(
-                ledger_id,
-                current["updated_time"],
-                self._next_update_time(current["updated_time"]),
-            ):
-                raise TargetTagError(409, "ledger changed; reload before writing")
+                return TargetTagAssignmentRead(
+                    ledger_id=ledger_id,
+                    tag_state=state,
+                    updated_time=current["updated_time"],
+                )
+            updated_time = self._next_update_time(current["updated_time"])
+            self.mapper.replace(ledger_id, list(tag_ids), updated_time)
             self.mapper.commit()
             return TargetTagAssignmentRead(
                 ledger_id=ledger_id,
                 tag_state=state,
+                updated_time=updated_time,
             )
         except TargetTagError:
             self.mapper.rollback()
@@ -59,5 +71,7 @@ class TargetTagAssignmentService:
             raise
 
     @staticmethod
-    def _next_update_time(previous: datetime) -> datetime:
+    def _next_update_time(previous: datetime | None) -> datetime:
+        if previous is None:
+            return utc_now()
         return max(utc_now(), previous + timedelta(milliseconds=1))

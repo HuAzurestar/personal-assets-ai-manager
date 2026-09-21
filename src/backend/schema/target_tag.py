@@ -62,6 +62,7 @@ class TargetTagAssignmentRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    expected_updated_time: datetime | None
     tag_state: dict[str, str]
 
 
@@ -132,6 +133,7 @@ class TargetTagViewListResponse(ListResponse[TargetTagViewRead]):
 class TargetTagAssignmentRead(BaseModel):
     ledger_id: int
     tag_state: dict[str, str]
+    updated_time: datetime | None
 
 
 class TargetTagAssignmentResponse(SuccessResponse[TargetTagAssignmentRead]):

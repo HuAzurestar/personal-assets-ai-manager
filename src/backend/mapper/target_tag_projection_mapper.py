@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from backend.entity import (
@@ -101,6 +101,7 @@ class TargetTagProjectionMapper:
         rows = self.db.execute(select(
             LedgerEntryTag.ledger_id,
             LedgerEntryTag.tag_id,
+            LedgerEntryTag.updated_time,
         ).where(
             LedgerEntryTag.ledger_id.in_(ledger_ids)
         ).order_by(
@@ -108,8 +109,14 @@ class TargetTagProjectionMapper:
             LedgerEntryTag.tag_id,
         )).all()
         current = {ledger_id: [] for ledger_id in ledger_ids}
-        for ledger_id, tag_id in rows:
+        previous_updated_times: dict[int, datetime | None] = {
+            ledger_id: None for ledger_id in ledger_ids
+        }
+        for ledger_id, tag_id, updated_time in rows:
             current[ledger_id].append(tag_id)
+            previous = previous_updated_times[ledger_id]
+            if previous is None or updated_time > previous:
+                previous_updated_times[ledger_id] = updated_time
         changed = [
             ledger_id
             for ledger_id, tag_ids in ledger_tags.items()
@@ -121,13 +128,23 @@ class TargetTagProjectionMapper:
         self.db.execute(delete(LedgerEntryTag).where(
             LedgerEntryTag.ledger_id.in_(changed)
         ))
+        current_time = utc_now()
+        updated_times = {
+            ledger_id: max(
+                current_time,
+                previous_updated_times[ledger_id] + timedelta(milliseconds=1),
+            ) if previous_updated_times[ledger_id] is not None else current_time
+            for ledger_id in changed
+        }
         self.db.add_all([
-            LedgerEntryTag(ledger_id=ledger_id, tag_id=tag_id)
+            LedgerEntryTag(
+                ledger_id=ledger_id,
+                tag_id=tag_id,
+                created_time=updated_times[ledger_id],
+                updated_time=updated_times[ledger_id],
+            )
             for ledger_id, tag_ids in ledger_tags.items()
             if ledger_id in changed_ids
             for tag_id in tag_ids
         ])
-        self.db.execute(update(LedgerEntry).where(
-            LedgerEntry.id.in_(changed)
-        ).values(updated_time=utc_now()))
         self.db.flush()

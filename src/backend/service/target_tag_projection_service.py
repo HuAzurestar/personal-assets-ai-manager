@@ -63,6 +63,18 @@ class TargetTagProjectionService:
             tag_ids[(view, normalized[view])] for view in normalized
         )
 
+    def effective_state(self, current: dict[str, str]) -> dict[str, str]:
+        dictionary = self.mapper.active_dictionary()
+        defaults, tag_ids = self._dictionary_maps(dictionary)
+        return {
+            view: (
+                current[view]
+                if (view, current.get(view, "")) in tag_ids
+                else default
+            )
+            for view, default in sorted(defaults.items())
+        }
+
     @staticmethod
     def _dictionary_maps(
         dictionary: tuple[ActiveTagValue, ...],

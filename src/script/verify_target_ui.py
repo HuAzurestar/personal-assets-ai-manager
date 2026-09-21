@@ -233,6 +233,7 @@ def run() -> None:
                     data={"name": "验收分类", "system_name": "acceptance"},
                 )
                 assert tag_view_response.ok, tag_view_response.text()
+                archived_view_id = tag_view_response.json()["body"]["id"]
                 page.locator('.secondary-nav [data-page="ledger-tags"]').click()
                 expect(page.locator(".module-heading")).to_be_hidden()
                 expect(page.locator(".tag-manager-head")).to_be_visible()
@@ -257,6 +258,34 @@ def run() -> None:
                     "can_yin_xiao_fei"
                 )
                 inline_tag.locator('[data-action="cancel-tag"]').click()
+
+                archived_response = page.request.put(
+                    f"{base_url}/paam/tag/v1/view/{archived_view_id}",
+                    data={"status": "ARCHIVED"},
+                )
+                assert archived_response.ok, archived_response.text()
+                active_view_response = page.request.post(
+                    f"{base_url}/paam/tag/v1/view",
+                    data={"name": "Active Category", "system_name": "active_category"},
+                )
+                assert active_view_response.ok, active_view_response.text()
+                active_view = active_view_response.json()["body"]
+                active_tag_response = page.request.post(
+                    f"{base_url}/paam/tag/v1/view/{active_view['id']}/tag",
+                    data={"name": "Food", "system_name": "food"},
+                )
+                assert active_tag_response.ok, active_tag_response.text()
+                page.locator('.secondary-nav [data-page="economy"]').click()
+                page.locator('[data-action="economic-detail"]').first.click()
+                tag_drawer = page.locator("dialog.detail-view-drawer[open]")
+                tag_drawer.locator('[data-action="edit-tags"]').click()
+                tag_form = page.locator('dialog[open] [data-form="tag-assignment"]')
+                expect(tag_form).to_be_visible()
+                expect(tag_form.locator("select")).to_have_count(1)
+                expect(tag_form.locator('select[name="active_category"]')).to_be_visible()
+                tag_form.locator('select[name="active_category"]').select_option("food")
+                tag_form.locator("button.primary").click()
+                expect(tag_form).to_be_hidden()
 
                 page.locator('.secondary-nav [data-page="ledger"]').click()
                 expect(page.locator(".module-heading")).to_be_hidden()

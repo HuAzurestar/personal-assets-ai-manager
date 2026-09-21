@@ -19,6 +19,15 @@ router = APIRouter(
 )
 
 
+@router.get("/assignment/{ledger_id}", response_model=TargetTagAssignmentResponse)
+def get_assignment(ledger_id: int, db: Session = Depends(get_db)):
+    return TargetTagAssignmentResponse(
+        status=200,
+        message="ok",
+        body=TargetTagAssignmentService(db).get(ledger_id),
+    )
+
+
 @router.put("/assignment/{ledger_id}", response_model=TargetTagAssignmentResponse)
 def set_assignment(
     ledger_id: int,

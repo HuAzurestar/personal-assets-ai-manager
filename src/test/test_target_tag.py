@@ -103,10 +103,22 @@ def _create_tag_dictionary(client):
     return response.json()["body"]
 
 
-def _assign(client, ledger_id, value):
+_LATEST_ASSIGNMENT = object()
+
+
+def _assignment(client, ledger_id):
+    response = client.get(f"/paam/tag/v1/assignment/{ledger_id}")
+    assert response.status_code == 200, response.text
+    return response.json()["body"]
+
+
+def _assign(client, ledger_id, value, expected_updated_time=_LATEST_ASSIGNMENT):
+    if expected_updated_time is _LATEST_ASSIGNMENT:
+        expected_updated_time = _assignment(client, ledger_id)["updated_time"]
     return client.put(
         f"/paam/tag/v1/assignment/{ledger_id}",
         json={
+            "expected_updated_time": expected_updated_time,
             "tag_state": {"category": value},
         },
     )
@@ -224,6 +236,30 @@ def test_target_tag_list_query_count_is_fixed(target_tag_api):
     assert legacy.json()["body"]["code"] == "LIST_PARAMETER_NOT_SUPPORTED"
 
 
+def test_target_tag_view_count_is_limited_to_100(target_tag_api):
+    client, sessions, _engine = target_tag_api
+    now = datetime(2026, 9, 12, 12, tzinfo=timezone.utc)
+    with sessions() as db:
+        db.add_all([
+            TargetTagView(
+                name=f"View {index}",
+                system_name=f"view_{index}",
+                status="ACTIVE",
+                created_time=now,
+                updated_time=now,
+            )
+            for index in range(100)
+        ])
+        db.commit()
+
+    rejected = client.post(
+        "/paam/tag/v1/view",
+        json={"name": "Overflow", "system_name": "overflow"},
+    )
+    assert rejected.status_code == 422
+    assert rejected.json()["message"] == "tag view limit is 100"
+
+
 def test_ledger_tag_assignment_is_direct_and_idempotent(target_tag_api):
     client, sessions, _engine = target_tag_api
     fact_id = _add_facts(sessions, 1)[0]
@@ -231,13 +267,14 @@ def test_ledger_tag_assignment_is_direct_and_idempotent(target_tag_api):
     ledger_id = _ledger_for_fact(sessions, fact_id)
     with sessions() as db:
         previous_updated_time = db.get(LedgerEntry, ledger_id).updated_time
+    opened = _assignment(client, ledger_id)
 
-    assigned = _assign(client, ledger_id, "food")
+    assigned = _assign(client, ledger_id, "food", opened["updated_time"])
     assert assigned.status_code == 200, assigned.text
-    assert assigned.json()["body"] == {
-        "ledger_id": ledger_id,
-        "tag_state": {"category": "food"},
-    }
+    assigned_body = assigned.json()["body"]
+    assert assigned_body["ledger_id"] == ledger_id
+    assert assigned_body["tag_state"] == {"category": "food"}
+    assert assigned_body["updated_time"] > opened["updated_time"]
     replay = _assign(client, ledger_id, "food")
     assert replay.status_code == 200
     assert replay.json()["body"]["tag_state"] == {"category": "food"}
@@ -248,11 +285,45 @@ def test_ledger_tag_assignment_is_direct_and_idempotent(target_tag_api):
     assert detail["ledger_entry"]["tags"][0]["tag_system_name"] == "food"
     assert all("review_type" not in item for item in detail["reviews"])
     with sessions() as db:
-        assert db.get(LedgerEntry, ledger_id).updated_time > previous_updated_time
+        assert db.get(LedgerEntry, ledger_id).updated_time == previous_updated_time
         assignment = db.scalar(
             select(LedgerEntryTag).where(LedgerEntryTag.ledger_id == ledger_id)
         )
         assert db.get(TargetTag, assignment.tag_id).system_name == "food"
+
+
+def test_stale_tag_assignment_is_rejected(target_tag_api):
+    client, sessions, _engine = target_tag_api
+    fact_id = _add_facts(sessions, 1)[0]
+    _create_tag_dictionary(client)
+    ledger_id = _ledger_for_fact(sessions, fact_id)
+    opened = _assignment(client, ledger_id)
+
+    current = _assign(client, ledger_id, "food", opened["updated_time"])
+    assert current.status_code == 200, current.text
+    stale = _assign(client, ledger_id, "unclassified", opened["updated_time"])
+    assert stale.status_code == 409
+    assert stale.json()["message"] == "tag assignment changed; reload before writing"
+    assert _assignment(client, ledger_id)["tag_state"] == {"category": "food"}
+
+
+def test_archived_view_is_excluded_from_assignment_state(target_tag_api):
+    client, sessions, _engine = target_tag_api
+    fact_id = _add_facts(sessions, 1)[0]
+    view = _create_tag_dictionary(client)
+    ledger_id = _ledger_for_fact(sessions, fact_id)
+
+    archived = client.put(
+        f"/paam/tag/v1/view/{view['id']}",
+        json={"status": "ARCHIVED"},
+    )
+    assert archived.status_code == 200, archived.text
+    active_views = client.get("/paam/tag/v1/view/list", params={
+        "page_size": 100,
+        "filter": '{"key":"status","op":"=","val":"ACTIVE"}',
+    }).json()["body"]
+    assert active_views["items"] == []
+    assert _assignment(client, ledger_id)["tag_state"] == {}
 
 
 def test_inactive_ledger_tag_assignment_is_allowed(target_tag_api):
@@ -285,6 +356,7 @@ def test_tag_assignment_has_bounded_reads(target_tag_api):
     fact_id = _add_facts(sessions, 1)[0]
     _create_tag_dictionary(client)
     ledger_id = _ledger_for_fact(sessions, fact_id)
+    expected_updated_time = _assignment(client, ledger_id)["updated_time"]
     statements = []
 
     def count_selects(_connection, _cursor, statement, _parameters, _context, _many):
@@ -293,7 +365,7 @@ def test_tag_assignment_has_bounded_reads(target_tag_api):
 
     event.listen(engine, "before_cursor_execute", count_selects)
     try:
-        response = _assign(client, ledger_id, "food")
+        response = _assign(client, ledger_id, "food", expected_updated_time)
     finally:
         event.remove(engine, "before_cursor_execute", count_selects)
     assert response.status_code == 200, response.text

@@ -630,7 +630,11 @@ def test_tag_sync_uses_allocations_for_every_split_ledger_entry(economic_api):
     })
     assert tagged_view.status_code == 200, tagged_view.text
     detail = client.get(f"/paam/ledger/v1/flow/{ledger_ids[0]}").json()["body"]
+    assignment = client.get(
+        f"/paam/tag/v1/assignment/{ledger_ids[0]}"
+    ).json()["body"]
     assigned = client.put(f"/paam/tag/v1/assignment/{ledger_ids[0]}", json={
+        "expected_updated_time": assignment["updated_time"],
         "tag_state": {"category": "food"},
     })
     assert assigned.status_code == 200, assigned.text

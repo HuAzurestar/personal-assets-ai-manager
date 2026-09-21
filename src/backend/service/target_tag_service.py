@@ -28,6 +28,8 @@ from backend.service.target_tag_projection_service import TargetTagProjectionSer
 
 
 class TargetTagService:
+    MAX_VIEWS = 100
+
     def __init__(self, db: Session):
         self.mapper = TargetTagMapper(db)
         self.projection = TargetTagProjectionService(db)
@@ -96,6 +98,8 @@ class TargetTagService:
         return TargetTagViewFilter.model_validate(values)
 
     def create_view(self, payload: TargetTagViewCreateRequest) -> TargetTagViewRead:
+        if self.mapper.view_count() >= self.MAX_VIEWS:
+            raise TargetTagError(422, "tag view limit is 100")
         try:
             view_id = self.mapper.create_view(
                 payload.name.strip(), payload.system_name, utc_now()
