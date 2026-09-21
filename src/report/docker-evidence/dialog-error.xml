@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="8.413" timestamp="2026-09-12T23:57:51.194014+08:00" hostname="DESKTOP-OSK7SFS"><testcase classname="reports.test_pirc9_docker" name="test_dialog_error_is_visible_above_modal_backdrop" time="5.966"><failure message="AssertionError: Validation error is appended to body, behind the open dialog and its blurred backdrop&#10;assert False">reports\test_pirc9_docker.py:334: in test_dialog_error_is_visible_above_modal_backdrop
+    assert unobscured, 'Validation error is appended to body, behind the open dialog and its blurred backdrop'
+E   AssertionError: Validation error is appended to body, behind the open dialog and its blurred backdrop
+E   assert False</failure></testcase></testsuite></testsuites>

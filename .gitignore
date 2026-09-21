@@ -9,7 +9,8 @@ build/
 .env
 .agent_context/
 .multica/
-AGENTS.md
+.kandev-preview/
+.kandev-preview-data/
 task_plan.md
 findings.md
 progress.md

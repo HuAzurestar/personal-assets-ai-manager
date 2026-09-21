@@ -1,0 +1,14 @@
+**
+!requirements.txt
+!src/
+!src/backend/
+!src/backend/**
+!src/frontend/
+!src/frontend/**
+!src/asset/
+!src/asset/**
+!src/report/
+!src/report/Dockerfile.pirc9
+!src/report/Dockerfile.pirc9.dockerignore
+**/__pycache__
+**/*.pyc

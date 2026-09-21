@@ -1,0 +1,55 @@
+---
+name: fact-layer
+description: Change PAAM import files, raw rows, normalized bill facts, parsing, deduplication, or source evidence.
+---
+
+# Fact layer
+
+Use `src/doc/data-model.md` as the target schema contract.
+
+- `transaction_import_file` represents one imported artifact and owns the exact source, parsed content format, SHA-256, covered period, and row counts.
+- Persist or reuse its `PENDING` row before parsing. Parse outside the write transaction, mark parse failures `FAILED`, and finalize it with Fact rows and default Review coverage in one confirmation transaction.
+- `transaction_import_row` represents one immutable source row. `(transaction_import_file_id, source_row_number)` is unique. Multiple raw rows may point to the same `transaction_fact`.
+- `transaction_fact` contains only stable normalized accounting facts. Optional export fields remain raw evidence.
+- Persist money as one integer `amount` plus `currency_code`; do not persist or
+  expose `amount_scale`. The currency code owns the quantum: for example `CNY`
+  means units of `0.01 CNY`, while `CNY_4` means units of `0.0001 CNY`.
+- Define the default quantum and explicit precision suffixes in one shared
+  currency-unit registry. Parsers use exact decimal arithmetic and convert to
+  integer `amount` at the input boundary; floating-point money is forbidden.
+- Reject values that cannot be represented exactly by their declared
+  `currency_code`. Do not silently round, infer another precision, or scatter
+  currency-suffix parsing across individual parsers and Mappers.
+- A richer repeat export adds another raw row; it does not overwrite the first raw row or accepted fact.
+- Core conflicts create an `INVALID` raw row with `issue_code=FACT_CONFLICT` and require Review. Never silently replace amount, direction, time, or currency unit.
+- Keep row parsing set-oriented. Batch-check source references/fingerprints and batch-write accepted rows.
+- A preview first derives the current upload's identity keys, references, and
+  date bounds. Query only matching raw evidence, imported files, and candidate
+  facts; never load historical tables in full.
+- Confirmation preloads every referenced ID set and performs grouped flushes.
+  Do not call `get()`, `select()`, or `flush()` once per parsed row.
+- Alternate bank/wallet exports may share one fact. Persist each source row in
+  `transaction_import_row`, link it by `transaction_fact_id`, and keep only the accepted canonical identity
+  in `transaction_fact.fact_key`; do not add a parallel identity/evidence table.
+- Import previews are bounded, process-local application command state rather than a
+  ledger table. Never read previews, raw payloads, or verbose account details in
+  ledger list/summary paths.
+- Import preview timeout is 30 minutes by default. The timeout is a named,
+  configurable setting so special workloads may extend it. Timed-out, evicted,
+  or restart-orphaned previews move their still-PENDING Import Files to FAILED
+  for user-facing lifecycle clarity. This FAILED state is advisory: a preview
+  still held by the process may be revised or confirmed, and timeout never
+  deletes evidence or creates accounting data.
+- Multi-source import writes `transaction_import_file`, `transaction_import_row`, and `transaction_fact` in the
+  Fact layer, then creates exact DEFAULT Review/INCOME_AND_EXPENSE/Allocation coverage
+  before the same transaction commits.
+- Missing required accounting fields do not receive fabricated defaults and do not produce a fact until resolved.
+- Transaction Fact and Import File Details lists are PO inspections, not import
+  workflow or Review candidate lists. Their queries run server-side with the
+  shared search/filter/sorter/page contract.
+- Transaction Fact detail may read its Import File evidence, Allocations,
+  Reviews, and Ledgers as relationships. Those relationships are read-only and
+  must be reached through persisted identifiers rather than inferred joins.
+- Import File detail may expose its Transaction Facts as a related subtable.
+  Raw source payload JSON is evidence for an individual imported row, not a
+  separate top-level Details object and not list data.

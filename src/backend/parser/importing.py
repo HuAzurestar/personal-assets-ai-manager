@@ -1,0 +1,99 @@
+from __future__ import annotations
+
+import csv
+import io
+import json
+import re
+from backend.core.money import amount_from_decimal, decimal_from_amount
+from dataclasses import dataclass
+from datetime import datetime
+from decimal import Decimal
+
+
+@dataclass(frozen=True)
+class ImportedRow:
+    occurred_at: datetime
+    merchant: str
+    note: str
+    amount: Decimal
+    reference: str
+    account_name: str
+    raw_payload: str
+
+
+HEADER_ALIASES = {
+    "occurred_at": ("交易时间", "交易创建时间", "交易日期"),
+    "merchant": ("交易对方", "交易对方名称", "收/付款方", "对方"),
+    "note": ("商品", "商品说明", "备注", "商品名称"),
+    "amount": ("金额(元)", "金额（元）", "金额"),
+    "direction": ("收/支", "收支类型", "交易类型"),
+    "reference": ("交易单号", "交易订单号", "支付宝交易号", "商家订单号"),
+    "account": ("支付方式", "收/支方式", "付款方式", "资金渠道", "收款方式"),
+}
+
+
+def parse_csv(content: bytes, source_type: str) -> list[ImportedRow]:
+    if source_type not in {"alipay", "wechat"}:
+        raise ValueError("Only alipay and wechat adapters are enabled in the MVP")
+    rows = list(csv.reader(io.StringIO(_decode(content))))
+    header_index = next((i for i, row in enumerate(rows) if _find(row, HEADER_ALIASES["amount"]) and _find(row, HEADER_ALIASES["occurred_at"])), None)
+    if header_index is None:
+        raise ValueError("Could not find transaction-time and amount headers")
+    headers = rows[header_index]
+    return [_normalise(dict(zip(headers, row))) for row in rows[header_index + 1 :] if any(cell.strip() for cell in row)]
+
+
+def _decode(content: bytes) -> str:
+    for encoding in ("utf-8-sig", "gb18030"):
+        try:
+            return content.decode(encoding)
+        except UnicodeDecodeError:
+            pass
+    raise ValueError("CSV must be UTF-8 or GB18030 encoded")
+
+
+def _find(row: list[str], aliases: tuple[str, ...]) -> str | None:
+    return next((cell for cell in row if cell.strip() in aliases), None)
+
+
+def _value(row: dict[str, str], field: str) -> str:
+    return next((row.get(name, "").strip() for name in HEADER_ALIASES[field] if row.get(name, "").strip()), "")
+
+
+def _normalise(row: dict[str, str]) -> ImportedRow:
+    timestamp = _value(row, "occurred_at")
+    occurred_at = next((datetime.strptime(timestamp, pattern) for pattern in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y/%m/%d %H:%M:%S") if _valid_time(timestamp, pattern)), None)
+    if not occurred_at:
+        raise ValueError(f"Unrecognised transaction time: {timestamp}")
+    merchant = _value(row, "merchant")
+    if not merchant:
+        raise ValueError("Missing transaction counterparty")
+    raw_amount = _value(row, "amount")
+    normalised_amount = raw_amount.strip().removeprefix("¥").removeprefix("￥").strip()
+    if not normalised_amount:
+        raise ValueError("Missing transaction amount")
+    try:
+        if not re.fullmatch(r"[+-]?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?", normalised_amount):
+            raise ValueError("Invalid amount")
+        amount = decimal_from_amount(
+            amount_from_decimal(normalised_amount.replace(",", ""), "CNY"),
+            "CNY",
+        )
+    except ValueError as error:
+        raise ValueError(f"Unrecognised transaction amount: {raw_amount}") from error
+    direction = _value(row, "direction")
+    if direction not in {"支出", "付款", "支", "收入", "收款", "收"}:
+        raise ValueError(f"收支方向缺失或无法确定：{direction or '未提供'}，需要人工核验")
+    if direction in {"支出", "付款", "支"} and amount > 0:
+        amount = -amount
+    elif direction in {"收入", "收款", "收"} and amount < 0:
+        amount = -amount
+    return ImportedRow(occurred_at, merchant, _value(row, "note"), amount, _value(row, "reference"), _value(row, "account") or "未提供账户", json.dumps(row, ensure_ascii=False, sort_keys=True))
+
+
+def _valid_time(value: str, pattern: str) -> bool:
+    try:
+        datetime.strptime(value, pattern)
+        return True
+    except ValueError:
+        return False

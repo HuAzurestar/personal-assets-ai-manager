@@ -1,0 +1,10 @@
+FROM python:3.10
+WORKDIR /app
+COPY requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+COPY src/backend ./src/backend
+COPY src/frontend ./src/frontend
+COPY src/asset ./src/asset
+ENV PAAM_DATA_DIR=/data PYTHONUNBUFFERED=1
+EXPOSE 8765
+CMD ["python", "-m", "uvicorn", "backend.target_main:app", "--app-dir", "src", "--host", "0.0.0.0", "--port", "8765"]
