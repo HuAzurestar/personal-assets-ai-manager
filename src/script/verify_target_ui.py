@@ -79,6 +79,7 @@ def run() -> None:
                 page.goto(base_url)
                 timezone_result = page.evaluate("""async () => {
                     const time = await import('/static/js/util/core.js');
+                    localStorage.removeItem('paam.importTimezone');
                     time.setSelectedTimeZone('Europe/London');
                     const result = {
                         normal: time.zonedISOString('2026-03-30T01:30'),
@@ -86,6 +87,7 @@ def run() -> None:
                         overlap: '',
                         newYorkDate: '',
                         tokyoDate: '',
+                        importDefault: time.selectedImportTimeZone(),
                     };
                     try { time.zonedISOString('2026-03-29T01:30'); }
                     catch (error) { result.gap = error.message; }
@@ -103,7 +105,11 @@ def run() -> None:
                 assert "不唯一" in timezone_result["overlap"]
                 assert timezone_result["newYorkDate"] == "2026-08-31"
                 assert timezone_result["tokyoDate"] == "2026-09-01"
+                assert timezone_result["importDefault"] == "Asia/Shanghai"
                 expect(page.locator('[data-form="fact-filter"]')).to_be_visible()
+                connection = page.locator("[data-connection-status]")
+                expect(connection).to_have_attribute("href", "/api/health")
+                expect(connection).to_have_attribute("data-state", "connected")
                 expect(page.locator(".module-heading")).to_be_hidden()
                 expect(page.locator(".module-nav [data-module]")).to_have_count(3)
                 assert page.evaluate("location.hash").startswith(
@@ -113,6 +119,7 @@ def run() -> None:
                     "getComputedStyle(document.querySelector('.module-topbar')).backdropFilter"
                 ) == "none"
 
+                page.locator('[data-timezone]').select_option("UTC")
                 page.locator('.topbar-actions [data-page="import"]').click()
                 expect(page.locator(".module-heading")).to_be_hidden()
                 expect(page.locator('[data-action="import-source"]')).to_have_count(6)
@@ -120,13 +127,27 @@ def run() -> None:
                 expect(page.get_by_role("heading", name="添加账单文件")).to_be_hidden()
                 page.locator('[data-action="import-step"][data-step="2"]').last.click()
                 expect(page.get_by_role("heading", name="添加账单文件")).to_be_visible()
+                expect(page.locator('[data-form="import-preview"] select[name="timezone"]')).to_have_value(
+                    "Asia/Shanghai"
+                )
                 if not page.locator('input[name="files"]').count():
                     raise AssertionError(
                         "import page did not render: "
                         f"{page.locator('#page-content').inner_text()}; "
                         f"browser errors: {errors}"
                     )
-                page.locator('input[name="files"]').set_input_files({
+                file_input = page.locator('input[name="files"]')
+                file_input.set_input_files({
+                    "name": "unsupported.txt",
+                    "mimeType": "text/plain",
+                    "buffer": b"not a statement",
+                })
+                page.locator('[data-action="preview-import"]').click()
+                expect(page.locator('[data-form="import-preview"] .form-error')).to_contain_text(
+                    "格式不受支持"
+                )
+                expect(page.locator('[data-action="preview-import"]')).to_be_enabled()
+                file_input.set_input_files({
                     "name": "target-ui.csv",
                     "mimeType": "text/csv",
                     "buffer": statement,
@@ -136,8 +157,17 @@ def run() -> None:
                 expect(page.get_by_role("heading", name="选择数据来源")).to_be_visible()
                 page.locator('[data-action="import-step"][data-step="2"]').first.click()
                 expect(page.locator("#selected-files")).to_contain_text("target-ui.csv")
-                page.locator('[data-action="preview-import"]').click()
+                with page.expect_request(
+                    lambda request: request.method == "POST"
+                    and request.url.endswith("/paam/import/v1/preview")
+                ) as preview_request:
+                    page.locator('[data-action="preview-import"]').click()
+                assert preview_request.value.post_data_json["timezone"] == "Asia/Shanghai"
                 expect(page.get_by_role("heading", name="预览结果")).to_be_visible()
+                expect(page.locator('[data-timezone]')).to_have_value("UTC")
+                expect(page.locator(".preview-heading p")).to_contain_text(
+                    "上海（Asia/Shanghai）"
+                )
                 expect(page.locator(".preview-file-card")).to_contain_text("浏览器测试商户")
                 expect(page.locator(".preview-file-card tbody tr")).to_have_count(5)
                 page.locator(".back-to-files").click()
@@ -170,6 +200,7 @@ def run() -> None:
                 page.locator('[data-action="confirm-import"]').click()
                 expect(page.locator(".module-heading")).to_be_hidden()
                 expect(page.locator('[data-form="history-filter"]')).to_be_visible()
+                page.locator('[data-timezone]').select_option("Asia/Hong_Kong")
                 expect(page.locator("#page-content").get_by_text("target-ui.csv")).to_be_visible()
                 page.locator('[data-action="import-file-detail"]').click()
                 history_drawer = page.locator("dialog.detail-view-drawer[open]")
@@ -198,6 +229,24 @@ def run() -> None:
                     '[data-form="account-filter"] select[name="account_code"]'
                 )).to_have_count(0)
                 expect(page.locator(".account-scope")).to_contain_text("Ledger 汇总")
+                page.locator('[data-action="account-metric"][data-value="EXPENSE"]').click()
+                expect(page.locator('[data-form="economic-filter"]')).to_be_visible()
+                metric_params = page.evaluate("""() => Object.fromEntries(
+                    new URLSearchParams(location.hash.split('?')[1] || '')
+                )""")
+                assert metric_params["economic_type"] == "TRANSACTION"
+                assert metric_params["entry_direction"] == "2"
+                page.locator('[data-module="overview"]').click()
+                expect(page.locator(".month-metrics")).to_be_visible()
+                page.locator('[data-action="account-type"][data-value="1"]').click()
+                expect(page.locator('[data-form="economic-filter"]')).to_be_visible()
+                type_params = page.evaluate("""() => Object.fromEntries(
+                    new URLSearchParams(location.hash.split('?')[1] || '')
+                )""")
+                assert type_params["economic_type"] == "ACCOUNT_TRANSFER"
+                assert "entry_direction" not in type_params
+                page.locator('[data-module="overview"]').click()
+                expect(page.locator(".month-metrics")).to_be_visible()
                 page.locator('[data-action="account-drilldown"]').click()
                 expect(page.locator(".module-heading")).to_be_hidden()
                 expect(page.locator('[data-action="economic-detail"]').first).to_be_visible()
@@ -403,6 +452,15 @@ def run() -> None:
                         )
                         assert overflow <= 1, (width, height, route_name, overflow)
                     expect(page.locator(".module-nav")).to_be_visible()
+                page.route("**/api/health", lambda route: route.abort("failed"))
+                page.evaluate("window.dispatchEvent(new Event('focus'))")
+                expect(page.locator("[data-connection-status]")).to_have_attribute(
+                    "data-state", "disconnected"
+                )
+                expect(page.locator("[data-live-label]")).to_have_text(
+                    "本地账本连接中断"
+                )
+                page.unroute("**/api/health")
                 if errors:
                     raise AssertionError(f"browser errors: {errors}")
                 browser.close()

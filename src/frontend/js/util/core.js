@@ -9,6 +9,8 @@ export const key = () => crypto.randomUUID();
 
 const DEFAULT_TIME_ZONE = "Asia/Hong_Kong";
 const TIME_ZONE_STORAGE_KEY = "paam.timezone";
+const DEFAULT_IMPORT_TIME_ZONE = "Asia/Shanghai";
+const IMPORT_TIME_ZONE_STORAGE_KEY = "paam.importTimezone";
 
 function validTimeZone(value) {
   try {
@@ -27,6 +29,16 @@ export function selectedTimeZone() {
 export function setSelectedTimeZone(value) {
   if (!validTimeZone(value)) throw new Error(`不支持的时区：${value}`);
   globalThis.localStorage?.setItem(TIME_ZONE_STORAGE_KEY, value);
+}
+
+export function selectedImportTimeZone() {
+  const stored = globalThis.localStorage?.getItem(IMPORT_TIME_ZONE_STORAGE_KEY);
+  return stored && validTimeZone(stored) ? stored : DEFAULT_IMPORT_TIME_ZONE;
+}
+
+export function setSelectedImportTimeZone(value) {
+  if (!validTimeZone(value)) throw new Error(`不支持的账单时区：${value}`);
+  globalThis.localStorage?.setItem(IMPORT_TIME_ZONE_STORAGE_KEY, value);
 }
 
 function wallClockParts(timestamp, timeZone) {

@@ -129,6 +129,14 @@ def verify_filters(page, base):
     # Calendar stays inside short/narrow viewports and closes with Escape.
     for width, height in [(390, 844), (960, 540)]:
         page.set_viewport_size({"width": width, "height": height})
+        if width == 390:
+            filter_box = page.locator('[data-form="fact-filter"]').bounding_box()
+            assert filter_box and filter_box["height"] < 420, filter_box
+            fact_cells = page.locator(".detail-data-table tbody tr").first.locator("td")
+            assert fact_cells.nth(1).get_attribute("data-label") == "交易对手"
+            assert fact_cells.nth(2).get_attribute("data-label") == "本方账户"
+            assert fact_cells.nth(3).get_attribute("data-label") == "金额"
+            assert fact_cells.nth(4).get_attribute("data-label") == "发生时间"
         page.locator('[data-action="range-open"]').click()
         popup = page.locator('[data-range-popover]')
         expect(popup).to_be_visible()

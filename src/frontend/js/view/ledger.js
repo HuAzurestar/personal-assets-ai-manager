@@ -1,4 +1,4 @@
-import { request, jsonRequest } from "../api/client.js";
+import { checkConnection, request, jsonRequest } from "../api/client.js?v=20260921.2";
 import { toast } from "../component/toast.js";
 import { table } from "../component/table.js";
 import { openInspection } from "../component/inspection.js?v=20260918.3";
@@ -12,17 +12,31 @@ import { state } from "../state/ledger.js";
 import {
   $, $$, currencyPrecision, date, decimalAmount, esc, key, money,
   reviewTypeNames, roleNames, statusNames, typeNames,
-  selectedCalendarDate, selectedTimeZone, setSelectedTimeZone, zonedISOString,
+  selectedCalendarDate, selectedImportTimeZone, selectedTimeZone,
+  setSelectedImportTimeZone, setSelectedTimeZone, zonedISOString,
 } from "../util/core.js";
 import {
   canonicalHash, parseHash, shellMarkup, syncNavigation,
-} from "../navigation.js?v=20260917.10";
+} from "../navigation.js?v=20260921.3";
 import {
   accountsMarkup, cursorFromParam, monthBounds,
 } from "./account.js?v=20260917.10";
 
 const entryTypeValues = { TRANSACTION: 0, ACCOUNT_TRANSFER: 1, CLAIM: 2 };
+const entryTypeCodes = { 0: "TRANSACTION", 1: "ACCOUNT_TRANSFER", 2: "CLAIM" };
 const reviewBehaviorNames = { 0: "事实交易", 1: "借款与还款" };
+const timeZoneNames = {
+  "Asia/Hong_Kong": "香港",
+  "Asia/Shanghai": "上海",
+  "Asia/Tokyo": "东京",
+  "Europe/London": "伦敦",
+  "America/New_York": "纽约",
+  UTC: "UTC",
+};
+
+function timeZoneName(value) {
+  return timeZoneNames[value] ? `${timeZoneNames[value]}（${value}）` : value;
+}
 
 function currentAccountMonth() {
   const { year, month } = selectedCalendarDate();
@@ -76,6 +90,11 @@ function detailDrawer({ title, kicker = "DETAIL", subtitle = "查看完整信息
 }
 
 $("#app").innerHTML = shellMarkup();
+checkConnection();
+window.addEventListener("focus", checkConnection);
+window.setInterval(() => {
+  if (!document.hidden) checkConnection();
+}, 30_000);
 const timezoneSelect = $('[data-timezone]');
 timezoneSelect.value = selectedTimeZone();
 timezoneSelect.addEventListener("change", () => {
@@ -196,7 +215,10 @@ function accountLedgerParams(extra = {}) {
       || state.params.get("currency_code")
       || "CNY",
   });
-  if (extra.entryTypeCode in entryTypeValues) params.set("economic_type", extra.entryTypeCode);
+  const entryTypeCode = entryTypeCodes[extra.entryTypeCode] || extra.entryTypeCode;
+  if (entryTypeCode in entryTypeValues) params.set("economic_type", entryTypeCode);
+  const entryDirection = Number(extra.entryDirection);
+  if ([1, 2].includes(entryDirection)) params.set("entry_direction", String(entryDirection));
   return params;
 }
 
@@ -293,7 +315,7 @@ async function ledgerPage() {
   if (filter) query.set("filter", JSON.stringify(filter));
   const result = await request(`/paam/ledger/v1/transaction_fact/list?${query}`);
   const rows = result.items.map((fact) => `<tr class="detail-click-row" tabindex="0" data-fact-row="${fact.id}">
-    <td><button type="button" class="detail-primary" data-action="fact-detail" data-id="${fact.id}" data-inspect-title="${esc(fact.summary || "未填写摘要")}" data-inspect-amount="${esc(compactAmount(fact, fact.cash_direction))}"><strong>${esc(fact.summary || "未填写摘要")}</strong><small>Fact #${fact.id}</small></button></td><td>${esc(fact.counterparty_name || "—")}</td><td class="mono fact-account" title="${esc(fact.account_code)}">${esc(compactAccount(fact.account_code))}</td><td class="fact-amount ${fact.cash_direction === 1 ? "inflow" : "outflow"}">${esc(compactAmount(fact, fact.cash_direction))}</td><td>${date(fact.occurred_time)}</td><td class="detail-arrow">→</td>
+    <td data-label="摘要"><button type="button" class="detail-primary" data-action="fact-detail" data-id="${fact.id}" data-inspect-title="${esc(fact.summary || "未填写摘要")}" data-inspect-amount="${esc(compactAmount(fact, fact.cash_direction))}"><strong>${esc(fact.summary || "未填写摘要")}</strong><small>Fact #${fact.id}</small></button></td><td data-label="交易对手">${esc(fact.counterparty_name || "—")}</td><td data-label="本方账户" class="mono fact-account" title="${esc(fact.account_code)}">${esc(compactAccount(fact.account_code))}</td><td data-label="金额" class="fact-amount ${fact.cash_direction === 1 ? "inflow" : "outflow"}">${esc(compactAmount(fact, fact.cash_direction))}</td><td data-label="发生时间">${date(fact.occurred_time)}</td><td class="detail-arrow">→</td>
   </tr>`).join("");
   const toolbar = `<form class="detail-filter" data-form="fact-filter"><label>收支方向${directionSelect("cash_direction", direction)}</label><label>币种${currencySelect(currency)}</label>${dateTimeRangeControl(dateFrom, dateTo)}<label class="grow">排序${sortPresetSelect(sortField, sortOrder)}</label><div class="detail-filter-actions"><button type="button" class="quiet" data-action="detail-clear" data-page-id="ledger">清空</button></div></form>`;
   return detailListView({ active: "ledger", toolbar, title: "Transaction Fact", description: "外部账单接受后的不可变事实 PO；查找、筛选与排序均由服务端执行。", total: result.total, headers: ["摘要", "交易对手", "本方账户", "金额", "发生时间", ""], rows, footer: detailPager(result, "ledger") });
@@ -332,7 +354,7 @@ async function economicPage() {
     const tags = (item.tags || []).filter((tag) => tag.tag_system_name !== "unclassified");
     const tagMarkup = tags.length ? `<small class="ledger-row-tags">${tags.map((tag) => `<span title="${esc(tag.view_name)}">${esc(tag.tag_name)}</span>`).join("")}</small>` : "";
     return `<tr class="detail-click-row" tabindex="0" data-economic-row="${item.id}">
-    <td><button type="button" class="detail-primary" data-action="economic-detail" data-id="${item.id}" data-inspect-title="${esc(item.summary || "未填写摘要")}" data-inspect-amount="${esc(compactAmount(item, item.entry_direction))}"><strong>${esc(item.summary || "未填写摘要")}</strong><small>Ledger #${item.id}</small>${tagMarkup}</button></td><td><span class="badge ${item.active ? "" : "warn"}">${item.active ? "有效" : "已停用"}</span></td><td title="${esc(item.counterparty_account_ref || "")}">${esc(compactAccount(item.counterparty_account_ref) || "—")}</td><td class="mono fact-account" title="${esc(item.account_code)}">${esc(compactAccount(item.account_code))}</td><td class="fact-amount ${item.entry_direction === 1 ? "inflow" : "outflow"}">${esc(compactAmount(item, item.entry_direction))}</td><td>${date(item.occurred_time)}</td><td class="detail-arrow">→</td>
+    <td data-label="摘要"><button type="button" class="detail-primary" data-action="economic-detail" data-id="${item.id}" data-inspect-title="${esc(item.summary || "未填写摘要")}" data-inspect-amount="${esc(compactAmount(item, item.entry_direction))}"><strong>${esc(item.summary || "未填写摘要")}</strong><small>Ledger #${item.id}</small>${tagMarkup}</button></td><td data-label="有效状态"><span class="badge ${item.active ? "" : "warn"}">${item.active ? "有效" : "已停用"}</span></td><td data-label="对手账户" title="${esc(item.counterparty_account_ref || "")}">${esc(compactAccount(item.counterparty_account_ref) || "—")}</td><td data-label="本方账户" class="mono fact-account" title="${esc(item.account_code)}">${esc(compactAccount(item.account_code))}</td><td data-label="金额" class="fact-amount ${item.entry_direction === 1 ? "inflow" : "outflow"}">${esc(compactAmount(item, item.entry_direction))}</td><td data-label="发生时间">${date(item.occurred_time)}</td><td class="detail-arrow">→</td>
   </tr>`;
   }).join("");
   const toolbar = `<form class="detail-filter ledger-detail-filter" data-form="economic-filter"><label>账本类型<select name="economic_type"><option value="">全部类型</option>${Object.keys(entryTypeValues).map((value) => `<option value="${value}" ${selectedType === value ? "selected" : ""}>${esc(typeNames[value] || value)}</option>`).join("")}</select></label><label>有效状态<select name="active"><option value="">全部状态</option><option value="true" ${active === "true" ? "selected" : ""}>有效</option><option value="false" ${active === "false" ? "selected" : ""}>已停用</option></select></label><label>收支方向${directionSelect("entry_direction", direction)}</label><label>币种${currencySelect(currency)}</label>${dateTimeRangeControl(dateFrom, dateTo)}<label class="grow">排序${sortPresetSelect(sortField, sortOrder)}</label><div class="detail-filter-actions"><button type="button" class="quiet" data-action="detail-clear" data-page-id="economy">清空</button></div></form>`;
@@ -375,8 +397,8 @@ async function ledgerReviewsPage() {
   const result = await request(`/paam/ledger/v1/review/list?${query}`);
   state.detailEconomicReviews = new Map(result.items.map((item) => [item.id, item]));
   const rows = result.items.map((item) => `<tr class="detail-click-row" tabindex="0" data-review-row="${item.id}">
-    <td><button type="button" class="detail-primary" data-action="economic-review-detail" data-id="${item.id}" data-inspect-title="${esc(item.title || `审查 #${item.id}`)}" data-inspect-meta="${esc(`${reviewBehaviorNames[item.behavior_type] || `未知类型（${item.behavior_type}）`} · ${statusNames[item.status] || item.status}`)}"><strong>${esc(item.title || `审查 #${item.id}`)}</strong><small>Review #${item.id}</small></button></td><td>${esc(reviewBehaviorNames[item.behavior_type] || `未知类型（${item.behavior_type}）`)}</td>
-    <td><span class="badge ${item.status === 1 ? "warn" : "neutral"}">${esc(statusNames[item.status] || item.status)}</span></td><td>${date(item.updated_time)}</td><td>${date(item.created_time)}</td><td class="detail-arrow">→</td>
+    <td data-label="审查标题"><button type="button" class="detail-primary" data-action="economic-review-detail" data-id="${item.id}" data-inspect-title="${esc(item.title || `审查 #${item.id}`)}" data-inspect-meta="${esc(`${reviewBehaviorNames[item.behavior_type] || `未知类型（${item.behavior_type}）`} · ${statusNames[item.status] || item.status}`)}"><strong>${esc(item.title || `审查 #${item.id}`)}</strong><small>Review #${item.id}</small></button></td><td data-label="类型">${esc(reviewBehaviorNames[item.behavior_type] || `未知类型（${item.behavior_type}）`)}</td>
+    <td data-label="状态"><span class="badge ${item.status === 1 ? "warn" : "neutral"}">${esc(statusNames[item.status] || item.status)}</span></td><td data-label="更新时间">${date(item.updated_time)}</td><td data-label="创建时间">${date(item.created_time)}</td><td class="detail-arrow">→</td>
   </tr>`).join("");
   const toolbar = `<form class="detail-filter" data-form="detail-review-filter"><label>状态<select name="status"><option value="">全部状态</option>${[0, 1].map((value) => `<option value="${value}" ${status === String(value) ? "selected" : ""}>${esc(statusNames[value] || value)}</option>`).join("")}</select></label><label>类型<select name="behavior_type"><option value="">全部类型</option>${[0, 1].map((value) => `<option value="${value}" ${behaviorType === String(value) ? "selected" : ""}>${esc(reviewBehaviorNames[value])}</option>`).join("")}</select></label><label class="grow">排序${reviewSortSelect(sortField, sortOrder)}</label><button type="button" class="quiet" data-action="detail-clear" data-page-id="ledger-reviews">清空</button><button type="button" class="primary" data-page="reviews">创建审查</button></form>`;
   return detailListView({ active: "ledger-reviews", toolbar, title: "Review", description: "每行对应数据库中的一个 Review Case。", total: result.total, headers: ["审查标题", "类型", "状态", "更新时间", "创建时间", ""], rows, footer: detailPager(result, "ledger-reviews") });
@@ -457,7 +479,7 @@ async function mountEconomicReviewEditor(root) {
   const selectedFacts = () => [...selected].map((id) => facts.get(id)).filter(Boolean);
   const renderCandidatePage = () => {
     candidatePage.items.forEach((fact) => facts.set(fact.id, fact));
-    const rows = candidatePage.items.map((fact) => `<tr class="${selected.has(fact.id) ? "selected" : ""}"><td><input type="checkbox" data-review-fact="${fact.id}" aria-label="选择 Fact #${fact.id}" ${selected.has(fact.id) ? "checked" : ""}></td><td><strong>${esc(fact.summary || "未填写摘要")}</strong><small>Fact #${fact.id}</small></td><td>${esc(fact.counterparty_name || "—")}</td><td class="mono" title="${esc(fact.account_code)}">${esc(compactAccount(fact.account_code))}</td><td class="fact-amount ${fact.cash_direction === 1 ? "inflow" : "outflow"}">${esc(compactAmount({ ...fact, amount: fact.available_amount }, fact.cash_direction))}</td><td>${date(fact.occurred_time)}</td></tr>`).join("");
+    const rows = candidatePage.items.map((fact) => `<tr class="${selected.has(fact.id) ? "selected" : ""}"><td><input type="checkbox" data-review-fact="${fact.id}" aria-label="选择 Fact #${fact.id}" ${selected.has(fact.id) ? "checked" : ""}></td><td data-label="摘要"><strong>${esc(fact.summary || "未填写摘要")}</strong><small>Fact #${fact.id}</small></td><td data-label="交易对手">${esc(fact.counterparty_name || "—")}</td><td data-label="本方账户" class="mono" title="${esc(fact.account_code)}">${esc(compactAccount(fact.account_code))}</td><td data-label="可分配金额" class="fact-amount ${fact.cash_direction === 1 ? "inflow" : "outflow"}">${esc(compactAmount({ ...fact, amount: fact.available_amount }, fact.cash_direction))}</td><td data-label="发生时间">${date(fact.occurred_time)}</td></tr>`).join("");
     factRoot.innerHTML = rows ? `<div class="table-scroll"><table class="detail-data-table review-candidate-table"><thead><tr><th></th><th>摘要</th><th>交易对手</th><th>本方账户</th><th>可分配金额</th><th>发生时间</th></tr></thead><tbody>${rows}</tbody></table></div>` : '<div class="empty-state">没有匹配的待审查流水</div>';
     const pages = Math.max(1, Math.ceil(candidatePage.total / candidatePage.page_size));
     $("[data-review-candidate-pager]", form).innerHTML = `<span>共 ${candidatePage.total} 条 · 第 ${candidatePage.page_index}/${pages} 页</span><button type="button" data-candidate-page="${candidatePage.page_index - 1}" ${candidatePage.page_index <= 1 ? "disabled" : ""}>上一页</button><button type="button" data-candidate-page="${candidatePage.page_index + 1}" ${candidatePage.page_index >= pages ? "disabled" : ""}>下一页</button>`;
@@ -617,7 +639,7 @@ async function ledgerImportsPage() {
   });
   if (filter) query.set("filter", JSON.stringify(filter));
   const result = await request(`/paam/import/v1/import_file/list?${query}`);
-  const rows = result.items.map((item) => `<tr class="detail-click-row" tabindex="0" data-import-file-row="${item.id}"><td><button type="button" class="detail-primary" data-action="import-file-detail" data-id="${item.id}" data-inspect-title="${esc(item.filename)}" data-inspect-meta="${esc(sourceLabels[item.source_type] || item.source_type)}"><strong>${esc(item.filename)}</strong><small>Import File #${item.id} · ${esc(item.batch_code || "无批次码")}</small></button></td><td>${esc(sourceLabels[item.source_type] || item.source_type)}</td><td>${esc(fileFormatLabels[item.file_format] || item.file_format)}</td><td><span class="badge ${item.status === 1 ? "neutral" : "warn"}">${esc(statusLabels[item.status] || item.status)}</span></td><td>${item.success_count}</td><td>${date(item.created_time)}</td><td class="detail-arrow">→</td></tr>`).join("");
+  const rows = result.items.map((item) => `<tr class="detail-click-row" tabindex="0" data-import-file-row="${item.id}"><td data-label="文件名"><button type="button" class="detail-primary" data-action="import-file-detail" data-id="${item.id}" data-inspect-title="${esc(item.filename)}" data-inspect-meta="${esc(sourceLabels[item.source_type] || item.source_type)}"><strong>${esc(item.filename)}</strong><small>Import File #${item.id} · ${esc(item.batch_code || "无批次码")}</small></button></td><td data-label="来源">${esc(sourceLabels[item.source_type] || item.source_type)}</td><td data-label="格式">${esc(fileFormatLabels[item.file_format] || item.file_format)}</td><td data-label="状态"><span class="badge ${item.status === 1 ? "neutral" : "warn"}">${esc(statusLabels[item.status] || item.status)}</span></td><td data-label="成功记录">${item.success_count}</td><td data-label="导入时间">${date(item.created_time)}</td><td class="detail-arrow">→</td></tr>`).join("");
   const sourceOptions = [...new Set(Object.entries(sourceLabels).map(([value, label]) => `<option value="${esc(value)}" ${sourceType === value ? "selected" : ""}>${esc(label)}</option>`))].join("");
   const toolbar = `<form class="detail-filter" data-form="detail-import-filter"><label>来源<select name="source_type"><option value="">全部来源</option>${sourceOptions}</select></label><label>状态<select name="status"><option value="">全部状态</option>${[0, 1, 2, 3].map((value) => `<option value="${value}" ${status === String(value) ? "selected" : ""}>${esc(statusLabels[value])}</option>`).join("")}</select></label><label class="grow">排序${importSortSelect(sortField, sortOrder)}</label><button type="button" class="quiet" data-action="detail-clear" data-page-id="ledger-imports">清空</button></form>`;
   return detailListView({ active: "ledger-imports", toolbar, title: "Import File", description: "每行代表一个导入文件 PO；Transaction Fact 是只读的详情子资源。", total: result.total, headers: ["文件", "来源", "格式", "状态", "成功数量", "时间", ""], rows, footer: detailPager(result, "ledger-imports") });
@@ -809,25 +831,63 @@ function scheduleHistoryRefresh(form) {
   state.historyFilterTimer = setTimeout(() => refreshHistoryResults(form, 1), 200);
 }
 
+const MAX_IMPORT_FILES = 100;
+const MAX_IMPORT_FILE_BYTES = 25 * 1024 * 1024;
+const MAX_IMPORT_TOTAL_BYTES = 100 * 1024 * 1024;
+const importExtensions = new Set(["csv", "xls", "xlsx", "pdf", "zip"]);
+
+function validateImportFiles(files) {
+  if (!files.length) throw new Error("请选择至少一个账单文件");
+  if (files.length > MAX_IMPORT_FILES) throw new Error(`单次最多选择 ${MAX_IMPORT_FILES} 个文件`);
+  const oversized = files.find((file) => file.size > MAX_IMPORT_FILE_BYTES);
+  if (oversized) throw new Error(`${oversized.name} 超过单文件 25 MB 限制`);
+  const unsupported = files.find((file) => !importExtensions.has(fileExtension(file.name).toLowerCase()));
+  if (unsupported) throw new Error(`${unsupported.name} 的格式不受支持`);
+  const total = files.reduce((sum, file) => sum + file.size, 0);
+  if (total > MAX_IMPORT_TOTAL_BYTES) throw new Error("所选文件总计超过单次 100 MB 限制");
+}
+
 const fileBase64 = (file) => new Promise((resolve, reject) => {
   const reader = new FileReader();
   reader.onload = () => resolve(String(reader.result).split(",")[1]);
-  reader.onerror = reject;
+  reader.onerror = () => reject(reader.error || new Error(`无法读取文件：${file.name}`));
+  reader.onabort = () => reject(new Error(`文件读取已取消：${file.name}`));
   reader.readAsDataURL(file);
 });
+
+async function encodeImportFiles(files, source, password) {
+  const encoded = new Array(files.length);
+  let nextIndex = 0;
+  const worker = async () => {
+    while (nextIndex < files.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      const file = files[index];
+      encoded[index] = {
+        filename: file.name,
+        content_base64: await fileBase64(file),
+        source_type: source,
+        password,
+      };
+    }
+  };
+  await Promise.all(Array.from(
+    { length: Math.min(4, files.length) },
+    () => worker(),
+  ));
+  return encoded;
+}
+
 async function previewImport(form) {
   if (!beginSubmit(form)) return;
-  const files = [...form.elements.files.files];
-  if (!files.length) { endSubmit(form); throw new Error("请选择至少一个账单文件"); }
-  const source = form.elements.source_type.value || null;
-  const password = form.elements.password.value || null;
-  const timezone = form.elements.timezone.value || "Asia/Hong_Kong";
-  setSelectedTimeZone(timezone);
-  timezoneSelect.value = timezone;
-  const payload = { timezone, files: await Promise.all(files.map(async (file) => ({
-    filename: file.name, content_base64: await fileBase64(file), source_type: source, password,
-  }))) };
   try {
+    const files = [...form.elements.files.files];
+    validateImportFiles(files);
+    const source = form.elements.source_type.value || null;
+    const password = form.elements.password.value || null;
+    const timezone = form.elements.timezone.value || selectedImportTimeZone();
+    setSelectedImportTimeZone(timezone);
+    const payload = { timezone, files: await encodeImportFiles(files, source, password) };
     state.importPlan = await jsonRequest("/paam/import/v1/preview", "POST", payload);
     renderImportPlan();
   } finally {
@@ -901,6 +961,9 @@ function renderImportPlan() {
   const plan = state.importPlan;
   const root = $("#import-preview");
   if (!plan || !root) return;
+  const sourceTimeZones = [...new Set(
+    (plan.documents || []).map((document) => document.source_timezone).filter(Boolean),
+  )];
   const rows = (plan.documents || []).flatMap((document) => document.rows || []);
   const accountRows = new Map();
   rows.forEach((row) => {
@@ -936,6 +999,10 @@ function renderImportPlan() {
     return `<details class="preview-file-card" ${index === 0 ? "open" : ""}><summary><span class="file-type-icon">${esc(fileExtension(document.filename || document.format))}</span><span class="preview-file-title"><strong>${esc(document.filename || "未命名文件")}</strong><small>${esc(source)} · ${documentRows.length} 行</small></span><span class="preview-status ${documentIssue ? "issue" : "ready"}">${status}</span><span class="preview-chevron" aria-hidden="true">⌄</span></summary><div class="preview-file-body">${body}</div></details>`;
   }).join("");
   root.innerHTML = `<div class="preview-section" aria-labelledby="preview-title"><div class="preview-heading"><div><span class="step-kicker">步骤 3 / 3</span><h2 id="preview-title" tabindex="-1">预览结果</h2><p>文件卡片默认快速展示前 5 行；需要逐条核对时可打开右侧仔细预览。</p></div><span class="preview-verdict ${plan.can_confirm ? "ready" : "issue"}">${plan.can_confirm ? "✓ 可以写入" : "! 需要处理"}</span></div><div class="preview-metrics">${metric("新增事实", Number(counts.new || 0), "green", "将生成新流水")}${metric("补充证据", Number(counts.supplement || 0), "blue", "关联已有事实")}${metric("跳过 / 留档", Number(counts.duplicate_file || 0) + Number(counts.record || 0), "gray", "不重复写入")}${metric("需处理", issueCount, issueCount ? "orange" : "green", issueCount ? "请检查下方项目" : "未发现阻塞项")}</div><div class="preview-file-list">${documentCards}</div>${errors ? `<div class="error"><strong>无法直接导入的记录</strong><ul class="error-list">${errors}</ul></div>` : ""}<form data-form="import-revise" class="preview-confirm-card"><div><h3>${plan.can_confirm ? "核对完成，准备写入" : "完成核对后再写入"}</h3><p>${plan.can_confirm ? "写入采用原子事务，原始文件和证据会一并保留。" : "请处理账号匹配或交易歧义；文件解析错误需重新导出后上传。"}</p></div>${accountFields ? `<details class="review-fields"><summary>核对或调整账号匹配</summary><div class="stack inset">${accountFields}</div></details>` : ""}${decisions ? `<fieldset><legend>交易匹配决策</legend><div class="stack">${decisions}</div></fieldset>` : ""}<details class="raw-plan" data-raw-plan><summary>查看技术明细</summary><div class="raw-plan-placeholder" data-raw-plan-content>展开后加载技术明细</div></details><div class="confirm-actions"><button type="button" class="quiet back-to-files" data-action="import-step" data-step="2">← 返回文件步骤</button><button type="submit">重新计算预览</button><button type="button" class="primary" data-action="confirm-import" ${plan.can_confirm ? "" : "disabled"}>确认并写入事实层</button></div></form></div>`;
+  const previewHelp = $(".preview-heading p", root);
+  if (previewHelp && sourceTimeZones.length) {
+    previewHelp.append(` 账单原始时间按 ${sourceTimeZones.map(timeZoneName).join("、")} 解释。`);
+  }
   bindPage(root);
   showImportStep(3);
 }
@@ -1226,7 +1293,10 @@ function bindPage(root) {
     route("summary", params);
   });
   $$('[data-action="account-metric"]', root).forEach((button) => button.onclick = () => {
-    route("economy", accountLedgerParams());
+    route("economy", accountLedgerParams({
+      entryTypeCode: 0,
+      entryDirection: button.dataset.value === "INCOME" ? 1 : 2,
+    }));
   });
   $$('[data-action="account-type"]', root).forEach((button) => button.onclick = () => {
     route("economy", accountLedgerParams({ entryTypeCode: button.dataset.value }));
@@ -1263,6 +1333,14 @@ function bindPage(root) {
   $$('[data-action="conflict-resolve"]', root).forEach((button) => button.onclick = () => conflictDialog(button));
   const importForm = $('[data-form="import-preview"]', root);
   if (importForm) {
+    const limitCopy = $("[data-import-dropzone] small", importForm);
+    if (limitCopy) limitCopy.textContent = "单个不超过 25 MB，最多 100 个，单次总计不超过 100 MB";
+    const importTimeZone = importForm.elements.timezone;
+    importTimeZone.value = selectedImportTimeZone();
+    const importTimeZoneHelp = $("small", importTimeZone.closest("label"));
+    if (importTimeZoneHelp) {
+      importTimeZoneHelp.textContent = "仅用于解释文件中未带时区的交易时间，不影响页面显示；国内账单默认上海。";
+    }
     $$('[data-action="import-source"]', importForm).forEach((button) => button.addEventListener("click", () => {
       clearImportPlan();
       importForm.elements.source_type.value = button.dataset.value;
