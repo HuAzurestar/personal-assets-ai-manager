@@ -1,4 +1,3 @@
-export const now = new Date();
 export const state = {
   page: "ledger",
   params: new URLSearchParams(),
@@ -10,5 +9,5 @@ export const state = {
   detailEconomics: new Map(),
   detailEconomicReviews: new Map(),
   detailSummaries: new Map(),
-  accountMonth: new Date(now.getFullYear(), now.getMonth(), 1),
+  accountMonth: null,
 };

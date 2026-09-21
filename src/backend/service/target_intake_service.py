@@ -121,6 +121,7 @@ class TargetIntakeService:
         state = self.store.get(token)
         if state is None or state.result is not None or state.expired:
             raise TargetIntakeError(409, "预览已失效，请重新上传")
+        expected_updated_time = state.updated_time
         try:
             plan = self.match_mapper.plan(
                 state.documents,
@@ -133,7 +134,11 @@ class TargetIntakeService:
         state.accounts = dict(payload.accounts)
         state.decisions = dict(payload.decisions)
         state.plan = plan
-        self.store.replace(state)
+        if not self.store.replace(
+            state,
+            expected_updated_time=expected_updated_time,
+        ):
+            raise TargetIntakeError(409, "预览已变化，请核对最新预览")
         return public_plan(token, plan)
 
     def confirm(self, token: str, payload: IntakeConfirmRequest) -> dict[str, object]:
@@ -169,6 +174,7 @@ class TargetIntakeService:
                 )
                 self.write_mapper.commit()
                 state.result = result
+                self.store.touch(state)
                 return result
             except TargetIntakeError:
                 self.write_mapper.rollback()

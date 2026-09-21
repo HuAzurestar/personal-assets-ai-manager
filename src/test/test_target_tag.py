@@ -10,6 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from backend.core.target_database import init_target_db
 from backend.entity import (
     CASH_DIRECTION_OUT,
+    LedgerEntry,
     LedgerEntryTag,
     ReviewAllocation,
     ReviewCase,
@@ -22,6 +23,7 @@ from backend.router.ledger import router as ledger_router
 from backend.router.ledger_account import router as ledger_account_router
 from backend.router.tag import router as tag_router
 from backend.router.tag_assignment import router as tag_assignment_router
+from backend.schema.target_review import TargetReviewTransitionRequest
 from backend.service.target_economic_service import TargetEconomicService
 
 
@@ -227,6 +229,8 @@ def test_ledger_tag_assignment_is_direct_and_idempotent(target_tag_api):
     fact_id = _add_facts(sessions, 1)[0]
     _create_tag_dictionary(client)
     ledger_id = _ledger_for_fact(sessions, fact_id)
+    with sessions() as db:
+        previous_updated_time = db.get(LedgerEntry, ledger_id).updated_time
 
     assigned = _assign(client, ledger_id, "food")
     assert assigned.status_code == 200, assigned.text
@@ -244,9 +248,35 @@ def test_ledger_tag_assignment_is_direct_and_idempotent(target_tag_api):
     assert detail["ledger_entry"]["tags"][0]["tag_system_name"] == "food"
     assert all("review_type" not in item for item in detail["reviews"])
     with sessions() as db:
+        assert db.get(LedgerEntry, ledger_id).updated_time > previous_updated_time
         assignment = db.scalar(
             select(LedgerEntryTag).where(LedgerEntryTag.ledger_id == ledger_id)
         )
+        assert db.get(TargetTag, assignment.tag_id).system_name == "food"
+
+
+def test_inactive_ledger_tag_assignment_is_allowed(target_tag_api):
+    client, sessions, _engine = target_tag_api
+    fact_id = _add_facts(sessions, 1)[0]
+    _create_tag_dictionary(client)
+    ledger_id = _ledger_for_fact(sessions, fact_id)
+    with sessions() as db:
+        case_id = db.scalar(select(ReviewAllocation.review_case_id).where(
+            ReviewAllocation.ledger_entry_id == ledger_id,
+        ))
+        TargetEconomicService(db).revoke(
+            case_id,
+            TargetReviewTransitionRequest(
+                idempotency_key="revoke-before-tag-edit",
+            ),
+        )
+
+    assigned = _assign(client, ledger_id, "food")
+    assert assigned.status_code == 200, assigned.text
+    with sessions() as db:
+        assignment = db.scalar(select(LedgerEntryTag).where(
+            LedgerEntryTag.ledger_id == ledger_id,
+        ))
         assert db.get(TargetTag, assignment.tag_id).system_name == "food"
 
 

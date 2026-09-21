@@ -7,12 +7,12 @@ import {
 } from "../component/detail.js?v=20260917.10";
 import {
   bindDateTimeRanges, dateTimeRangeControl,
-} from "../component/date-time-range.js?v=20260917.10";
-import { now, state } from "../state/ledger.js";
+} from "../component/date-time-range.js?v=20260921.1";
+import { state } from "../state/ledger.js";
 import {
   $, $$, currencyPrecision, date, decimalAmount, esc, key, money,
   reviewTypeNames, roleNames, statusNames, typeNames,
-  selectedTimeZone, setSelectedTimeZone, zonedISOString,
+  selectedCalendarDate, selectedTimeZone, setSelectedTimeZone, zonedISOString,
 } from "../util/core.js";
 import {
   canonicalHash, parseHash, shellMarkup, syncNavigation,
@@ -23,6 +23,11 @@ import {
 
 const entryTypeValues = { TRANSACTION: 0, ACCOUNT_TRANSFER: 1, CLAIM: 2 };
 const reviewBehaviorNames = { 0: "事实交易", 1: "借款与还款" };
+
+function currentAccountMonth() {
+  const { year, month } = selectedCalendarDate();
+  return new Date(year, month - 1, 1);
+}
 
 function closeDialogs() {
   $$('dialog[open]').forEach((dialog) => dialog.close());
@@ -75,6 +80,9 @@ const timezoneSelect = $('[data-timezone]');
 timezoneSelect.value = selectedTimeZone();
 timezoneSelect.addEventListener("change", () => {
   setSelectedTimeZone(timezoneSelect.value);
+  if (state.page === "summary" && !state.params.has("month")) {
+    state.accountMonth = currentAccountMonth();
+  }
   render();
 });
 
@@ -153,7 +161,10 @@ function renderPageActions() {
 }
 
 async function summaryPage() {
-  state.accountMonth = cursorFromParam(state.params.get("month"), state.accountMonth);
+  state.accountMonth = cursorFromParam(
+    state.params.get("month"),
+    state.accountMonth || currentAccountMonth(),
+  );
   const range = monthBounds(state.accountMonth);
   const economicSummary = await request(`/paam/ledger/v1/flow/summary?${new URLSearchParams({ date_from: range.from, date_to: range.to, timezone: selectedTimeZone() })}`);
   const summary = {
@@ -1202,9 +1213,10 @@ function bindPage(root) {
     route("summary", params);
   });
   $('[data-action="account-current"]', root)?.addEventListener("click", () => {
-    state.accountMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    state.accountMonth = currentAccountMonth();
+    const range = monthBounds(state.accountMonth);
     const params = new URLSearchParams(state.params);
-    params.set("month", `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
+    params.set("month", `${range.year}-${String(range.month + 1).padStart(2, "0")}`);
     route("summary", params);
   });
   $$('[data-action="account-metric"]', root).forEach((button) => button.onclick = () => {

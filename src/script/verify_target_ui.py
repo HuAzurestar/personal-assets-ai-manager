@@ -84,17 +84,25 @@ def run() -> None:
                         normal: time.zonedISOString('2026-03-30T01:30'),
                         gap: '',
                         overlap: '',
+                        newYorkDate: '',
+                        tokyoDate: '',
                     };
                     try { time.zonedISOString('2026-03-29T01:30'); }
                     catch (error) { result.gap = error.message; }
                     try { time.zonedISOString('2026-10-25T01:30'); }
                     catch (error) { result.overlap = error.message; }
+                    time.setSelectedTimeZone('America/New_York');
+                    result.newYorkDate = time.selectedCalendarDate('2026-09-01T01:00:00Z').iso;
+                    time.setSelectedTimeZone('Asia/Tokyo');
+                    result.tokyoDate = time.selectedCalendarDate('2026-09-01T01:00:00Z').iso;
                     time.setSelectedTimeZone('Asia/Hong_Kong');
                     return result;
                 }""")
                 assert timezone_result["normal"] == "2026-03-30T00:30:00.000Z"
                 assert "不存在" in timezone_result["gap"]
                 assert "不唯一" in timezone_result["overlap"]
+                assert timezone_result["newYorkDate"] == "2026-08-31"
+                assert timezone_result["tokyoDate"] == "2026-09-01"
                 expect(page.locator('[data-form="fact-filter"]')).to_be_visible()
                 expect(page.locator(".module-heading")).to_be_hidden()
                 expect(page.locator(".module-nav [data-module]")).to_have_count(3)

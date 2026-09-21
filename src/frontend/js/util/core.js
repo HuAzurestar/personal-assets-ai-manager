@@ -44,6 +44,12 @@ function wallClockParts(timestamp, timeZone) {
   return ["year", "month", "day", "hour", "minute", "second"].map((key) => Number(values[key]));
 }
 
+export function selectedCalendarDate(value = new Date()) {
+  const [year, month, day] = wallClockParts(value, selectedTimeZone());
+  const iso = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  return { year, month, day, iso };
+}
+
 export function zonedISOString(value, exclusiveEnd = false) {
   const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2}))?)?$/);
   if (!match) throw new Error(`无效的本地日期时间：${value}`);

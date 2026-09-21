@@ -16,7 +16,11 @@ from sqlalchemy.orm import sessionmaker
 import backend.service.target_intake_service as target_intake_service_module
 from backend.core import target_database
 from backend import target_main
-from backend.core.intake_preview_store import target_intake_preview_store
+from backend.core.intake_preview_store import (
+    IntakePreviewState,
+    IntakePreviewStore,
+    target_intake_preview_store,
+)
 from backend.entity import (
     CASH_DIRECTION_IN,
     CASH_DIRECTION_OUT,
@@ -97,6 +101,33 @@ def _csv(rows=None) -> bytes:
     writer.writerow(HEADERS)
     writer.writerows(rows or _rows())
     return output.getvalue().encode()
+
+
+def test_intake_preview_store_rejects_stale_replacement():
+    store = IntakePreviewStore()
+    store.put(IntakePreviewState(
+        token="preview-token",
+        documents=[],
+        plan={"version": "initial"},
+    ))
+    stale = store.get("preview-token")
+    assert stale is not None
+
+    with store.locked("preview-token") as current:
+        assert current is not None
+        current.result = {"status": "confirmed"}
+        store.touch(current)
+
+    stale.plan = {"version": "stale"}
+    assert not store.replace(
+        stale,
+        expected_updated_time=stale.updated_time,
+    )
+    retained = store.get("preview-token")
+    assert retained is not None
+    assert retained.updated_time > stale.updated_time
+    assert retained.result == {"status": "confirmed"}
+    assert retained.plan == {"version": "initial"}
 
 
 def _workbook(extension: str) -> bytes:

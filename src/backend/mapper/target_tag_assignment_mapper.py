@@ -8,8 +8,6 @@ from sqlalchemy.orm import Session
 from backend.entity import (
     LedgerEntry,
     LedgerEntryTag,
-    ReviewAllocation,
-    ReviewCase,
     TargetTag,
     TargetTagView,
 )
@@ -25,19 +23,12 @@ class TargetTagAssignmentMapper:
         if self.db.bind is not None and self.db.bind.dialect.name == "sqlite":
             self.db.execute(text("BEGIN IMMEDIATE"))
 
-    def active_ledger(self, ledger_id: int) -> dict | None:
+    def ledger(self, ledger_id: int) -> dict | None:
         row = self.db.execute(select(
             LedgerEntry.id,
             LedgerEntry.updated_time,
-        ).join(
-            ReviewAllocation,
-            ReviewAllocation.ledger_entry_id == LedgerEntry.id,
-        ).join(
-            ReviewCase,
-            ReviewCase.id == ReviewAllocation.review_case_id,
         ).where(
             LedgerEntry.id == ledger_id,
-            ReviewCase.status == 0,
         )).mappings().one_or_none()
         return dict(row) if row is not None else None
 
@@ -70,13 +61,14 @@ class TargetTagAssignmentMapper:
     def touch(
         self,
         ledger_id: int,
+        expected_updated_time: datetime,
         now: datetime,
-    ) -> None:
+    ) -> bool:
         result = self.db.execute(update(LedgerEntry).where(
             LedgerEntry.id == ledger_id,
+            LedgerEntry.updated_time == expected_updated_time,
         ).values(updated_time=now))
-        if result.rowcount != 1:
-            raise ValueError(f"ledger {ledger_id} not found")
+        return result.rowcount == 1
 
     def commit(self) -> None:
         self.db.commit()

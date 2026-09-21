@@ -19,6 +19,7 @@ class IntakePreviewState:
     decisions: dict[str, str] = field(default_factory=dict)
     result: dict[str, object] | None = None
     created_time: datetime = field(default_factory=utc_now)
+    updated_time: datetime = field(default_factory=utc_now)
 
     @property
     def expired(self) -> bool:
@@ -46,11 +47,28 @@ class IntakePreviewStore:
             state = self._states.get(token)
             return copy.deepcopy(state) if state is not None else None
 
-    def replace(self, state: IntakePreviewState) -> None:
+    def replace(
+        self,
+        state: IntakePreviewState,
+        *,
+        expected_updated_time: datetime,
+    ) -> bool:
         with self._lock:
-            if state.token not in self._states:
+            current = self._states.get(state.token)
+            if current is None:
                 raise KeyError(state.token)
+            if current.updated_time != expected_updated_time:
+                return False
+            state.updated_time = self._next_update_time(current.updated_time)
             self._states[state.token] = copy.deepcopy(state)
+            return True
+
+    def touch(self, state: IntakePreviewState) -> None:
+        with self._lock:
+            current = self._states.get(state.token)
+            if current is not state:
+                raise KeyError(state.token)
+            state.updated_time = self._next_update_time(state.updated_time)
 
     @contextmanager
     def locked(self, token: str) -> Iterator[IntakePreviewState | None]:
@@ -66,6 +84,10 @@ class IntakePreviewStore:
         expired = [token for token, state in self._states.items() if state.expired]
         for token in expired:
             self._states.pop(token, None)
+
+    @staticmethod
+    def _next_update_time(previous: datetime) -> datetime:
+        return max(utc_now(), previous + timedelta(milliseconds=1))
 
 
 target_intake_preview_store = IntakePreviewStore()

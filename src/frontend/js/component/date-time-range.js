@@ -1,13 +1,10 @@
-import { $, $$, esc } from "../util/core.js";
+import { $, $$, esc, selectedCalendarDate } from "../util/core.js";
 
 let openedControl = null;
 let outsideHandler = null;
 
 const pad = (value) => String(value).padStart(2, "0");
-const today = () => {
-  const value = new Date();
-  return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
-};
+const today = () => selectedCalendarDate().iso;
 
 function normalize(value, endpoint) {
   const text = String(value || "").slice(0, 16);
