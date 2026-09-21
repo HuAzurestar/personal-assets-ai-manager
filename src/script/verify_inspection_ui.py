@@ -345,20 +345,23 @@ def run():
                     for region in ("navigation", "list"):
                         assert abs(list_geometry[region]["x"] - open_geometry[region]["x"]) <= .5
                         assert abs(list_geometry[region]["width"] - open_geometry[region]["width"]) <= .5
-                    expect(drawer.locator(".inspection-rail")).to_be_visible()
+                    expect(drawer).to_have_attribute("data-layout", "wide")
+                    expect(drawer.locator(".inspection-rail")).to_be_hidden()
                     title = drawer.locator("#inspection-title").inner_text()
                     drawer.locator("[data-inspect-next]").click()
                     expect(drawer.locator("#inspection-title")).not_to_have_text(title)
                     drawer.locator("[data-inspect-back]").click()
                     expect(drawer.locator("#inspection-title")).to_have_text(title)
                     drawer.locator("[data-inspect-full]").click()
-                    expect(drawer.locator(".inspection-rail")).to_be_hidden()
-                    drawer.locator("[data-inspect-full]").click()
+                    expect(drawer).to_have_attribute("data-layout", "split")
+                    expect(drawer.locator(".inspection-rail")).to_be_visible()
                     old_page_label = drawer.locator("[data-rail-page-label]").inner_text()
                     drawer.locator('[data-rail-page="next"]').click()
                     expect(drawer.locator("[data-rail-page-label]")).not_to_have_text(old_page_label)
                     expect(drawer).to_be_visible()
-                    expect(drawer.locator(".inspection-rail")).to_be_visible()
+                    drawer.locator("[data-inspect-full]").click()
+                    expect(drawer).to_have_attribute("data-layout", "wide")
+                    expect(drawer.locator(".inspection-rail")).to_be_hidden()
                     drawer.locator("[data-close]").click()
 
                     # Keyboard open / Escape returns focus and leaves filtering intact.
@@ -420,12 +423,9 @@ def run():
                                 page.locator(f'.secondary-nav [data-page="{tab}"]').click()
                                 expect(page.locator('.detail-primary').first).to_be_visible()
                             drawer = open_detail(kind, record_id)
-                            expected_layout = "split" if width >= 1280 and height >= 680 else "bottom" if width >= 600 and height < 640 else "right" if width >= 768 else "full"
+                            expected_layout = "wide" if width >= 1280 and height >= 680 else "bottom" if width >= 600 and height < 640 else "right" if width >= 768 else "full"
                             expect(drawer).to_have_attribute("data-layout", expected_layout)
-                            if expected_layout == "split":
-                                expect(drawer.locator(".inspection-rail")).to_be_visible()
-                            else:
-                                expect(drawer.locator(".inspection-rail")).to_be_hidden()
+                            expect(drawer.locator(".inspection-rail")).to_be_hidden()
                             geometry = drawer.evaluate("""d => ({
                                 overflow: d.scrollWidth-d.clientWidth,
                                 bodyOverflow: d.querySelector('.inspection-body').scrollWidth-d.querySelector('.inspection-body').clientWidth,
@@ -438,7 +438,7 @@ def run():
                                 args.screenshots.mkdir(parents=True, exist_ok=True)
                                 page.screenshot(path=str(args.screenshots / f"inspection-{kind}-{width}x{height}.png"))
                             assert drawer.evaluate("d=>d.scrollWidth-d.clientWidth") <= 1
-                            if expected_layout == "right":
+                            if expected_layout in {"wide", "right"}:
                                 page.mouse.click(4, height / 2)
                                 expect(page.locator("dialog.inspection-workspace[open]")).to_have_count(0)
                             elif expected_layout == "bottom":

@@ -1,7 +1,7 @@
 import { checkConnection, request, jsonRequest } from "../api/client.js?v=20260921.2";
 import { toast } from "../component/toast.js";
 import { table } from "../component/table.js";
-import { openInspection } from "../component/inspection.js?v=20260918.3";
+import { openInspection } from "../component/inspection.js?v=20260921.4";
 import {
   detailList, detailPager,
 } from "../component/detail.js?v=20260917.10";

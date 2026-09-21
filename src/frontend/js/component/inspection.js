@@ -285,11 +285,12 @@ export async function openInspection(kind, id, bindActions) {
     dialog.querySelector('[data-rail-page="next"]').disabled = !listContext.next || listContext.next.disabled;
   }
   function syncLayout() {
-    const layout = full ? "full" : window.innerWidth >= 1280 && window.innerHeight >= 680
-      ? "split"
-      : window.innerWidth >= 600 && window.innerHeight < 640
-        ? "bottom"
-        : window.innerWidth >= 768 ? "right" : "full";
+    const supportsWideWorkspace = window.innerWidth >= 1280 && window.innerHeight >= 680;
+    let layout = "full";
+    if (full) layout = supportsWideWorkspace ? "split" : "full";
+    else if (supportsWideWorkspace) layout = "wide";
+    else if (window.innerWidth >= 600 && window.innerHeight < 640) layout = "bottom";
+    else if (window.innerWidth >= 768) layout = "right";
     dialog.dataset.layout = layout;
     const button = dialog.querySelector("[data-inspect-full]");
     button.setAttribute("aria-pressed", String(full));
@@ -389,7 +390,7 @@ export async function openInspection(kind, id, bindActions) {
   window.addEventListener("resize", resize, { passive: true });
   dialog.querySelector("[data-close]").onclick = () => dialog.close();
   dialog.addEventListener("click", (event) => {
-    if (event.target === dialog && ["right", "bottom"].includes(dialog.dataset.layout)) dialog.close();
+    if (event.target === dialog && ["wide", "right", "bottom"].includes(dialog.dataset.layout)) dialog.close();
   });
   dialog.querySelector("[data-inspect-full]").onclick = () => { full = !full; syncLayout(); };
   dialog.querySelector("[data-inspect-back]").onclick = async () => { const previous = stack.pop(); if (previous) { await navigate(previous.kind, previous.id, false); body.scrollTop = previous.scroll; } };

@@ -205,9 +205,14 @@ def run() -> None:
                 page.locator('[data-action="import-file-detail"]').click()
                 history_drawer = page.locator("dialog.detail-view-drawer[open]")
                 expect(history_drawer).to_be_visible()
+                expect(history_drawer).to_have_attribute("data-layout", "wide")
                 history_drawer_box = history_drawer.bounding_box()
                 assert history_drawer_box is not None
-                assert history_drawer_box["width"] >= 1438, history_drawer_box
+                assert history_drawer_box["x"] >= 340, history_drawer_box
+                assert history_drawer_box["width"] < 1200, history_drawer_box
+                assert abs(
+                    history_drawer_box["x"] + history_drawer_box["width"] - 1440
+                ) <= 1, history_drawer_box
                 expect(history_drawer.locator(".inspection-import-row")).to_have_count(20)
                 expect(history_drawer).to_contain_text("来源行处理结果")
                 expect(history_drawer).to_contain_text("显示 1–20 / 26 行")

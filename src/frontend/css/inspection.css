@@ -1,7 +1,9 @@
 /* Responsive dashboard-style detail workspace shared by the four persisted objects. */
 .inspection-workspace { inset:0; width:100vw; max-width:none; height:100dvh; max-height:none; margin:0; padding:0; border:0; border-radius:0; animation:none; font-size:14px; color:var(--text); }
+.inspection-workspace[data-layout="wide"] { inset:0 0 0 auto; width:min(1248px,calc(100vw - clamp(340px,28vw,560px))); margin-left:auto; border-left:1px solid var(--line); border-radius:18px 0 0 18px; }
 .inspection-workspace[data-layout="right"] { inset:0 0 0 auto; width:min(780px,82vw); margin-left:auto; border-left:1px solid var(--line); border-radius:18px 0 0 18px; }
 .inspection-workspace[data-layout="bottom"] { inset:auto 0 0; height:min(78dvh,700px); margin-top:auto; border-top:1px solid var(--line); border-radius:18px 18px 0 0; }
+.inspection-workspace[data-layout="wide"]::backdrop { background:rgba(7,25,24,.46); }
 .inspection-shell { display:grid; grid-template-columns:minmax(0,1fr); height:100%; }
 .inspection-workspace[data-layout="split"] .inspection-shell { grid-template-columns:clamp(240px,18vw,310px) minmax(0,1fr); }
 .inspection-main { min-width:0; min-height:0; display:grid; grid-template-rows:auto minmax(0,1fr); }
