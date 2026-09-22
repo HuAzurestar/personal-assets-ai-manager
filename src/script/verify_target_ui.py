@@ -196,8 +196,9 @@ def run() -> None:
                 expect(page.locator('.secondary-nav [data-page="tag-review"]')).to_be_visible()
                 page.locator('.secondary-nav [data-page="tag-review"]').click()
                 expect(page.locator(".tag-review-page")).to_be_visible()
-                expect(page.locator(".automation-rules")).to_be_visible()
-                expect(page.locator(".review-empty")).to_contain_text("建议列表尚未接通")
+                expect(page.locator(".automation-rules")).to_have_count(0)
+                expect(page.locator(".request-table")).to_be_visible()
+                expect(page.locator(".request-table .table-empty")).to_contain_text("建议列表尚未接通")
                 expect(page.locator(".automation-requests .tag-manager-head button")).to_be_disabled()
                 expect(page.locator(".review-filter-skeleton select")).to_have_count(3)
                 expect(page.locator(".review-filter-skeleton select").first).to_be_disabled()
@@ -409,8 +410,7 @@ def run() -> None:
                     data={"name": "Food", "system_name": "food"},
                 )
                 assert active_tag_response.ok, active_tag_response.text()
-                page.goto(f"{base_url}/#workbench/import")
-                page.goto(f"{base_url}/#workbench/tag-review")
+                page.goto(f"{base_url}/#details/auto-rule")
                 expect(page.locator(".automation-rules")).to_be_visible()
                 page.locator('[data-action="rule-new"]').click()
                 rule_form = page.locator('dialog[open] [data-form="automation-rule"]')
@@ -420,16 +420,18 @@ def run() -> None:
                 rule_form.locator('[name="cron"]').fill("*/5 * * * *")
                 rule_form.locator('[name="enabled"]').check()
                 rule_form.locator('button[type="submit"]').click()
-                rule_card = page.locator("[data-rule-card]").filter(
+                rule_row = page.locator("[data-rule-row]").filter(
                     has_text="浏览器验收规则"
                 )
-                expect(rule_card).to_be_visible()
-                expect(rule_card).to_contain_text("Ledger #0")
-                rule_card.locator('[data-action="rule-preview"]').click()
-                expect(rule_card.locator(".automation-result")).to_contain_text(
+                expect(rule_row).to_be_visible()
+                expect(rule_row).to_contain_text("Ledger #0")
+                rule_row.locator('[data-action="rule-preview"]').click()
+                preview_dialog = page.locator('dialog[open]').filter(has_text="候选资格预览")
+                expect(preview_dialog.locator(".automation-result")).to_contain_text(
                     "SIMULATED_LOCAL · 只读预览"
                 )
-                rule_card.locator('[data-action="rule-edit"]').click()
+                preview_dialog.locator("[data-close]").click()
+                rule_row.locator('[data-action="rule-edit"]').click()
                 rule_edit_form = page.locator(
                     'dialog[open] [data-form="automation-rule"]'
                 )
@@ -448,13 +450,11 @@ def run() -> None:
                 assert page.request.get(
                     f"{base_url}/paam/tag/v1/auto_rule/1"
                 ).json()["body"]["name"] == "浏览器验收规则"
+                page.goto(f"{base_url}/#workbench/tag-review")
                 expect(page.locator(".tag-review-page")).to_be_visible()
-                expect(page.locator("[data-rule-card]")).to_contain_text(
-                    "浏览器验收规则"
-                )
-                expect(page.locator("[data-rule-card]")).to_contain_text(
-                    "Active Category"
-                )
+                expect(page.locator("[data-rule-row]")).to_have_count(0)
+                expect(page.locator(".request-table")).to_be_visible()
+                expect(page.locator(".review-filter-skeleton select").nth(1)).to_contain_text("浏览器验收规则")
                 if evidence_dir:
                     page.locator(".toast").evaluate_all(
                         "nodes => nodes.forEach(node => node.remove())"
@@ -587,6 +587,7 @@ def run() -> None:
                     for route_name, selector in (
                         ("details/transaction-fact", '[data-form="fact-filter"]'),
                         ("details/tag", ".tag-manager"),
+                        ("details/auto-rule", ".automation-rules"),
                         ("overview", '.month-metrics'),
                         ("workbench/review", '[data-review-workflow]'),
                         ("workbench/tag-review", ".tag-review-page"),

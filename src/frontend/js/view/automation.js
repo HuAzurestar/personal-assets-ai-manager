@@ -58,22 +58,20 @@ export async function automationSettingsPage() {
   </div>`;
 }
 
-function ruleCard(rule) {
+function ruleRow(rule) {
   const view = views.find((item) => item.id === rule.view_id);
   const model = setting?.models.find((item) => item.id === rule.method_config.model_id);
   const counts = [
     ["已分析", rule.analyzed_count], ["失败", rule.failed_count], ["建议", rule.suggested_count],
     ["已启用", rule.accepted_count], ["已拒绝", rule.rejected_count],
   ].map(([label, value]) => `<div><span>${label}</span><strong>${esc(value)}</strong></div>`).join("");
-  return `<article class="automation-card rule-card" data-rule-card="${rule.id}">
-    <header><div><span class="eyebrow">RULE #${rule.id} · REV ${rule.rule_revision}</span><h3>${esc(rule.name)}</h3></div>${statusPill(rule.enabled, Boolean(model?.key_configured))}</header>
-    <p class="rule-source">来源：${esc(view?.name || `View #${rule.view_id}`)} · ${esc(model?.name || `Model #${rule.method_config.model_id}`)}</p>
-    <p class="rule-prompt">${esc(rule.method_config.prompt)}</p>
-    <div class="rule-schedule"><span>CRON</span><code>${esc(rule.cron || "未设置")}</code><small>游标 Ledger #${rule.scan_after_ledger_id} · Epoch ${rule.scan_epoch}</small></div>
-    <div class="rule-counts">${counts}</div>
-    <div class="automation-actions"><button type="button" class="quiet" data-action="rule-preview" data-id="${rule.id}">查看候选预览</button><button type="button" data-action="rule-edit" data-id="${rule.id}">编辑规则</button></div>
-    <div class="automation-result" data-rule-result="${rule.id}" aria-live="polite" hidden></div>
-  </article>`;
+  return `<tr data-rule-row="${rule.id}">
+    <td class="rule-identity"><span class="eyebrow">RULE #${rule.id} · REV ${rule.rule_revision}</span><strong>${esc(rule.name)}</strong><small>${esc(rule.method_config.prompt)}</small></td>
+    <td><strong>${esc(view?.name || `View #${rule.view_id}`)}</strong><small>${esc(model?.name || `Model #${rule.method_config.model_id}`)}</small></td>
+    <td class="rule-schedule"><code>${esc(rule.cron || "未设置")}</code><small>Ledger #${rule.scan_after_ledger_id} · Epoch ${rule.scan_epoch}</small></td>
+    <td><div class="rule-counts">${counts}</div></td>
+    <td class="rule-operation">${statusPill(rule.enabled, Boolean(model?.key_configured))}<div class="automation-actions"><button type="button" class="quiet" data-action="rule-preview" data-id="${rule.id}">候选预览</button><button type="button" data-action="rule-edit" data-id="${rule.id}">编辑</button></div></td>
+  </tr>`;
 }
 
 export async function autoRulesPanel(tagViews) {
@@ -88,29 +86,34 @@ export async function autoRulesPanel(tagViews) {
   return `<section class="tag-manager automation-rules" aria-labelledby="auto-rule-title">
     <div class="tag-manager-head"><div><h2 id="auto-rule-title">自动打标签规则</h2><p>同一标签维度可配置多条独立规则；配置和进度从 SQLite 实时读取。</p></div><button type="button" class="primary" data-action="rule-new" ${canCreate ? "" : 'disabled title="需要启用中的标签维度和模型"'}>＋ 新建规则</button></div>
     <div class="automation-notice compact" role="note"><strong>尚未启动调度</strong><span>本页没有“立即执行/重扫”入口。候选预览仅做本地只读资格检查，不调用模型、不移动游标。</span></div>
-    <div class="automation-grid">${rules.map(ruleCard).join("") || '<div class="panel empty-state"><strong>尚未创建自动规则</strong><p>启用模型并准备标签维度后即可保存第一条规则。</p></div>'}</div>
+    <div class="automation-table-wrap"><table class="automation-table rule-table"><thead><tr><th>规则</th><th>View / 模型</th><th>调度 / 进度</th><th>累计统计</th><th>状态 / 操作</th></tr></thead><tbody>${rules.map(ruleRow).join("") || '<tr><td colspan="5" class="table-empty"><strong>尚未创建自动规则</strong><span>启用模型并准备标签维度后即可保存第一条规则。</span></td></tr>'}</tbody></table></div>
   </section>`;
 }
 
-export async function tagReviewSkeletonPage() {
+export async function autoRulesPage() {
   const viewPage = await request("/paam/tag/v1/view/list?page_index=1&page_size=100");
-  const rulePanel = await autoRulesPanel(viewPage.items);
+  return `<div class="auto-rules-page">${await autoRulesPanel(viewPage.items)}</div>`;
+}
+
+export async function tagReviewSkeletonPage() {
+  const [viewPage, rulePage] = await Promise.all([
+    request("/paam/tag/v1/view/list?page_index=1&page_size=100"),
+    request("/paam/tag/v1/auto_rule/list?page_index=1&page_size=100&sorter=%5B%7B%22key%22%3A%22id%22%2C%22direction%22%3A%22asc%22%7D%5D"),
+  ]);
+  const viewOptions = viewPage.items.map((item) => `<option>${esc(item.name)}</option>`).join("");
+  const ruleOptions = rulePage.items.map((item) => `<option>${esc(item.name)}</option>`).join("");
   return `<div class="tag-review-page">
-    ${rulePanel}
     <section class="tag-manager automation-requests" aria-labelledby="tag-request-title">
-      <div class="tag-manager-head"><div><h2 id="tag-request-title">标签建议请求</h2><p>选择上方规则后，按 Ledger + View 查看该规则生成的多个候选及处理状态。</p></div><button type="button" class="primary" disabled title="DEV-012 接通建议 API 后启用">批量确认</button></div>
+      <div class="tag-manager-head"><div><h2 id="tag-request-title">标签建议请求</h2><p>按规则、Ledger + View 查看候选建议及处理状态；规则配置位于「明细 → 自动规则」。</p></div><button type="button" class="primary" disabled title="DEV-012 接通建议 API 后启用">批量确认</button></div>
       <div class="automation-notice compact" role="status" aria-live="polite"><strong>请求 API 待接通</strong><span>建议读取、详情和批量通过/拒绝由 DEV-012 完成；当前不会用模拟操作修改标签。</span></div>
       <div class="review-filter-skeleton" aria-labelledby="tag-review-filter-title">
         <div class="form-grid three">
-          <label>标签维度<select disabled><option>全部 View</option></select></label>
-          <label>来源规则<select disabled><option>全部规则</option></select></label>
+          <label>标签维度<select disabled><option>全部 View</option>${viewOptions}</select></label>
+          <label>来源规则<select disabled><option>全部规则</option>${ruleOptions}</select></label>
           <label>建议状态<select disabled><option>待人工确认</option></select></label>
         </div>
       </div>
-      <div class="panel review-empty" aria-labelledby="tag-review-list-title">
-        <span class="empty-state-icon" aria-hidden="true">◇</span><h3 id="tag-review-list-title">建议列表尚未接通</h3>
-        <p>后续在这里显示请求列表、规则来源和同一 Ledger + View 的候选冲突；本阶段不把本地资格预览冒充模型建议。</p>
-      </div>
+      <div class="automation-table-wrap"><table class="automation-table request-table" aria-labelledby="tag-review-list-title"><thead><tr><th id="tag-review-list-title">请求</th><th>Ledger / View</th><th>建议标签</th><th>来源规则</th><th>状态</th><th>操作</th></tr></thead><tbody><tr><td colspan="6" class="table-empty"><strong>建议列表尚未接通</strong><span>DEV-012 将在这里接入 request 列表、候选冲突与人工处理操作。</span></td></tr></tbody></table></div>
     </section>
   </div>`;
 }
@@ -269,10 +272,9 @@ async function testModel(button) {
 }
 
 async function previewRule(button) {
-  const result = $(`[data-rule-result="${button.dataset.id}"]`);
+  const dialog = openDialog("候选资格预览", '<div class="automation-result" aria-live="polite">正在本地检查候选资格…</div>');
+  const result = $(".automation-result", dialog);
   button.disabled = true;
-  result.hidden = false;
-  result.textContent = "正在本地检查候选资格…";
   try {
     const body = await jsonRequest(`/paam/tag/v1/auto_rule/${button.dataset.id}/candidate_preview`, "POST", {});
     const reasons = Object.entries(body.reason_counts).map(([name, count]) => `<span>${esc(name)} <strong>${count}</strong></span>`).join("");

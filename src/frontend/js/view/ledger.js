@@ -22,8 +22,8 @@ import {
   accountsMarkup, cursorFromParam, monthBounds,
 } from "./account.js?v=20260917.10";
 import {
-  automationSettingsPage, bindAutomation, tagReviewSkeletonPage,
-} from "./automation.js?v=20260922.3";
+  automationSettingsPage, autoRulesPage, bindAutomation, tagReviewSkeletonPage,
+} from "./automation.js?v=20260922.4";
 
 const entryTypeValues = { TRANSACTION: 0, ACCOUNT_TRANSFER: 1, CLAIM: 2 };
 const entryTypeCodes = { 0: "TRANSACTION", 1: "ACCOUNT_TRANSFER", 2: "CLAIM" };
@@ -113,6 +113,7 @@ const pageInfo = {
   "ledger-reviews": ["明细", "查看事实如何通过审查和 Allocation 形成经济流水。"],
   "ledger-imports": ["明细", "在统一列表中追溯导入文件、原始行和处理结果。"],
   "ledger-tags": ["明细", "在统一列表中查看分类维度、标签值和启用状态。"],
+  "auto-rules": ["明细", "查看自动标签规则、调度配置、扫描进度和累计指标。"],
   summary: ["概览", "基于 Ledger Summary 查看月度收支、趋势和账本活动；具体流水继续回到“明细”查看。"],
   ledger: ["明细", "查看导入后不可变的事实流水；最终结果请切换到经济明细。"],
   import: ["导入 / 上传", "选择来源、添加文件，并在写入账本前逐项核对。"],
@@ -160,6 +161,7 @@ async function render() {
       "ledger-reviews": ledgerReviewsPage,
       "ledger-imports": ledgerImportsPage,
       "ledger-tags": ledgerTagsPage,
+      "auto-rules": autoRulesPage,
       summary: summaryPage,
       ledger: ledgerPage,
       import: importPage,

@@ -25,6 +25,7 @@ const secondaryMeta = {
     ["ledger-reviews", "审查记录", "Review"],
     ["ledger-imports", "导入文件", "Import File"],
     ["ledger-tags", "标签管理", "Tag"],
+    ["auto-rules", "自动规则", "Auto Tag Rule"],
   ],
   overview: [
     ["summary", "概览", "Ledger Summary"],
@@ -45,6 +46,7 @@ const pageModules = {
   "ledger-reviews": "details",
   "ledger-imports": "details",
   "ledger-tags": "details",
+  "auto-rules": "details",
   summary: "overview",
   reviews: "workbench",
   import: "workbench",
@@ -74,6 +76,7 @@ const pagePaths = {
   "ledger-reviews": "details/review",
   "ledger-imports": "details/import-file",
   "ledger-tags": "details/tag",
+  "auto-rules": "details/auto-rule",
   summary: "overview",
   import: "workbench/import",
   reviews: "workbench/review",

@@ -220,6 +220,7 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
             assert 'data-page="settings">设置</button>' in navigation_script.text
             assert 'data-page="import">导入账单</button>' not in navigation_script.text
             assert '["tag-review", "打标签审查"' in navigation_script.text
+            assert '["auto-rules", "自动规则"' in navigation_script.text
             core_script = client.get("/static/js/util/core.js")
             assert core_script.status_code == 200
             assert "export const reviewTypeNames" in core_script.text
