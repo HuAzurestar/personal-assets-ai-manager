@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
+from pydantic import ValidationError
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from backend.entity import Setting
+from backend.schema.setting import AutomationModelWrite
 
 
 SETTING_SCHEMA_VERSION = 1
@@ -24,6 +26,22 @@ def decode_setting_value(value_json: str) -> dict[str, object]:
     automation = value.get("automation")
     if automation is not None and not isinstance(automation, dict):
         raise ValueError("setting automation must be a JSON object")
+    if isinstance(automation, dict):
+        models = automation.get("models", [])
+        disclosure = automation.get("disclosure", {})
+        if not isinstance(models, list):
+            raise ValueError("setting automation models must be a JSON array")
+        if not isinstance(disclosure, dict):
+            raise ValueError("setting automation disclosure must be a JSON object")
+        try:
+            parsed_models = [
+                AutomationModelWrite.model_validate(model) for model in models
+            ]
+        except ValidationError as error:
+            raise ValueError("setting automation model is invalid") from error
+        model_ids = [model.id for model in parsed_models]
+        if len(set(model_ids)) != len(model_ids):
+            raise ValueError("setting automation model ids must be unique")
     return value
 
 

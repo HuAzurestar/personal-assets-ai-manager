@@ -5,7 +5,11 @@ from collections.abc import Collection, Generator
 from fastapi import Request
 from sqlalchemy.orm import Session
 
-from backend.core import target_database
+from backend.core import (
+    ProtectedSecretStore,
+    protected_secret_store,
+    target_database,
+)
 from backend.error import ListQueryError
 
 
@@ -15,6 +19,10 @@ def get_db() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
+
+
+def get_protected_secret_store() -> ProtectedSecretStore:
+    return protected_secret_store
 
 
 def validate_query_parameter_names(

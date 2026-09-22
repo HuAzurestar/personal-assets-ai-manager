@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 from sqlalchemy.orm import Session
 
 from backend.entity import (
@@ -11,6 +11,7 @@ from backend.entity import (
     AUTO_TAG_METHOD_LLM_DIRECT,
     AutoTagRule,
 )
+from backend.entity.auto_tag_rule import MAX_COUNTER_VALUE
 
 
 METHOD_CONFIG_SCHEMA_VERSION = 1
@@ -96,6 +97,54 @@ class AutoTagRuleMapper:
             AutoTagRule.view_id == view_id,
         ).order_by(AutoTagRule.id)).mappings().all()
         return [self._decode_row(row) for row in rows]
+
+    def advance_for_model_ids(
+        self,
+        model_ids: set[int],
+        *,
+        now: datetime,
+    ) -> datetime:
+        """Invalidate rules whose effective model parameters changed."""
+
+        if not model_ids:
+            return now
+        rows = self.db.execute(select(
+            AutoTagRule.id,
+            AutoTagRule.method_config_json,
+            AutoTagRule.rule_revision,
+            AutoTagRule.scan_epoch,
+            AutoTagRule.updated_time,
+        )).mappings().all()
+        affected_ids: list[int] = []
+        effective_time = now
+        for row in rows:
+            method_config = decode_method_config(row["method_config_json"])
+            if method_config["model_id"] not in model_ids:
+                continue
+            if (
+                row["rule_revision"] >= MAX_COUNTER_VALUE
+                or row["scan_epoch"] >= MAX_COUNTER_VALUE
+            ):
+                raise ValueError("automatic tag rule revision counter is exhausted")
+            affected_ids.append(row["id"])
+            effective_time = max(
+                effective_time,
+                row["updated_time"] + timedelta(microseconds=1),
+            )
+
+        if not affected_ids:
+            return now
+        self.db.execute(
+            update(AutoTagRule)
+            .where(AutoTagRule.id.in_(affected_ids))
+            .values(
+                rule_revision=AutoTagRule.rule_revision + 1,
+                scan_after_ledger_id=0,
+                scan_epoch=AutoTagRule.scan_epoch + 1,
+                updated_time=effective_time,
+            )
+        )
+        return effective_time
 
     def create(
         self,
