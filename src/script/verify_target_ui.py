@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import re
 import socket
 import sys
 import tempfile
 import threading
 import time
+from pathlib import Path
 
 import httpx
 
@@ -35,6 +35,7 @@ def run() -> None:
         sys.path.insert(0, str(root / "src"))
 
         import uvicorn
+
         from backend import target_main
         from backend.router.dependency import get_protected_secret_store
 
@@ -198,10 +199,17 @@ def run() -> None:
                 expect(page.locator(".tag-review-page")).to_be_visible()
                 expect(page.locator(".automation-rules")).to_have_count(0)
                 expect(page.locator(".request-table")).to_be_visible()
-                expect(page.locator(".request-table .table-empty")).to_contain_text("建议列表尚未接通")
-                expect(page.locator(".automation-requests .tag-manager-head button")).to_be_disabled()
+                expect(page.locator(".request-table .table-empty")).to_contain_text(
+                    "没有符合条件的建议请求"
+                )
+                batch_actions = page.locator(
+                    '.automation-requests [data-action="tag-request-batch"]'
+                )
+                expect(batch_actions).to_have_count(2)
+                expect(batch_actions.first).to_be_disabled()
+                expect(batch_actions.nth(1)).to_be_disabled()
                 expect(page.locator(".review-filter-skeleton select")).to_have_count(3)
-                expect(page.locator(".review-filter-skeleton select").first).to_be_disabled()
+                expect(page.locator(".review-filter-skeleton select").first).to_be_enabled()
                 page.locator('.secondary-nav [data-page="import"]').click()
                 expect(page.locator('[data-action="import-source"]')).to_have_count(6)
                 expect(page.get_by_role("heading", name="选择数据来源")).to_be_visible()
@@ -491,7 +499,7 @@ def run() -> None:
                         ".module-topbar,.module-subbar{position:static!important}"
                     ))
                     page.screenshot(
-                        path=evidence_dir / "tag-review-skeleton.png",
+                        path=evidence_dir / "tag-review.png",
                         full_page=True,
                     )
                     evidence_style.evaluate("node => node.remove()")
@@ -642,6 +650,7 @@ def run() -> None:
                 browser.close()
 
             from sqlalchemy import create_engine, inspect
+
             from backend.core.target_database import TARGET_TABLE_NAMES
 
             engine = create_engine(f"sqlite:///{database_path}")
