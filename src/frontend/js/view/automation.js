@@ -7,9 +7,9 @@ let views = [];
 
 const amountModeNames = { 1: "金额区间（BAND）", 2: "精确金额（EXACT）", 3: "不发送金额（NONE）" };
 
-function statusPill(enabled, configured = true) {
-  const active = enabled && configured;
-  const copy = !configured ? "缺少密钥" : enabled ? "已启用" : "已停用";
+function statusPill(enabled, available = true, unavailableCopy = "缺少密钥") {
+  const active = enabled && available;
+  const copy = !available ? unavailableCopy : enabled ? "已启用" : "已停用";
   return `<span class="automation-status ${active ? "active" : "inactive"}"><i></i>${copy}</span>`;
 }
 
@@ -61,6 +61,8 @@ export async function automationSettingsPage() {
 function ruleRow(rule) {
   const view = views.find((item) => item.id === rule.view_id);
   const model = setting?.models.find((item) => item.id === rule.method_config.model_id);
+  const modelAvailable = Boolean(model?.enabled && model?.key_configured);
+  const unavailableCopy = !model ? "模型不可用" : !model.enabled ? "模型已停用" : "缺少密钥";
   const counts = [
     ["已分析", rule.analyzed_count], ["失败", rule.failed_count], ["建议", rule.suggested_count],
     ["已启用", rule.accepted_count], ["已拒绝", rule.rejected_count],
@@ -70,7 +72,7 @@ function ruleRow(rule) {
     <td><strong>${esc(view?.name || `View #${rule.view_id}`)}</strong><small>${esc(model?.name || `Model #${rule.method_config.model_id}`)}</small></td>
     <td class="rule-schedule"><code>${esc(rule.cron || "未设置")}</code><small>Ledger #${rule.scan_after_ledger_id} · Epoch ${rule.scan_epoch}</small></td>
     <td><div class="rule-counts">${counts}</div></td>
-    <td class="rule-operation">${statusPill(rule.enabled, Boolean(model?.key_configured))}<div class="automation-actions"><button type="button" class="quiet" data-action="rule-preview" data-id="${rule.id}">候选预览</button><button type="button" data-action="rule-edit" data-id="${rule.id}">编辑</button></div></td>
+    <td class="rule-operation">${statusPill(rule.enabled, modelAvailable, unavailableCopy)}<div class="automation-actions"><button type="button" class="quiet" data-action="rule-preview" data-id="${rule.id}">候选预览</button><button type="button" data-action="rule-edit" data-id="${rule.id}">编辑</button></div></td>
   </tr>`;
 }
 

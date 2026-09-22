@@ -450,6 +450,33 @@ def run() -> None:
                 assert page.request.get(
                     f"{base_url}/paam/tag/v1/auto_rule/1"
                 ).json()["body"]["name"] == "浏览器验收规则"
+                current_setting = page.request.get(
+                    f"{base_url}/paam/system/v1/setting/automation"
+                ).json()["body"]
+                disabled_models = []
+                for model in current_setting["models"]:
+                    disabled_model = {
+                        key: value
+                        for key, value in model.items()
+                        if key != "key_configured"
+                    }
+                    disabled_model["enabled"] = False
+                    disabled_models.append(disabled_model)
+                disable_response = page.request.put(
+                    f"{base_url}/paam/system/v1/setting/automation",
+                    data={
+                        "expected_updated_time": current_setting["updated_time"],
+                        "models": disabled_models,
+                    },
+                )
+                assert disable_response.ok, disable_response.text()
+                page.reload()
+                disabled_rule_row = page.locator("[data-rule-row]").filter(
+                    has_text="浏览器验收规则"
+                )
+                disabled_rule_status = disabled_rule_row.locator(".automation-status")
+                expect(disabled_rule_status).to_have_text("模型已停用")
+                expect(disabled_rule_status).not_to_have_text("已启用")
                 page.goto(f"{base_url}/#workbench/tag-review")
                 expect(page.locator(".tag-review-page")).to_be_visible()
                 expect(page.locator("[data-rule-row]")).to_have_count(0)

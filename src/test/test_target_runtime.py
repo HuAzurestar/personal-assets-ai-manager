@@ -213,6 +213,7 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
             assert "/paam/system/v1/setting/automation" in automation_script.text
             assert "/paam/tag/v1/auto_rule" in automation_script.text
             assert "SIMULATED_LOCAL" in automation_script.text
+            assert "模型已停用" in automation_script.text
             assert 'data-action="rule-run"' not in automation_script.text
             assert 'data-action="rule-rescan"' not in automation_script.text
             navigation_script = client.get("/static/js/navigation.js")
