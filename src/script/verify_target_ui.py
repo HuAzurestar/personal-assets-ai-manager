@@ -186,6 +186,14 @@ def run() -> None:
 
                 page.locator('[data-module="workbench"]').click()
                 expect(page.locator(".module-heading")).to_be_hidden()
+                expect(page.locator('.secondary-nav [data-page="tag-review"]')).to_be_visible()
+                page.locator('.secondary-nav [data-page="tag-review"]').click()
+                expect(page.locator(".tag-review-page")).to_be_visible()
+                expect(page.locator(".review-empty")).to_contain_text("建议列表尚未接通")
+                expect(page.locator(".tag-review-hero button")).to_be_disabled()
+                expect(page.locator(".review-filter-skeleton select")).to_have_count(3)
+                expect(page.locator(".review-filter-skeleton select").first).to_be_disabled()
+                page.locator('.secondary-nav [data-page="import"]').click()
                 expect(page.locator('[data-action="import-source"]')).to_have_count(6)
                 expect(page.get_by_role("heading", name="选择数据来源")).to_be_visible()
                 expect(page.get_by_role("heading", name="添加账单文件")).to_be_hidden()
@@ -420,6 +428,19 @@ def run() -> None:
                 assert page.request.get(
                     f"{base_url}/paam/tag/v1/auto_rule/1"
                 ).json()["body"]["name"] == "浏览器验收规则"
+                page.goto(f"{base_url}/#workbench/tag-review")
+                expect(page.locator(".tag-review-page")).to_be_visible()
+                expect(page.locator(".review-source-card")).to_contain_text(
+                    "浏览器验收规则"
+                )
+                expect(page.locator(".review-source-card")).to_contain_text(
+                    "Active Category"
+                )
+                if evidence_dir:
+                    page.locator(".tag-review-page").screenshot(
+                        path=evidence_dir / "tag-review-skeleton.png",
+                    )
+                page.locator('[data-module="details"]').click()
                 page.locator('.secondary-nav [data-page="economy"]').click()
                 page.locator('[data-action="economic-detail"]').first.click()
                 tag_drawer = page.locator("dialog.detail-view-drawer[open]")

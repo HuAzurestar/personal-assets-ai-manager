@@ -22,8 +22,8 @@ import {
   accountsMarkup, cursorFromParam, monthBounds,
 } from "./account.js?v=20260917.10";
 import {
-  automationSettingsPage, autoRulesPanel, bindAutomation,
-} from "./automation.js?v=20260922.1";
+  automationSettingsPage, autoRulesPanel, bindAutomation, tagReviewSkeletonPage,
+} from "./automation.js?v=20260922.2";
 
 const entryTypeValues = { TRANSACTION: 0, ACCOUNT_TRANSFER: 1, CLAIM: 2 };
 const entryTypeCodes = { 0: "TRANSACTION", 1: "ACCOUNT_TRANSFER", 2: "CLAIM" };
@@ -118,6 +118,7 @@ const pageInfo = {
   import: ["导入 / 上传", "选择来源、添加文件，并在写入账本前逐项核对。"],
   "import-history": ["导入记录", "查找已经写入的文件、处理结果和原始行。"],
   reviews: ["账单审查", "选择待审查事实，配置 Fact 与 Ledger 的关系，预览后生成账本流水。"],
+  "tag-review": ["打标签审查", "核对自动规则生成的标签建议及其来源；只有人工确认后标签才会生效。"],
   settings: ["设置", "管理自动化模型连接与安全披露配置。"],
 };
 const validPages = new Set(Object.keys(pageInfo));
@@ -164,6 +165,7 @@ async function render() {
       import: importPage,
       "import-history": importHistoryPage,
       reviews: reviewCreatePage,
+      "tag-review": tagReviewSkeletonPage,
       settings: automationSettingsPage,
     })[page]();
     if (renderVersion !== state.renderVersion || page !== state.page) return;

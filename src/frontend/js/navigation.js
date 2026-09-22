@@ -32,6 +32,7 @@ const secondaryMeta = {
   workbench: [
     ["import", "导入 / 上传", "预览并写入事实层"],
     ["reviews", "账单审查", "配置 Fact 与 Ledger"],
+    ["tag-review", "打标签审查", "建议确认与来源核对"],
   ],
   settings: [
     ["settings", "自动化", "模型连接与安全披露"],
@@ -48,6 +49,7 @@ const pageModules = {
   reviews: "workbench",
   import: "workbench",
   "import-history": "workbench",
+  "tag-review": "workbench",
   settings: "settings",
 };
 
@@ -76,6 +78,7 @@ const pagePaths = {
   import: "workbench/import",
   reviews: "workbench/review",
   "import-history": "workbench/import/history",
+  "tag-review": "workbench/tag-review",
   settings: "settings/automation",
 };
 
