@@ -196,8 +196,9 @@ def run() -> None:
                 expect(page.locator('.secondary-nav [data-page="tag-review"]')).to_be_visible()
                 page.locator('.secondary-nav [data-page="tag-review"]').click()
                 expect(page.locator(".tag-review-page")).to_be_visible()
+                expect(page.locator(".automation-rules")).to_be_visible()
                 expect(page.locator(".review-empty")).to_contain_text("建议列表尚未接通")
-                expect(page.locator(".tag-review-hero button")).to_be_disabled()
+                expect(page.locator(".automation-requests .tag-manager-head button")).to_be_disabled()
                 expect(page.locator(".review-filter-skeleton select")).to_have_count(3)
                 expect(page.locator(".review-filter-skeleton select").first).to_be_disabled()
                 page.locator('.secondary-nav [data-page="import"]').click()
@@ -408,8 +409,8 @@ def run() -> None:
                     data={"name": "Food", "system_name": "food"},
                 )
                 assert active_tag_response.ok, active_tag_response.text()
-                page.goto(f"{base_url}/#details/transaction-fact")
-                page.goto(f"{base_url}/#details/tag")
+                page.goto(f"{base_url}/#workbench/import")
+                page.goto(f"{base_url}/#workbench/tag-review")
                 expect(page.locator(".automation-rules")).to_be_visible()
                 page.locator('[data-action="rule-new"]').click()
                 rule_form = page.locator('dialog[open] [data-form="automation-rule"]')
@@ -447,18 +448,26 @@ def run() -> None:
                 assert page.request.get(
                     f"{base_url}/paam/tag/v1/auto_rule/1"
                 ).json()["body"]["name"] == "浏览器验收规则"
-                page.goto(f"{base_url}/#workbench/tag-review")
                 expect(page.locator(".tag-review-page")).to_be_visible()
-                expect(page.locator(".review-source-card")).to_contain_text(
+                expect(page.locator("[data-rule-card]")).to_contain_text(
                     "浏览器验收规则"
                 )
-                expect(page.locator(".review-source-card")).to_contain_text(
+                expect(page.locator("[data-rule-card]")).to_contain_text(
                     "Active Category"
                 )
                 if evidence_dir:
-                    page.locator(".tag-review-page").screenshot(
-                        path=evidence_dir / "tag-review-skeleton.png",
+                    page.locator(".toast").evaluate_all(
+                        "nodes => nodes.forEach(node => node.remove())"
                     )
+                    page.evaluate("window.scrollTo(0, 0)")
+                    evidence_style = page.add_style_tag(content=(
+                        ".module-topbar,.module-subbar{position:static!important}"
+                    ))
+                    page.screenshot(
+                        path=evidence_dir / "tag-review-skeleton.png",
+                        full_page=True,
+                    )
+                    evidence_style.evaluate("node => node.remove()")
                 page.locator('[data-module="details"]').click()
                 page.locator('.secondary-nav [data-page="economy"]').click()
                 page.locator('[data-action="economic-detail"]').first.click()
@@ -577,7 +586,7 @@ def run() -> None:
                     page.set_viewport_size({"width": width, "height": height})
                     for route_name, selector in (
                         ("details/transaction-fact", '[data-form="fact-filter"]'),
-                        ("details/tag", ".automation-rules"),
+                        ("details/tag", ".tag-manager"),
                         ("overview", '.month-metrics'),
                         ("workbench/review", '[data-review-workflow]'),
                         ("workbench/tag-review", ".tag-review-page"),

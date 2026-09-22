@@ -93,46 +93,25 @@ export async function autoRulesPanel(tagViews) {
 }
 
 export async function tagReviewSkeletonPage() {
-  const [rulePage, viewPage, currentSetting] = await Promise.all([
-    request("/paam/tag/v1/auto_rule/list?page_index=1&page_size=100&sorter=%5B%7B%22key%22%3A%22id%22%2C%22direction%22%3A%22asc%22%7D%5D"),
-    request("/paam/tag/v1/view/list?page_index=1&page_size=100"),
-    request("/paam/system/v1/setting/automation"),
-  ]);
-  const viewById = new Map(viewPage.items.map((item) => [item.id, item]));
-  const modelById = new Map(currentSetting.models.map((item) => [item.id, item]));
-  const sources = rulePage.items.map((rule) => {
-    const view = viewById.get(rule.view_id);
-    const model = modelById.get(rule.method_config.model_id);
-    return `<article class="review-source-card">
-      <div><span class="eyebrow">RULE #${rule.id} · REV ${rule.rule_revision}</span><strong>${esc(rule.name)}</strong><small>${esc(view?.name || `View #${rule.view_id}`)} · ${esc(model?.name || `Model #${rule.method_config.model_id}`)}</small></div>
-      ${statusPill(rule.enabled, Boolean(model?.key_configured))}
-    </article>`;
-  }).join("");
+  const viewPage = await request("/paam/tag/v1/view/list?page_index=1&page_size=100");
+  const rulePanel = await autoRulesPanel(viewPage.items);
   return `<div class="tag-review-page">
-    <section class="automation-hero tag-review-hero">
-      <div><span class="eyebrow">WORKBENCH · TAG REVIEW</span><h2>打标签审查</h2><p>自动分析只生成建议；标签必须经人工确认后生效，并保留规则与版本来源。</p></div>
-      <button type="button" class="primary" disabled title="DEV-012 接通建议 API 后启用">批量确认</button>
-    </section>
-    <div class="automation-notice" role="status" aria-live="polite"><strong>M1-UI 骨架</strong><span>建议读取、详情和批量通过/拒绝尚未接通；DEV-012 将使用正式请求 API 完成闭环。此页不会用模拟按钮修改标签。</span></div>
-    <section class="review-filter-skeleton" aria-labelledby="tag-review-filter-title">
-      <div class="automation-section-head"><div><h3 id="tag-review-filter-title">建议筛选</h3><p>最终页面可按 View、规则和状态筛选多个候选。</p></div><span class="automation-status inactive"><i></i>请求 API 待接通</span></div>
-      <div class="form-grid three">
-        <label>标签维度<select disabled><option>全部 View</option></select></label>
-        <label>来源规则<select disabled><option>全部规则</option></select></label>
-        <label>建议状态<select disabled><option>待人工确认</option></select></label>
+    ${rulePanel}
+    <section class="tag-manager automation-requests" aria-labelledby="tag-request-title">
+      <div class="tag-manager-head"><div><h2 id="tag-request-title">标签建议请求</h2><p>选择上方规则后，按 Ledger + View 查看该规则生成的多个候选及处理状态。</p></div><button type="button" class="primary" disabled title="DEV-012 接通建议 API 后启用">批量确认</button></div>
+      <div class="automation-notice compact" role="status" aria-live="polite"><strong>请求 API 待接通</strong><span>建议读取、详情和批量通过/拒绝由 DEV-012 完成；当前不会用模拟操作修改标签。</span></div>
+      <div class="review-filter-skeleton" aria-labelledby="tag-review-filter-title">
+        <div class="form-grid three">
+          <label>标签维度<select disabled><option>全部 View</option></select></label>
+          <label>来源规则<select disabled><option>全部规则</option></select></label>
+          <label>建议状态<select disabled><option>待人工确认</option></select></label>
+        </div>
+      </div>
+      <div class="panel review-empty" aria-labelledby="tag-review-list-title">
+        <span class="empty-state-icon" aria-hidden="true">◇</span><h3 id="tag-review-list-title">建议列表尚未接通</h3>
+        <p>后续在这里显示请求列表、规则来源和同一 Ledger + View 的候选冲突；本阶段不把本地资格预览冒充模型建议。</p>
       </div>
     </section>
-    <div class="tag-review-layout">
-      <section class="panel review-empty" aria-labelledby="tag-review-list-title">
-        <span class="empty-state-icon" aria-hidden="true">◇</span><h3 id="tag-review-list-title">建议列表尚未接通</h3>
-        <p>后续将按 Ledger + View 展示多个候选、规则来源和冲突；本阶段不把本地资格预览冒充模型建议。</p>
-        <button type="button" data-page="ledger-tags">前往规则管理</button>
-      </section>
-      <aside class="review-source-panel" aria-labelledby="tag-review-source-title">
-        <div class="automation-section-head"><div><h3 id="tag-review-source-title">已配置来源</h3><p>${rulePage.total} 条规则可作为未来建议来源</p></div></div>
-        <div class="review-source-list">${sources || '<div class="empty-state compact"><strong>暂无规则来源</strong><p>先在标签管理中创建规则。</p></div>'}</div>
-      </aside>
-    </div>
   </div>`;
 }
 
