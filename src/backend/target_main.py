@@ -1,4 +1,4 @@
-"""PIRC-9 API application backed by exactly the 10 target tables."""
+"""PAAM API application backed by exactly the 13 target tables."""
 
 import asyncio
 import logging
@@ -14,6 +14,7 @@ from backend.core.config import (
     RESOURCE_DIR,
 )
 from backend.router.error import register_error_handlers
+from backend.router.auto_tag_rule import router as auto_tag_rule_router
 from backend.router.import_conflict import router as import_conflict_router
 from backend.router.import_file import router as import_file_router
 from backend.router.import_router import router as import_router
@@ -23,6 +24,7 @@ from backend.router.ledger_review import router as ledger_review_router
 from backend.router.ledger_review_candidate import router as ledger_review_candidate_router
 from backend.router.ledger_transaction_fact import router as ledger_transaction_fact_router
 from backend.router.system import router as system_router
+from backend.router.system_setting import router as system_setting_router
 from backend.router.tag import router as tag_router
 from backend.router.tag_assignment import router as tag_assignment_router
 from backend.service.target_economic_service import TargetEconomicService
@@ -66,6 +68,7 @@ register_error_handlers(app)
 app.mount("/static", StaticFiles(directory=RESOURCE_DIR / "frontend"), name="static")
 app.mount("/asset", StaticFiles(directory=RESOURCE_DIR / "asset"), name="asset")
 app.include_router(import_router)
+app.include_router(auto_tag_rule_router)
 app.include_router(import_conflict_router)
 app.include_router(import_file_router)
 app.include_router(ledger_router)
@@ -76,3 +79,4 @@ app.include_router(ledger_account_router)
 app.include_router(tag_router)
 app.include_router(tag_assignment_router)
 app.include_router(system_router)
+app.include_router(system_setting_router)

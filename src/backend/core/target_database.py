@@ -38,6 +38,9 @@ TARGET_TABLE_NAMES = (
     "tag_view",
     "tag",
     "ledger_entry_tag",
+    "setting",
+    "auto_tag_rule",
+    "tag_assignment_request",
 )
 
 SQL_ASSET_DIR = Path(__file__).resolve().parents[2] / "asset" / "sql"

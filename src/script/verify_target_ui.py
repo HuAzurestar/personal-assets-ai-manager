@@ -24,6 +24,10 @@ def run() -> None:
         ) from error
 
     root = Path(__file__).resolve().parents[2]
+    evidence_dir_value = os.environ.get("PAAM_UI_EVIDENCE_DIR")
+    evidence_dir = Path(evidence_dir_value) if evidence_dir_value else None
+    if evidence_dir:
+        evidence_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="paam-target-ui-") as temp:
         database_path = Path(temp) / "target.db"
         os.environ["PAAM_DATA_DIR"] = temp
@@ -31,6 +35,26 @@ def run() -> None:
         sys.path.insert(0, str(root / "src"))
 
         import uvicorn
+        from backend import target_main
+        from backend.router.dependency import get_protected_secret_store
+
+        class BrowserSecretStore:
+            def __init__(self) -> None:
+                self.values: dict[int, str] = {}
+
+            def is_configured(self, model_id: int) -> bool:
+                return model_id in self.values
+
+            def set(self, model_id: int, secret: str) -> None:
+                self.values[model_id] = secret
+
+            def delete(self, model_id: int) -> None:
+                self.values.pop(model_id, None)
+
+        browser_secret_store = BrowserSecretStore()
+        target_main.app.dependency_overrides[get_protected_secret_store] = (
+            lambda: browser_secret_store
+        )
 
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
@@ -120,8 +144,65 @@ def run() -> None:
                 ) == "none"
 
                 page.locator('[data-timezone]').select_option("UTC")
-                page.locator('.topbar-actions [data-page="import"]').click()
+                page.locator('.topbar-actions [data-page="settings"]').click()
+                expect(page.locator(".automation-hero")).to_be_visible()
+                expect(page.locator(".automation-grid .empty-state")).to_contain_text(
+                    "尚未配置模型"
+                )
+                page.locator('[data-action="model-new"]').first.click()
+                model_form = page.locator('dialog[open] [data-form="automation-model"]')
+                model_form.locator('[name="name"]').fill("浏览器验收模型")
+                model_form.locator('[name="model"]').fill("openai/Qwen/Qwen3-8B")
+                model_form.locator('[name="api_base"]').fill(
+                    "https://api.example.test/v1"
+                )
+                model_form.locator('[name="temperature"]').fill("0")
+                model_form.locator('[name="max_tokens"]').fill("512")
+                model_form.locator('[name="extras"]').fill(
+                    '{"provider_zero":0,"provider_flag":false}'
+                )
+                model_form.locator('[name="secret"]').fill("browser-test-secret")
+                model_form.locator('[name="enabled"]').check()
+                model_form.locator('button[type="submit"]').click()
+                model_card = page.locator('[data-model-card="1"]')
+                expect(model_card).to_contain_text("浏览器验收模型")
+                expect(model_card).to_contain_text("已安全配置")
+                model_card.locator('[data-action="model-test"]').click()
+                expect(model_card.locator('[data-model-result="1"]')).to_contain_text(
+                    "SIMULATED · 未连接供应商"
+                )
+                if evidence_dir:
+                    page.screenshot(
+                        path=evidence_dir / "automation-settings.png",
+                        full_page=True,
+                    )
+                persisted_setting = page.request.get(
+                    f"{base_url}/paam/system/v1/setting/automation"
+                ).json()["body"]
+                assert persisted_setting["models"][0]["litellm_params"]["temperature"] == 0
+                assert persisted_setting["models"][0]["litellm_params"]["provider_zero"] == 0
+                assert persisted_setting["models"][0]["litellm_params"]["provider_flag"] is False
+                assert "browser-test-secret" not in str(persisted_setting)
+                page.reload()
+                expect(page.locator('[data-model-card="1"]')).to_contain_text(
+                    "浏览器验收模型"
+                )
+                expect(page.locator('[data-model-card="1"]')).to_contain_text(
+                    "已安全配置"
+                )
+
+                page.locator('[data-module="workbench"]').click()
                 expect(page.locator(".module-heading")).to_be_hidden()
+                expect(page.locator('.secondary-nav [data-page="tag-review"]')).to_be_visible()
+                page.locator('.secondary-nav [data-page="tag-review"]').click()
+                expect(page.locator(".tag-review-page")).to_be_visible()
+                expect(page.locator(".automation-rules")).to_have_count(0)
+                expect(page.locator(".request-table")).to_be_visible()
+                expect(page.locator(".request-table .table-empty")).to_contain_text("建议列表尚未接通")
+                expect(page.locator(".automation-requests .tag-manager-head button")).to_be_disabled()
+                expect(page.locator(".review-filter-skeleton select")).to_have_count(3)
+                expect(page.locator(".review-filter-skeleton select").first).to_be_disabled()
+                page.locator('.secondary-nav [data-page="import"]').click()
                 expect(page.locator('[data-action="import-source"]')).to_have_count(6)
                 expect(page.get_by_role("heading", name="选择数据来源")).to_be_visible()
                 expect(page.get_by_role("heading", name="添加账单文件")).to_be_hidden()
@@ -290,7 +371,7 @@ def run() -> None:
                 archived_view_id = tag_view_response.json()["body"]["id"]
                 page.locator('.secondary-nav [data-page="ledger-tags"]').click()
                 expect(page.locator(".module-heading")).to_be_hidden()
-                expect(page.locator(".tag-manager-head")).to_be_visible()
+                expect(page.locator(".tag-manager-head").first).to_be_visible()
                 page.locator('[data-action="new-view"]').click()
                 dictionary_form = page.locator('dialog[open] [data-form="dictionary"]')
                 expect(dictionary_form).to_be_visible()
@@ -329,6 +410,92 @@ def run() -> None:
                     data={"name": "Food", "system_name": "food"},
                 )
                 assert active_tag_response.ok, active_tag_response.text()
+                page.goto(f"{base_url}/#details/auto-rule")
+                expect(page.locator(".automation-rules")).to_be_visible()
+                page.locator('[data-action="rule-new"]').click()
+                rule_form = page.locator('dialog[open] [data-form="automation-rule"]')
+                rule_form.locator('[name="name"]').fill("浏览器验收规则")
+                rule_form.locator('[name="view_id"]').select_option(str(active_view["id"]))
+                rule_form.locator('[name="prompt"]').fill("根据商户和摘要分类")
+                rule_form.locator('[name="cron"]').fill("*/5 * * * *")
+                rule_form.locator('[name="enabled"]').check()
+                rule_form.locator('button[type="submit"]').click()
+                rule_row = page.locator("[data-rule-row]").filter(
+                    has_text="浏览器验收规则"
+                )
+                expect(rule_row).to_be_visible()
+                expect(rule_row).to_contain_text("Ledger #0")
+                rule_row.locator('[data-action="rule-preview"]').click()
+                preview_dialog = page.locator('dialog[open]').filter(has_text="候选资格预览")
+                expect(preview_dialog.locator(".automation-result")).to_contain_text(
+                    "SIMULATED_LOCAL · 只读预览"
+                )
+                preview_dialog.locator("[data-close]").click()
+                rule_row.locator('[data-action="rule-edit"]').click()
+                rule_edit_form = page.locator(
+                    'dialog[open] [data-form="automation-rule"]'
+                )
+                rule_edit_form.locator('[name="cron"]').fill("* * * *")
+                rule_edit_form.locator('button[type="submit"]').click()
+                expect(rule_edit_form.locator(".form-error-slot .error")).to_be_visible()
+                expect(rule_edit_form.locator(".form-error-slot .error")).to_contain_text(
+                    "cron"
+                )
+                expect(rule_edit_form.locator('button[type="submit"]')).to_be_enabled()
+                rule_edit_form.locator("[data-close]").click()
+                if evidence_dir:
+                    page.locator(".automation-rules").screenshot(
+                        path=evidence_dir / "auto-tag-rules.png",
+                    )
+                assert page.request.get(
+                    f"{base_url}/paam/tag/v1/auto_rule/1"
+                ).json()["body"]["name"] == "浏览器验收规则"
+                current_setting = page.request.get(
+                    f"{base_url}/paam/system/v1/setting/automation"
+                ).json()["body"]
+                disabled_models = []
+                for model in current_setting["models"]:
+                    disabled_model = {
+                        key: value
+                        for key, value in model.items()
+                        if key != "key_configured"
+                    }
+                    disabled_model["enabled"] = False
+                    disabled_models.append(disabled_model)
+                disable_response = page.request.put(
+                    f"{base_url}/paam/system/v1/setting/automation",
+                    data={
+                        "expected_updated_time": current_setting["updated_time"],
+                        "models": disabled_models,
+                    },
+                )
+                assert disable_response.ok, disable_response.text()
+                page.reload()
+                disabled_rule_row = page.locator("[data-rule-row]").filter(
+                    has_text="浏览器验收规则"
+                )
+                disabled_rule_status = disabled_rule_row.locator(".automation-status")
+                expect(disabled_rule_status).to_have_text("模型已停用")
+                expect(disabled_rule_status).not_to_have_text("已启用")
+                page.goto(f"{base_url}/#workbench/tag-review")
+                expect(page.locator(".tag-review-page")).to_be_visible()
+                expect(page.locator("[data-rule-row]")).to_have_count(0)
+                expect(page.locator(".request-table")).to_be_visible()
+                expect(page.locator(".review-filter-skeleton select").nth(1)).to_contain_text("浏览器验收规则")
+                if evidence_dir:
+                    page.locator(".toast").evaluate_all(
+                        "nodes => nodes.forEach(node => node.remove())"
+                    )
+                    page.evaluate("window.scrollTo(0, 0)")
+                    evidence_style = page.add_style_tag(content=(
+                        ".module-topbar,.module-subbar{position:static!important}"
+                    ))
+                    page.screenshot(
+                        path=evidence_dir / "tag-review-skeleton.png",
+                        full_page=True,
+                    )
+                    evidence_style.evaluate("node => node.remove()")
+                page.locator('[data-module="details"]').click()
                 page.locator('.secondary-nav [data-page="economy"]').click()
                 page.locator('[data-action="economic-detail"]').first.click()
                 tag_drawer = page.locator("dialog.detail-view-drawer[open]")
@@ -446,8 +613,12 @@ def run() -> None:
                     page.set_viewport_size({"width": width, "height": height})
                     for route_name, selector in (
                         ("details/transaction-fact", '[data-form="fact-filter"]'),
+                        ("details/tag", ".tag-manager"),
+                        ("details/auto-rule", ".automation-rules"),
                         ("overview", '.month-metrics'),
                         ("workbench/review", '[data-review-workflow]'),
+                        ("workbench/tag-review", ".tag-review-page"),
+                        ("settings/automation", ".automation-page"),
                     ):
                         page.goto(f"{base_url}/#{route_name}")
                         expect(page.locator(selector)).to_be_visible()
@@ -479,8 +650,9 @@ def run() -> None:
                 assert actual == set(TARGET_TABLE_NAMES), actual
             finally:
                 engine.dispose()
-            print("PASS target UI fact, review, economic flow, and 10-table isolation")
+            print("PASS target UI fact, review, economic flow, and 13-table isolation")
         finally:
+            target_main.app.dependency_overrides.clear()
             server.should_exit = True
             thread.join(timeout=10)
             # SQLite keeps pooled file handles open after the ASGI server exits.

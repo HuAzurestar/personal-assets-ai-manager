@@ -1,4 +1,4 @@
-import { checkConnection, request, jsonRequest } from "../api/client.js?v=20260921.2";
+import { checkConnection, request, jsonRequest } from "../api/client.js?v=20260922.3";
 import { toast } from "../component/toast.js";
 import { table } from "../component/table.js";
 import { openInspection } from "../component/inspection.js?v=20260921.4";
@@ -21,6 +21,9 @@ import {
 import {
   accountsMarkup, cursorFromParam, monthBounds,
 } from "./account.js?v=20260917.10";
+import {
+  automationSettingsPage, autoRulesPage, bindAutomation, tagReviewSkeletonPage,
+} from "./automation.js?v=20260922.5";
 
 const entryTypeValues = { TRANSACTION: 0, ACCOUNT_TRANSFER: 1, CLAIM: 2 };
 const entryTypeCodes = { 0: "TRANSACTION", 1: "ACCOUNT_TRANSFER", 2: "CLAIM" };
@@ -110,11 +113,14 @@ const pageInfo = {
   "ledger-reviews": ["明细", "查看事实如何通过审查和 Allocation 形成经济流水。"],
   "ledger-imports": ["明细", "在统一列表中追溯导入文件、原始行和处理结果。"],
   "ledger-tags": ["明细", "在统一列表中查看分类维度、标签值和启用状态。"],
+  "auto-rules": ["明细", "查看自动标签规则、调度配置、扫描进度和累计指标。"],
   summary: ["概览", "基于 Ledger Summary 查看月度收支、趋势和账本活动；具体流水继续回到“明细”查看。"],
   ledger: ["明细", "查看导入后不可变的事实流水；最终结果请切换到经济明细。"],
   import: ["导入 / 上传", "选择来源、添加文件，并在写入账本前逐项核对。"],
   "import-history": ["导入记录", "查找已经写入的文件、处理结果和原始行。"],
   reviews: ["账单审查", "选择待审查事实，配置 Fact 与 Ledger 的关系，预览后生成账本流水。"],
+  "tag-review": ["打标签审查", "核对自动规则生成的标签建议及其来源；只有人工确认后标签才会生效。"],
+  settings: ["设置", "管理自动化模型连接与安全披露配置。"],
 };
 const validPages = new Set(Object.keys(pageInfo));
 
@@ -155,11 +161,14 @@ async function render() {
       "ledger-reviews": ledgerReviewsPage,
       "ledger-imports": ledgerImportsPage,
       "ledger-tags": ledgerTagsPage,
+      "auto-rules": autoRulesPage,
       summary: summaryPage,
       ledger: ledgerPage,
       import: importPage,
       "import-history": importHistoryPage,
       reviews: reviewCreatePage,
+      "tag-review": tagReviewSkeletonPage,
+      settings: automationSettingsPage,
     })[page]();
     if (renderVersion !== state.renderVersion || page !== state.page) return;
     root.innerHTML = content;
@@ -1175,6 +1184,7 @@ function closeInlineTag(form) {
 }
 
 function bindPage(root) {
+  bindAutomation(root, render, toast);
   $$('button[data-page], a[data-page]', root).forEach((button) => button.onclick = () => {
     if (button.closest("dialog")) closeDialogs();
     route(button.dataset.page);
@@ -1430,6 +1440,11 @@ function bindPage(root) {
   $('[data-form="conflict"]', root)?.addEventListener("submit", submitConflict);
   $$('form[data-form]', root).forEach(bindCommandForm);
 }
+
+window.addEventListener("paam:automation-saved", async (event) => {
+  toast(event.detail?.message || "自动化配置已保存");
+  await render();
+});
 
 async function submitTags(event) {
   event.preventDefault(); const form = event.currentTarget; const data = new FormData(form);

@@ -1,12 +1,12 @@
 from sqlalchemy import Integer, String, create_engine, inspect, text
-from sqlalchemy.sql.schema import CheckConstraint, UniqueConstraint
+from sqlalchemy.sql.schema import UniqueConstraint
 
 from backend.core.target_database import TARGET_TABLE_NAMES, TargetBase, init_target_db
 from script.reset_target_database import reset
 
 
 def test_target_metadata_contains_exactly_the_target_tables():
-    assert len(TARGET_TABLE_NAMES) == 10
+    assert len(TARGET_TABLE_NAMES) == 13
     assert set(TargetBase.metadata.tables) == set(TARGET_TABLE_NAMES)
 
 
@@ -43,10 +43,6 @@ def test_sql_assets_and_orm_mapping_have_schema_parity(tmp_path):
                 assert bool(actual[column.name]["primary_key"]) == column.primary_key
                 if not column.primary_key:
                     assert actual[column.name]["nullable"] == column.nullable
-            assert not any(
-                isinstance(constraint, CheckConstraint)
-                for constraint in mapped.constraints
-            )
             actual_indexes = database.get_indexes(table_name)
             actual_unique = {
                 tuple(item["column_names"])

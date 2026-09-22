@@ -55,6 +55,23 @@ class TargetTagError(DomainError):
     default_code = "TAG_ERROR"
 
 
+class SettingError(DomainError):
+    default_code = "SETTING_ERROR"
+
+
+class AutoTagRuleError(DomainError):
+    default_code = "AUTO_TAG_RULE_ERROR"
+
+
+class ProtectedSecretStoreError(DomainError):
+    """The configured OS-backed secret store is unavailable."""
+
+    default_code = "PROTECTED_SECRET_STORE_ERROR"
+
+    def __init__(self, message: str = "Protected secret storage is unavailable"):
+        super().__init__(503, message)
+
+
 class UnknownTagSelector(DomainError):
     """A requested tag view or value does not exist or is archived."""
 
