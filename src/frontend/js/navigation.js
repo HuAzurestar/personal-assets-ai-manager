@@ -33,6 +33,9 @@ const secondaryMeta = {
     ["import", "导入 / 上传", "预览并写入事实层"],
     ["reviews", "账单审查", "配置 Fact 与 Ledger"],
   ],
+  settings: [
+    ["settings", "自动化", "模型连接与安全披露"],
+  ],
 };
 
 const pageModules = {
@@ -45,6 +48,7 @@ const pageModules = {
   reviews: "workbench",
   import: "workbench",
   "import-history": "workbench",
+  settings: "settings",
 };
 
 const canonicalPages = {
@@ -72,6 +76,7 @@ const pagePaths = {
   import: "workbench/import",
   reviews: "workbench/review",
   "import-history": "workbench/import/history",
+  settings: "settings/automation",
 };
 
 const pathPages = Object.fromEntries(Object.entries(pagePaths).map(([page, path]) => [path, page]));
@@ -119,7 +124,7 @@ export function shellMarkup() {
       <div class="topbar-actions">
         <label class="timezone-control">显示时区<select data-timezone aria-label="页面显示时区"><option value="Asia/Hong_Kong">香港</option><option value="Asia/Shanghai">上海</option><option value="Asia/Tokyo">东京</option><option value="Europe/London">伦敦</option><option value="America/New_York">纽约</option><option value="UTC">UTC</option></select></label>
         <a class="connection" data-connection-status data-state="checking" href="/api/health" target="_blank" rel="noopener" title="点击打开本地服务健康检查"><i></i><span data-live-label aria-live="polite">正在检查本地账本</span></a>
-        <button type="button" class="primary compact" data-page="import">导入账单</button>
+        <button type="button" class="primary compact" data-page="settings">设置</button>
       </div>
     </header>
     <div class="module-subbar">
@@ -153,7 +158,10 @@ export function syncNavigation(page) {
         <strong>${esc(label)}</strong><small>${esc(caption)}</small>
       </button>`).join("");
   }
-  $("#section-kicker").textContent = active === "details"
-    ? "DETAILS"
-    : active === "overview" ? "LEDGER OVERVIEW" : "WORKBENCH";
+  const domainNote = $(".domain-note");
+  if (domainNote) domainNote.innerHTML = active === "settings"
+    ? "<span>自动化边界</span><strong>配置 → 规则 → 审查后生效</strong><p>模型与规则保存在本地；模拟能力会明确标记，未接通的执行不会伪装成可用。</p>"
+    : "<span>账目形成</span><strong>事实流水 → 审查 → 经济流水</strong><p>事实保留来源，审查负责解释，经济流水是最终阅读和统计结果。</p>";
+  const kicker = { details: "DETAILS", overview: "LEDGER OVERVIEW", workbench: "WORKBENCH", settings: "SETTINGS" };
+  $("#section-kicker").textContent = kicker[active];
 }

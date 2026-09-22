@@ -21,6 +21,9 @@ import {
 import {
   accountsMarkup, cursorFromParam, monthBounds,
 } from "./account.js?v=20260917.10";
+import {
+  automationSettingsPage, autoRulesPanel, bindAutomation,
+} from "./automation.js?v=20260922.1";
 
 const entryTypeValues = { TRANSACTION: 0, ACCOUNT_TRANSFER: 1, CLAIM: 2 };
 const entryTypeCodes = { 0: "TRANSACTION", 1: "ACCOUNT_TRANSFER", 2: "CLAIM" };
@@ -115,6 +118,7 @@ const pageInfo = {
   import: ["导入 / 上传", "选择来源、添加文件，并在写入账本前逐项核对。"],
   "import-history": ["导入记录", "查找已经写入的文件、处理结果和原始行。"],
   reviews: ["账单审查", "选择待审查事实，配置 Fact 与 Ledger 的关系，预览后生成账本流水。"],
+  settings: ["设置", "管理自动化模型连接与安全披露配置。"],
 };
 const validPages = new Set(Object.keys(pageInfo));
 
@@ -160,6 +164,7 @@ async function render() {
       import: importPage,
       "import-history": importHistoryPage,
       reviews: reviewCreatePage,
+      settings: automationSettingsPage,
     })[page]();
     if (renderVersion !== state.renderVersion || page !== state.page) return;
     root.innerHTML = content;
@@ -1042,7 +1047,8 @@ async function tagsPage() {
     const creator = isActive ? `<div class="tag-inline-creator"><button class="tag-inline-launch" type="button" data-action="new-tag-inline" data-id="${view.id}" aria-controls="tag-create-${view.id}" aria-expanded="false"><span aria-hidden="true">＋</span> 新标签</button><form id="tag-create-${view.id}" class="tag-inline-form" data-form="inline-tag" data-view="${view.id}" hidden><label class="sr-only" for="tag-name-${view.id}">显示名称</label><input id="tag-name-${view.id}" name="name" maxlength="120" placeholder="显示名称" autocomplete="off" required><span class="tag-inline-divider" aria-hidden="true"></span><label class="sr-only" for="tag-system-${view.id}">系统名称</label><input id="tag-system-${view.id}" name="system_name" maxlength="64" pattern="[a-z][a-z0-9_]{0,63}" placeholder="自动生成系统名称" autocomplete="off" required><button class="tag-inline-submit" type="submit" aria-label="保存标签" title="保存">✓</button><button class="tag-inline-cancel" type="button" data-action="cancel-tag" aria-label="取消添加标签" title="取消">×</button></form></div>` : "";
     return `<article class="tag-view-card${isActive ? "" : " archived"}" aria-labelledby="tag-view-${view.id}"><header class="tag-view-head"><div class="tag-view-meta"><div class="tag-view-title"><h3 id="tag-view-${view.id}">${esc(view.name)}</h3><span class="tag-view-status ${isActive ? "active" : "archived"}"><span aria-hidden="true">●</span>${esc(statusNames[view.status] || view.status)}</span></div><code>${esc(view.system_name)}</code></div><div class="tag-view-actions">${isActive ? `<button type="button" data-action="new-tag" data-id="${view.id}" aria-controls="tag-create-${view.id}" aria-expanded="false">＋ 添加标签</button>` : ""}<button class="quiet" type="button" data-action="view-status" data-id="${view.id}" data-status="${isActive ? "ARCHIVED" : "ACTIVE"}">${isActive ? "归档维度" : "恢复维度"}</button></div></header><div class="tag-pill-list">${tagsMarkup}${creator}</div></article>`;
   }).join("");
-  return `<section class="tag-manager" aria-labelledby="tag-manager-title"><div class="tag-manager-head"><div><h2 id="tag-manager-title">标签维度</h2><p>${views.length ? `共 ${viewPage.total} 个维度，${activeCount} 个启用中${atViewLimit ? "；已达 100 个上限" : ""}` : "用维度组织同一类标签"}</p></div><button class="primary" data-action="new-view" ${atViewLimit ? 'disabled title="标签维度上限为 100"' : ""}>${atViewLimit ? "已达维度上限" : "＋ 新建维度"}</button></div><div class="tag-view-list">${cards || '<div class="panel empty-state">尚未创建标签维度</div>'}</div></section>`;
+  const rulePanel = await autoRulesPanel(views);
+  return `<section class="tag-manager" aria-labelledby="tag-manager-title"><div class="tag-manager-head"><div><h2 id="tag-manager-title">标签维度</h2><p>${views.length ? `共 ${viewPage.total} 个维度，${activeCount} 个启用中${atViewLimit ? "；已达 100 个上限" : ""}` : "用维度组织同一类标签"}</p></div><button class="primary" data-action="new-view" ${atViewLimit ? 'disabled title="标签维度上限为 100"' : ""}>${atViewLimit ? "已达维度上限" : "＋ 新建维度"}</button></div><div class="tag-view-list">${cards || '<div class="panel empty-state">尚未创建标签维度</div>'}</div></section>${rulePanel}`;
 }
 
 async function showFactConflict(id) {
@@ -1175,6 +1181,7 @@ function closeInlineTag(form) {
 }
 
 function bindPage(root) {
+  bindAutomation(root, render, toast);
   $$('button[data-page], a[data-page]', root).forEach((button) => button.onclick = () => {
     if (button.closest("dialog")) closeDialogs();
     route(button.dataset.page);
@@ -1430,6 +1437,11 @@ function bindPage(root) {
   $('[data-form="conflict"]', root)?.addEventListener("submit", submitConflict);
   $$('form[data-form]', root).forEach(bindCommandForm);
 }
+
+window.addEventListener("paam:automation-saved", async (event) => {
+  toast(event.detail?.message || "自动化配置已保存");
+  await render();
+});
 
 async function submitTags(event) {
   event.preventDefault(); const form = event.currentTarget; const data = new FormData(form);

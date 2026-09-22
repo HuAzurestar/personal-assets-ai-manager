@@ -207,6 +207,18 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
             assert "/paam/review/v1/account" not in script.text
             assert "/paam/review/v2" not in script.text
             assert "/paam/ledger/v1/entry/" not in script.text
+            assert "automationSettingsPage" in script.text
+            automation_script = client.get("/static/js/view/automation.js")
+            assert automation_script.status_code == 200
+            assert "/paam/system/v1/setting/automation" in automation_script.text
+            assert "/paam/tag/v1/auto_rule" in automation_script.text
+            assert "SIMULATED_LOCAL" in automation_script.text
+            assert 'data-action="rule-run"' not in automation_script.text
+            assert 'data-action="rule-rescan"' not in automation_script.text
+            navigation_script = client.get("/static/js/navigation.js")
+            assert navigation_script.status_code == 200
+            assert 'data-page="settings">设置</button>' in navigation_script.text
+            assert 'data-page="import">导入账单</button>' not in navigation_script.text
             core_script = client.get("/static/js/util/core.js")
             assert core_script.status_code == 200
             assert "export const reviewTypeNames" in core_script.text
@@ -214,6 +226,7 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
             for path in (
                 "/static/js/util/core.js", "/static/js/navigation.js",
                 "/static/js/view/account.js", "/static/js/api/client.js",
+                "/static/js/view/automation.js",
                 "/static/js/component/toast.js", "/static/js/component/table.js",
                 "/static/js/state/ledger.js", "/static/js/theme.js",
                 "/static/css/ledger.css", "/static/css/theme.css", "/static/css/target.css",
