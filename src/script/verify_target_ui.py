@@ -479,7 +479,7 @@ def run() -> None:
                 assert actual == set(TARGET_TABLE_NAMES), actual
             finally:
                 engine.dispose()
-            print("PASS target UI fact, review, economic flow, and 10-table isolation")
+            print("PASS target UI fact, review, economic flow, and 13-table isolation")
         finally:
             server.should_exit = True
             thread.join(timeout=10)

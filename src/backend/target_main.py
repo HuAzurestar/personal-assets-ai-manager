@@ -1,4 +1,4 @@
-"""PIRC-9 API application backed by exactly the 10 target tables."""
+"""PAAM API application backed by exactly the 13 target tables."""
 
 import asyncio
 import logging

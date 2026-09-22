@@ -39,3 +39,20 @@ from backend.entity.ledger_entry import LedgerEntry
 from backend.entity.tag_view import TargetTagView
 from backend.entity.tag import TargetTag
 from backend.entity.ledger_entry_tag import LedgerEntryTag
+from backend.entity.setting import Setting
+from backend.entity.auto_tag_rule import (
+    AMOUNT_MODE_BAND,
+    AMOUNT_MODE_EXACT,
+    AMOUNT_MODE_NONE,
+    AUTO_TAG_METHOD_LLM_DIRECT,
+    MAX_COUNTER_VALUE,
+    AutoTagRule,
+)
+from backend.entity.tag_assignment_request import (
+    TAG_REQUEST_STATUS_CANCELLED,
+    TAG_REQUEST_STATUS_ENABLED,
+    TAG_REQUEST_STATUS_PENDING,
+    TAG_REQUEST_STATUS_REJECTED,
+    TAG_REQUEST_STATUS_REPLACED,
+    TagAssignmentRequest,
+)
