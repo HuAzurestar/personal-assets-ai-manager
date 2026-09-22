@@ -97,25 +97,62 @@ export async function autoRulesPage() {
   return `<div class="auto-rules-page">${await autoRulesPanel(viewPage.items)}</div>`;
 }
 
-export async function tagReviewSkeletonPage() {
+const requestStatusNames = {
+  1: "待确认", 2: "已通过", 3: "已拒绝", 4: "已取消", 5: "已替换",
+};
+
+function requestStatusPill(status) {
+  const active = Number(status) === 2;
+  const pending = Number(status) === 1;
+  return `<span class="automation-status ${active ? "active" : pending ? "pending" : "inactive"}"><i></i>${esc(requestStatusNames[status] || status)}</span>`;
+}
+
+export async function tagReviewPage(params = new URLSearchParams()) {
+  const page = Math.max(1, Number(params.get("page") || 1));
+  const pageSize = Math.min(100, Math.max(1, Number(params.get("page_size") || 20)));
+  const viewId = params.get("view_id") || "";
+  const ruleId = params.get("rule_id") || "";
+  const status = params.has("status") ? params.get("status") : "1";
+  const expressions = [];
+  if (viewId) expressions.push({ key: "view_id", op: "=", val: Number(viewId) });
+  if (ruleId) expressions.push({ key: "rule_id", op: "=", val: Number(ruleId) });
+  if (status) expressions.push({ key: "status", op: "=", val: Number(status) });
+  const filter = expressions.length > 1 ? { op: "AND", expression: expressions } : expressions[0];
+  const query = new URLSearchParams({
+    page_index: String(page), page_size: String(pageSize),
+    sorter: JSON.stringify([{ key: "created_time", direction: "desc" }]),
+  });
+  if (filter) query.set("filter", JSON.stringify(filter));
   const [viewPage, rulePage] = await Promise.all([
     request("/paam/tag/v1/view/list?page_index=1&page_size=100"),
     request("/paam/tag/v1/auto_rule/list?page_index=1&page_size=100&sorter=%5B%7B%22key%22%3A%22id%22%2C%22direction%22%3A%22asc%22%7D%5D"),
   ]);
-  const viewOptions = viewPage.items.map((item) => `<option>${esc(item.name)}</option>`).join("");
-  const ruleOptions = rulePage.items.map((item) => `<option>${esc(item.name)}</option>`).join("");
+  const result = await request(`/paam/tag/v1/assignment_request/list?${query}`);
+  const viewOptions = viewPage.items.map((item) => `<option value="${item.id}" ${String(item.id) === viewId ? "selected" : ""}>${esc(item.name)}</option>`).join("");
+  const ruleOptions = rulePage.items.map((item) => `<option value="${item.id}" ${String(item.id) === ruleId ? "selected" : ""}>${esc(item.name)}</option>`).join("");
+  const rows = result.items.map((item) => `<tr data-tag-request-row="${item.id}">
+    <td><label class="request-selector"><input type="checkbox" data-tag-request-select value="${item.id}" ${item.status === 1 ? "" : "disabled"}><span><strong>Request #${item.id}</strong><small>${esc(item.reason_summary || "无补充理由")}</small></span></label></td>
+    <td><strong>Ledger #${item.ledger_id}</strong><small>${esc(item.view_name)} · ${item.ledger_active ? "当前有效" : "Ledger 已失效"}</small></td>
+    <td><strong>${esc(item.proposed_tag_name)}</strong><small>${esc(item.proposed_tag_system_name)}</small></td>
+    <td><strong>${esc(item.rule_name)}</strong><small>Rule #${item.rule_id} · Revision ${item.rule_revision}</small></td>
+    <td>${requestStatusPill(item.status)}</td>
+    <td><div class="automation-actions request-actions">${item.status === 1 ? `<button type="button" class="primary" data-action="tag-request-transition" data-operation="approve" data-id="${item.id}">通过并打标</button><button type="button" class="quiet" data-action="tag-request-transition" data-operation="reject" data-id="${item.id}">拒绝</button>` : "—"}</div></td>
+  </tr>`).join("");
+  const lastPage = Math.max(1, Math.ceil(result.total / result.page_size));
+  const pager = `<div class="request-pager"><span>共 ${result.total} 条 · 第 ${result.page_index}/${lastPage} 页</span><div><button type="button" class="quiet" data-action="tag-request-page" data-page="${page - 1}" ${page <= 1 ? "disabled" : ""}>上一页</button><button type="button" class="quiet" data-action="tag-request-page" data-page="${page + 1}" ${page >= lastPage ? "disabled" : ""}>下一页</button></div></div>`;
   return `<div class="tag-review-page">
     <section class="tag-manager automation-requests" aria-labelledby="tag-request-title">
-      <div class="tag-manager-head"><div><h2 id="tag-request-title">标签建议请求</h2><p>按规则、Ledger + View 查看候选建议及处理状态；规则配置位于「明细 → 自动规则」。</p></div><button type="button" class="primary" disabled title="DEV-012 接通建议 API 后启用">批量确认</button></div>
-      <div class="automation-notice compact" role="status" aria-live="polite"><strong>请求 API 待接通</strong><span>建议读取、详情和批量通过/拒绝由 DEV-012 完成；当前不会用模拟操作修改标签。</span></div>
+      <div class="tag-manager-head"><div><h2 id="tag-request-title">标签建议请求</h2><p>按规则、Ledger + View 查看建议；只有人工通过后目标 View 的标签才会生效。</p></div><div class="request-batch-actions"><button type="button" class="primary" data-action="tag-request-batch" data-operation="approve" disabled>批量通过</button><button type="button" class="quiet" data-action="tag-request-batch" data-operation="reject" disabled>批量拒绝</button></div></div>
+      <div class="automation-notice compact" role="status" aria-live="polite"><strong>人工确认边界</strong><span>通过时会重新核对规则版本、Ledger、View、候选标签和当前人工标签；冲突不会强制覆盖。请求超时请刷新核对状态。</span></div>
       <div class="review-filter-skeleton" aria-labelledby="tag-review-filter-title">
-        <div class="form-grid three">
-          <label>标签维度<select disabled><option>全部 View</option>${viewOptions}</select></label>
-          <label>来源规则<select disabled><option>全部规则</option>${ruleOptions}</select></label>
-          <label>建议状态<select disabled><option>待人工确认</option></select></label>
-        </div>
+        <form class="form-grid three" data-form="tag-request-filter">
+          <label>标签维度<select name="view_id"><option value="">全部 View</option>${viewOptions}</select></label>
+          <label>来源规则<select name="rule_id"><option value="">全部规则</option>${ruleOptions}</select></label>
+          <label>建议状态<select name="status"><option value="" ${status === "" ? "selected" : ""}>全部状态</option>${Object.entries(requestStatusNames).map(([value, label]) => `<option value="${value}" ${status === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>
+        </form>
       </div>
-      <div class="automation-table-wrap"><table class="automation-table request-table" aria-labelledby="tag-review-list-title"><thead><tr><th id="tag-review-list-title">请求</th><th>Ledger / View</th><th>建议标签</th><th>来源规则</th><th>状态</th><th>操作</th></tr></thead><tbody><tr><td colspan="6" class="table-empty"><strong>建议列表尚未接通</strong><span>DEV-012 将在这里接入 request 列表、候选冲突与人工处理操作。</span></td></tr></tbody></table></div>
+      <div class="automation-table-wrap"><table class="automation-table request-table" aria-labelledby="tag-review-list-title"><thead><tr><th id="tag-review-list-title"><label class="request-select-all"><input type="checkbox" data-tag-request-select-all> 请求</label></th><th>Ledger / View</th><th>建议标签</th><th>来源规则</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows || '<tr><td colspan="6" class="table-empty"><strong>没有符合条件的建议请求</strong><span>等待下一次规则扫描，或调整上方筛选条件。</span></td></tr>'}</tbody></table></div>
+      ${pager}
     </section>
   </div>`;
 }
@@ -289,7 +326,7 @@ async function previewRule(button) {
   } finally { button.disabled = false; }
 }
 
-export function bindAutomation(root, rerender, notify) {
+export function bindAutomation(root, rerender, notify, navigate) {
   $$('[data-action="model-new"]', root).forEach((button) => button.addEventListener("click", () => modelDialog()));
   $$('[data-action="model-edit"]', root).forEach((button) => button.addEventListener("click", () => modelDialog(setting.models.find((item) => item.id === Number(button.dataset.id)))));
   $$('[data-action="model-test"]', root).forEach((button) => button.addEventListener("click", () => testModel(button)));
@@ -305,4 +342,46 @@ export function bindAutomation(root, rerender, notify) {
   $('[data-action="rule-new"]', root)?.addEventListener("click", () => ruleDialog());
   $$('[data-action="rule-edit"]', root).forEach((button) => button.addEventListener("click", () => ruleDialog(rules.find((item) => item.id === Number(button.dataset.id)))));
   $$('[data-action="rule-preview"]', root).forEach((button) => button.addEventListener("click", () => previewRule(button)));
+  const requestFilter = $('[data-form="tag-request-filter"]', root);
+  requestFilter?.addEventListener("change", () => {
+    const params = new URLSearchParams();
+    for (const [name, value] of new FormData(requestFilter)) if (value) params.set(name, value);
+    params.set("page", "1");
+    navigate?.("tag-review", params);
+  });
+  $$('[data-action="tag-request-page"]', root).forEach((button) => button.addEventListener("click", () => {
+    const params = new URLSearchParams(location.hash.split("?")[1] || "");
+    params.set("page", button.dataset.page);
+    navigate?.("tag-review", params);
+  }));
+  const selection = $$('[data-tag-request-select]', root);
+  const updateRequestActions = () => {
+    const selected = selection.filter((item) => item.checked).length;
+    $$('[data-action="tag-request-batch"]', root).forEach((button) => {
+      button.disabled = selected === 0;
+    });
+  };
+  selection.forEach((checkbox) => checkbox.addEventListener("change", updateRequestActions));
+  $('[data-tag-request-select-all]', root)?.addEventListener("change", (event) => {
+    selection.filter((item) => !item.disabled).forEach((item) => { item.checked = event.currentTarget.checked; });
+    updateRequestActions();
+  });
+  const transitionRequests = async (button) => {
+    const ids = button.dataset.id
+      ? [Number(button.dataset.id)]
+      : selection.filter((item) => item.checked).map((item) => Number(item.value));
+    if (!ids.length) return;
+    const approve = button.dataset.operation === "approve";
+    if (!window.confirm(approve ? `通过并应用 ${ids.length} 条标签建议？` : `拒绝 ${ids.length} 条标签建议？`)) return;
+    button.disabled = true;
+    try {
+      await jsonRequest(`/paam/tag/v1/assignment_request/batch_${approve ? "approve" : "reject"}`, "POST", { request_ids: ids });
+      notify(approve ? "建议已通过，标签与来源已回读" : "建议已拒绝，当前标签未改变");
+      await rerender();
+    } catch (error) {
+      button.disabled = false;
+      notify(`${error.message}；若请求超时，请刷新核对状态后再重试`, true);
+    }
+  };
+  $$('[data-action="tag-request-transition"], [data-action="tag-request-batch"]', root).forEach((button) => button.addEventListener("click", () => transitionRequests(button)));
 }

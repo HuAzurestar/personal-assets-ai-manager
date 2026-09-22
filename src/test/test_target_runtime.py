@@ -212,6 +212,12 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
             assert automation_script.status_code == 200
             assert "/paam/system/v1/setting/automation" in automation_script.text
             assert "/paam/tag/v1/auto_rule" in automation_script.text
+            assert "/paam/tag/v1/assignment_request" in automation_script.text
+            assert 'data-action="tag-request-batch"' in automation_script.text
+            inspection_script = client.get("/static/js/component/inspection.js")
+            assert inspection_script.status_code == 200
+            assert "AUTO_RULE" in inspection_script.text
+            assert "Request #" in inspection_script.text
             assert "SIMULATED_LOCAL" in automation_script.text
             assert "模型已停用" in automation_script.text
             assert 'data-action="rule-run"' not in automation_script.text

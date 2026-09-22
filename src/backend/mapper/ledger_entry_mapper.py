@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-from datetime import datetime, time
-
-from sqlalchemy import exists, func, select
+from sqlalchemy import and_, exists, func, select
 from sqlalchemy.orm import Session
 
 from backend.entity import (
+    TAG_REQUEST_STATUS_ENABLED,
     LedgerEntry,
     LedgerEntryTag,
     ReviewAllocation,
     ReviewCase,
+    TagAssignmentRequest,
     TargetTag,
     TargetTagView,
     TransactionFact,
@@ -139,12 +139,23 @@ class LedgerEntryMapper:
             TargetTagView.system_name.label("view_system_name"),
             TargetTag.name.label("tag_name"),
             TargetTag.system_name.label("tag_system_name"),
+            TagAssignmentRequest.id.label("request_id"),
+            TagAssignmentRequest.rule_id,
+            TagAssignmentRequest.rule_revision,
         ).join(
             TargetTag,
             TargetTag.id == LedgerEntryTag.tag_id,
         ).join(
             TargetTagView,
             TargetTagView.id == TargetTag.view_id,
+        ).outerjoin(
+            TagAssignmentRequest,
+            and_(
+                TagAssignmentRequest.ledger_id == LedgerEntryTag.ledger_id,
+                TagAssignmentRequest.view_id == TargetTag.view_id,
+                TagAssignmentRequest.proposed_tag_id == TargetTag.id,
+                TagAssignmentRequest.status == TAG_REQUEST_STATUS_ENABLED,
+            ),
         ).where(
             LedgerEntryTag.ledger_id.in_(ledger_ids),
             TargetTagView.status == "ACTIVE",
@@ -158,6 +169,10 @@ class LedgerEntryMapper:
         for row in rows:
             result.setdefault(row["ledger_id"], []).append({
                 key: value for key, value in row.items() if key != "ledger_id"
+            } | {
+                "source_type": (
+                    "AUTO_RULE" if row["request_id"] is not None else "MANUAL"
+                ),
             })
         return result
 

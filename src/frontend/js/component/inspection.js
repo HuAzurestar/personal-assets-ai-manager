@@ -182,7 +182,7 @@ function describe(kind, data) {
     body = metrics([["账本金额", amount(item), "accent"], ["来源事实金额", fact ? amount(fact) : "未提供"], ["占来源事实", fact?.amount > 0 && fact.currency_code === item.currency_code ? `${(item.amount / fact.amount * 100).toFixed(2)}%` : "不适用"]])
       + '<div class="inspection-dashboard">'
       + card("账本概览", fields([["摘要", item.summary], ["有效状态", item.active ? "有效" : "已停用"], ["经济分类", typeNames[item.entry_type]], ["本方账户", readableAccount(item.account_code)], ["发生时间", when(item.occurred_time)]]), { tone: "accent" })
-      + card("分类标签", item.tags.length ? `<div class="inspection-tags">${item.tags.map(tag => `<span><small>${esc(tag.view_name)}</small>${esc(tag.tag_name)}</span>`).join("")}</div>` : '<p class="inspection-empty">暂无标签</p>')
+      + card("分类标签", item.tags.length ? `<div class="inspection-tags">${item.tags.map(tag => `<span><small>${esc(tag.view_name)}</small><strong>${esc(tag.tag_name)}</strong><small>${tag.source_type === "AUTO_RULE" ? `自动规则 #${esc(tag.rule_id)} · Rev ${esc(tag.rule_revision)} · Request #${esc(tag.request_id)}` : "人工 / 默认标签"}</small></span>`).join("")}</div>` : '<p class="inspection-empty">暂无标签</p>')
       + allocationSection(p, data.allocations, data.facts, [item], data.reviews, { kind, id: item.id }) + "</div>";
     actions = `<button data-action="edit-ledger-account" data-id="${item.id}">编辑账户</button><button data-action="edit-tags" data-id="${item.id}">编辑标签</button>`;
   } else if (kind === "review") {

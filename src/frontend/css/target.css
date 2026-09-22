@@ -468,6 +468,16 @@
 .target-shell .review-filter-skeleton { padding:16px; border:1px solid var(--line); border-radius:var(--radius); background:var(--surface); }
 .target-shell .review-filter-skeleton .form-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
 .target-shell .review-filter-skeleton select:disabled { opacity:.7; cursor:not-allowed; }
+.target-shell .request-batch-actions { display:flex; gap:8px; flex-wrap:wrap; }
+.target-shell .request-selector { display:flex; align-items:flex-start; gap:9px; min-width:220px; }
+.target-shell .request-selector input { margin-top:3px; }
+.target-shell .request-selector strong,
+.target-shell .request-selector small { display:block; }
+.target-shell .request-selector small { max-width:280px; margin-top:5px; color:var(--muted); line-height:1.4; }
+.target-shell .request-select-all { display:flex; align-items:center; gap:7px; }
+.target-shell .request-actions { min-width:190px; }
+.target-shell .request-pager { display:flex; justify-content:space-between; align-items:center; gap:12px; color:var(--muted); font-size:12px; }
+.target-shell .request-pager > div { display:flex; gap:8px; }
 .automation-dialog .automation-form { min-width:min(680px,80vw); }
 .automation-dialog .form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
 .automation-dialog .form-grid.three { grid-template-columns:repeat(3,minmax(0,1fr)); }

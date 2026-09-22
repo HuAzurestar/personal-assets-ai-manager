@@ -30,6 +30,9 @@ from backend.router.system import router as system_router
 from backend.router.system_setting import router as system_setting_router
 from backend.router.tag import router as tag_router
 from backend.router.tag_assignment import router as tag_assignment_router
+from backend.router.tag_assignment_request import (
+    router as tag_assignment_request_router,
+)
 from backend.service.target_economic_service import TargetEconomicService
 from backend.service.target_intake_service import TargetIntakeService
 
@@ -76,5 +79,6 @@ app.include_router(ledger_transaction_fact_router)
 app.include_router(ledger_account_router)
 app.include_router(tag_router)
 app.include_router(tag_assignment_router)
+app.include_router(tag_assignment_request_router)
 app.include_router(system_router)
 app.include_router(system_setting_router)

@@ -22,7 +22,7 @@ import {
   accountsMarkup, cursorFromParam, monthBounds,
 } from "./account.js?v=20260917.10";
 import {
-  automationSettingsPage, autoRulesPage, bindAutomation, tagReviewSkeletonPage,
+  automationSettingsPage, autoRulesPage, bindAutomation, tagReviewPage,
 } from "./automation.js?v=20260922.5";
 
 const entryTypeValues = { TRANSACTION: 0, ACCOUNT_TRANSFER: 1, CLAIM: 2 };
@@ -167,7 +167,7 @@ async function render() {
       import: importPage,
       "import-history": importHistoryPage,
       reviews: reviewCreatePage,
-      "tag-review": tagReviewSkeletonPage,
+      "tag-review": () => tagReviewPage(state.params),
       settings: automationSettingsPage,
     })[page]();
     if (renderVersion !== state.renderVersion || page !== state.page) return;
@@ -1184,7 +1184,7 @@ function closeInlineTag(form) {
 }
 
 function bindPage(root) {
-  bindAutomation(root, render, toast);
+  bindAutomation(root, render, toast, route);
   $$('button[data-page], a[data-page]', root).forEach((button) => button.onclick = () => {
     if (button.closest("dialog")) closeDialogs();
     route(button.dataset.page);
