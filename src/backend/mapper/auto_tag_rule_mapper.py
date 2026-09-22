@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timedelta
 
 from pydantic import ValidationError
-from sqlalchemy import distinct, func, select, text, update
+from sqlalchemy import case, distinct, func, select, text, update
 from sqlalchemy.orm import Session
 
 from backend.entity import (
@@ -354,6 +354,40 @@ class AutoTagRuleMapper:
             )
         )
         return effective_time, affected_ids
+
+    def rewind_for_ledger_ids(
+        self,
+        ledger_ids: list[int],
+        *,
+        now: datetime,
+        view_ids: set[int] | None = None,
+    ) -> tuple[datetime, list[int]]:
+        """Invalidate in-flight scans and rewind past affected Ledger IDs."""
+
+        if not ledger_ids:
+            return now, []
+        if view_ids == set():
+            return now, []
+        minimum_id = min(ledger_ids)
+        clauses = [] if view_ids is None else [AutoTagRule.view_id.in_(view_ids)]
+        rewind_to = max(0, minimum_id - 1)
+        affected_ids = list(self.db.scalars(
+            update(AutoTagRule)
+            .where(*clauses)
+            .values(
+                scan_after_ledger_id=case(
+                    (
+                        AutoTagRule.scan_after_ledger_id > rewind_to,
+                        rewind_to,
+                    ),
+                    else_=AutoTagRule.scan_after_ledger_id,
+                ),
+                scan_epoch=AutoTagRule.scan_epoch + 1,
+                updated_time=now,
+            )
+            .returning(AutoTagRule.id)
+        ).all())
+        return now, affected_ids
 
     def create(
         self,

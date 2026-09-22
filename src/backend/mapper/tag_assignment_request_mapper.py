@@ -116,6 +116,27 @@ class TagAssignmentRequestMapper:
         )
         return int(result.rowcount or 0)
 
+    def cancel_pending_for_ledger_ids(
+        self,
+        ledger_ids: list[int],
+        *,
+        now: datetime,
+    ) -> int:
+        if not ledger_ids:
+            return 0
+        result = self.db.execute(
+            update(TagAssignmentRequest)
+            .where(
+                TagAssignmentRequest.ledger_id.in_(ledger_ids),
+                TagAssignmentRequest.status == TAG_REQUEST_STATUS_PENDING,
+            )
+            .values(
+                status=TAG_REQUEST_STATUS_CANCELLED,
+                updated_time=now,
+            )
+        )
+        return int(result.rowcount or 0)
+
     def commit(self) -> None:
         self.db.commit()
 
