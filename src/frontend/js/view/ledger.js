@@ -1,4 +1,4 @@
-import { checkConnection, request, jsonRequest } from "../api/client.js?v=20260921.2";
+import { checkConnection, request, jsonRequest } from "../api/client.js?v=20260922.3";
 import { toast } from "../component/toast.js";
 import { table } from "../component/table.js";
 import { openInspection } from "../component/inspection.js?v=20260921.4";

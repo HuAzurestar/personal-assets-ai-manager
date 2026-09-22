@@ -24,9 +24,15 @@ export async function request(url, options = {}) {
   setConnectionState("connected");
   const payload = response.status === 204 ? null : await response.json().catch(() => null);
   if (!response.ok) {
-    const detail = payload?.message || payload?.detail;
+    const validationDetails = payload?.body?.code === "VALIDATION_ERROR"
+      && Array.isArray(payload?.body?.details)
+      ? payload.body.details.map((item) => item?.msg).filter(Boolean)
+      : [];
+    const detail = validationDetails.length
+      ? validationDetails
+      : payload?.message || payload?.detail;
     const text = Array.isArray(detail)
-      ? detail.map((item) => item.msg).join("；")
+      ? detail.map((item) => typeof item === "string" ? item : item?.msg).filter(Boolean).join("；")
       : detail || `请求失败（${response.status}）`;
     throw new Error(text);
   }

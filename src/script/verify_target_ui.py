@@ -183,6 +183,13 @@ def run() -> None:
                 assert persisted_setting["models"][0]["litellm_params"]["provider_zero"] == 0
                 assert persisted_setting["models"][0]["litellm_params"]["provider_flag"] is False
                 assert "browser-test-secret" not in str(persisted_setting)
+                page.reload()
+                expect(page.locator('[data-model-card="1"]')).to_contain_text(
+                    "浏览器验收模型"
+                )
+                expect(page.locator('[data-model-card="1"]')).to_contain_text(
+                    "已安全配置"
+                )
 
                 page.locator('[data-module="workbench"]').click()
                 expect(page.locator(".module-heading")).to_be_hidden()
@@ -421,6 +428,18 @@ def run() -> None:
                 expect(rule_card.locator(".automation-result")).to_contain_text(
                     "SIMULATED_LOCAL · 只读预览"
                 )
+                rule_card.locator('[data-action="rule-edit"]').click()
+                rule_edit_form = page.locator(
+                    'dialog[open] [data-form="automation-rule"]'
+                )
+                rule_edit_form.locator('[name="cron"]').fill("* * * *")
+                rule_edit_form.locator('button[type="submit"]').click()
+                expect(rule_edit_form.locator(".form-error-slot .error")).to_be_visible()
+                expect(rule_edit_form.locator(".form-error-slot .error")).to_contain_text(
+                    "cron"
+                )
+                expect(rule_edit_form.locator('button[type="submit"]')).to_be_enabled()
+                rule_edit_form.locator("[data-close]").click()
                 if evidence_dir:
                     page.locator(".automation-rules").screenshot(
                         path=evidence_dir / "auto-tag-rules.png",
@@ -558,8 +577,11 @@ def run() -> None:
                     page.set_viewport_size({"width": width, "height": height})
                     for route_name, selector in (
                         ("details/transaction-fact", '[data-form="fact-filter"]'),
+                        ("details/tag", ".automation-rules"),
                         ("overview", '.month-metrics'),
                         ("workbench/review", '[data-review-workflow]'),
+                        ("workbench/tag-review", ".tag-review-page"),
+                        ("settings/automation", ".automation-page"),
                     ):
                         page.goto(f"{base_url}/#{route_name}")
                         expect(page.locator(selector)).to_be_visible()

@@ -1,4 +1,4 @@
-import { request, jsonRequest } from "../api/client.js?v=20260921.2";
+import { request, jsonRequest } from "../api/client.js?v=20260922.3";
 import { $, $$, esc } from "../util/core.js";
 
 let setting = null;
