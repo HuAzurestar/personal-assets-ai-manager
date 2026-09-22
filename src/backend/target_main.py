@@ -14,6 +14,7 @@ from backend.core.config import (
     RESOURCE_DIR,
 )
 from backend.router.error import register_error_handlers
+from backend.router.auto_tag_rule import router as auto_tag_rule_router
 from backend.router.import_conflict import router as import_conflict_router
 from backend.router.import_file import router as import_file_router
 from backend.router.import_router import router as import_router
@@ -67,6 +68,7 @@ register_error_handlers(app)
 app.mount("/static", StaticFiles(directory=RESOURCE_DIR / "frontend"), name="static")
 app.mount("/asset", StaticFiles(directory=RESOURCE_DIR / "asset"), name="asset")
 app.include_router(import_router)
+app.include_router(auto_tag_rule_router)
 app.include_router(import_conflict_router)
 app.include_router(import_file_router)
 app.include_router(ledger_router)

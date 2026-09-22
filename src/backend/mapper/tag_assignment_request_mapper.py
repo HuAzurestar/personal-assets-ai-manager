@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 from sqlalchemy.orm import Session
 
 from backend.entity import (
     TAG_REQUEST_STATUS_PENDING,
+    TAG_REQUEST_STATUS_CANCELLED,
     TagAssignmentRequest,
 )
 
@@ -72,6 +73,48 @@ class TagAssignmentRequestMapper:
         self.db.add_all(entities)
         self.db.flush()
         return [entity.id for entity in entities]
+
+    def cancel_pending_for_rule(
+        self,
+        rule_id: int,
+        *,
+        before_revision: int,
+        now: datetime,
+    ) -> int:
+        result = self.db.execute(
+            update(TagAssignmentRequest)
+            .where(
+                TagAssignmentRequest.rule_id == rule_id,
+                TagAssignmentRequest.rule_revision < before_revision,
+                TagAssignmentRequest.status == TAG_REQUEST_STATUS_PENDING,
+            )
+            .values(
+                status=TAG_REQUEST_STATUS_CANCELLED,
+                updated_time=now,
+            )
+        )
+        return int(result.rowcount or 0)
+
+    def cancel_pending_for_rule_ids(
+        self,
+        rule_ids: list[int],
+        *,
+        now: datetime,
+    ) -> int:
+        if not rule_ids:
+            return 0
+        result = self.db.execute(
+            update(TagAssignmentRequest)
+            .where(
+                TagAssignmentRequest.rule_id.in_(rule_ids),
+                TagAssignmentRequest.status == TAG_REQUEST_STATUS_PENDING,
+            )
+            .values(
+                status=TAG_REQUEST_STATUS_CANCELLED,
+                updated_time=now,
+            )
+        )
+        return int(result.rowcount or 0)
 
     def commit(self) -> None:
         self.db.commit()

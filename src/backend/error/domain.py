@@ -59,6 +59,10 @@ class SettingError(DomainError):
     default_code = "SETTING_ERROR"
 
 
+class AutoTagRuleError(DomainError):
+    default_code = "AUTO_TAG_RULE_ERROR"
+
+
 class ProtectedSecretStoreError(DomainError):
     """The configured OS-backed secret store is unavailable."""
 

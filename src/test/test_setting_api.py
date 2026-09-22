@@ -13,9 +13,15 @@ from sqlalchemy.orm import sessionmaker
 from backend.core.target_database import init_target_db
 from backend.core.protected_secret_store import KeyringProtectedSecretStore
 from backend.error import ProtectedSecretStoreError
-from backend.entity import AutoTagRule, Setting
+from backend.entity import (
+    AutoTagRule,
+    Setting,
+    TAG_REQUEST_STATUS_CANCELLED,
+    TagAssignmentRequest,
+)
 from backend.mapper.auto_tag_rule_mapper import AutoTagRuleMapper
 from backend.mapper.setting_mapper import SettingMapper
+from backend.mapper.tag_assignment_request_mapper import TagAssignmentRequestMapper
 from backend.router.dependency import get_db, get_protected_secret_store
 from backend.router.error import register_error_handlers
 from backend.router.system_setting import router as system_setting_router
@@ -195,7 +201,7 @@ def test_parameter_change_invalidates_rules_and_uses_exact_lock_token(
         with sessions() as db:
             mapper = AutoTagRuleMapper(db)
             mapper.begin_write()
-            mapper.create(
+            rule_id = mapper.create(
                 name="Synthetic rule",
                 view_id=3,
                 method_config={
@@ -205,6 +211,14 @@ def test_parameter_change_invalidates_rules_and_uses_exact_lock_token(
                 },
                 now=datetime(2026, 9, 22, tzinfo=timezone.utc),
             )
+            TagAssignmentRequestMapper(db).create_many([{
+                "rule_id": rule_id,
+                "rule_revision": 1,
+                "ledger_id": 11,
+                "view_id": 3,
+                "proposed_tag_id": 5,
+                "reason_summary": "synthetic",
+            }], datetime(2026, 9, 22, tzinfo=timezone.utc))
             mapper.commit()
 
         changed = client.put(
@@ -219,12 +233,15 @@ def test_parameter_change_invalidates_rules_and_uses_exact_lock_token(
         assert second_token != first_token
         with sessions() as db:
             rule = db.scalar(select(AutoTagRule))
+            request = db.scalar(select(TagAssignmentRequest))
             assert rule is not None
             assert (rule.rule_revision, rule.scan_epoch, rule.scan_after_ledger_id) == (
                 2,
                 2,
                 0,
             )
+            assert request is not None
+            assert request.status == TAG_REQUEST_STATUS_CANCELLED
 
         renamed = client.put(
             "/paam/system/v1/setting/automation",

@@ -14,6 +14,7 @@ from backend.entity.base import utc_now
 from backend.error import SettingError
 from backend.mapper.auto_tag_rule_mapper import AutoTagRuleMapper
 from backend.mapper.setting_mapper import SETTING_SCHEMA_VERSION, SettingMapper
+from backend.mapper.tag_assignment_request_mapper import TagAssignmentRequestMapper
 from backend.schema.setting import (
     AutomationModelRead,
     AutomationModelWrite,
@@ -38,6 +39,7 @@ class SettingService:
     def __init__(self, db: Session, secret_store: ProtectedSecretStore):
         self.mapper = SettingMapper(db)
         self.rule_mapper = AutoTagRuleMapper(db)
+        self.request_mapper = TagAssignmentRequestMapper(db)
         self.secret_store = secret_store
 
     def get_automation(self) -> AutomationSettingRead:
@@ -104,8 +106,12 @@ class SettingService:
                 model.model_dump(mode="json", exclude_unset=True)
                 for model in payload.models
             ]
-            next_time = self.rule_mapper.advance_for_model_ids(
+            next_time, affected_rule_ids = self.rule_mapper.advance_for_model_ids(
                 changed_parameter_ids,
+                now=next_time,
+            )
+            self.request_mapper.cancel_pending_for_rule_ids(
+                affected_rule_ids,
                 now=next_time,
             )
             self.mapper.save(next_value, next_time)
