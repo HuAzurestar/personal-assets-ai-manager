@@ -63,6 +63,36 @@ class AutoTagRuleError(DomainError):
     default_code = "AUTO_TAG_RULE_ERROR"
 
 
+class LlmAdapterError(DomainError):
+    """Safe diagnostic produced at the model-provider boundary."""
+
+    default_code = "LLM_ADAPTER_ERROR"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str,
+        retryable: bool = False,
+        details: dict[str, Any] | None = None,
+    ):
+        safe_details = dict(details or {})
+        safe_details["retryable"] = retryable
+        status_code = {
+            "CONFIG_ERROR": 422,
+            "REQUEST_TIMEOUT": 504,
+            "PROVIDER_UNAVAILABLE": 503,
+            "RATE_LIMIT": 429,
+            "AUTH_ERROR": 502,
+        }.get(code, 502)
+        super().__init__(
+            status_code,
+            message,
+            code=code,
+            details=safe_details,
+        )
+
+
 class ProtectedSecretStoreError(DomainError):
     """The configured OS-backed secret store is unavailable."""
 

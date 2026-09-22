@@ -26,6 +26,11 @@ _FORBIDDEN_PARAMETER_KEYS = {
     "class_path",
     "messages",
     "module",
+    "fallbacks",
+    "context_window_fallbacks",
+    "content_policy_fallbacks",
+    "response_format",
+    "stream",
     "tools",
 }
 
