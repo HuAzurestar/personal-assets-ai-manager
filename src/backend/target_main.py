@@ -1,8 +1,6 @@
 """PAAM API application backed by exactly the 13 target tables."""
 
-import asyncio
-import logging
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -13,16 +11,21 @@ from backend.core.config import (
     IMPORT_PREVIEW_SWEEP_INTERVAL_SECONDS,
     RESOURCE_DIR,
 )
-from backend.router.error import register_error_handlers
+from backend.core.job_scheduler import JobRunContext, job_scheduler
 from backend.router.auto_tag_rule import router as auto_tag_rule_router
+from backend.router.error import register_error_handlers
 from backend.router.import_conflict import router as import_conflict_router
 from backend.router.import_file import router as import_file_router
 from backend.router.import_router import router as import_router
 from backend.router.ledger import router as ledger_router
 from backend.router.ledger_account import router as ledger_account_router
 from backend.router.ledger_review import router as ledger_review_router
-from backend.router.ledger_review_candidate import router as ledger_review_candidate_router
-from backend.router.ledger_transaction_fact import router as ledger_transaction_fact_router
+from backend.router.ledger_review_candidate import (
+    router as ledger_review_candidate_router,
+)
+from backend.router.ledger_transaction_fact import (
+    router as ledger_transaction_fact_router,
+)
 from backend.router.system import router as system_router
 from backend.router.system_setting import router as system_setting_router
 from backend.router.tag import router as tag_router
@@ -31,17 +34,9 @@ from backend.service.target_economic_service import TargetEconomicService
 from backend.service.target_intake_service import TargetIntakeService
 
 
-logger = logging.getLogger(__name__)
-
-
-async def _sweep_timed_out_import_previews() -> None:
-    while True:
-        await asyncio.sleep(IMPORT_PREVIEW_SWEEP_INTERVAL_SECONDS)
-        try:
-            with target_database.SessionLocal() as db:
-                TargetIntakeService(db).fail_expired_pending_files()
-        except Exception:
-            logger.exception("Failed to sweep timed-out import previews")
+async def _sweep_timed_out_import_previews(_: JobRunContext) -> None:
+    with target_database.SessionLocal() as db:
+        TargetIntakeService(db).fail_expired_pending_files()
 
 
 @asynccontextmanager
@@ -50,13 +45,16 @@ async def lifespan(_: FastAPI):
     with target_database.SessionLocal() as db:
         TargetIntakeService(db).fail_orphaned_pending_files()
         TargetEconomicService(db).backfill_defaults()
-    sweep_task = asyncio.create_task(_sweep_timed_out_import_previews())
+    job_scheduler.register_interval(
+        "system:import-preview-timeout",
+        seconds=IMPORT_PREVIEW_SWEEP_INTERVAL_SECONDS,
+        callback=_sweep_timed_out_import_previews,
+    )
+    await job_scheduler.start()
     try:
         yield
     finally:
-        sweep_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await sweep_task
+        await job_scheduler.shutdown()
 
 
 app = FastAPI(
