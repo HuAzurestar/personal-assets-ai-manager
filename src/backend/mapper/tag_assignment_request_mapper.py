@@ -25,9 +25,9 @@ from backend.entity import (
     ReviewAllocation,
     ReviewCase,
     TagAssignmentRequest,
-    TransactionFact,
     TargetTag,
     TargetTagView,
+    TransactionFact,
 )
 from backend.schema.tag_assignment_request import (
     TagAssignmentRequestFilter,
