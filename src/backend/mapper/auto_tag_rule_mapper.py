@@ -107,6 +107,15 @@ class AutoTagRuleMapper:
         ).order_by(AutoTagRule.id)).mappings().all()
         return [self._decode_row(row) for row in rows]
 
+    def enabled_schedules(self) -> tuple[tuple[int, str], ...]:
+        rows = self.db.execute(select(
+            AutoTagRule.id,
+            AutoTagRule.cron,
+        ).where(
+            AutoTagRule.enabled == 1,
+        ).order_by(AutoTagRule.id)).all()
+        return tuple((int(rule_id), str(cron)) for rule_id, cron in rows)
+
     def list(
         self,
         *,

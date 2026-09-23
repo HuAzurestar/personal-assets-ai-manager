@@ -213,6 +213,11 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
             assert "/paam/system/v1/setting/automation" in automation_script.text
             assert "/paam/tag/v1/auto_rule" in automation_script.text
             assert "/paam/tag/v1/assignment_request" in automation_script.text
+            assert "/paam/system/v1/schedule/status" in automation_script.text
+            assert "尚未启动调度" not in automation_script.text
+            schedule = client.get("/paam/system/v1/schedule/status")
+            assert schedule.status_code == 200
+            assert schedule.json()["body"]["scheduler_state"] == "RUNNING"
             assert 'data-action="tag-request-batch"' in automation_script.text
             inspection_script = client.get("/static/js/component/inspection.js")
             assert inspection_script.status_code == 200

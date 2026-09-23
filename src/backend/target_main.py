@@ -33,6 +33,8 @@ from backend.router.tag_assignment import router as tag_assignment_router
 from backend.router.tag_assignment_request import (
     router as tag_assignment_request_router,
 )
+from backend.service.auto_tag_schedule_service import AutoTagScheduleService
+from backend.service.configured_llm_analyzer import provider_secret_reader
 from backend.service.target_economic_service import TargetEconomicService
 from backend.service.target_intake_service import TargetIntakeService
 
@@ -43,7 +45,7 @@ async def _sweep_timed_out_import_previews(_: JobRunContext) -> None:
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(application: FastAPI):
     target_database.init_target_db()
     with target_database.SessionLocal() as db:
         TargetIntakeService(db).fail_orphaned_pending_files()
@@ -53,11 +55,20 @@ async def lifespan(_: FastAPI):
         seconds=IMPORT_PREVIEW_SWEEP_INTERVAL_SECONDS,
         callback=_sweep_timed_out_import_previews,
     )
+    auto_tag_schedule = AutoTagScheduleService(
+        target_database.SessionLocal,
+        job_scheduler,
+        provider_secret_reader,
+    )
+    auto_tag_schedule.register_persisted()
+    application.state.auto_tag_schedule = auto_tag_schedule
     await job_scheduler.start()
     try:
         yield
     finally:
         await job_scheduler.shutdown()
+        if hasattr(application.state, "auto_tag_schedule"):
+            del application.state.auto_tag_schedule
 
 
 app = FastAPI(

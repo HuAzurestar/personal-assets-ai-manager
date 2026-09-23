@@ -4,6 +4,7 @@ import { $, $$, esc } from "../util/core.js";
 let setting = null;
 let rules = [];
 let views = [];
+let scheduleStatus = null;
 
 const amountModeNames = { 1: "金额区间（BAND）", 2: "精确金额（EXACT）", 3: "不发送金额（NONE）" };
 
@@ -46,7 +47,7 @@ export async function automationSettingsPage() {
       <div><span class="eyebrow">SETTINGS · AUTOMATION</span><h2>自动化设置</h2><p>模型连接保存在本地设置中；密钥进入系统凭据存储，普通读取永不回显。</p></div>
       <button type="button" class="primary" data-action="model-new">＋ 添加模型</button>
     </section>
-    <div class="automation-notice" role="note"><strong>M1-UI 安全边界</strong><span>连接测试只使用虚构数据且当前为模拟响应，不会请求供应商；真实模型调用和调度将在后续核心任务接通。</span></div>
+    <div class="automation-notice" role="note"><strong>模型安全边界</strong><span>启用规则后由 CRON 调度通过共享 FIFO 调用配置的模型；API Key 只从系统凭据存储读取，不写入 SQLite，也不会回显。</span></div>
     <section class="automation-section" aria-labelledby="automation-model-title">
       <div class="automation-section-head"><div><h3 id="automation-model-title">模型连接</h3><p>${setting.models.length ? `共 ${setting.models.length} 个本地配置` : "添加首个模型后，规则才可选择模型"}</p></div></div>
       <div class="automation-grid">${modelCards || '<div class="panel empty-state"><strong>尚未配置模型</strong><p>添加一个 LiteLLM 兼容配置；启用前必须保存 API Key。</p><button type="button" data-action="model-new">添加模型</button></div>'}</div>
@@ -76,18 +77,31 @@ function ruleRow(rule) {
   </tr>`;
 }
 
+function scheduleNotice() {
+  const tasks = (scheduleStatus?.tasks || []).filter((item) => item.task_key.startsWith("tag-scan:"));
+  const running = scheduleStatus?.scheduler_state === "RUNNING" && scheduleStatus?.worker_state === "HEALTHY";
+  const nextRuns = tasks.map((item) => item.next_run_at).filter(Boolean).sort();
+  const failed = tasks.filter((item) => item.last_result === "FAILED").length;
+  const title = running ? `CRON 调度运行中 · ${tasks.length} 条规则已注册` : "CRON 调度未运行";
+  const next = nextRuns.length ? `下一次触发：${new Date(nextRuns[0]).toLocaleString("zh-CN", { timeZone: "Asia/Hong_Kong" })}` : "当前没有待触发的启用规则";
+  const failure = failed ? `；${failed} 条规则上次执行失败，请检查模型配置或网络` : "";
+  return `<div class="automation-notice compact" role="status" aria-live="polite"><strong>${esc(title)}</strong><span>${esc(next + failure)}。CRON 触发进入共享 FIFO；本页仍不提供手动执行或重扫入口。</span></div>`;
+}
+
 export async function autoRulesPanel(tagViews) {
   views = tagViews;
-  const [rulePage, currentSetting] = await Promise.all([
+  const [rulePage, currentSetting, currentSchedule] = await Promise.all([
     request("/paam/tag/v1/auto_rule/list?page_index=1&page_size=100&sorter=%5B%7B%22key%22%3A%22id%22%2C%22direction%22%3A%22asc%22%7D%5D"),
     request("/paam/system/v1/setting/automation"),
+    request("/paam/system/v1/schedule/status"),
   ]);
   rules = rulePage.items;
   setting = currentSetting;
+  scheduleStatus = currentSchedule;
   const canCreate = views.some((item) => item.status === "ACTIVE") && setting.models.some((item) => item.enabled && item.key_configured);
   return `<section class="tag-manager automation-rules" aria-labelledby="auto-rule-title">
     <div class="tag-manager-head"><div><h2 id="auto-rule-title">自动打标签规则</h2><p>同一标签维度可配置多条独立规则；配置和进度从 SQLite 实时读取。</p></div><button type="button" class="primary" data-action="rule-new" ${canCreate ? "" : 'disabled title="需要启用中的标签维度和模型"'}>＋ 新建规则</button></div>
-    <div class="automation-notice compact" role="note"><strong>尚未启动调度</strong><span>本页没有“立即执行/重扫”入口。候选预览仅做本地只读资格检查，不调用模型、不移动游标。</span></div>
+    ${scheduleNotice()}
     <div class="automation-table-wrap"><table class="automation-table rule-table"><thead><tr><th>规则</th><th>View / 模型</th><th>调度 / 进度</th><th>累计统计</th><th>状态 / 操作</th></tr></thead><tbody>${rules.map(ruleRow).join("") || '<tr><td colspan="5" class="table-empty"><strong>尚未创建自动规则</strong><span>启用模型并准备标签维度后即可保存第一条规则。</span></td></tr>'}</tbody></table></div>
   </section>`;
 }
@@ -258,9 +272,9 @@ function ruleDialog(rule = null) {
     <div class="form-grid"><label>规则名称<input name="name" required maxlength="120" value="${esc(value.name)}"></label><label>标签维度<select name="view_id" ${rule ? "disabled" : ""}>${enabledViews.map((item) => `<option value="${item.id}" ${item.id === value.view_id ? "selected" : ""}>${esc(item.name)}</option>`).join("")}</select></label></div>
     <label>使用模型<select name="model_id">${enabledModels.map((item) => `<option value="${item.id}" ${item.id === value.method_config.model_id ? "selected" : ""}>${esc(item.name)}${item.enabled ? "" : "（已停用）"}</option>`).join("")}</select></label>
     <label>业务判断说明<textarea name="prompt" rows="5" required>${esc(value.method_config.prompt)}</textarea><small>这是业务 Prompt；后续执行时仍会经过统一脱敏和 system Prompt 边界。</small></label>
-    <div class="form-grid"><label>CRON（5 或 6 段）<input name="cron" value="${esc(value.cron)}" ${value.enabled ? "required" : ""} placeholder="*/5 * * * *"><small data-cron-copy>保存时严格校验；当前不注册调度任务。</small></label><label>金额披露<select name="amount_mode">${Object.entries(amountModeNames).map(([id, label]) => `<option value="${id}" ${Number(id) === value.amount_mode ? "selected" : ""}>${label}</option>`).join("")}</select></label></div>
+    <div class="form-grid"><label>CRON（5 或 6 段）<input name="cron" value="${esc(value.cron)}" ${value.enabled ? "required" : ""} placeholder="*/5 * * * *"><small data-cron-copy>保存时严格校验；启用后立即注册到共享调度器。</small></label><label>金额披露<select name="amount_mode">${Object.entries(amountModeNames).map(([id, label]) => `<option value="${id}" ${Number(id) === value.amount_mode ? "selected" : ""}>${label}</option>`).join("")}</select></label></div>
     <label class="check-row"><input name="enabled" type="checkbox" ${value.enabled ? "checked" : ""}> 启用规则配置</label>
-    <div class="automation-notice compact"><strong>保存不等于执行</strong><span>DEV-011 只持久化规则。统一调度、模型调用和建议写入在后续任务接通。</span></div>
+    <div class="automation-notice compact"><strong>保存后按 CRON 执行</strong><span>启用规则会注册到共享 FIFO 调度器；模型只生成待人工确认的建议，不会直接修改标签。</span></div>
     <div class="actions"><button type="button" class="quiet" data-close>取消</button><button type="submit" class="primary">保存并回读</button></div>
   </form>`);
   const form = $("[data-form='automation-rule']", dialog);

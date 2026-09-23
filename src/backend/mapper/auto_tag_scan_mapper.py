@@ -18,6 +18,7 @@ from backend.entity import (
     TagAssignmentRequest,
     TargetTag,
     TargetTagView,
+    TransactionFact,
 )
 from backend.entity.auto_tag_rule import MAX_COUNTER_VALUE
 from backend.entity.base import utc_now
@@ -66,6 +67,15 @@ class ScanCommitResult:
     status: ScanCommitStatus
     reason: str
     request_count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class ProtectedScanSource:
+    direction: Literal["IN", "OUT"]
+    amount: int
+    currency_code: str
+    merchant: str
+    summary: str
 
 
 class AutoTagScanMapper:
@@ -185,6 +195,33 @@ class AutoTagScanMapper:
             },
             existing_request_ids=existing_request_ids,
             targets=self._targets(rule["view_id"]),
+        )
+
+    def read_protected_source(self, ledger_id: int) -> ProtectedScanSource | None:
+        row = self.db.execute(select(
+            TransactionFact.cash_direction,
+            TransactionFact.amount,
+            TransactionFact.currency_code,
+            TransactionFact.counterparty_name,
+            TransactionFact.summary,
+        ).select_from(ReviewAllocation).join(
+            ReviewCase,
+            ReviewCase.id == ReviewAllocation.review_case_id,
+        ).join(
+            TransactionFact,
+            TransactionFact.id == ReviewAllocation.transaction_fact_id,
+        ).where(
+            ReviewAllocation.ledger_entry_id == ledger_id,
+            ReviewCase.status == 0,
+        ).limit(1)).mappings().one_or_none()
+        if row is None:
+            return None
+        return ProtectedScanSource(
+            direction="IN" if row["cash_direction"] == 1 else "OUT",
+            amount=int(row["amount"]),
+            currency_code=str(row["currency_code"]),
+            merchant=str(row["counterparty_name"]),
+            summary=str(row["summary"]),
         )
 
     def commit_item(

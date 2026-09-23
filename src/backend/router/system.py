@@ -5,7 +5,9 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from backend.core.config import APP_DISPLAY_NAME, RESOURCE_DIR
-
+from backend.core.job_scheduler import job_scheduler
+from backend.schema.schedule import ScheduleStatusResponse
+from backend.service.schedule_status_service import ScheduleStatusService
 
 router = APIRouter(
     tags=["system"],
@@ -25,3 +27,15 @@ def home(request: Request):
 @router.get("/api/health")
 def health():
     return {"status": "ok", "schema": "pirc-9-target"}
+
+
+@router.get(
+    "/paam/system/v1/schedule/status",
+    response_model=ScheduleStatusResponse,
+)
+def schedule_status():
+    return ScheduleStatusResponse(
+        status=200,
+        message="ok",
+        body=ScheduleStatusService(job_scheduler).get(),
+    )

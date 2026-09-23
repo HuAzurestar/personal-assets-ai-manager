@@ -1,4 +1,4 @@
-"""Strict DTOs for one synthetic LLM tag-analysis request."""
+"""Strict DTOs for one privacy-filtered LLM tag-analysis request."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ class LlmAmountDisclosure(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     mode: Literal["BAND", "EXACT", "NONE"]
-    currency_code: str = Field(pattern=r"^[A-Z]{3}$")
+    currency_code: str = Field(pattern=r"^[A-Z][A-Z0-9_]{2,11}$")
     band_code: str | None = Field(default=None, min_length=1, max_length=32)
     band_label: str | None = Field(default=None, min_length=1, max_length=120)
     amount_units: int | None = None
@@ -52,12 +52,11 @@ class LlmAmountDisclosure(BaseModel):
         return self
 
 
-class SyntheticLlmAnalysisInput(BaseModel):
-    """Input fence for M1: real ledger DTOs cannot enter this adapter."""
+class _LlmAnalysisInput(BaseModel):
+    """Common provider payload after the source-specific safety boundary."""
 
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    source: Literal["SYNTHETIC_FIXTURE"]
     item: str = Field(min_length=1, max_length=120)
     direction: Literal["IN", "OUT"]
     merchant: str = Field(default="", max_length=200)
@@ -80,11 +79,26 @@ class SyntheticLlmAnalysisInput(BaseModel):
         return value.strip()
 
     @model_validator(mode="after")
-    def reject_duplicate_candidates(self) -> SyntheticLlmAnalysisInput:
+    def reject_duplicate_candidates(self) -> _LlmAnalysisInput:
         candidate_ids = [candidate.tag_id for candidate in self.candidates]
         if len(candidate_ids) != len(set(candidate_ids)):
             raise ValueError("candidate tag ids must be unique")
         return self
+
+
+class SyntheticLlmAnalysisInput(_LlmAnalysisInput):
+    """Auditable test input; raw Ledger DTOs cannot enter this contract."""
+
+    source: Literal["SYNTHETIC_FIXTURE"]
+
+
+class ProtectedLlmAnalysisInput(_LlmAnalysisInput):
+    """Production input containing only privacy-filtered business fields."""
+
+    source: Literal["PROTECTED_LEDGER"]
+
+
+LlmAnalysisInput = SyntheticLlmAnalysisInput | ProtectedLlmAnalysisInput
 
 
 class LlmResolvedSuggestion(BaseModel):

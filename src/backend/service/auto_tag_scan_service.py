@@ -1,7 +1,8 @@
-"""Synthetic-only auto-tag scan orchestration for the M1 core."""
+"""Bounded automatic-tag scan orchestration for test and scheduled runs."""
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Protocol
@@ -19,16 +20,21 @@ from backend.mapper.auto_tag_scan_mapper import (
 )
 from backend.schema.auto_tag_scan import SyntheticTagScanFixture
 from backend.schema.llm_analysis import (
+    LlmAnalysisInput,
     LlmAnalysisResult,
     LlmCandidate,
     SyntheticLlmAnalysisInput,
 )
+from backend.service.llm_privacy_service import LlmPrivacyService
 
 
-class SyntheticTagAnalyzer(Protocol):
+logger = logging.getLogger(__name__)
+
+
+class TagAnalyzer(Protocol):
     async def analyze(
         self,
-        payload: SyntheticLlmAnalysisInput,
+        payload: LlmAnalysisInput,
         *,
         rule_id: int,
         model_id: int,
@@ -45,13 +51,23 @@ class ScanRunReport:
     stopped_reason: str
 
 
+class _PayloadStop(ValueError):
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
+PayloadBuilder = Callable[[ScanPage, int], LlmAnalysisInput | None]
+SuggestionValidator = Callable[[tuple, int], None]
+
+
 class AutoTagScanService:
-    """Run one bounded page; no production Ledger DTO is accepted here."""
+    """Run one bounded page with provider calls outside write transactions."""
 
     def __init__(
         self,
         sessions: Callable[[], Session],
-        analyzer: SyntheticTagAnalyzer,
+        analyzer: TagAnalyzer,
     ):
         self._sessions = sessions
         self._analyzer = analyzer
@@ -61,6 +77,50 @@ class AutoTagScanService:
         rule_id: int,
         fixtures: Mapping[int, SyntheticTagScanFixture],
         context: JobRunContext,
+    ) -> ScanRunReport:
+        def build(page: ScanPage, ledger_id: int) -> SyntheticLlmAnalysisInput:
+            fixture = fixtures.get(ledger_id)
+            if fixture is None:
+                raise _PayloadStop("SYNTHETIC_FIXTURE_MISSING")
+            try:
+                return self._synthetic_payload(page, fixture, ledger_id=ledger_id)
+            except (ValidationError, ValueError, TypeError) as error:
+                raise _PayloadStop("SYNTHETIC_FIXTURE_INVALID") from error
+
+        return await self._run(rule_id, context, build)
+
+    async def run_protected(
+        self,
+        rule_id: int,
+        context: JobRunContext,
+        privacy: LlmPrivacyService,
+    ) -> ScanRunReport:
+        def build(page: ScanPage, ledger_id: int):
+            with self._sessions() as db:
+                source = AutoTagScanMapper(db).read_protected_source(ledger_id)
+            if source is None:
+                return None
+            return privacy.build_payload(page, source)
+
+        def validate(suggestions: tuple, amount_mode: int) -> None:
+            privacy.validate_suggestions(suggestions, amount_mode=amount_mode)
+
+        return await self._run(
+            rule_id,
+            context,
+            build,
+            suggestion_validator=validate,
+            stop_on_provider_error=True,
+        )
+
+    async def _run(
+        self,
+        rule_id: int,
+        context: JobRunContext,
+        payload_builder: PayloadBuilder,
+        *,
+        suggestion_validator: SuggestionValidator | None = None,
+        stop_on_provider_error: bool = False,
     ) -> ScanRunReport:
         page = self._read_page(rule_id, min(context.page_limit, 100))
         if page is None:
@@ -94,23 +154,28 @@ class AutoTagScanService:
                     rule_id, inspected - 1, submitted, request_count, failed,
                     "SOFT_BUDGET_EXHAUSTED",
                 )
-            fixture = fixtures.get(ledger_id)
-            if fixture is None:
-                return ScanRunReport(
-                    rule_id, inspected, submitted, request_count, failed,
-                    "SYNTHETIC_FIXTURE_MISSING",
-                )
             try:
-                payload = self._payload(page, fixture, ledger_id=ledger_id)
-            except (ValidationError, ValueError, TypeError):
+                payload = payload_builder(page, ledger_id)
+            except _PayloadStop as error:
                 return ScanRunReport(
                     rule_id, inspected, submitted, request_count, failed,
-                    "SYNTHETIC_FIXTURE_INVALID",
+                    error.reason,
                 )
+            if payload is None:
+                result = self._commit(token, ledger_id, "NO_SUGGESTION", ())
+                if result.status == "STALE":
+                    return ScanRunReport(
+                        rule_id, inspected, submitted, request_count, failed,
+                        result.reason,
+                    )
+                token = self._advanced(token, ledger_id)
+                continue
+
             submitted += 1
             kind: ScanCommitKind
             suggestions = ()
             item_failed = False
+            provider_error_code = None
             try:
                 analysis = LlmAnalysisResult.model_validate(
                     await self._analyze_with_policy(
@@ -121,17 +186,25 @@ class AutoTagScanService:
                     )
                 )
                 if analysis.item != payload.item:
-                    raise ValueError("analysis item does not match fixture")
+                    raise ValueError("analysis item does not match request")
                 if analysis.kind == "SUGGESTED":
                     if not analysis.suggestions:
                         raise ValueError("suggested analysis requires suggestions")
                     kind = "SUGGESTED"
                     suggestions = tuple(analysis.suggestions)
+                    if suggestion_validator is not None:
+                        suggestion_validator(suggestions, page.amount_mode)
                 else:
                     if analysis.suggestions:
                         raise ValueError("insufficient analysis cannot suggest tags")
                     kind = "NO_SUGGESTION"
             except LlmAdapterError as error:
+                logger.warning(
+                    "Auto-tag provider failure rule=%s ledger=%s code=%s",
+                    rule_id,
+                    ledger_id,
+                    error.code,
+                )
                 if error.code in {"AUTH_ERROR", "CONFIG_ERROR"}:
                     return ScanRunReport(
                         rule_id, inspected, submitted, request_count, failed,
@@ -139,10 +212,23 @@ class AutoTagScanService:
                     )
                 kind = "ITEM_FAILURE"
                 item_failed = True
-            except (ValidationError, ValueError, TypeError):
+                provider_error_code = error.code
+            except (ValidationError, ValueError, TypeError) as error:
+                logger.warning(
+                    "Auto-tag output rejected rule=%s ledger=%s error_type=%s",
+                    rule_id,
+                    ledger_id,
+                    type(error).__name__,
+                )
                 kind = "ITEM_FAILURE"
                 item_failed = True
-            except Exception:  # noqa: BLE001 - an item failure must not kill the rule run
+            except Exception as error:  # noqa: BLE001 - isolate one item
+                logger.warning(
+                    "Auto-tag item failed rule=%s ledger=%s error_type=%s",
+                    rule_id,
+                    ledger_id,
+                    type(error).__name__,
+                )
                 kind = "ITEM_FAILURE"
                 item_failed = True
 
@@ -155,7 +241,22 @@ class AutoTagScanService:
             request_count += result.request_count
             if item_failed or result.reason == "INVALID_SUGGESTION":
                 failed += 1
+            if result.reason == "INVALID_SUGGESTION":
+                logger.warning(
+                    "Auto-tag suggestion rejected rule=%s ledger=%s",
+                    rule_id,
+                    ledger_id,
+                )
             token = self._advanced(token, ledger_id)
+            if stop_on_provider_error and provider_error_code is not None:
+                return ScanRunReport(
+                    rule_id,
+                    inspected,
+                    submitted,
+                    request_count,
+                    failed,
+                    provider_error_code,
+                )
 
         return ScanRunReport(
             rule_id, inspected, submitted, request_count, failed, "PAGE_COMPLETE"
@@ -163,7 +264,7 @@ class AutoTagScanService:
 
     async def _analyze_with_policy(
         self,
-        payload: SyntheticLlmAnalysisInput,
+        payload: LlmAnalysisInput,
         *,
         rule_id: int,
         model_id: int,
@@ -222,7 +323,7 @@ class AutoTagScanService:
         return None
 
     @staticmethod
-    def _payload(
+    def _synthetic_payload(
         page: ScanPage,
         fixture: SyntheticTagScanFixture,
         *,

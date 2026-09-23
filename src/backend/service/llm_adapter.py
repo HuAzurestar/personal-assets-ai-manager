@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Callable, Mapping
+from threading import RLock
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from backend.error import LlmAdapterError
 from backend.schema.llm_analysis import (
+    LlmAnalysisInput,
     LlmAnalysisResult,
     LlmResolvedSuggestion,
+    ProtectedLlmAnalysisInput,
     SyntheticLlmAnalysisInput,
 )
 from backend.schema.setting import AutomationModelWrite
@@ -20,6 +24,7 @@ MAX_RESPONSE_BYTES = 32 * 1024
 MAX_JSON_DEPTH = 12
 ResponseMode = Literal["json_object", "json_schema"]
 Completion = Callable[..., object]
+_LITELLM_LOCK = RLock()
 
 
 class _DuplicateJsonKey(ValueError):
@@ -67,11 +72,32 @@ class LiteLlmAdapter:
         if not isinstance(api_key, str) or not api_key.strip():
             raise _error("CONFIG_ERROR", "The configured model credential is missing")
 
-        completion = self._completion
-        if completion is None:
-            from litellm import completion as litellm_completion
+        return self._analyze(payload, profile, api_key=api_key, response_mode=response_mode)
 
-            completion = litellm_completion
+    def analyze_protected(
+        self,
+        payload: ProtectedLlmAnalysisInput,
+        profile: AutomationModelWrite,
+        *,
+        api_key: str,
+        response_mode: ResponseMode = "json_object",
+    ) -> LlmAnalysisResult:
+        return self._analyze(payload, profile, api_key=api_key, response_mode=response_mode)
+
+    def _analyze(
+        self,
+        payload: LlmAnalysisInput,
+        profile: AutomationModelWrite,
+        *,
+        api_key: str,
+        response_mode: ResponseMode,
+    ) -> LlmAnalysisResult:
+        if not profile.enabled:
+            raise _error("CONFIG_ERROR", "The configured model is disabled")
+        if not isinstance(api_key, str) or not api_key.strip():
+            raise _error("CONFIG_ERROR", "The configured model credential is missing")
+
+        completion = self._completion or _direct_litellm_completion
 
         request = build_litellm_request(payload, profile, response_mode=response_mode)
         try:
@@ -84,7 +110,7 @@ class LiteLlmAdapter:
 
 
 def build_litellm_request(
-    payload: SyntheticLlmAnalysisInput,
+    payload: LlmAnalysisInput,
     profile: AutomationModelWrite,
     *,
     response_mode: ResponseMode = "json_object",
@@ -104,7 +130,7 @@ def build_litellm_request(
 
 
 def build_messages(
-    payload: SyntheticLlmAnalysisInput,
+    payload: LlmAnalysisInput,
     *,
     response_mode: ResponseMode = "json_object",
 ) -> list[dict[str, str]]:
@@ -177,7 +203,7 @@ def build_messages(
 
 def parse_provider_response(
     response: object,
-    payload: SyntheticLlmAnalysisInput,
+    payload: LlmAnalysisInput,
 ) -> LlmAnalysisResult:
     status_code = _field(response, "status_code")
     if isinstance(status_code, int) and status_code != 200:
@@ -216,7 +242,7 @@ def parse_provider_response(
 
 def parse_business_output(
     content: str,
-    payload: SyntheticLlmAnalysisInput,
+    payload: LlmAnalysisInput,
 ) -> LlmAnalysisResult:
     if len(content.encode("utf-8")) > MAX_RESPONSE_BYTES:
         raise _error("OUTPUT_SCHEMA_INVALID", "The model output is too large")
@@ -294,7 +320,7 @@ def parse_business_output(
     )
 
 
-def _amount_instruction(payload: SyntheticLlmAnalysisInput) -> str:
+def _amount_instruction(payload: LlmAnalysisInput) -> str:
     amount = payload.amount
     if amount.mode == "BAND":
         return (
@@ -310,7 +336,7 @@ def _amount_instruction(payload: SyntheticLlmAnalysisInput) -> str:
 
 
 def _response_format(
-    payload: SyntheticLlmAnalysisInput,
+    payload: LlmAnalysisInput,
     response_mode: ResponseMode,
 ) -> dict[str, object]:
     if response_mode == "json_object":
@@ -363,6 +389,24 @@ def _response_format(
             "schema": schema,
         },
     }
+
+
+def _direct_litellm_completion(**request):
+    """Use a request-scoped client without inheriting ambient proxy variables."""
+
+    import httpx
+    import litellm
+
+    os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "true")
+    client = httpx.Client(trust_env=False)
+    with _LITELLM_LOCK:
+        previous = litellm.client_session
+        litellm.client_session = client
+        try:
+            return litellm.completion(**request)
+        finally:
+            litellm.client_session = previous
+            client.close()
 
 
 def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
