@@ -214,6 +214,10 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
             assert "/paam/tag/v1/auto_rule" in automation_script.text
             assert "/paam/tag/v1/assignment_request" in automation_script.text
             assert "/paam/system/v1/schedule/status" in automation_script.text
+            assert "自动标签扫描未启用" in automation_script.text
+            assert "已保存·未调度" in automation_script.text
+            assert "保存后按 CRON 执行" not in automation_script.text
+            assert "启用后立即注册" not in automation_script.text
             assert "尚未启动调度" not in automation_script.text
             schedule = client.get("/paam/system/v1/schedule/status")
             assert schedule.status_code == 200

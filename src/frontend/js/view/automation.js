@@ -47,7 +47,7 @@ export async function automationSettingsPage() {
       <div><span class="eyebrow">SETTINGS · AUTOMATION</span><h2>自动化设置</h2><p>模型连接保存在本地设置中；密钥进入系统凭据存储，普通读取永不回显。</p></div>
       <button type="button" class="primary" data-action="model-new">＋ 添加模型</button>
     </section>
-    <div class="automation-notice" role="note"><strong>模型安全边界</strong><span>启用规则后由 CRON 调度通过共享 FIFO 调用配置的模型；API Key 只从系统凭据存储读取，不写入 SQLite，也不会回显。</span></div>
+    <div class="automation-notice" role="note"><strong>模型安全边界</strong><span>规则配置可以保存；本阶段只有显式隔离的合成验收库才会注册 CRON 扫描。API Key 只从系统凭据存储读取，不写入 SQLite，也不会回显。</span></div>
     <section class="automation-section" aria-labelledby="automation-model-title">
       <div class="automation-section-head"><div><h3 id="automation-model-title">模型连接</h3><p>${setting.models.length ? `共 ${setting.models.length} 个本地配置` : "添加首个模型后，规则才可选择模型"}</p></div></div>
       <div class="automation-grid">${modelCards || '<div class="panel empty-state"><strong>尚未配置模型</strong><p>添加一个 LiteLLM 兼容配置；启用前必须保存 API Key。</p><button type="button" data-action="model-new">添加模型</button></div>'}</div>
@@ -69,16 +69,22 @@ function ruleRow(rule) {
     ["已启用", rule.accepted_count], ["已拒绝", rule.rejected_count],
   ].map(([label, value]) => `<div><span>${label}</span><strong>${esc(value)}</strong></div>`).join("");
   const scheduleTask = scheduleStatus?.tasks?.find((item) => item.task_key === `tag-scan:${rule.id}`);
+  const schedulerRunning = scheduleStatus?.scheduler_state === "RUNNING" && scheduleStatus?.worker_state === "HEALTHY";
+  const ruleStatus = !rule.enabled ? statusPill(false)
+    : !modelAvailable ? statusPill(true, false, unavailableCopy)
+    : !scheduleTask ? statusPill(true, false, "已保存·未调度")
+    : !schedulerRunning ? statusPill(true, false, "调度已停止")
+    : statusPill(true);
   const resultNames = { COMPLETED: "完成", PARTIAL_FAILURE: "部分失败", FAILED: "失败", CANCELLED: "已取消" };
   const lastRun = scheduleTask?.last_result
     ? `上次执行：${resultNames[scheduleTask.last_result] || scheduleTask.last_result}${scheduleTask.last_error_code ? ` · ${scheduleTask.last_error_code}` : ""}`
-    : "尚未执行";
+    : scheduleTask ? "尚未执行" : "未注册到调度器";
   return `<tr data-rule-row="${rule.id}">
     <td class="rule-identity"><span class="eyebrow">RULE #${rule.id} · REV ${rule.rule_revision}</span><strong>${esc(rule.name)}</strong><small>${esc(rule.method_config.prompt)}</small></td>
     <td><strong>${esc(view?.name || `View #${rule.view_id}`)}</strong><small>${esc(model?.name || `Model #${rule.method_config.model_id}`)}</small></td>
     <td class="rule-schedule"><code>${esc(rule.cron || "未设置")}</code><small>Ledger #${rule.scan_after_ledger_id} · Epoch ${rule.scan_epoch}</small><small>${esc(lastRun)}</small></td>
     <td><div class="rule-counts">${counts}</div></td>
-    <td class="rule-operation">${statusPill(rule.enabled, modelAvailable, unavailableCopy)}<div class="automation-actions"><button type="button" class="quiet" data-action="rule-preview" data-id="${rule.id}">候选预览</button><button type="button" data-action="rule-edit" data-id="${rule.id}">编辑</button></div></td>
+    <td class="rule-operation">${ruleStatus}<div class="automation-actions"><button type="button" class="quiet" data-action="rule-preview" data-id="${rule.id}">候选预览</button><button type="button" data-action="rule-edit" data-id="${rule.id}">编辑</button></div></td>
   </tr>`;
 }
 
@@ -87,8 +93,11 @@ function scheduleNotice() {
   const running = scheduleStatus?.scheduler_state === "RUNNING" && scheduleStatus?.worker_state === "HEALTHY";
   const nextRuns = tasks.map((item) => item.next_run_at).filter(Boolean).sort();
   const failed = tasks.filter((item) => ["FAILED", "PARTIAL_FAILURE"].includes(item.last_result)).length;
-  const title = running ? `CRON 调度运行中 · ${tasks.length} 条规则已注册` : "CRON 调度未运行";
-  const next = nextRuns.length ? `下一次触发：${new Date(nextRuns[0]).toLocaleString("zh-CN", { timeZone: "Asia/Hong_Kong" })}` : "当前没有待触发的启用规则";
+  const title = !tasks.length ? "自动标签扫描未启用"
+    : running ? `CRON 调度运行中 · ${tasks.length} 条规则已注册` : "CRON 调度未运行";
+  const next = !tasks.length
+    ? "规则配置可保存；默认模式不扫描账单。只有显式合成验收环境会注册自动扫描"
+    : nextRuns.length ? `下一次触发：${new Date(nextRuns[0]).toLocaleString("zh-CN", { timeZone: "Asia/Hong_Kong" })}` : "当前没有待触发的启用规则";
   const failure = failed ? `；${failed} 条规则上次执行失败，请检查模型配置或网络` : "";
   return `<div class="automation-notice compact" role="status" aria-live="polite"><strong>${esc(title)}</strong><span>${esc(next + failure)}。CRON 触发进入共享 FIFO；本页仍不提供手动执行或重扫入口。</span></div>`;
 }
@@ -277,9 +286,9 @@ function ruleDialog(rule = null) {
     <div class="form-grid"><label>规则名称<input name="name" required maxlength="120" value="${esc(value.name)}"></label><label>标签维度<select name="view_id" ${rule ? "disabled" : ""}>${enabledViews.map((item) => `<option value="${item.id}" ${item.id === value.view_id ? "selected" : ""}>${esc(item.name)}</option>`).join("")}</select></label></div>
     <label>使用模型<select name="model_id">${enabledModels.map((item) => `<option value="${item.id}" ${item.id === value.method_config.model_id ? "selected" : ""}>${esc(item.name)}${item.enabled ? "" : "（已停用）"}</option>`).join("")}</select></label>
     <label>业务判断说明<textarea name="prompt" rows="5" required>${esc(value.method_config.prompt)}</textarea><small>这是业务 Prompt；后续执行时仍会经过统一脱敏和 system Prompt 边界。</small></label>
-    <div class="form-grid"><label>CRON（5 或 6 段）<input name="cron" value="${esc(value.cron)}" ${value.enabled ? "required" : ""} placeholder="*/5 * * * *"><small data-cron-copy>保存时严格校验；启用后立即注册到共享调度器。</small></label><label>金额披露<select name="amount_mode">${Object.entries(amountModeNames).map(([id, label]) => `<option value="${id}" ${Number(id) === value.amount_mode ? "selected" : ""}>${label}</option>`).join("")}</select></label></div>
+    <div class="form-grid"><label>CRON（5 或 6 段）<input name="cron" value="${esc(value.cron)}" ${value.enabled ? "required" : ""} placeholder="*/5 * * * *"><small data-cron-copy>保存时严格校验；是否注册请以规则列表中的调度状态为准。</small></label><label>金额披露<select name="amount_mode">${Object.entries(amountModeNames).map(([id, label]) => `<option value="${id}" ${Number(id) === value.amount_mode ? "selected" : ""}>${label}</option>`).join("")}</select></label></div>
     <label class="check-row"><input name="enabled" type="checkbox" ${value.enabled ? "checked" : ""}> 启用规则配置</label>
-    <div class="automation-notice compact"><strong>保存后按 CRON 执行</strong><span>启用规则会注册到共享 FIFO 调度器；模型只生成待人工确认的建议，不会直接修改标签。</span></div>
+    <div class="automation-notice compact"><strong>保存规则配置</strong><span>仅显式隔离的合成验收环境可注册 CRON；模型只生成待人工确认的建议，不会直接修改标签。</span></div>
     <div class="actions"><button type="button" class="quiet" data-close>取消</button><button type="submit" class="primary">保存并回读</button></div>
   </form>`);
   const form = $("[data-form='automation-rule']", dialog);
