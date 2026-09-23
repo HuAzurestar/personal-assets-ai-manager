@@ -253,6 +253,10 @@ def test_synthetic_request_requires_approval_and_reads_back_source(request_api):
     items = pending.json()["body"]["items"]
     assert [item["rule_name"] for item in items] == ["Food rule", "Travel rule"]
     assert all(item["ledger_active"] for item in items)
+    assert all(item["ledger_summary"] == "Synthetic purchase" for item in items)
+    assert all(item["ledger_counterparty_name"] == "Synthetic merchant" for item in items)
+    assert all(item["ledger_amount"] == 2_500 for item in items)
+    assert all(item["ledger_currency_code"] == "CNY" for item in items)
 
     before = client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]
     before_tags = {

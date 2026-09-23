@@ -161,7 +161,7 @@ async function render() {
       "ledger-reviews": ledgerReviewsPage,
       "ledger-imports": ledgerImportsPage,
       "ledger-tags": ledgerTagsPage,
-      "auto-rules": autoRulesPage,
+      "auto-rules": () => autoRulesPage(state.params),
       summary: summaryPage,
       ledger: ledgerPage,
       import: importPage,

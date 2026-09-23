@@ -1,5 +1,5 @@
 import { request, jsonRequest } from "../api/client.js?v=20260922.3";
-import { $, $$, esc } from "../util/core.js";
+import { $, $$, esc, money } from "../util/core.js";
 
 let setting = null;
 let rules = [];
@@ -84,7 +84,7 @@ function ruleRow(rule) {
     <td><strong>${esc(view?.name || `View #${rule.view_id}`)}</strong><small>${esc(model?.name || `Model #${rule.method_config.model_id}`)}</small></td>
     <td class="rule-schedule"><code>${esc(rule.cron || "未设置")}</code><small>Ledger #${rule.scan_after_ledger_id} · Epoch ${rule.scan_epoch}</small><small>${esc(lastRun)}</small></td>
     <td><div class="rule-counts">${counts}</div></td>
-    <td class="rule-operation">${ruleStatus}<div class="automation-actions"><button type="button" class="quiet" data-action="rule-preview" data-id="${rule.id}">候选预览</button><button type="button" data-action="rule-edit" data-id="${rule.id}">编辑</button></div></td>
+    <td class="rule-operation">${ruleStatus}<div class="automation-actions"><button type="button" class="quiet" data-action="rule-detail" data-id="${rule.id}">审查详情</button><button type="button" class="quiet" data-action="rule-preview" data-id="${rule.id}">资格预览</button><button type="button" data-action="rule-edit" data-id="${rule.id}">编辑</button></div></td>
   </tr>`;
 }
 
@@ -98,7 +98,7 @@ function scheduleNotice() {
   const next = !tasks.length
     ? "规则配置可保存；默认模式不扫描账单。只有显式合成验收环境会注册自动扫描"
     : nextRuns.length ? `下一次触发：${new Date(nextRuns[0]).toLocaleString("zh-CN", { timeZone: "Asia/Hong_Kong" })}` : "当前没有待触发的启用规则";
-  const failure = failed ? `；${failed} 条规则上次执行失败，请检查模型配置或网络` : "";
+  const failure = failed ? `；${failed} 条规则上次执行失败，请打开规则详情查看具体原因` : "";
   return `<div class="automation-notice compact" role="status" aria-live="polite"><strong>${esc(title)}</strong><span>${esc(next + failure)}。CRON 触发进入共享 FIFO；本页仍不提供手动执行或重扫入口。</span></div>`;
 }
 
@@ -120,7 +120,25 @@ export async function autoRulesPanel(tagViews) {
   </section>`;
 }
 
-export async function autoRulesPage() {
+export async function autoRulesPage(params = new URLSearchParams()) {
+  const ruleId = Number(params.get("rule_id"));
+  if (Number.isSafeInteger(ruleId) && ruleId > 0) {
+    const query = new URLSearchParams({
+      page_index: "1", page_size: "5",
+      filter: JSON.stringify({ key: "rule_id", op: "=", val: ruleId }),
+      sorter: JSON.stringify([{ key: "created_time", direction: "desc" }]),
+    });
+    const [rule, viewPage, currentSetting, schedule, recent] = await Promise.all([
+      request(`/paam/tag/v1/auto_rule/${ruleId}`),
+      request("/paam/tag/v1/view/list?page_index=1&page_size=100"),
+      request("/paam/system/v1/setting/automation"),
+      request("/paam/system/v1/schedule/status"),
+      request(`/paam/tag/v1/assignment_request/list?${query}`),
+    ]);
+    views = viewPage.items;
+    setting = currentSetting;
+    return `<div class="auto-rules-page automation-detail-page"><button type="button" class="quiet" data-action="rule-detail-back">← 返回规则列表</button><h2>规则 #${ruleId} · ${esc(rule.name)}</h2>${ruleDetailMarkup(rule, schedule, recent)}</div>`;
+  }
   const viewPage = await request("/paam/tag/v1/view/list?page_index=1&page_size=100");
   return `<div class="auto-rules-page">${await autoRulesPanel(viewPage.items)}</div>`;
 }
@@ -136,6 +154,15 @@ function requestStatusPill(status) {
 }
 
 export async function tagReviewPage(params = new URLSearchParams()) {
+  const requestId = Number(params.get("request_id"));
+  if (Number.isSafeInteger(requestId) && requestId > 0) {
+    const item = await request(`/paam/tag/v1/assignment_request/${requestId}`);
+    const [ledger, rule] = await Promise.all([
+      request(`/paam/ledger/v1/flow/${item.ledger_id}`),
+      request(`/paam/tag/v1/auto_rule/${item.rule_id}`),
+    ]);
+    return `<div class="tag-review-page automation-detail-page"><button type="button" class="quiet" data-action="tag-request-detail-back">← 返回建议列表</button><h2>建议请求 #${requestId} · 判断依据</h2>${requestDetailMarkup(item, ledger, rule)}${item.status === 1 ? `<div class="automation-actions"><button type="button" class="primary" data-action="tag-request-transition" data-operation="approve" data-id="${item.id}">通过并打标</button><button type="button" class="quiet" data-action="tag-request-transition" data-operation="reject" data-id="${item.id}">拒绝</button></div>` : ""}</div>`;
+  }
   const page = Math.max(1, Number(params.get("page") || 1));
   const pageSize = Math.min(100, Math.max(1, Number(params.get("page_size") || 20)));
   const viewId = params.get("view_id") || "";
@@ -159,18 +186,18 @@ export async function tagReviewPage(params = new URLSearchParams()) {
   const viewOptions = viewPage.items.map((item) => `<option value="${item.id}" ${String(item.id) === viewId ? "selected" : ""}>${esc(item.name)}</option>`).join("");
   const ruleOptions = rulePage.items.map((item) => `<option value="${item.id}" ${String(item.id) === ruleId ? "selected" : ""}>${esc(item.name)}</option>`).join("");
   const rows = result.items.map((item) => `<tr data-tag-request-row="${item.id}">
-    <td><label class="request-selector"><input type="checkbox" data-tag-request-select value="${item.id}" ${item.status === 1 ? "" : "disabled"}><span><strong>Request #${item.id}</strong><small>${esc(item.reason_summary || "无补充理由")}</small></span></label></td>
-    <td><strong>Ledger #${item.ledger_id}</strong><small>${esc(item.view_name)} · ${item.ledger_active ? "当前有效" : "Ledger 已失效"}</small></td>
+    <td><label class="request-selector"><input type="checkbox" data-tag-request-select value="${item.id}" ${item.status === 1 ? "" : "disabled"}><span><strong>Request #${item.id} · ${esc(item.ledger_counterparty_name || "未记录交易对方")}</strong><small>${esc(item.ledger_summary || "无账目摘要；请查看详情")}</small></span></label></td>
+    <td><strong>${item.ledger_amount == null ? `Ledger #${item.ledger_id}` : esc(money({ amount: item.ledger_amount, currency_code: item.ledger_currency_code }))}</strong><small>Ledger #${item.ledger_id} · ${esc(item.view_name)} · ${item.ledger_active ? "当前有效" : "Ledger 已失效"}</small></td>
     <td><strong>${esc(item.proposed_tag_name)}</strong><small>${esc(item.proposed_tag_system_name)}</small></td>
     <td><strong>${esc(item.rule_name)}</strong><small>Rule #${item.rule_id} · Revision ${item.rule_revision}</small></td>
     <td>${requestStatusPill(item.status)}</td>
-    <td><div class="automation-actions request-actions">${item.status === 1 ? `<button type="button" class="primary" data-action="tag-request-transition" data-operation="approve" data-id="${item.id}">通过并打标</button><button type="button" class="quiet" data-action="tag-request-transition" data-operation="reject" data-id="${item.id}">拒绝</button>` : "—"}</div></td>
+    <td><div class="automation-actions request-actions"><button type="button" class="quiet" data-action="tag-request-detail" data-id="${item.id}">查看依据</button>${item.status === 1 ? `<button type="button" class="primary" data-action="tag-request-transition" data-operation="approve" data-id="${item.id}">通过并打标</button><button type="button" class="quiet" data-action="tag-request-transition" data-operation="reject" data-id="${item.id}">拒绝</button>` : ""}</div></td>
   </tr>`).join("");
   const lastPage = Math.max(1, Math.ceil(result.total / result.page_size));
   const pager = `<div class="request-pager"><span>共 ${result.total} 条 · 第 ${result.page_index}/${lastPage} 页</span><div><button type="button" class="quiet" data-action="tag-request-page" data-page="${page - 1}" ${page <= 1 ? "disabled" : ""}>上一页</button><button type="button" class="quiet" data-action="tag-request-page" data-page="${page + 1}" ${page >= lastPage ? "disabled" : ""}>下一页</button></div></div>`;
   return `<div class="tag-review-page">
     <section class="tag-manager automation-requests" aria-labelledby="tag-request-title">
-      <div class="tag-manager-head"><div><h2 id="tag-request-title">标签建议请求</h2><p>按规则、Ledger + View 查看建议；只有人工通过后目标 View 的标签才会生效。</p></div><div class="request-batch-actions"><button type="button" class="primary" data-action="tag-request-batch" data-operation="approve" disabled>批量通过</button><button type="button" class="quiet" data-action="tag-request-batch" data-operation="reject" disabled>批量拒绝</button></div></div>
+      <div class="tag-manager-head"><div><h2 id="tag-request-title">标签建议请求</h2><p>列表展示交易对方、摘要和金额；点击「查看依据」核对账目、现有标签与建议理由后再决定。</p></div><div class="request-batch-actions"><button type="button" class="primary" data-action="tag-request-batch" data-operation="approve" disabled>批量通过</button><button type="button" class="quiet" data-action="tag-request-batch" data-operation="reject" disabled>批量拒绝</button></div></div>
       <div class="automation-notice compact" role="status" aria-live="polite"><strong>人工确认边界</strong><span>通过时会重新核对规则版本、Ledger、View、候选标签和当前人工标签；冲突不会强制覆盖。请求超时请刷新核对状态。</span></div>
       <div class="review-filter-skeleton" aria-labelledby="tag-review-filter-title">
         <form class="form-grid three" data-form="tag-request-filter">
@@ -354,6 +381,77 @@ async function previewRule(button) {
   } finally { button.disabled = false; }
 }
 
+function detailFields(fields) {
+  return `<dl class="automation-definition">${fields.map(([label, value]) =>
+    `<div><dt>${esc(label)}</dt><dd>${esc(value ?? "—")}</dd></div>`).join("")}</dl>`;
+}
+
+function displayTime(value) {
+  return value ? new Date(value).toLocaleString("zh-CN", { timeZone: "Asia/Hong_Kong" }) : "—";
+}
+
+function scheduleExplanation(code) {
+  const explanations = {
+    ACCEPTANCE_DATABASE_REQUIRED: "验收库含有非虚构数据；安全保护已阻止扫描，未向模型发送这些账目。请改用独立的纯虚构验收库。",
+    MODEL_DISABLED: "所选模型已停用或不可用；请核对模型启用状态及密钥。",
+    AUTH_ERROR: "模型供应商鉴权失败；请核对 API Key。",
+    CONFIG_ERROR: "模型或金额披露配置有误；请核对设置。",
+    NO_ACTIVE_TARGETS: "目标标签维度没有可用的候选标签。",
+    ITEM_FAILURE: "至少一条账目分析失败；逐项错误目前未持久化。",
+    JOB_CALLBACK_FAILED: "调度回调异常；需要查看服务端日志。",
+  };
+  return code ? `${explanations[code] || "执行失败，请查看服务端日志。"}（${code}）` : "无错误码记录";
+}
+
+function ruleDetailMarkup(rule, schedule, recent) {
+  const view = views.find((item) => item.id === rule.view_id);
+  const model = setting?.models.find((item) => item.id === rule.method_config.model_id);
+  const task = schedule.tasks?.find((item) => item.task_key === `tag-scan:${rule.id}`);
+  const running = schedule.scheduler_state === "RUNNING" && schedule.worker_state === "HEALTHY";
+  const scheduling = !rule.enabled ? "规则已停用，不会调度" : !task ? "未注册 CRON 任务；当前环境可能未启用自动扫描" : !running ? "调度器未运行" : `${task.queue_state}；下一次触发 ${displayTime(task.next_run_at)}`;
+  const latest = !task ? "无调度执行记录" : !task.last_result ? "尚无执行结果" : `${task.last_result}；${task.last_error_code ? scheduleExplanation(task.last_error_code) : "无错误码"}`;
+  return `<div class="automation-detail stack">
+    <section><h3>规则配置</h3>${detailFields([
+      ["规则", `${rule.name} · #${rule.id} · 修订 ${rule.rule_revision}`],
+      ["状态", rule.enabled ? "已启用" : "已停用"],
+      ["标签维度", `${view?.name || `View #${rule.view_id}`} (#${rule.view_id})`],
+      ["模型", `${model?.name || `Model #${rule.method_config.model_id}`} (#${rule.method_config.model_id})`],
+      ["CRON", rule.cron || "未设置"], ["金额披露", amountModeNames[rule.amount_mode]],
+      ["业务判断说明", rule.method_config.prompt], ["最后修改", displayTime(rule.updated_time)],
+    ])}</section>
+    <section><h3>调度与最近执行</h3>${detailFields([
+      ["调度状态", scheduling], ["最近结果", latest],
+      ["扫描游标", `Ledger #${rule.scan_after_ledger_id} · Epoch ${rule.scan_epoch}`],
+      ["累计", `分析 ${rule.analyzed_count} · 失败 ${rule.failed_count} · 建议 ${rule.suggested_count} · 通过 ${rule.accepted_count} · 拒绝 ${rule.rejected_count}`],
+    ])}<p class="automation-detail-note">调度器仅提供当前进程的最近结果和下一次触发；不保存每次运行的完整日志。累计计数从数据库读取。资格预览不会请求模型，也不会推进游标。</p></section>
+    <section><h3>最近建议 / 审查结果</h3>${recent.items.length ? `<div class="automation-detail-list">${recent.items.map((item) => `<div><button type="button" class="quiet" data-action="tag-request-detail" data-id="${item.id}">Request #${item.id} · ${esc(item.ledger_counterparty_name || item.ledger_summary || `Ledger #${item.ledger_id}`)}</button><span>${esc(item.proposed_tag_name)} · ${esc(requestStatusNames[item.status])} · ${esc(displayTime(item.created_time))}</span></div>`).join("")}</div>` : "<p>尚无建议请求；失败的调度也可能未生成请求。</p>"}</section>
+    <section><h3>模型输入与输出</h3><p class="automation-detail-note">历史模型请求正文与原始响应未被保存，不能准确回放；当前只保留建议标签和清洗后的理由。此处不会将资格预览冒充模型审查结果。</p></section>
+  </div>`;
+}
+
+function requestDetailMarkup(item, ledger, rule) {
+  const facts = ledger.facts || [];
+  const currentTags = (ledger.ledger_entry.tags || []).filter((tag) => tag.view_system_name === item.view_system_name);
+  const revisionChanged = rule.rule_revision !== item.rule_revision;
+  return `<div class="automation-detail stack">
+    <section><h3>建议与来源</h3>${detailFields([
+      ["请求", `#${item.id} · ${requestStatusNames[item.status]} · ${displayTime(item.created_time)}`],
+      ["建议标签", `${item.view_name} → ${item.proposed_tag_name}`],
+      ["建议理由", item.reason_summary || "模型未提供可展示的理由"],
+      ["当前标签", currentTags.length ? currentTags.map((tag) => `${tag.tag_name} (${tag.source_type})`).join("、") : "目标维度尚无标签"],
+      ["来源规则", `${item.rule_name} · #${item.rule_id} · 请求修订 ${item.rule_revision}`],
+      ["业务判断说明", rule.method_config.prompt],
+      ["版本核对", revisionChanged ? `规则现为修订 ${rule.rule_revision}；通过时会因版本变化而拒绝` : "与当前规则修订一致"],
+    ])}</section>
+    <section><h3>被审查的账目</h3>${detailFields([
+      ["账目", `Ledger #${item.ledger_id} · ${ledger.ledger_entry.active ? "当前有效" : "已失效"}`],
+      ["账目摘要", ledger.ledger_entry.summary || "无摘要"],
+      ["方向与金额", `${ledger.ledger_entry.entry_direction === 2 ? "支出" : ledger.ledger_entry.entry_direction === 1 ? "收入" : "其他"} · ${money(ledger.ledger_entry)}`], ["账目时间", displayTime(ledger.ledger_entry.occurred_time)],
+    ])}${facts.length ? `<div class="automation-detail-list">${facts.map((fact) => `<div><strong>${esc(fact.counterparty_name || "未记录交易对方")} · ${esc(money(fact))}</strong><span>${esc(fact.summary || "无交易摘要")} · ${esc(displayTime(fact.occurred_time))}</span></div>`).join("")}</div>` : "<p>未找到关联交易事实；无法仅凭本页核对该建议。</p>"}</section>
+    <section><h3>判断边界</h3><p class="automation-detail-note">此页展示当前账目与交易事实，可能不同于生成建议时的状态。历史模型输入正文和原始输出未留存，无法证明当时逐字传输了什么；建议理由仅是保存的清洗摘要。通过时服务端会再次校验规则版本、账目及现有标签。</p></section>
+  </div>`;
+}
+
 export function bindAutomation(root, rerender, notify, navigate) {
   $$('[data-action="model-new"]', root).forEach((button) => button.addEventListener("click", () => modelDialog()));
   $$('[data-action="model-edit"]', root).forEach((button) => button.addEventListener("click", () => modelDialog(setting.models.find((item) => item.id === Number(button.dataset.id)))));
@@ -370,6 +468,18 @@ export function bindAutomation(root, rerender, notify, navigate) {
   $('[data-action="rule-new"]', root)?.addEventListener("click", () => ruleDialog());
   $$('[data-action="rule-edit"]', root).forEach((button) => button.addEventListener("click", () => ruleDialog(rules.find((item) => item.id === Number(button.dataset.id)))));
   $$('[data-action="rule-preview"]', root).forEach((button) => button.addEventListener("click", () => previewRule(button)));
+  $$('[data-action="rule-detail"]', root).forEach((button) => button.addEventListener("click", () => navigate?.("auto-rules", new URLSearchParams({ rule_id: button.dataset.id }))));
+  $('[data-action="rule-detail-back"]', root)?.addEventListener("click", () => navigate?.("auto-rules"));
+  $$('[data-action="tag-request-detail"]', root).forEach((button) => button.addEventListener("click", () => {
+    const params = new URLSearchParams(location.hash.split("?")[1] || "");
+    params.set("request_id", button.dataset.id);
+    navigate?.("tag-review", params);
+  }));
+  $('[data-action="tag-request-detail-back"]', root)?.addEventListener("click", () => {
+    const params = new URLSearchParams(location.hash.split("?")[1] || "");
+    params.delete("request_id");
+    navigate?.("tag-review", params);
+  });
   const requestFilter = $('[data-form="tag-request-filter"]', root);
   requestFilter?.addEventListener("change", () => {
     const params = new URLSearchParams();

@@ -22,6 +22,10 @@ class TagAssignmentRequestRead(BaseModel):
     rule_name: str
     ledger_id: int
     ledger_active: bool
+    ledger_summary: str | None = None
+    ledger_counterparty_name: str | None = None
+    ledger_amount: int | None = None
+    ledger_currency_code: str | None = None
     view_id: int
     view_name: str
     view_system_name: str

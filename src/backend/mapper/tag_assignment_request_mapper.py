@@ -20,10 +20,12 @@ from backend.entity import (
     TAG_REQUEST_STATUS_PENDING,
     TAG_REQUEST_STATUS_REJECTED,
     AutoTagRule,
+    LedgerEntry,
     LedgerEntryTag,
     ReviewAllocation,
     ReviewCase,
     TagAssignmentRequest,
+    TransactionFact,
     TargetTag,
     TargetTagView,
 )
@@ -74,12 +76,25 @@ class TagAssignmentRequestMapper:
 
     @staticmethod
     def _read_columns():
+        first_fact_id = select(ReviewAllocation.transaction_fact_id).where(
+            ReviewAllocation.ledger_entry_id == TagAssignmentRequest.ledger_id,
+        ).order_by(ReviewAllocation.id).limit(1).correlate(
+            TagAssignmentRequest,
+        ).scalar_subquery()
         return (
             TagAssignmentRequest.id,
             TagAssignmentRequest.rule_id,
             TagAssignmentRequest.rule_revision,
             AutoTagRule.name.label("rule_name"),
             TagAssignmentRequest.ledger_id,
+            select(TransactionFact.summary).where(
+                TransactionFact.id == first_fact_id,
+            ).scalar_subquery().label("ledger_summary"),
+            select(TransactionFact.counterparty_name).where(
+                TransactionFact.id == first_fact_id,
+            ).scalar_subquery().label("ledger_counterparty_name"),
+            LedgerEntry.amount.label("ledger_amount"),
+            LedgerEntry.currency_code.label("ledger_currency_code"),
             exists(select(ReviewAllocation.id).join(
                 ReviewCase,
                 ReviewCase.id == ReviewAllocation.review_case_id,
@@ -110,6 +125,9 @@ class TagAssignmentRequestMapper:
         ).join(
             TargetTag,
             TargetTag.id == TagAssignmentRequest.proposed_tag_id,
+        ).outerjoin(
+            LedgerEntry,
+            LedgerEntry.id == TagAssignmentRequest.ledger_id,
         )
 
     def read(self, request_id: int) -> dict[str, object] | None:

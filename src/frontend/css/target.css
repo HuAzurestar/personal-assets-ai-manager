@@ -479,6 +479,20 @@
 .target-shell .request-pager { display:flex; justify-content:space-between; align-items:center; gap:12px; color:var(--muted); font-size:12px; }
 .target-shell .request-pager > div { display:flex; gap:8px; }
 .automation-dialog .automation-form { min-width:min(680px,80vw); }
+.target-shell .automation-detail-page { display:grid; gap:16px; }
+.target-shell .automation-detail-page > button { justify-self:start; }
+.target-shell .automation-detail-page > h2 { margin:0; }
+.target-shell .automation-detail { display:grid; gap:18px; max-width:1000px; }
+.target-shell .automation-detail section { display:grid; gap:10px; }
+.target-shell .automation-detail h3 { margin:8px 0 0; font-size:15px; }
+.target-shell .automation-detail .automation-definition { padding:14px; border:1px solid var(--line); border-radius:8px; background:var(--surface); }
+.target-shell .automation-detail .automation-definition div { grid-template-columns:100px minmax(0,1fr); }
+.target-shell .automation-detail .automation-definition dd { white-space:pre-wrap; font-size:13px; }
+.target-shell .automation-detail-note { margin:0; color:var(--muted); font-size:12px; line-height:1.55; }
+.target-shell .automation-detail-list { display:grid; gap:8px; }
+.target-shell .automation-detail-list > div { display:grid; gap:4px; padding:10px 12px; border:1px solid var(--line); border-radius:8px; background:var(--surface); }
+.target-shell .automation-detail-list span { color:var(--muted); font-size:12px; overflow-wrap:anywhere; }
+.target-shell .automation-detail-list button { justify-self:start; text-align:left; }
 .automation-dialog .form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
 .automation-dialog .form-grid.three { grid-template-columns:repeat(3,minmax(0,1fr)); }
 .automation-dialog textarea { resize:vertical; }
@@ -492,6 +506,7 @@
   .automation-dialog .form-grid,
   .automation-dialog .form-grid.three { grid-template-columns:1fr; }
   .automation-dialog .automation-form { min-width:0; }
+  .target-shell .automation-detail .automation-definition div { grid-template-columns:1fr; gap:3px; }
 }
 .target-shell .tag-view-list { display:grid; gap:16px; }
 .target-shell .tag-view-card { overflow:hidden; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); transition:border-color .18s ease, box-shadow .18s ease, transform .18s ease; }
