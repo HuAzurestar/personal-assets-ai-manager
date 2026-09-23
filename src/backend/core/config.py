@@ -16,6 +16,12 @@ APP_SLUG = "personal-assets-ai-manager"
 APP_DISPLAY_NAME = "个人账本与资产管家"
 DATA_DIR = Path(os.getenv("PAAM_DATA_DIR", BASE_DIR / "data"))
 DATABASE_URL = os.getenv("PAAM_DATABASE_URL", f"sqlite:///{DATA_DIR / f'{APP_SLUG}.db'}")
+AUTOTAG_SYNTHETIC_ACCEPTANCE = (
+    os.getenv("PAAM_AUTOTAG_SYNTHETIC_ACCEPTANCE") == "1"
+    and "PAAM_DATABASE_URL" in os.environ
+    and DATABASE_URL.startswith("sqlite:///")
+    and Path(DATABASE_URL.removeprefix("sqlite:///")).name == "synthetic.db"
+)
 LLM_PROVIDER = os.getenv("PAAM_LLM_PROVIDER", "mock")
 LLM_BASE_URL = os.getenv("PAAM_LLM_BASE_URL", "")
 LLM_MODEL = os.getenv("PAAM_LLM_MODEL", "")

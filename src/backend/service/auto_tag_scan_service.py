@@ -27,7 +27,6 @@ from backend.schema.llm_analysis import (
 )
 from backend.service.llm_privacy_service import LlmPrivacyService
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -94,10 +93,14 @@ class AutoTagScanService:
         rule_id: int,
         context: JobRunContext,
         privacy: LlmPrivacyService,
+        *,
+        synthetic_only: bool = False,
     ) -> ScanRunReport:
         def build(page: ScanPage, ledger_id: int):
             with self._sessions() as db:
-                source = AutoTagScanMapper(db).read_protected_source(ledger_id)
+                source = AutoTagScanMapper(db).read_protected_source(
+                    ledger_id, synthetic_only=synthetic_only,
+                )
             if source is None:
                 return None
             return privacy.build_payload(page, source)

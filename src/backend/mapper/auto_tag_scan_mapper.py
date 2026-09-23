@@ -84,6 +84,12 @@ class AutoTagScanMapper:
     def __init__(self, db: Session):
         self.db = db
 
+    def is_synthetic_acceptance_database(self) -> bool:
+        """Reject any database containing a non-fixture fact before scanning."""
+        return self.db.scalar(select(TransactionFact.id).where(
+            ~TransactionFact.fact_key.like("pirc24-gate-fictional-%"),
+        ).limit(1)) is None
+
     def read_page(self, rule_id: int, *, limit: int) -> ScanPage | None:
         if limit < 1 or limit > 100:
             raise ValueError("scan page limit must be between 1 and 100")
@@ -197,7 +203,9 @@ class AutoTagScanMapper:
             targets=self._targets(rule["view_id"]),
         )
 
-    def read_protected_source(self, ledger_id: int) -> ProtectedScanSource | None:
+    def read_protected_source(
+        self, ledger_id: int, *, synthetic_only: bool = False,
+    ) -> ProtectedScanSource | None:
         row = self.db.execute(select(
             TransactionFact.cash_direction,
             TransactionFact.amount,
@@ -213,6 +221,10 @@ class AutoTagScanMapper:
         ).where(
             ReviewAllocation.ledger_entry_id == ledger_id,
             ReviewCase.status == 0,
+            *(
+                (TransactionFact.fact_key.like("pirc24-gate-fictional-%"),)
+                if synthetic_only else ()
+            ),
         ).limit(1)).mappings().one_or_none()
         if row is None:
             return None

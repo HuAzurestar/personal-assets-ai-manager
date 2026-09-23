@@ -23,6 +23,7 @@ from backend.entity import (
 )
 from backend.error import LlmAdapterError
 from backend.mapper.auto_tag_rule_mapper import AutoTagRuleMapper
+from backend.mapper.auto_tag_scan_mapper import AutoTagScanMapper
 from backend.mapper.setting_mapper import SettingMapper
 from backend.mapper.target_tag_mapper import TargetTagMapper
 from backend.schema.auto_tag_scan import SyntheticTagScanFixture
@@ -193,6 +194,37 @@ def _fixture(ledger_id: int) -> SyntheticTagScanFixture:
             band_label="100-500",
         ),
     )
+
+
+def test_acceptance_source_rejects_unmarked_fact(scan_runtime):
+    sessions, _, _, tag_ids = scan_runtime
+    ledger_id = _seed_ledger(sessions, tag_ids["unclassified"])
+    with sessions() as db:
+        db.add(TransactionFact(
+            id=ledger_id,
+            fact_key="ordinary-bill",
+            occurred_time=NOW,
+            cash_direction=2,
+            amount=12_300,
+            currency_code="CNY",
+            account_code="fixture",
+            counterparty_name="Not for model",
+            counterparty_account_ref="",
+            summary="Private summary",
+            created_time=NOW,
+            updated_time=NOW,
+        ))
+        db.commit()
+        mapper = AutoTagScanMapper(db)
+        assert mapper.is_synthetic_acceptance_database() is False
+        assert mapper.read_protected_source(ledger_id, synthetic_only=True) is None
+        assert mapper.read_protected_source(ledger_id) is not None
+        db.get(TransactionFact, ledger_id).fact_key = (
+            "pirc24-gate-fictional-breakfast"
+        )
+        db.commit()
+        assert mapper.is_synthetic_acceptance_database() is True
+        assert mapper.read_protected_source(ledger_id, synthetic_only=True) is not None
 
 
 def _context(*, page_limit: int = 100) -> JobRunContext:

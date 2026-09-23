@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from backend.core.job_scheduler import JobOutcome, JobRunContext, JobScheduler
 from backend.mapper.auto_tag_rule_mapper import AutoTagRuleMapper
+from backend.mapper.auto_tag_scan_mapper import AutoTagScanMapper
 from backend.mapper.setting_mapper import SettingMapper
 from backend.service.auto_tag_scan_service import AutoTagScanService
 from backend.service.configured_llm_analyzer import (
@@ -27,20 +28,39 @@ class AutoTagScheduleService:
         sessions: Callable[[], Session],
         scheduler: JobScheduler,
         secret_store: ProviderSecretReader,
+        *,
+        synthetic_acceptance_enabled: bool = False,
     ):
         self._sessions = sessions
         self._scheduler = scheduler
+        self._synthetic_acceptance_enabled = synthetic_acceptance_enabled
         analyzer = ConfiguredLlmAnalyzer(sessions, secret_store)
         self._scan = AutoTagScanService(sessions, analyzer)
 
     def register_persisted(self) -> None:
+        if not self._synthetic_acceptance_enabled:
+            return
         with self._sessions() as db:
+            if not AutoTagScanMapper(db).is_synthetic_acceptance_database():
+                return
             schedules = AutoTagRuleMapper(db).enabled_schedules()
         for rule_id, expression in schedules:
             self._register(rule_id, expression)
 
     def sync_rule(self, rule_id: int) -> None:
+        if not self._synthetic_acceptance_enabled:
+            try:
+                self._scheduler.remove(self.task_key(rule_id))
+            except KeyError:
+                pass
+            return
         with self._sessions() as db:
+            if not AutoTagScanMapper(db).is_synthetic_acceptance_database():
+                try:
+                    self._scheduler.remove(self.task_key(rule_id))
+                except KeyError:
+                    pass
+                return
             rule = AutoTagRuleMapper(db).get(rule_id)
         task_key = self.task_key(rule_id)
         if rule is None or not bool(rule["enabled"]):
@@ -60,10 +80,14 @@ class AutoTagScheduleService:
 
     def _callback(self, rule_id: int):
         async def run(context: JobRunContext) -> JobOutcome:
+            with self._sessions() as db:
+                if not AutoTagScanMapper(db).is_synthetic_acceptance_database():
+                    return JobOutcome("FAILED", "ACCEPTANCE_DATABASE_REQUIRED")
             report = await self._scan.run_protected(
                 rule_id,
                 context,
                 self._privacy_service(),
+                synthetic_only=True,
             )
             if report.failed_count:
                 return JobOutcome(

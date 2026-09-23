@@ -9,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.core.job_scheduler import JobRunContext, JobScheduler
 from backend.core.target_database import init_target_db
-from backend.entity import AutoTagRule
+from backend.entity import AutoTagRule, TransactionFact
 from backend.error import LlmAdapterError
 from backend.mapper.auto_tag_rule_mapper import AutoTagRuleMapper
 from backend.mapper.auto_tag_scan_mapper import (
@@ -70,15 +70,108 @@ def _runtime(tmp_path):
     return engine, sessions, rule_id
 
 
-def test_persisted_enabled_rules_are_restored_and_ticks_use_shared_fifo(tmp_path):
+def test_default_mode_never_registers_tag_scans(tmp_path):
     engine, sessions, rule_id = _runtime(tmp_path)
     scheduler = JobScheduler()
     service = AutoTagScheduleService(sessions, scheduler, FakeSecretStore())
+    try:
+        service.register_persisted()
+        service.sync_rule(rule_id)
+        assert scheduler.snapshot().tasks == ()
+    finally:
+        engine.dispose()
+
+
+def test_acceptance_mode_rejects_database_with_ordinary_fact(tmp_path):
+    engine, sessions, rule_id = _runtime(tmp_path)
+    scheduler = JobScheduler()
+    service = AutoTagScheduleService(
+        sessions, scheduler, FakeSecretStore(), synthetic_acceptance_enabled=True,
+    )
+    try:
+        with sessions() as db:
+            db.add(TransactionFact(
+                fact_key="ordinary-bill",
+                occurred_time=NOW,
+                cash_direction=2,
+                amount=100,
+                currency_code="CNY",
+                account_code="fixture",
+                counterparty_name="Do not send",
+                counterparty_account_ref="",
+                summary="Private summary",
+                created_time=NOW,
+                updated_time=NOW,
+            ))
+            db.commit()
+        service.register_persisted()
+        service.sync_rule(rule_id)
+        assert scheduler.snapshot().tasks == ()
+    finally:
+        engine.dispose()
+
+
+def test_new_ordinary_fact_blocks_already_registered_tick(tmp_path):
+    engine, sessions, rule_id = _runtime(tmp_path)
+    scheduler = JobScheduler()
+    service = AutoTagScheduleService(
+        sessions, scheduler, FakeSecretStore(), synthetic_acceptance_enabled=True,
+    )
+
+    class ForbiddenScan:
+        async def run_protected(self, *args, **kwargs):
+            raise AssertionError("ordinary facts must never reach a model")
+
+    service._scan = ForbiddenScan()
+    service.register_persisted()
+    with sessions() as db:
+        db.add(TransactionFact(
+            fact_key="ordinary-bill",
+            occurred_time=NOW,
+            cash_direction=2,
+            amount=100,
+            currency_code="CNY",
+            account_code="fixture",
+            counterparty_name="Do not send",
+            counterparty_account_ref="",
+            summary="Private summary",
+            created_time=NOW,
+            updated_time=NOW,
+        ))
+        db.commit()
+
+    async def scenario():
+        await scheduler.start()
+        try:
+            assert await scheduler.notify(f"tag-scan:{rule_id}") is True
+            for _ in range(100):
+                task = scheduler.snapshot().tasks[0]
+                if task.last_result is not None:
+                    break
+                await asyncio.sleep(0.01)
+            assert task.last_result == "FAILED"
+            assert task.last_error_code == "ACCEPTANCE_DATABASE_REQUIRED"
+        finally:
+            await scheduler.shutdown()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        engine.dispose()
+
+
+def test_persisted_enabled_rules_are_restored_and_ticks_use_shared_fifo(tmp_path):
+    engine, sessions, rule_id = _runtime(tmp_path)
+    scheduler = JobScheduler()
+    service = AutoTagScheduleService(
+        sessions, scheduler, FakeSecretStore(), synthetic_acceptance_enabled=True,
+    )
     called = asyncio.Event()
     contexts = []
 
     class FakeScan:
-        async def run_protected(self, actual_rule_id, context, privacy):
+        async def run_protected(self, actual_rule_id, context, privacy, *, synthetic_only=False):
+            assert synthetic_only is True
             contexts.append((actual_rule_id, context.task_key, privacy))
             called.set()
             return ScanRunReport(actual_rule_id, 0, 0, 0, 0, "PAGE_COMPLETE")
@@ -117,10 +210,13 @@ def test_scan_outcome_is_visible_in_shared_scheduler(
 ):
     engine, sessions, rule_id = _runtime(tmp_path)
     scheduler = JobScheduler()
-    service = AutoTagScheduleService(sessions, scheduler, FakeSecretStore())
+    service = AutoTagScheduleService(
+        sessions, scheduler, FakeSecretStore(), synthetic_acceptance_enabled=True,
+    )
 
     class FakeScan:
-        async def run_protected(self, actual_rule_id, context, privacy):
+        async def run_protected(self, actual_rule_id, context, privacy, *, synthetic_only=False):
+            assert synthetic_only is True
             del context, privacy
             return ScanRunReport(actual_rule_id, *report_counts, reason)
 
@@ -150,7 +246,9 @@ def test_scan_outcome_is_visible_in_shared_scheduler(
 def test_disabling_a_rule_removes_its_registration(tmp_path):
     engine, sessions, rule_id = _runtime(tmp_path)
     scheduler = JobScheduler()
-    service = AutoTagScheduleService(sessions, scheduler, FakeSecretStore())
+    service = AutoTagScheduleService(
+        sessions, scheduler, FakeSecretStore(), synthetic_acceptance_enabled=True,
+    )
     try:
         service.register_persisted()
         assert len(scheduler.snapshot().tasks) == 1
