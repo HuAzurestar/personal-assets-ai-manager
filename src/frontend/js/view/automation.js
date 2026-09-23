@@ -93,10 +93,10 @@ function scheduleNotice() {
   const running = scheduleStatus?.scheduler_state === "RUNNING" && scheduleStatus?.worker_state === "HEALTHY";
   const nextRuns = tasks.map((item) => item.next_run_at).filter(Boolean).sort();
   const failed = tasks.filter((item) => ["FAILED", "PARTIAL_FAILURE"].includes(item.last_result)).length;
-  const title = !tasks.length ? "自动标签扫描未启用"
+  const title = !tasks.length ? "没有已注册的自动标签任务"
     : running ? `CRON 调度运行中 · ${tasks.length} 条规则已注册` : "CRON 调度未运行";
   const next = !tasks.length
-    ? "规则配置可保存；默认模式不扫描账单。只有显式合成验收环境会注册自动扫描"
+    ? "等待不会产生新建议。默认模式不扫描账单；纯虚构验收库混入普通记录后也不会注册标签任务。规则已启用不等于已调度"
     : nextRuns.length ? `下一次触发：${new Date(nextRuns[0]).toLocaleString("zh-CN", { timeZone: "Asia/Hong_Kong" })}` : "当前没有待触发的启用规则";
   const failure = failed ? `；${failed} 条规则上次执行失败，请打开规则详情查看具体原因` : "";
   return `<div class="automation-notice compact" role="status" aria-live="polite"><strong>${esc(title)}</strong><span>${esc(next + failure)}。CRON 触发进入共享 FIFO；本页仍不提供手动执行或重扫入口。</span></div>`;
@@ -206,7 +206,7 @@ export async function tagReviewPage(params = new URLSearchParams()) {
           <label>建议状态<select name="status"><option value="" ${status === "" ? "selected" : ""}>全部状态</option>${Object.entries(requestStatusNames).map(([value, label]) => `<option value="${value}" ${status === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>
         </form>
       </div>
-      <div class="automation-table-wrap"><table class="automation-table request-table" aria-labelledby="tag-review-list-title"><thead><tr><th id="tag-review-list-title"><label class="request-select-all"><input type="checkbox" data-tag-request-select-all> 请求</label></th><th>Ledger / View</th><th>建议标签</th><th>来源规则</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows || '<tr><td colspan="6" class="table-empty"><strong>没有符合条件的建议请求</strong><span>等待下一次规则扫描，或调整上方筛选条件。</span></td></tr>'}</tbody></table></div>
+      <div class="automation-table-wrap"><table class="automation-table request-table" aria-labelledby="tag-review-list-title"><thead><tr><th id="tag-review-list-title"><label class="request-select-all"><input type="checkbox" data-tag-request-select-all> 请求</label></th><th>Ledger / View</th><th>建议标签</th><th>来源规则</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows || '<tr><td colspan="6" class="table-empty"><strong>没有符合条件的建议请求</strong><span>可选择「全部状态」查看已处理建议；只有已注册的规则扫描任务才会自动产生新建议。</span></td></tr>'}</tbody></table></div>
       ${pager}
     </section>
   </div>`;
@@ -452,6 +452,15 @@ function requestDetailMarkup(item, ledger, rule) {
   </div>`;
 }
 
+function tagReviewFilterParams(entries) {
+  const params = new URLSearchParams();
+  for (const [name, value] of entries) {
+    if (value || name === "status") params.set(name, value);
+  }
+  params.set("page", "1");
+  return params;
+}
+
 export function bindAutomation(root, rerender, notify, navigate) {
   $$('[data-action="model-new"]', root).forEach((button) => button.addEventListener("click", () => modelDialog()));
   $$('[data-action="model-edit"]', root).forEach((button) => button.addEventListener("click", () => modelDialog(setting.models.find((item) => item.id === Number(button.dataset.id)))));
@@ -482,10 +491,7 @@ export function bindAutomation(root, rerender, notify, navigate) {
   });
   const requestFilter = $('[data-form="tag-request-filter"]', root);
   requestFilter?.addEventListener("change", () => {
-    const params = new URLSearchParams();
-    for (const [name, value] of new FormData(requestFilter)) if (value) params.set(name, value);
-    params.set("page", "1");
-    navigate?.("tag-review", params);
+    navigate?.("tag-review", tagReviewFilterParams(new FormData(requestFilter)));
   });
   $$('[data-action="tag-request-page"]', root).forEach((button) => button.addEventListener("click", () => {
     const params = new URLSearchParams(location.hash.split("?")[1] || "");

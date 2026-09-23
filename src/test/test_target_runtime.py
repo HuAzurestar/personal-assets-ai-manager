@@ -213,7 +213,8 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
             assert "/paam/tag/v1/auto_rule" in automation_script.text
             assert "/paam/tag/v1/assignment_request" in automation_script.text
             assert "/paam/system/v1/schedule/status" in automation_script.text
-            assert "自动标签扫描未启用" in automation_script.text
+            assert "没有已注册的自动标签任务" in automation_script.text
+            assert "等待不会产生新建议" in automation_script.text
             assert "已保存·未调度" in automation_script.text
             assert "保存后按 CRON 执行" not in automation_script.text
             assert "启用后立即注册" not in automation_script.text

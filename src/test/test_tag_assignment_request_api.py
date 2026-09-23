@@ -315,6 +315,18 @@ def test_reject_keeps_tag_and_increments_rule_counter(request_api):
 
     assert rejected.status_code == 200, rejected.text
     assert rejected.json()["body"]["items"][0]["status"] == 3
+    all_requests = client.get("/paam/tag/v1/assignment_request/list")
+    pending_requests = client.get(
+        "/paam/tag/v1/assignment_request/list",
+        params={"filter": '{"key":"status","op":"=","val":1}'},
+    )
+    rejected_requests = client.get(
+        "/paam/tag/v1/assignment_request/list",
+        params={"filter": '{"key":"status","op":"=","val":3}'},
+    )
+    assert all_requests.json()["body"]["total"] == 1
+    assert pending_requests.json()["body"]["total"] == 0
+    assert rejected_requests.json()["body"]["items"][0]["id"] == request_id
     with sessions() as db:
         assert db.get(AutoTagRule, rule_id).rejected_count == 1
         current = db.scalar(select(LedgerEntryTag.tag_id).where(

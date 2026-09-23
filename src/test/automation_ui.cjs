@@ -26,6 +26,7 @@ const setting = {
 let schedule = {
   scheduler_state: "RUNNING", worker_state: "HEALTHY", tasks: [],
 };
+const requestedUrls = [];
 const suggestion = {
   id: 8, status: 1, created_time: "2026-09-23T14:00:00+08:00",
   proposed_tag_name: "餐饮", view_name: "消费分类", view_system_name: "category",
@@ -40,13 +41,13 @@ const ledger = {
     currency_code: "CNY", occurred_time: "2026-09-23T08:00:00+08:00" }],
 };
 const context = {
-  request: async (url) => url.includes("auto_rule/list") ? { items: [rule] }
+  request: async (url) => (requestedUrls.push(url), url.includes("auto_rule/list") ? { items: [rule] }
     : url.includes("auto_rule/1") ? rule
-    : url.includes("assignment_request/list") ? { items: [suggestion] }
+    : url.includes("assignment_request/list") ? { items: [suggestion], total: 1, page_index: 1, page_size: 20 }
     : url.includes("assignment_request/8") ? suggestion
     : url.includes("flow/12") ? ledger
     : url.includes("view/list") ? { items: [{ id: 1, name: "分类", status: "ACTIVE" }] }
-    : url.includes("schedule/status") ? schedule : setting,
+    : url.includes("schedule/status") ? schedule : setting),
   jsonRequest: async () => {},
   $: () => null,
   $$: () => [],
@@ -55,12 +56,13 @@ const context = {
   URLSearchParams,
 };
 vm.createContext(context);
-vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.testSettings = automationSettingsPage; globalThis.testRuleDetail = ruleDetailMarkup; globalThis.testRequestDetail = requestDetailMarkup; globalThis.testScheduleExplanation = scheduleExplanation; globalThis.testRulePage = autoRulesPage; globalThis.testReviewPage = tagReviewPage;`, context);
+vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.testSettings = automationSettingsPage; globalThis.testRuleDetail = ruleDetailMarkup; globalThis.testRequestDetail = requestDetailMarkup; globalThis.testScheduleExplanation = scheduleExplanation; globalThis.testRulePage = autoRulesPage; globalThis.testReviewPage = tagReviewPage; globalThis.testFilterParams = tagReviewFilterParams;`, context);
 
 (async () => {
   const views = [{ id: 1, name: "分类", status: "ACTIVE" }];
   const idle = await context.testPanel(views);
-  assert.match(idle, /自动标签扫描未启用/);
+  assert.match(idle, /没有已注册的自动标签任务/);
+  assert.match(idle, /等待不会产生新建议/);
   assert.match(idle, /已保存·未调度/);
   assert.match(idle, /未注册到调度器/);
   assert.doesNotMatch(idle, /CRON 调度运行中/);
@@ -91,6 +93,20 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
   assert.match(reviewPage, /返回建议列表/);
   assert.match(reviewPage, /虚构咖啡店/);
   assert.match(reviewPage, /通过并打标/);
+
+  const allParams = context.testFilterParams([["view_id", ""], ["rule_id", ""], ["status", ""]]);
+  assert.equal(allParams.has("status"), true);
+  assert.equal(allParams.get("status"), "");
+  assert.equal(allParams.get("page"), "1");
+  const allPage = await context.testReviewPage(allParams);
+  assert.match(allPage, /全部状态/);
+  assert.doesNotMatch(requestedUrls.at(-1), /filter=/);
+  const pendingParams = context.testFilterParams([["status", "1"]]);
+  await context.testReviewPage(pendingParams);
+  assert.match(decodeURIComponent(requestedUrls.at(-1)), /"key":"status"/);
+  const rejectedParams = context.testFilterParams([["status", "3"]]);
+  await context.testReviewPage(rejectedParams);
+  assert.match(decodeURIComponent(requestedUrls.at(-1)), /"val":3/);
 
   const requestDetail = context.testRequestDetail({
     id: 8, status: 1, created_time: "2026-09-23T14:00:00+08:00",
