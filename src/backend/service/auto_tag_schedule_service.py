@@ -7,7 +7,7 @@ from copy import deepcopy
 
 from sqlalchemy.orm import Session
 
-from backend.core.job_scheduler import JobRunContext, JobScheduler
+from backend.core.job_scheduler import JobOutcome, JobRunContext, JobScheduler
 from backend.mapper.auto_tag_rule_mapper import AutoTagRuleMapper
 from backend.mapper.setting_mapper import SettingMapper
 from backend.service.auto_tag_scan_service import AutoTagScanService
@@ -59,12 +59,35 @@ class AutoTagScheduleService:
         )
 
     def _callback(self, rule_id: int):
-        async def run(context: JobRunContext) -> None:
-            await self._scan.run_protected(
+        async def run(context: JobRunContext) -> JobOutcome:
+            report = await self._scan.run_protected(
                 rule_id,
                 context,
                 self._privacy_service(),
             )
+            if report.failed_count:
+                return JobOutcome(
+                    result=(
+                        "PARTIAL_FAILURE"
+                        if report.submitted_count > report.failed_count
+                        else "FAILED"
+                    ),
+                    error_code=(
+                        report.stopped_reason
+                        if report.stopped_reason != "PAGE_COMPLETE"
+                        else "ITEM_FAILURE"
+                    ),
+                )
+            if report.stopped_reason in {
+                "RULE_NOT_FOUND", "MODEL_DISABLED", "NO_ACTIVE_TARGETS",
+                "CONFIG_ERROR", "AUTH_ERROR",
+            }:
+                return JobOutcome("FAILED", report.stopped_reason)
+            if report.stopped_reason in {
+                "RULE_TOKEN_CHANGED", "CURSOR_ALREADY_ADVANCED",
+            }:
+                return JobOutcome("CANCELLED")
+            return JobOutcome("COMPLETED")
 
         return run
 

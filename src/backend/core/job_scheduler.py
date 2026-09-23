@@ -31,7 +31,13 @@ DEFAULT_PAGE_LIMIT = 100
 DEFAULT_SOFT_BUDGET_SECONDS = 30.0
 
 QueueState = Literal["IDLE", "QUEUED", "RUNNING", "PAUSED"]
-LastResult = Literal["COMPLETED", "FAILED", "CANCELLED"]
+LastResult = Literal["COMPLETED", "PARTIAL_FAILURE", "FAILED", "CANCELLED"]
+
+
+@dataclass(frozen=True, slots=True)
+class JobOutcome:
+    result: LastResult
+    error_code: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,14 +47,17 @@ class JobRunContext:
     deadline_monotonic: float
     page_limit: int
     _monotonic: Callable[[], float] = field(repr=False, compare=False)
+    _active: Callable[[], bool] = field(
+        default=lambda: True, repr=False, compare=False,
+    )
 
     def may_start_work(self) -> bool:
         """Return false once this run's soft start budget is exhausted."""
 
-        return self._monotonic() < self.deadline_monotonic
+        return self._monotonic() < self.deadline_monotonic and self._active()
 
 
-JobCallback = Callable[[JobRunContext], Awaitable[None]]
+JobCallback = Callable[[JobRunContext], Awaitable[JobOutcome | None]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -401,9 +410,12 @@ class JobScheduler:
                 deadline_monotonic=(self._monotonic() + self._soft_budget_seconds),
                 page_limit=self._page_limit,
                 _monotonic=self._monotonic,
+                _active=lambda key=task_key, current=registration: (
+                    self._registration_is_active(key, current)
+                ),
             )
             try:
-                await registration.callback(context)
+                outcome = await registration.callback(context)
             except asyncio.CancelledError:
                 with self._state_lock:
                     state.last_result = "CANCELLED"
@@ -416,8 +428,14 @@ class JobScheduler:
                 logger.error("Scheduled callback failed for %s", task_key)
             else:
                 with self._state_lock:
-                    state.last_result = "COMPLETED" if self._accepting else "CANCELLED"
-                    state.last_error_code = None
+                    state.last_result = (
+                        (outcome.result if outcome is not None else "COMPLETED")
+                        if self._accepting else "CANCELLED"
+                    )
+                    state.last_error_code = (
+                        outcome.error_code if self._accepting and outcome is not None
+                        else None
+                    )
             finally:
                 with self._state_lock:
                     state.started_at = None
@@ -431,6 +449,16 @@ class JobScheduler:
         if registration is None:
             raise KeyError(task_key)
         return registration
+
+    def _registration_is_active(
+        self, task_key: str, registration: _Registration,
+    ) -> bool:
+        with self._state_lock:
+            return (
+                self._accepting
+                and self._registrations.get(task_key) is registration
+                and not registration.paused
+            )
 
     def _discard_queued(self, task_key: str) -> None:
         if self._running_key == task_key:

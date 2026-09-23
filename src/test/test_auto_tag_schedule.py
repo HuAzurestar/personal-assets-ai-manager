@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 
+import pytest
 from sqlalchemy import create_engine, update
 from sqlalchemy.orm import sessionmaker
 
@@ -22,8 +23,8 @@ from backend.schema.llm_analysis import (
     LlmCandidate,
     ProtectedLlmAnalysisInput,
 )
+from backend.service.auto_tag_scan_service import AutoTagScanService, ScanRunReport
 from backend.service.auto_tag_schedule_service import AutoTagScheduleService
-from backend.service.auto_tag_scan_service import AutoTagScanService
 
 NOW = datetime(2026, 9, 22, 8, tzinfo=timezone.utc)
 
@@ -80,6 +81,7 @@ def test_persisted_enabled_rules_are_restored_and_ticks_use_shared_fifo(tmp_path
         async def run_protected(self, actual_rule_id, context, privacy):
             contexts.append((actual_rule_id, context.task_key, privacy))
             called.set()
+            return ScanRunReport(actual_rule_id, 0, 0, 0, 0, "PAGE_COMPLETE")
 
     service._scan = FakeScan()
 
@@ -93,6 +95,49 @@ def test_persisted_enabled_rules_are_restored_and_ticks_use_shared_fifo(tmp_path
             await asyncio.wait_for(called.wait(), timeout=1)
             assert contexts[0][0:2] == (rule_id, f"tag-scan:{rule_id}")
             assert scheduler.snapshot().tasks[0].next_run_at is not None
+        finally:
+            await scheduler.shutdown()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize(
+    ("report_counts", "reason", "expected_result", "expected_code"),
+    [
+        ((1, 1, 0, 1), "OUTPUT_JSON_INVALID", "FAILED", "OUTPUT_JSON_INVALID"),
+        ((2, 2, 1, 1), "PAGE_COMPLETE", "PARTIAL_FAILURE", "ITEM_FAILURE"),
+        ((0, 0, 0, 0), "MODEL_DISABLED", "FAILED", "MODEL_DISABLED"),
+    ],
+)
+def test_scan_outcome_is_visible_in_shared_scheduler(
+    tmp_path, report_counts, reason, expected_result, expected_code,
+):
+    engine, sessions, rule_id = _runtime(tmp_path)
+    scheduler = JobScheduler()
+    service = AutoTagScheduleService(sessions, scheduler, FakeSecretStore())
+
+    class FakeScan:
+        async def run_protected(self, actual_rule_id, context, privacy):
+            del context, privacy
+            return ScanRunReport(actual_rule_id, *report_counts, reason)
+
+    service._scan = FakeScan()
+
+    async def scenario():
+        service.register_persisted()
+        await scheduler.start()
+        try:
+            assert await scheduler.notify(f"tag-scan:{rule_id}") is True
+            for _ in range(100):
+                task = scheduler.snapshot().tasks[0]
+                if task.last_result is not None:
+                    break
+                await asyncio.sleep(0.01)
+            assert task.last_result == expected_result
+            assert task.last_error_code == expected_code
         finally:
             await scheduler.shutdown()
 

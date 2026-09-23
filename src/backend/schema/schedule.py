@@ -17,7 +17,7 @@ class ScheduleTaskRead(BaseModel):
     enqueued_at: datetime | None
     started_at: datetime | None
     next_run_at: datetime | None
-    last_result: Literal["COMPLETED", "FAILED", "CANCELLED"] | None
+    last_result: Literal["COMPLETED", "PARTIAL_FAILURE", "FAILED", "CANCELLED"] | None
     last_error_code: str | None
 
 

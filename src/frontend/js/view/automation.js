@@ -68,10 +68,15 @@ function ruleRow(rule) {
     ["已分析", rule.analyzed_count], ["失败", rule.failed_count], ["建议", rule.suggested_count],
     ["已启用", rule.accepted_count], ["已拒绝", rule.rejected_count],
   ].map(([label, value]) => `<div><span>${label}</span><strong>${esc(value)}</strong></div>`).join("");
+  const scheduleTask = scheduleStatus?.tasks?.find((item) => item.task_key === `tag-scan:${rule.id}`);
+  const resultNames = { COMPLETED: "完成", PARTIAL_FAILURE: "部分失败", FAILED: "失败", CANCELLED: "已取消" };
+  const lastRun = scheduleTask?.last_result
+    ? `上次执行：${resultNames[scheduleTask.last_result] || scheduleTask.last_result}${scheduleTask.last_error_code ? ` · ${scheduleTask.last_error_code}` : ""}`
+    : "尚未执行";
   return `<tr data-rule-row="${rule.id}">
     <td class="rule-identity"><span class="eyebrow">RULE #${rule.id} · REV ${rule.rule_revision}</span><strong>${esc(rule.name)}</strong><small>${esc(rule.method_config.prompt)}</small></td>
     <td><strong>${esc(view?.name || `View #${rule.view_id}`)}</strong><small>${esc(model?.name || `Model #${rule.method_config.model_id}`)}</small></td>
-    <td class="rule-schedule"><code>${esc(rule.cron || "未设置")}</code><small>Ledger #${rule.scan_after_ledger_id} · Epoch ${rule.scan_epoch}</small></td>
+    <td class="rule-schedule"><code>${esc(rule.cron || "未设置")}</code><small>Ledger #${rule.scan_after_ledger_id} · Epoch ${rule.scan_epoch}</small><small>${esc(lastRun)}</small></td>
     <td><div class="rule-counts">${counts}</div></td>
     <td class="rule-operation">${statusPill(rule.enabled, modelAvailable, unavailableCopy)}<div class="automation-actions"><button type="button" class="quiet" data-action="rule-preview" data-id="${rule.id}">候选预览</button><button type="button" data-action="rule-edit" data-id="${rule.id}">编辑</button></div></td>
   </tr>`;
@@ -81,7 +86,7 @@ function scheduleNotice() {
   const tasks = (scheduleStatus?.tasks || []).filter((item) => item.task_key.startsWith("tag-scan:"));
   const running = scheduleStatus?.scheduler_state === "RUNNING" && scheduleStatus?.worker_state === "HEALTHY";
   const nextRuns = tasks.map((item) => item.next_run_at).filter(Boolean).sort();
-  const failed = tasks.filter((item) => item.last_result === "FAILED").length;
+  const failed = tasks.filter((item) => ["FAILED", "PARTIAL_FAILURE"].includes(item.last_result)).length;
   const title = running ? `CRON 调度运行中 · ${tasks.length} 条规则已注册` : "CRON 调度未运行";
   const next = nextRuns.length ? `下一次触发：${new Date(nextRuns[0]).toLocaleString("zh-CN", { timeZone: "Asia/Hong_Kong" })}` : "当前没有待触发的启用规则";
   const failure = failed ? `；${failed} 条规则上次执行失败，请检查模型配置或网络` : "";

@@ -593,6 +593,40 @@ def test_scheduler_executes_synthetic_callback(scan_runtime):
         assert db.scalar(select(func.count(TagAssignmentRequest.id))) == 1
 
 
+def test_cron_tick_creates_request_without_manual_notification(scan_runtime):
+    sessions, _, view_id, tag_ids = scan_runtime
+    ledger_id = _seed_ledger(sessions, tag_ids["unclassified"])
+    rule_id = _seed_rule(sessions, view_id)
+    service = AutoTagScanService(
+        sessions,
+        FakeAnalyzer(lambda _, payload: _suggest(payload, tag_ids["food"])),
+    )
+
+    async def scenario():
+        scheduler = JobScheduler()
+        scheduler.register_cron(
+            f"tag-scan:{rule_id}",
+            expression="*/1 * * * * *",
+            callback=service.callback(rule_id, {ledger_id: _fixture(ledger_id)}),
+        )
+        await scheduler.start()
+        try:
+            for _ in range(50):
+                with sessions() as db:
+                    count = db.scalar(select(func.count(TagAssignmentRequest.id)))
+                if count == 1 and scheduler.snapshot().tasks[0].last_result == "COMPLETED":
+                    break
+                await asyncio.sleep(0.1)
+            assert count == 1
+            assert scheduler.snapshot().tasks[0].last_result == "COMPLETED"
+        finally:
+            await scheduler.shutdown()
+
+    _run(scenario())
+    with sessions() as db:
+        assert db.get(AutoTagRule, rule_id).scan_after_ledger_id == ledger_id
+
+
 def test_review_revoke_and_restore_invalidate_scan_and_pending_request(
     scan_runtime,
 ):

@@ -112,9 +112,12 @@ def test_pause_during_call_prevents_duplicate_and_does_not_auto_resume():
         release = asyncio.Event()
         call_count = 0
 
-        async def callback(_):
+        contexts = []
+
+        async def callback(context):
             nonlocal call_count
             call_count += 1
+            contexts.append(context)
             started.set()
             await release.wait()
 
@@ -123,7 +126,9 @@ def test_pause_during_call_prevents_duplicate_and_does_not_auto_resume():
         try:
             await scheduler.notify("tag-scan:7")
             await asyncio.wait_for(started.wait(), timeout=1)
+            assert contexts[0].may_start_work() is True
             scheduler.pause("tag-scan:7")
+            assert contexts[0].may_start_work() is False
             assert await scheduler.notify("tag-scan:7") is False
             release.set()
             await asyncio.sleep(0.02)
@@ -132,6 +137,36 @@ def test_pause_during_call_prevents_duplicate_and_does_not_auto_resume():
             scheduler.resume("tag-scan:7")
             await asyncio.sleep(0.02)
             assert call_count == 1
+        finally:
+            await scheduler.shutdown()
+
+    _run(scenario())
+
+
+def test_replacing_a_running_registration_stops_its_next_item():
+    async def scenario():
+        scheduler = JobScheduler()
+        started = asyncio.Event()
+        release = asyncio.Event()
+        contexts = []
+
+        async def old_callback(context):
+            contexts.append(context)
+            started.set()
+            await release.wait()
+
+        async def new_callback(_):
+            pass
+
+        scheduler.register_interval("tag-scan:7", seconds=3600, callback=old_callback)
+        await scheduler.start()
+        try:
+            assert await scheduler.notify("tag-scan:7") is True
+            await asyncio.wait_for(started.wait(), timeout=1)
+            assert contexts[0].may_start_work() is True
+            scheduler.register_interval("tag-scan:7", seconds=3600, callback=new_callback)
+            assert contexts[0].may_start_work() is False
+            release.set()
         finally:
             await scheduler.shutdown()
 
