@@ -4,7 +4,12 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
-from backend.core.config import APP_DISPLAY_NAME, RESOURCE_DIR
+from backend.core import target_database
+from backend.core.config import (
+    APP_DISPLAY_NAME,
+    AUTOTAG_SYNTHETIC_ACCEPTANCE,
+    RESOURCE_DIR,
+)
 from backend.core.job_scheduler import job_scheduler
 from backend.schema.schedule import ScheduleStatusResponse
 from backend.service.schedule_status_service import ScheduleStatusService
@@ -37,5 +42,9 @@ def schedule_status():
     return ScheduleStatusResponse(
         status=200,
         message="ok",
-        body=ScheduleStatusService(job_scheduler).get(),
+        body=ScheduleStatusService(
+            job_scheduler,
+            target_database.SessionLocal,
+            synthetic_acceptance_enabled=AUTOTAG_SYNTHETIC_ACCEPTANCE,
+        ).get(),
     )

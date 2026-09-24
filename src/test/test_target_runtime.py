@@ -222,6 +222,7 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
             schedule = client.get("/paam/system/v1/schedule/status")
             assert schedule.status_code == 200
             assert schedule.json()["body"]["scheduler_state"] == "RUNNING"
+            assert schedule.json()["body"]["tag_scan_guard"] == "DISABLED"
             assert 'data-action="tag-request-batch"' in automation_script.text
             inspection_script = client.get("/static/js/component/inspection.js")
             assert inspection_script.status_code == 200

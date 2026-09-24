@@ -24,7 +24,7 @@ const setting = {
   disclosure: {},
 };
 let schedule = {
-  scheduler_state: "RUNNING", worker_state: "HEALTHY", tasks: [],
+  scheduler_state: "RUNNING", worker_state: "HEALTHY", tag_scan_guard: "DISABLED", tasks: [],
 };
 const requestedUrls = [];
 const suggestion = {
@@ -68,8 +68,8 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
   assert.doesNotMatch(idle, /CRON 调度运行中/);
 
   schedule = {
-    scheduler_state: "RUNNING", worker_state: "HEALTHY",
-    tasks: [{ task_key: "tag-scan:1", next_run_at: "2026-09-23T14:00:00+08:00", last_result: "COMPLETED" }],
+    scheduler_state: "RUNNING", worker_state: "HEALTHY", tag_scan_guard: "SYNTHETIC_READY",
+    tasks: [{ task_key: "tag-scan:1", queue_state: "IDLE", next_run_at: "2026-09-23T14:00:00+08:00", last_result: "COMPLETED" }],
   };
   const active = await context.testPanel(views);
   assert.match(active, /CRON 调度运行中 · 1 条规则已注册/);
@@ -85,6 +85,26 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
   assert.match(detail, /虚构商户/);
   assert.match(detail, /历史模型请求正文与原始响应未被保存/);
   assert.match(context.testScheduleExplanation("ACCEPTANCE_DATABASE_REQUIRED"), /非虚构数据/);
+
+  schedule = {
+    scheduler_state: "RUNNING", worker_state: "HEALTHY", tag_scan_guard: "NON_SYNTHETIC_FACT",
+    tasks: [{ task_key: "tag-scan:1", queue_state: "PAUSED", next_run_at: null,
+      last_result: "FAILED", last_error_code: "ACCEPTANCE_DATABASE_REQUIRED" }],
+  };
+  const blocked = await context.testPanel(views);
+  assert.match(blocked, /当前库不允许自动标签扫描/);
+  assert.match(blocked, /安全阻断/);
+  assert.match(blocked, /已注册任务会暂停且不再按 CRON 重试/);
+  assert.doesNotMatch(blocked, /下一次触发/);
+  const blockedDetail = context.testRuleDetail(rule, schedule, { items: [] });
+  assert.match(blockedDetail, /安全门禁阻止/);
+  assert.match(blockedDetail, /ACCEPTANCE_DATABASE_REQUIRED/);
+  schedule.tasks = [];
+  const blockedAfterRestart = await context.testPanel(views);
+  assert.match(blockedAfterRestart, /当前库不允许自动标签扫描/);
+  assert.doesNotMatch(blockedAfterRestart, /CRON 调度运行中 · 1 条规则已注册/);
+  schedule = { scheduler_state: "RUNNING", worker_state: "HEALTHY",
+    tag_scan_guard: "SYNTHETIC_READY", tasks: [] };
 
   const rulePage = await context.testRulePage(new URLSearchParams({ rule_id: "1" }));
   assert.match(rulePage, /返回规则列表/);

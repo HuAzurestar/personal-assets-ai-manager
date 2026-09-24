@@ -25,6 +25,7 @@ from backend.schema.llm_analysis import (
 )
 from backend.service.auto_tag_scan_service import AutoTagScanService, ScanRunReport
 from backend.service.auto_tag_schedule_service import AutoTagScheduleService
+from backend.service.schedule_status_service import ScheduleStatusService
 
 NOW = datetime(2026, 9, 22, 8, tzinfo=timezone.utc)
 
@@ -78,6 +79,9 @@ def test_default_mode_never_registers_tag_scans(tmp_path):
         service.register_persisted()
         service.sync_rule(rule_id)
         assert scheduler.snapshot().tasks == ()
+        assert ScheduleStatusService(
+            scheduler, sessions, synthetic_acceptance_enabled=False,
+        ).get().tag_scan_guard == "DISABLED"
     finally:
         engine.dispose()
 
@@ -107,6 +111,9 @@ def test_acceptance_mode_rejects_database_with_ordinary_fact(tmp_path):
         service.register_persisted()
         service.sync_rule(rule_id)
         assert scheduler.snapshot().tasks == ()
+        assert ScheduleStatusService(
+            scheduler, sessions, synthetic_acceptance_enabled=True,
+        ).get().tag_scan_guard == "NON_SYNTHETIC_FACT"
     finally:
         engine.dispose()
 
@@ -151,6 +158,12 @@ def test_new_ordinary_fact_blocks_already_registered_tick(tmp_path):
                 await asyncio.sleep(0.01)
             assert task.last_result == "FAILED"
             assert task.last_error_code == "ACCEPTANCE_DATABASE_REQUIRED"
+            assert task.queue_state == "PAUSED"
+            assert task.next_run_at is None
+            assert await scheduler.notify(f"tag-scan:{rule_id}") is False
+            assert ScheduleStatusService(
+                scheduler, sessions, synthetic_acceptance_enabled=True,
+            ).get().tag_scan_guard == "NON_SYNTHETIC_FACT"
         finally:
             await scheduler.shutdown()
 
@@ -180,6 +193,9 @@ def test_persisted_enabled_rules_are_restored_and_ticks_use_shared_fifo(tmp_path
 
     async def scenario():
         service.register_persisted()
+        assert ScheduleStatusService(
+            scheduler, sessions, synthetic_acceptance_enabled=True,
+        ).get().tag_scan_guard == "SYNTHETIC_READY"
         registered = scheduler.snapshot().tasks
         assert [item.task_key for item in registered] == [f"tag-scan:{rule_id}"]
         await scheduler.start()

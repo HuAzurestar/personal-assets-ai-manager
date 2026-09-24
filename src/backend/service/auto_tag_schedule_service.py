@@ -82,6 +82,13 @@ class AutoTagScheduleService:
         async def run(context: JobRunContext) -> JobOutcome:
             with self._sessions() as db:
                 if not AutoTagScanMapper(db).is_synthetic_acceptance_database():
+                    # Accepted Facts are immutable, so this database cannot become
+                    # a synthetic-only fixture again. Keep the last failure visible
+                    # while preventing every later CRON tick from repeating it.
+                    try:
+                        self._scheduler.pause(self.task_key(rule_id))
+                    except KeyError:
+                        pass
                     return JobOutcome("FAILED", "ACCEPTANCE_DATABASE_REQUIRED")
             report = await self._scan.run_protected(
                 rule_id,
