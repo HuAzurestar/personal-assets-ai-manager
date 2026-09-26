@@ -7,6 +7,7 @@ from fastapi.templating import Jinja2Templates
 from backend.core import target_database
 from backend.core.config import (
     APP_DISPLAY_NAME,
+    AUTOTAG_REAL_ANALYSIS,
     AUTOTAG_SYNTHETIC_ACCEPTANCE,
     RESOURCE_DIR,
 )
@@ -46,5 +47,6 @@ def schedule_status():
             job_scheduler,
             target_database.SessionLocal,
             synthetic_acceptance_enabled=AUTOTAG_SYNTHETIC_ACCEPTANCE,
+            real_analysis_enabled=AUTOTAG_REAL_ANALYSIS,
         ).get(),
     )

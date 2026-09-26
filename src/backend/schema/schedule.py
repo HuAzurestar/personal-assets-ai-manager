@@ -28,7 +28,9 @@ class ScheduleStatusRead(BaseModel):
     worker_state: Literal["HEALTHY", "STOPPED"]
     accepting: bool
     captured_at: datetime
-    tag_scan_guard: Literal["DISABLED", "SYNTHETIC_READY", "NON_SYNTHETIC_FACT"]
+    tag_scan_guard: Literal[
+        "DISABLED", "SYNTHETIC_READY", "NON_SYNTHETIC_FACT", "REAL_READY",
+    ]
     tasks: list[ScheduleTaskRead]
 
 

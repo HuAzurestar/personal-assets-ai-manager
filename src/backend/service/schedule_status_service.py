@@ -16,14 +16,18 @@ class ScheduleStatusService:
         sessions: Callable[[], Session],
         *,
         synthetic_acceptance_enabled: bool,
+        real_analysis_enabled: bool = False,
     ):
         self._scheduler = scheduler
         self._sessions = sessions
         self._synthetic_acceptance_enabled = synthetic_acceptance_enabled
+        self._real_analysis_enabled = real_analysis_enabled
 
     def get(self) -> ScheduleStatusRead:
         snapshot = self._scheduler.snapshot()
-        if not self._synthetic_acceptance_enabled:
+        if self._real_analysis_enabled:
+            guard = "REAL_READY"
+        elif not self._synthetic_acceptance_enabled:
             guard = "DISABLED"
         else:
             with self._sessions() as db:

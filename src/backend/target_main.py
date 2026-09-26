@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from backend.core import target_database
 from backend.core.config import (
     APP_DISPLAY_NAME,
+    AUTOTAG_REAL_ANALYSIS,
     AUTOTAG_SYNTHETIC_ACCEPTANCE,
     IMPORT_PREVIEW_SWEEP_INTERVAL_SECONDS,
     RESOURCE_DIR,
@@ -61,6 +62,7 @@ async def lifespan(application: FastAPI):
         job_scheduler,
         provider_secret_reader,
         synthetic_acceptance_enabled=AUTOTAG_SYNTHETIC_ACCEPTANCE,
+        real_analysis_enabled=AUTOTAG_REAL_ANALYSIS,
     )
     auto_tag_schedule.register_persisted()
     application.state.auto_tag_schedule = auto_tag_schedule

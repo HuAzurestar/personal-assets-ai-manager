@@ -30,32 +30,40 @@ class AutoTagScheduleService:
         secret_store: ProviderSecretReader,
         *,
         synthetic_acceptance_enabled: bool = False,
+        real_analysis_enabled: bool = False,
     ):
+        if synthetic_acceptance_enabled and real_analysis_enabled:
+            raise ValueError("Real analysis and synthetic acceptance are exclusive")
         self._sessions = sessions
         self._scheduler = scheduler
         self._synthetic_acceptance_enabled = synthetic_acceptance_enabled
+        self._real_analysis_enabled = real_analysis_enabled
         analyzer = ConfiguredLlmAnalyzer(sessions, secret_store)
         self._scan = AutoTagScanService(sessions, analyzer)
 
     def register_persisted(self) -> None:
-        if not self._synthetic_acceptance_enabled:
+        if not (self._synthetic_acceptance_enabled or self._real_analysis_enabled):
             return
         with self._sessions() as db:
-            if not AutoTagScanMapper(db).is_synthetic_acceptance_database():
+            if not self._real_analysis_enabled and not (
+                AutoTagScanMapper(db).is_synthetic_acceptance_database()
+            ):
                 return
             schedules = AutoTagRuleMapper(db).enabled_schedules()
         for rule_id, expression in schedules:
             self._register(rule_id, expression)
 
     def sync_rule(self, rule_id: int) -> None:
-        if not self._synthetic_acceptance_enabled:
+        if not (self._synthetic_acceptance_enabled or self._real_analysis_enabled):
             try:
                 self._scheduler.remove(self.task_key(rule_id))
             except KeyError:
                 pass
             return
         with self._sessions() as db:
-            if not AutoTagScanMapper(db).is_synthetic_acceptance_database():
+            if not self._real_analysis_enabled and not (
+                AutoTagScanMapper(db).is_synthetic_acceptance_database()
+            ):
                 try:
                     self._scheduler.remove(self.task_key(rule_id))
                 except KeyError:
@@ -81,7 +89,9 @@ class AutoTagScheduleService:
     def _callback(self, rule_id: int):
         async def run(context: JobRunContext) -> JobOutcome:
             with self._sessions() as db:
-                if not AutoTagScanMapper(db).is_synthetic_acceptance_database():
+                if not self._real_analysis_enabled and not (
+                    AutoTagScanMapper(db).is_synthetic_acceptance_database()
+                ):
                     # Accepted Facts are immutable, so this database cannot become
                     # a synthetic-only fixture again. Keep the last failure visible
                     # while preventing every later CRON tick from repeating it.
@@ -94,7 +104,7 @@ class AutoTagScheduleService:
                 rule_id,
                 context,
                 self._privacy_service(),
-                synthetic_only=True,
+                synthetic_only=not self._real_analysis_enabled,
             )
             if report.failed_count:
                 return JobOutcome(

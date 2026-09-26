@@ -22,6 +22,11 @@ AUTOTAG_SYNTHETIC_ACCEPTANCE = (
     and DATABASE_URL.startswith("sqlite:///")
     and Path(DATABASE_URL.removeprefix("sqlite:///")).name == "synthetic.db"
 )
+# Opt-in for a deployment authorized to send privacy-filtered Ledger context.
+# This is independent of the historical synthetic-only acceptance mode.
+AUTOTAG_REAL_ANALYSIS = os.getenv("PAAM_AUTOTAG_REAL_ANALYSIS") == "1"
+if AUTOTAG_REAL_ANALYSIS and AUTOTAG_SYNTHETIC_ACCEPTANCE:
+    raise RuntimeError("Choose either real analysis or synthetic acceptance, not both")
 LLM_PROVIDER = os.getenv("PAAM_LLM_PROVIDER", "mock")
 LLM_BASE_URL = os.getenv("PAAM_LLM_BASE_URL", "")
 LLM_MODEL = os.getenv("PAAM_LLM_MODEL", "")

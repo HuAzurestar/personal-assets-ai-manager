@@ -247,7 +247,7 @@ def _suggest(payload, *tag_ids: int) -> LlmAnalysisResult:
             LlmResolvedSuggestion(
                 tag_id=tag_id,
                 tag_name=names[tag_id],
-                reason=f"synthetic reason {tag_id}",
+                reason="synthetic reason",
             )
             for tag_id in tag_ids
         ],

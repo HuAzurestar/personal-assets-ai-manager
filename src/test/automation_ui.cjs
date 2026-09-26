@@ -77,6 +77,14 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
   assert.doesNotMatch(active, /已保存·未调度/);
   assert.match(active, /审查详情/);
 
+  schedule.tag_scan_guard = "REAL_READY";
+  const real = await context.testPanel(views);
+  assert.match(real, /真实流水自动分析已启用/);
+  assert.match(real, /新增 Ledger 将在后续 CRON 中检查/);
+  assert.match(real, /批准或拒绝由人处理/);
+  assert.match(real, /CRON 调度运行中 · 1 条规则已注册/);
+  assert.doesNotMatch(real, /纯虚构验收库/);
+
   const detail = context.testRuleDetail(rule, schedule, { items: [{
     id: 8, ledger_id: 12, ledger_counterparty_name: "虚构商户", proposed_tag_name: "餐饮",
     status: 1, created_time: "2026-09-23T14:00:00+08:00",
@@ -145,7 +153,7 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
   assert.match(requestDetail, /历史模型输入正文和原始输出未留存/);
 
   const settings = await context.testSettings();
-  assert.match(settings, /只有显式隔离的合成验收库才会注册 CRON 扫描/);
+  assert.match(settings, /真实流水自动分析须由服务显式启用/);
   console.log("RESULT=PASS DEFAULT_NOT_SCHEDULED=1 SYNTHETIC_REGISTERED=1 RULE_DETAIL=1 REQUEST_DETAIL=1");
 })().catch((error) => {
   console.error(error);

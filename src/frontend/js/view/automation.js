@@ -47,7 +47,7 @@ export async function automationSettingsPage() {
       <div><span class="eyebrow">SETTINGS · AUTOMATION</span><h2>自动化设置</h2><p>模型连接保存在本地设置中；密钥进入系统凭据存储，普通读取永不回显。</p></div>
       <button type="button" class="primary" data-action="model-new">＋ 添加模型</button>
     </section>
-    <div class="automation-notice" role="note"><strong>模型安全边界</strong><span>规则配置可以保存；本阶段只有显式隔离的合成验收库才会注册 CRON 扫描。API Key 只从系统凭据存储读取，不写入 SQLite，也不会回显。</span></div>
+    <div class="automation-notice" role="note"><strong>模型安全边界</strong><span>真实流水自动分析须由服务显式启用；请在自动规则页查看实际调度状态。启用后会按规则调用真实模型并可能产生费用，只生成待人工处理的打标申请。API Key 只从系统凭据存储读取，不写入 SQLite，也不会回显。</span></div>
     <section class="automation-section" aria-labelledby="automation-model-title">
       <div class="automation-section-head"><div><h3 id="automation-model-title">模型连接</h3><p>${setting.models.length ? `共 ${setting.models.length} 个本地配置` : "添加首个模型后，规则才可选择模型"}</p></div></div>
       <div class="automation-grid">${modelCards || '<div class="panel empty-state"><strong>尚未配置模型</strong><p>添加一个 LiteLLM 兼容配置；启用前必须保存 API Key。</p><button type="button" data-action="model-new">添加模型</button></div>'}</div>
@@ -93,6 +93,7 @@ function ruleRow(rule) {
 function scheduleNotice() {
   const tasks = (scheduleStatus?.tasks || []).filter((item) => item.task_key.startsWith("tag-scan:"));
   const blockedByData = scheduleStatus?.tag_scan_guard === "NON_SYNTHETIC_FACT";
+  const realAnalysis = scheduleStatus?.tag_scan_guard === "REAL_READY";
   const running = scheduleStatus?.scheduler_state === "RUNNING" && scheduleStatus?.worker_state === "HEALTHY";
   const nextRuns = tasks.map((item) => item.next_run_at).filter(Boolean).sort();
   const failed = tasks.filter((item) => ["FAILED", "PARTIAL_FAILURE"].includes(item.last_result)).length;
@@ -102,10 +103,11 @@ function scheduleNotice() {
   const next = blockedByData
     ? "验收库含非虚构记录；安全门禁在模型调用前阻断扫描，已注册任务会暂停且不再按 CRON 重试。请改用独立的纯虚构验收库"
     : !tasks.length
-    ? "等待不会产生新建议。默认模式不扫描账单；纯虚构验收库混入普通记录后也不会注册标签任务。规则已启用不等于已调度"
+    ? realAnalysis ? "真实流水分析已启用，但没有启用的规则；请配置模型和自动规则" : "等待不会产生新建议。默认模式不扫描账单；纯虚构验收库混入普通记录后也不会注册标签任务。规则已启用不等于已调度"
     : nextRuns.length ? `下一次触发：${new Date(nextRuns[0]).toLocaleString("zh-CN", { timeZone: "Asia/Hong_Kong" })}` : "当前没有待触发的启用规则";
   const failure = failed && !blockedByData ? `；${failed} 条规则上次执行失败，请打开规则详情查看具体原因` : "";
-  return `<div class="automation-notice compact" role="status" aria-live="polite"><strong>${esc(title)}</strong><span>${esc(next + failure)}。CRON 触发进入共享 FIFO；本页仍不提供手动执行或重扫入口。</span></div>`;
+  const mode = realAnalysis ? "真实流水自动分析已启用：新增 Ledger 将在后续 CRON 中检查；真实模型调用可能计费，只生成待审申请，批准或拒绝由人处理。" : "";
+  return `<div class="automation-notice compact" role="status" aria-live="polite"><strong>${esc(title)}</strong><span>${esc(mode + next + failure)}。CRON 触发进入共享 FIFO；本页仍不提供手动执行或重扫入口。</span></div>`;
 }
 
 export async function autoRulesPanel(tagViews) {
@@ -321,7 +323,7 @@ function ruleDialog(rule = null) {
     <label>业务判断说明<textarea name="prompt" rows="5" required>${esc(value.method_config.prompt)}</textarea><small>这是业务 Prompt；后续执行时仍会经过统一脱敏和 system Prompt 边界。</small></label>
     <div class="form-grid"><label>CRON（5 或 6 段）<input name="cron" value="${esc(value.cron)}" ${value.enabled ? "required" : ""} placeholder="*/5 * * * *"><small data-cron-copy>保存时严格校验；是否注册请以规则列表中的调度状态为准。</small></label><label>金额披露<select name="amount_mode">${Object.entries(amountModeNames).map(([id, label]) => `<option value="${id}" ${Number(id) === value.amount_mode ? "selected" : ""}>${label}</option>`).join("")}</select></label></div>
     <label class="check-row"><input name="enabled" type="checkbox" ${value.enabled ? "checked" : ""}> 启用规则配置</label>
-    <div class="automation-notice compact"><strong>保存规则配置</strong><span>仅显式隔离的合成验收环境可注册 CRON；模型只生成待人工确认的建议，不会直接修改标签。</span></div>
+    <div class="automation-notice compact"><strong>保存规则配置</strong><span>服务显式启用自动分析后，启用的规则会注册 CRON；是否正在调度请以列表状态为准。模型只生成待人工确认的建议，不会直接修改标签。修改 Prompt、模型或金额模式会从头重新扫描。</span></div>
     <div class="actions"><button type="button" class="quiet" data-close>取消</button><button type="submit" class="primary">保存并回读</button></div>
   </form>`);
   const form = $("[data-form='automation-rule']", dialog);
