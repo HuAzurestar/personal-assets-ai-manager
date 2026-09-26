@@ -17,7 +17,6 @@ from backend.schema.auto_tag_rule import (
 from backend.schema.list_query import parse_list_request
 from backend.service.auto_tag_rule_service import AutoTagRuleService
 
-
 router = APIRouter(
     prefix="/paam/tag/v1/auto_rule",
     tags=["auto-tag-rule"],
@@ -28,12 +27,13 @@ router = APIRouter(
 @router.post("", response_model=AutoTagRuleResponse)
 def create_rule(
     payload: AutoTagRuleCreateRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     return AutoTagRuleResponse(
         status=200,
         message="ok",
-        body=AutoTagRuleService(db).create(payload),
+        body=_write_service(db, request).create(payload),
     )
 
 
@@ -79,12 +79,13 @@ def get_rule(rule_id: int, db: Session = Depends(get_db)):
 def update_rule(
     rule_id: int,
     payload: AutoTagRuleUpdateRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     return AutoTagRuleResponse(
         status=200,
         message="ok",
-        body=AutoTagRuleService(db).update(rule_id, payload),
+        body=_write_service(db, request).update(rule_id, payload),
     )
 
 
@@ -107,3 +108,9 @@ def preview_candidates(rule_id: int, db: Session = Depends(get_db)):
         message="ok",
         body=AutoTagRuleService(db).candidate_preview(rule_id),
     )
+
+
+def _write_service(db: Session, request: Request) -> AutoTagRuleService:
+    schedule = getattr(request.app.state, "auto_tag_schedule", None)
+    callback = schedule.sync_rule if schedule is not None else None
+    return AutoTagRuleService(db, on_saved=callback)

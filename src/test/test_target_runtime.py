@@ -1,18 +1,17 @@
 import base64
 import csv
 import io
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import sessionmaker
 
-from backend.core import target_database
 from backend import target_main
+from backend.core import target_database
 from backend.core.intake_preview_store import target_intake_preview_store
-
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -212,6 +211,23 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
             assert automation_script.status_code == 200
             assert "/paam/system/v1/setting/automation" in automation_script.text
             assert "/paam/tag/v1/auto_rule" in automation_script.text
+            assert "/paam/tag/v1/assignment_request" in automation_script.text
+            assert "/paam/system/v1/schedule/status" in automation_script.text
+            assert "没有已注册的自动标签任务" in automation_script.text
+            assert "等待不会产生新建议" in automation_script.text
+            assert "已保存·未调度" in automation_script.text
+            assert "保存后按 CRON 执行" not in automation_script.text
+            assert "启用后立即注册" not in automation_script.text
+            assert "尚未启动调度" not in automation_script.text
+            schedule = client.get("/paam/system/v1/schedule/status")
+            assert schedule.status_code == 200
+            assert schedule.json()["body"]["scheduler_state"] == "RUNNING"
+            assert schedule.json()["body"]["tag_scan_guard"] == "DISABLED"
+            assert 'data-action="tag-request-batch"' in automation_script.text
+            inspection_script = client.get("/static/js/component/inspection.js")
+            assert inspection_script.status_code == 200
+            assert "AUTO_RULE" in inspection_script.text
+            assert "Request #" in inspection_script.text
             assert "SIMULATED_LOCAL" in automation_script.text
             assert "模型已停用" in automation_script.text
             assert 'data-action="rule-run"' not in automation_script.text

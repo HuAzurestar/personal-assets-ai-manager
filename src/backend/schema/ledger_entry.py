@@ -69,6 +69,10 @@ class LedgerEntryTagRead(BaseModel):
     view_system_name: str
     tag_name: str
     tag_system_name: str
+    source_type: Literal["MANUAL", "AUTO_RULE"] = "MANUAL"
+    request_id: int | None = None
+    rule_id: int | None = None
+    rule_revision: int | None = None
 
 
 class LedgerEntryListItem(BaseModel):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 
 from pydantic import ValidationError
@@ -32,11 +33,16 @@ from backend.schema.setting import AutomationModelWrite
 class AutoTagRuleService:
     """Manage automatic Tag rules without executing analysis work."""
 
-    def __init__(self, db: Session):
+    def __init__(
+        self,
+        db: Session,
+        on_saved: Callable[[int], None] | None = None,
+    ):
         self.mapper = AutoTagRuleMapper(db)
         self.request_mapper = TagAssignmentRequestMapper(db)
         self.setting_mapper = SettingMapper(db)
         self.tag_mapper = TargetTagMapper(db)
+        self._on_saved = on_saved
 
     def get(self, rule_id: int) -> AutoTagRuleRead:
         return self._read(self._required(rule_id))
@@ -80,7 +86,10 @@ class AutoTagRuleService:
                 now=utc_now(),
             )
             self.mapper.commit()
-            return self._read(self._required(rule_id))
+            result = self._read(self._required(rule_id))
+            if self._on_saved is not None:
+                self._on_saved(rule_id)
+            return result
         except AutoTagRuleError:
             self.mapper.rollback()
             raise
@@ -163,7 +172,10 @@ class AutoTagRuleService:
                     now=next_time,
                 )
             self.mapper.commit()
-            return self._read(self._required(rule_id))
+            result = self._read(self._required(rule_id))
+            if self._on_saved is not None:
+                self._on_saved(rule_id)
+            return result
         except AutoTagRuleError:
             self.mapper.rollback()
             raise
