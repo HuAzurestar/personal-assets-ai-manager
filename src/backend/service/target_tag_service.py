@@ -170,6 +170,8 @@ class TargetTagService:
             now = utc_now()
             if not self.mapper.set_view_status(view_id, payload.status, now):
                 raise TargetTagError(404, "tag view not found")
+            if payload.status != "ACTIVE":
+                self.request_mapper.retire_dictionary_sources(view_id, tag_id=None, now=now)
             self.projection.sync_all()
             self._invalidate_rules(view_id, now)
             self.mapper.commit()
@@ -209,6 +211,8 @@ class TargetTagService:
             now = utc_now()
             if not self.mapper.set_tag_status(view_id, tag_id, payload.status, now):
                 raise TargetTagError(404, "tag not found in this view")
+            if payload.status != "ACTIVE":
+                self.request_mapper.retire_dictionary_sources(view_id, tag_id=tag_id, now=now)
             self.projection.sync_all()
             self._invalidate_rules(view_id, now)
             self.mapper.commit()

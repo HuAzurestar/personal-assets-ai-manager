@@ -8,6 +8,7 @@ const resultCopy = {
   MANUAL_TAG_CONFLICT: "已有人工标签，不能强制覆盖", NOT_FOUND: "请求不存在，请刷新核对",
   REQUEST_STATE_CONFLICT: "请求已处理或失效，请刷新核对", VIEW_INACTIVE: "标签维度已停用",
   TAG_INACTIVE: "候选标签已停用", UNKNOWN: "结果未知，请刷新核对后再决定重试",
+  COUNTER_EXHAUSTED: "规则累计计数已达上限，本项未处理，请检查服务端诊断",
 };
 
 export function batchResults(body, ids, operation) {

@@ -91,16 +91,29 @@ class TagAssignmentBatchRequest(BaseModel):
     @field_validator("request_ids")
     @classmethod
     def validate_request_ids(cls, value: list[int]) -> list[int]:
-        if any(item < 1 for item in value):
-            raise ValueError("request_ids must contain positive integers")
+        if any(item < 1 or item > 2**63 - 1 for item in value):
+            raise ValueError("request_ids must contain supported positive integer IDs")
         if len(value) != len(set(value)):
             raise ValueError("request_ids must be unique")
         return value
 
 
+class TagAssignmentItemResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: int
+    result: Literal[
+        "APPROVED", "REJECTED", "ALREADY_APPROVED", "ALREADY_REJECTED",
+        "SCOPE_CONFLICT", "RULE_STALE", "LEDGER_INACTIVE", "MANUAL_TAG_CONFLICT",
+        "NOT_FOUND", "REQUEST_STATE_CONFLICT", "VIEW_INACTIVE", "TAG_INACTIVE",
+        "COUNTER_EXHAUSTED",
+    ]
+    status: Literal[1, 2, 3, 4, 5] | None = None
+
+
 class TagAssignmentBatchRead(BaseModel):
     operation: Literal["APPROVE", "REJECT"]
-    items: list[TagAssignmentRequestRead]
+    items: list[TagAssignmentItemResult]
 
 
 class TagAssignmentBatchResponse(SuccessResponse[TagAssignmentBatchRead]):

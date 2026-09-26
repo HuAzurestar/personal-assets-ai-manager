@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from datetime import datetime
 
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
@@ -277,7 +276,7 @@ class TargetEconomicService:
                 affected_ledger_ids,
                 now=transition_time,
             )
-            self.tag_requests.cancel_pending_for_ledger_ids(
+            self.tag_requests.retire_for_ledger_ids(
                 affected_ledger_ids,
                 now=transition_time,
             )

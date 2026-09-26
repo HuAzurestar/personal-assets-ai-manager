@@ -196,6 +196,9 @@ class TagAssignmentRequestMapper:
         ).join(
             ReviewCase,
             ReviewCase.id == ReviewAllocation.review_case_id,
+        ).join(
+            LedgerEntry,
+            LedgerEntry.id == ReviewAllocation.ledger_entry_id,
         ).where(
             ReviewAllocation.ledger_entry_id.in_(ledger_ids),
             ReviewCase.status == 0,
@@ -266,22 +269,32 @@ class TagAssignmentRequestMapper:
             )
         return result
 
-    def enabled_scopes(
-        self,
-        scopes: set[tuple[int, int]],
-    ) -> set[tuple[int, int]]:
+    def enabled_sources(self, scopes: set[tuple[int, int]]) -> dict[tuple[int, int], list[int]]:
         if not scopes:
-            return set()
-        return set(self.db.execute(select(
-            TagAssignmentRequest.ledger_id,
-            TagAssignmentRequest.view_id,
+            return {}
+        rows = self.db.execute(select(
+            TagAssignmentRequest.ledger_id, TagAssignmentRequest.view_id,
+            TagAssignmentRequest.proposed_tag_id,
         ).where(
-            tuple_(
-                TagAssignmentRequest.ledger_id,
-                TagAssignmentRequest.view_id,
-            ).in_(scopes),
+            tuple_(TagAssignmentRequest.ledger_id, TagAssignmentRequest.view_id).in_(scopes),
             TagAssignmentRequest.status == TAG_REQUEST_STATUS_ENABLED,
-        )).all())
+        )).all()
+        result: dict[tuple[int, int], list[int]] = {}
+        for ledger_id, view_id, tag_id in rows:
+            result.setdefault((ledger_id, view_id), []).append(tag_id)
+        return result
+
+    def active_view_ids(self, view_ids: set[int]) -> set[int]:
+        return set(self.db.scalars(select(TargetTagView.id).where(
+            TargetTagView.id.in_(view_ids), TargetTagView.status == "ACTIVE",
+        )).all()) if view_ids else set()
+
+    def latest_assignment_time(self, ledger_ids: set[int]) -> datetime | None:
+        if not ledger_ids:
+            return None
+        return self.db.scalar(select(func.max(LedgerEntryTag.updated_time)).where(
+            LedgerEntryTag.ledger_id.in_(ledger_ids),
+        ))
 
     def approve_rows(
         self,
@@ -319,9 +332,12 @@ class TagAssignmentRequestMapper:
                 TagAssignmentRequest.view_id,
             ).in_(scopes),
             TagAssignmentRequest.id.not_in(request_ids),
-            TagAssignmentRequest.status == TAG_REQUEST_STATUS_PENDING,
+            TagAssignmentRequest.status.in_((TAG_REQUEST_STATUS_PENDING, TAG_REQUEST_STATUS_ENABLED)),
         ).values(
-            status=TAG_REQUEST_STATUS_CANCELLED,
+            status=case(
+                (TagAssignmentRequest.status == TAG_REQUEST_STATUS_PENDING, TAG_REQUEST_STATUS_CANCELLED),
+                else_=TAG_REQUEST_STATUS_REPLACED,
+            ),
             updated_time=now,
         ))
         self.db.execute(update(TagAssignmentRequest).where(
@@ -429,7 +445,7 @@ class TagAssignmentRequestMapper:
         )
         return int(result.rowcount or 0)
 
-    def cancel_pending_for_ledger_ids(
+    def retire_for_ledger_ids(
         self,
         ledger_ids: list[int],
         *,
@@ -441,14 +457,30 @@ class TagAssignmentRequestMapper:
             update(TagAssignmentRequest)
             .where(
                 TagAssignmentRequest.ledger_id.in_(ledger_ids),
-                TagAssignmentRequest.status == TAG_REQUEST_STATUS_PENDING,
+                TagAssignmentRequest.status.in_((TAG_REQUEST_STATUS_PENDING, TAG_REQUEST_STATUS_ENABLED)),
             )
             .values(
-                status=TAG_REQUEST_STATUS_CANCELLED,
+                status=case(
+                    (TagAssignmentRequest.status == TAG_REQUEST_STATUS_PENDING, TAG_REQUEST_STATUS_CANCELLED),
+                    else_=TAG_REQUEST_STATUS_REPLACED,
+                ),
                 updated_time=now,
             )
         )
         return int(result.rowcount or 0)
+
+    def retire_dictionary_sources(self, view_id: int, *, tag_id: int | None, now: datetime) -> None:
+        self.db.execute(update(TagAssignmentRequest).where(
+            TagAssignmentRequest.view_id == view_id,
+            *((TagAssignmentRequest.proposed_tag_id == tag_id,) if tag_id is not None else ()),
+            TagAssignmentRequest.status.in_((TAG_REQUEST_STATUS_PENDING, TAG_REQUEST_STATUS_ENABLED)),
+        ).values(
+            status=case(
+                (TagAssignmentRequest.status == TAG_REQUEST_STATUS_PENDING, TAG_REQUEST_STATUS_CANCELLED),
+                else_=TAG_REQUEST_STATUS_REPLACED,
+            ),
+            updated_time=now,
+        ))
 
     def commit(self) -> None:
         self.db.commit()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import secrets
 from datetime import datetime, timezone
 
 import pytest
@@ -123,7 +124,7 @@ def _rule(sessions, view_id: int, name: str) -> int:
 def _ledger(sessions, category_tag: int, mood_tag: int) -> int:
     with sessions() as db:
         fact = TransactionFact(
-            fact_key=f"request-fixture-{category_tag}-{mood_tag}",
+            fact_key=f"request-fixture-{secrets.token_hex(8)}",
             occurred_time=NOW,
             cash_direction=2,
             amount=2_500,
@@ -339,7 +340,7 @@ def test_reject_keeps_tag_and_increments_rule_counter(request_api):
         assert current == tag_ids["category"]["unclassified"]
 
 
-def test_approval_conflicts_are_atomic_and_never_override_manual_tag(request_api):
+def test_approval_conflicts_have_item_results_and_never_override_manual_tag(request_api):
     client, sessions, category_id, _, tag_ids = request_api
     ledger_id = _ledger(
         sessions,
@@ -359,8 +360,8 @@ def test_approval_conflicts_are_atomic_and_never_override_manual_tag(request_api
         "/paam/tag/v1/assignment_request/batch_approve",
         json={"request_ids": request_ids},
     )
-    assert scope_conflict.status_code == 409
-    assert scope_conflict.json()["body"]["code"] == "TAG_REQUEST_SCOPE_CONFLICT"
+    assert scope_conflict.status_code == 200
+    assert [item["result"] for item in scope_conflict.json()["body"]["items"]] == ["SCOPE_CONFLICT", "SCOPE_CONFLICT"]
     with sessions() as db:
         assert set(db.scalars(select(TagAssignmentRequest.status)).all()) == {1}
 
@@ -382,8 +383,8 @@ def test_approval_conflicts_are_atomic_and_never_override_manual_tag(request_api
         "/paam/tag/v1/assignment_request/batch_approve",
         json={"request_ids": [request_ids[0]]},
     )
-    assert manual_conflict.status_code == 409
-    assert manual_conflict.json()["body"]["details"]["reason"] == (
+    assert manual_conflict.status_code == 200
+    assert manual_conflict.json()["body"]["items"][0]["result"] == (
         "MANUAL_TAG_CONFLICT"
     )
     with sessions() as db:
@@ -413,8 +414,8 @@ def test_stale_rule_and_inactive_ledger_are_rejected(request_api):
         "/paam/tag/v1/assignment_request/batch_approve",
         json={"request_ids": [request_id]},
     )
-    assert stale.status_code == 409
-    assert stale.json()["body"]["details"]["reason"] == "RULE_REVISION_CHANGED"
+    assert stale.status_code == 200
+    assert stale.json()["body"]["items"][0]["result"] == "RULE_STALE"
 
     with sessions() as db:
         db.execute(update(AutoTagRule).where(
@@ -431,8 +432,8 @@ def test_stale_rule_and_inactive_ledger_are_rejected(request_api):
         "/paam/tag/v1/assignment_request/batch_approve",
         json={"request_ids": [request_id]},
     )
-    assert inactive.status_code == 409
-    assert inactive.json()["body"]["details"]["reason"] == "LEDGER_INACTIVE"
+    assert inactive.status_code == 200
+    assert inactive.json()["body"]["items"][0]["result"] == "LEDGER_INACTIVE"
 
 
 def _request_id(sessions, rule_id, ledger_id):
@@ -563,7 +564,7 @@ def test_manual_assignment_cancels_pending_only_for_target_ledger(request_api, c
     assert client.post(
         "/paam/tag/v1/assignment_request/batch_approve",
         json={"request_ids": [request_id]},
-    ).status_code == 409
+    ).json()["body"]["items"][0]["result"] == "REQUEST_STATE_CONFLICT"
     with sessions() as db:
         assert db.get(TagAssignmentRequest, request_id).status == 4
         assert db.get(TagAssignmentRequest, other_request).status == 1

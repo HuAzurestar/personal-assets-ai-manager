@@ -12,6 +12,7 @@ from backend.error import TargetTagError
 from backend.mapper.tag_assignment_request_mapper import TagAssignmentRequestMapper
 from backend.schema.tag_assignment_request import (
     TagAssignmentBatchRead,
+    TagAssignmentItemResult,
     TagAssignmentRequestListBody,
     TagAssignmentRequestListRequest,
     TagAssignmentRequestRead,
@@ -21,7 +22,11 @@ from backend.schema.tag_assignment_request import (
 
 
 class TagAssignmentRequestService:
-    """Review automatic tag suggestions under one short SQLite write lock."""
+    """Validate each scope under one short write lock; commit valid scopes together.
+
+    Business conflicts are per-item results. Unexpected storage failures still
+    roll back EVERY write. No per-item SQL, model call, or automatic retry.
+    """
 
     def __init__(self, db: Session):
         self.mapper = TagAssignmentRequestMapper(db)
@@ -29,197 +34,133 @@ class TagAssignmentRequestService:
     def get(self, request_id: int) -> TagAssignmentRequestRead:
         row = self.mapper.read(request_id)
         if row is None:
-            raise TargetTagError(
-                404,
-                "标签建议请求不存在",
-                code="TAG_REQUEST_NOT_FOUND",
-            )
+            raise TargetTagError(404, "标签建议请求不存在", code="TAG_REQUEST_NOT_FOUND")
         return TagAssignmentRequestRead(**row)
 
-    def list(
-        self,
-        request: TagAssignmentRequestListRequest,
-    ) -> TagAssignmentRequestListBody:
+    def list(self, request: TagAssignmentRequestListRequest) -> TagAssignmentRequestListBody:
         sorter_expression = request.sorter[0] if request.sorter else None
-        sorter = TagAssignmentRequestSorter(
-            order=sorter_expression.direction if sorter_expression else "desc",
-        )
         rows, total = self.mapper.list(
-            page=request.page_index,
-            page_size=request.page_size,
+            page=request.page_index, page_size=request.page_size,
             filter_value=tag_assignment_request_filter(request),
-            sorter=sorter,
+            sorter=TagAssignmentRequestSorter(order=sorter_expression.direction if sorter_expression else "desc"),
         )
         return TagAssignmentRequestListBody(
             items=[TagAssignmentRequestRead(**row) for row in rows],
-            total=total,
-            page_index=request.page_index,
-            page_size=request.page_size,
+            total=total, page_index=request.page_index, page_size=request.page_size,
         )
 
     def approve(self, request_ids: list[int]) -> TagAssignmentBatchRead:
-        try:
-            self.mapper.begin_write()
-            rows = self._pending_rows(request_ids)
-            scopes = [
-                (int(row["ledger_id"]), int(row["view_id"]))
-                for row in rows
-            ]
-            if len(scopes) != len(set(scopes)):
-                raise TargetTagError(
-                    409,
-                    "同一 Ledger 与标签维度只能选择一条建议",
-                    code="TAG_REQUEST_SCOPE_CONFLICT",
-                )
-            scope_set = set(scopes)
-            rule_rows = self.mapper.rule_rows({int(row["rule_id"]) for row in rows})
-            active_ledgers = self.mapper.active_ledger_ids({
-                int(row["ledger_id"]) for row in rows
-            })
-            dictionary = self.mapper.active_dictionary_rows({
-                int(row["proposed_tag_id"]) for row in rows
-            })
-            scope_rows = self.mapper.scope_tag_rows(scope_set)
-            enabled_scopes = self.mapper.enabled_scopes(scope_set)
-            for row in rows:
-                request_id = int(row["id"])
-                rule = rule_rows.get(int(row["rule_id"]))
-                if (
-                    rule is None
-                    or rule.rule_revision != int(row["rule_revision"])
-                ):
-                    self._conflict(request_id, "RULE_REVISION_CHANGED")
-                if rule.view_id != int(row["view_id"]):
-                    self._conflict(request_id, "RULE_VIEW_CHANGED")
-                if int(row["ledger_id"]) not in active_ledgers:
-                    self._conflict(request_id, "LEDGER_INACTIVE")
-                target = dictionary.get(int(row["proposed_tag_id"]))
-                if (
-                    target is None
-                    or target[0] != int(row["view_id"])
-                    or target[1] == "unclassified"
-                ):
-                    self._conflict(request_id, "TARGET_TAG_INACTIVE")
-                scope = (int(row["ledger_id"]), int(row["view_id"]))
-                current = [
-                    item for item in scope_rows.get(scope, []) if item[3] == "ACTIVE"
-                ]
-                if len(current) != 1 or current[0][2] != "unclassified":
-                    self._conflict(request_id, "MANUAL_TAG_CONFLICT")
-                if scope in enabled_scopes:
-                    self._conflict(request_id, "SOURCE_ALREADY_ENABLED")
-
-            now = utc_now()
-            self._increment_counters(rule_rows, rows, accepted=True, now=now)
-            self.mapper.approve_rows(rows, scope_rows, now=now)
-            items = [
-                TagAssignmentRequestRead(**row)
-                for row in self.mapper.read_by_ids(request_ids)
-            ]
-            self.mapper.commit()
-            return TagAssignmentBatchRead(
-                operation="APPROVE",
-                items=items,
-            )
-        except TargetTagError:
-            self.mapper.rollback()
-            raise
-        except (IntegrityError, OperationalError) as error:
-            self.mapper.rollback()
-            raise TargetTagError(
-                409,
-                "标签建议状态已变化，请刷新后重试",
-                code="TAG_REQUEST_WRITE_CONFLICT",
-            ) from error
-        except Exception:
-            self.mapper.rollback()
-            raise
+        return self._transition(request_ids, accepted=True)
 
     def reject(self, request_ids: list[int]) -> TagAssignmentBatchRead:
+        return self._transition(request_ids, accepted=False)
+
+    def _transition(self, request_ids: list[int], *, accepted: bool) -> TagAssignmentBatchRead:
+        # The service is used outside HTTP too; enforce the public batch bounds.
+        if (not request_ids or len(request_ids) > 100 or
+                any(type(value) is not int or not 1 <= value <= MAX_COUNTER_VALUE for value in request_ids) or
+                len(set(request_ids)) != len(request_ids)):
+            raise TargetTagError(422, "请选择1至100条不同的请求", code="TAG_REQUEST_BATCH_INVALID")
         try:
             self.mapper.begin_write()
-            rows = self._pending_rows(request_ids)
-            rule_rows = self.mapper.rule_rows({int(row["rule_id"]) for row in rows})
-            if len(rule_rows) != len({int(row["rule_id"]) for row in rows}):
-                raise TargetTagError(
-                    409,
-                    "来源规则已不存在，请刷新核对",
-                    code="TAG_REQUEST_RULE_MISSING",
-                )
-            now = utc_now()
-            self._increment_counters(rule_rows, rows, accepted=False, now=now)
-            self.mapper.reject_rows(request_ids, now=now)
-            items = [
-                TagAssignmentRequestRead(**row)
-                for row in self.mapper.read_by_ids(request_ids)
-            ]
+            rows = self.mapper.by_ids(request_ids)
+            by_id = {int(row["id"]): row for row in rows}
+            rules = self.mapper.rule_rows({int(row["rule_id"]) for row in rows})
+            scopes = {(int(row["ledger_id"]), int(row["view_id"])) for row in rows}
+            scope_counts = Counter((int(row["ledger_id"]), int(row["view_id"])) for row in rows)
+            if accepted:
+                active_ledgers = self.mapper.active_ledger_ids({int(row["ledger_id"]) for row in rows})
+                active_views = self.mapper.active_view_ids({int(row["view_id"]) for row in rows})
+                targets = self.mapper.active_dictionary_rows({int(row["proposed_tag_id"]) for row in rows})
+                scope_tags = self.mapper.scope_tag_rows(scopes)
+                enabled_sources = self.mapper.enabled_sources(scopes)
+            else:
+                scope_tags = {}
+
+            results: dict[int, TagAssignmentItemResult] = {}
+            eligible = []
+            for request_id in request_ids:
+                row = by_id.get(request_id)
+                code = None
+                status = int(row["status"]) if row is not None else None
+                if row is None:
+                    code = "NOT_FOUND"
+                elif status == (2 if accepted else 3):
+                    code = "ALREADY_APPROVED" if accepted else "ALREADY_REJECTED"
+                elif status != TAG_REQUEST_STATUS_PENDING:
+                    code = "REQUEST_STATE_CONFLICT"
+                else:
+                    rule = rules.get(int(row["rule_id"]))
+                    scope = (int(row["ledger_id"]), int(row["view_id"]))
+                    if rule is None:
+                        code = "RULE_STALE"
+                    elif accepted:
+                        current = [item for item in scope_tags.get(scope, []) if item[3] == "ACTIVE"]
+                        target = targets.get(int(row["proposed_tag_id"]))
+                        if scope_counts[scope] > 1:
+                            code = "SCOPE_CONFLICT"
+                        elif rule.rule_revision != row["rule_revision"] or rule.view_id != row["view_id"]:
+                            code = "RULE_STALE"
+                        elif scope[0] not in active_ledgers:
+                            code = "LEDGER_INACTIVE"
+                        elif scope[1] not in active_views:
+                            code = "VIEW_INACTIVE"
+                        elif target is None or target[0] != scope[1] or target[1] == "unclassified":
+                            code = "TAG_INACTIVE"
+                        elif len(current) != 1 or not (
+                            (current[0][2] == "unclassified" and not enabled_sources.get(scope))
+                            or enabled_sources.get(scope) == [current[0][1]]
+                        ):
+                            code = "MANUAL_TAG_CONFLICT"
+                    if code is None:
+                        eligible.append(row)
+                if code is not None:
+                    results[request_id] = TagAssignmentItemResult(request_id=request_id, result=code, status=status)
+
+            # Overflow rejects only that rule's subset. SQLite never promotes
+            # counters to REAL and other rules do not lose their decisions.
+            field = "accepted_count" if accepted else "rejected_count"
+            counts = Counter(int(row["rule_id"]) for row in eligible)
+            exhausted = {
+                rule_id for rule_id, delta in counts.items()
+                if int(getattr(rules[rule_id], field)) > MAX_COUNTER_VALUE - delta
+            }
+            valid = []
+            for row in eligible:
+                if int(row["rule_id"]) in exhausted:
+                    results[int(row["id"])] = TagAssignmentItemResult(
+                        request_id=int(row["id"]), result="COUNTER_EXHAUSTED", status=1,
+                    )
+                else:
+                    valid.append(row)
+            if valid:
+                now = utc_now()
+                previous = self.mapper.latest_assignment_time({int(row["ledger_id"]) for row in valid}) if accepted else None
+                if previous is not None:
+                    now = max(now, previous + timedelta(microseconds=1))
+                for rule_id, delta in Counter(int(row["rule_id"]) for row in valid).items():
+                    rule = rules[rule_id]
+                    setattr(rule, field, int(getattr(rule, field)) + delta)
+                    rule.updated_time = max(now, rule.updated_time + timedelta(microseconds=1))
+                if accepted:
+                    self.mapper.approve_rows(valid, scope_tags, now=now)
+                else:
+                    self.mapper.reject_rows([int(row["id"]) for row in valid], now=now)
+                for row in valid:
+                    results[int(row["id"])] = TagAssignmentItemResult(
+                        request_id=int(row["id"]), result="APPROVED" if accepted else "REJECTED",
+                        status=2 if accepted else 3,
+                    )
             self.mapper.commit()
             return TagAssignmentBatchRead(
-                operation="REJECT",
-                items=items,
+                operation="APPROVE" if accepted else "REJECT",
+                items=[results[request_id] for request_id in request_ids],
             )
-        except TargetTagError:
-            self.mapper.rollback()
-            raise
-        except (IntegrityError, OperationalError) as error:
+        except (IntegrityError, OperationalError):
             self.mapper.rollback()
             raise TargetTagError(
-                409,
-                "标签建议状态已变化，请刷新后重试",
-                code="TAG_REQUEST_WRITE_CONFLICT",
-            ) from error
+                409, "标签建议写入冲突，请刷新核对后重试", code="TAG_REQUEST_WRITE_CONFLICT",
+            ) from None
         except Exception:
             self.mapper.rollback()
             raise
-
-    def _pending_rows(self, request_ids: list[int]) -> list[dict[str, object]]:
-        rows = self.mapper.by_ids(request_ids)
-        found = {int(row["id"]) for row in rows}
-        missing = sorted(set(request_ids) - found)
-        if missing:
-            raise TargetTagError(
-                404,
-                f"标签建议请求不存在：{missing}",
-                code="TAG_REQUEST_NOT_FOUND",
-            )
-        non_pending = sorted(
-            int(row["id"])
-            for row in rows
-            if row["status"] != TAG_REQUEST_STATUS_PENDING
-        )
-        if non_pending:
-            raise TargetTagError(
-                409,
-                f"标签建议已不再处于待确认状态：{non_pending}",
-                code="TAG_REQUEST_NOT_PENDING",
-            )
-        by_id = {int(row["id"]): row for row in rows}
-        return [by_id[request_id] for request_id in request_ids]
-
-    @staticmethod
-    def _increment_counters(rule_rows, rows, *, accepted: bool, now) -> None:
-        counts = Counter(int(row["rule_id"]) for row in rows)
-        field = "accepted_count" if accepted else "rejected_count"
-        for rule_id, delta in counts.items():
-            rule = rule_rows[rule_id]
-            current = int(getattr(rule, field))
-            if current > MAX_COUNTER_VALUE - delta:
-                raise TargetTagError(
-                    409,
-                    f"自动标签规则计数器 {field} 已达到上限",
-                    code="AUTO_TAG_RULE_COUNTER_EXHAUSTED",
-                )
-            setattr(rule, field, current + delta)
-            rule.updated_time = max(
-                now,
-                rule.updated_time + timedelta(microseconds=1),
-            )
-
-    @staticmethod
-    def _conflict(request_id: int, reason: str) -> None:
-        raise TargetTagError(
-            409,
-            f"标签建议请求 {request_id} 已不再适用，请刷新核对",
-            code="TAG_REQUEST_STALE",
-            details={"request_id": request_id, "reason": reason},
-        )

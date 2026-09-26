@@ -9,6 +9,7 @@ from pydantic import (
     Field,
     TypeAdapter,
     ValidationError,
+    field_serializer,
     model_validator,
 )
 
@@ -136,6 +137,12 @@ class TargetTagAssignmentRead(BaseModel):
     ledger_id: int
     tag_state: dict[str, str]
     updated_time: datetime | None
+
+    @field_serializer("updated_time", when_used="json")
+    def serialize_token(self, value: datetime | None) -> str | None:
+        if value is None:
+            return None
+        return value.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
 class TargetTagAssignmentResponse(SuccessResponse[TargetTagAssignmentRead]):

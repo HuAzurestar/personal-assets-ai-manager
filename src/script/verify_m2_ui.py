@@ -109,8 +109,9 @@ def run():
                 for item in conflict:
                     page.locator(f'[data-tag-request-select][value="{item["id"]}"]').check()
                 page.locator('[data-action="tag-request-batch"][data-operation="approve"]').click()
-                expect(page.locator("[data-batch-feedback]")).to_contain_text("同一账目和维度只能选择一项")
+                expect(page.locator("dialog[open]")).to_contain_text("同范围冲突项")
                 assert commands == []
+                page.locator('dialog [data-close]').first.click()
                 page.locator(f'[data-tag-request-select][value="{conflict[1]["id"]}"]').uncheck()
                 page.wait_for_timeout(5400)
                 expect(page.locator(f'[data-tag-request-select][value="{conflict[0]["id"]}"]')).to_be_checked()
@@ -147,17 +148,24 @@ def run():
                     page.unroute(batch_url)
                     expect(selectors).to_have_count(3)
                 assert len(commands) == 3
-                page.locator(f'[data-tag-request-select][value="{other["id"]}"]').uncheck()
+                # Real backend partial success: both competing requests fail,
+                # while the independent Ledger is approved in the same command.
+                page.locator(f'[data-tag-request-select][value="{conflict[1]["id"]}"]').check()
                 page.locator('[data-action="tag-request-batch"][data-operation="approve"]').click()
                 page.locator("[data-confirm-batch]").click()
-                expect(page.locator("[data-batch-feedback]")).to_contain_text("成功 1")
-                expect(selectors).to_have_count(1)
+                expect(page.locator("[data-batch-feedback]")).to_contain_text("成功 1 · 已处理 0 · 失败/未知 2")
+                expect(selectors).to_have_count(2)
                 assert len(commands) == 4
-                page.locator('[data-action="tag-request-transition"][data-operation="reject"]').click()
+                page.locator(f'[data-action="tag-request-transition"][data-operation="reject"][data-id="{conflict[0]["id"]}"]').click()
                 page.locator("[data-confirm-batch]").click()
                 expect(page.locator("[data-batch-feedback]")).to_contain_text("已拒绝，未改变标签")
-                expect(selectors).to_have_count(0)
+                expect(selectors).to_have_count(1)
                 assert len(commands) == 5
+                page.locator('[data-action="tag-request-transition"][data-operation="approve"]').click()
+                page.locator("[data-confirm-batch]").click()
+                expect(page.locator("[data-batch-feedback]")).to_contain_text("成功 1")
+                expect(selectors).to_have_count(0)
+                assert len(commands) == 6
 
                 page.goto(f"{base}/#details/auto-rule?rule_id=1")
                 expect(page.locator("[data-auto-rule-detail]")).to_contain_text("不是模型准确率")
@@ -186,9 +194,9 @@ def run():
                     page.screenshot(path=Path(evidence_dir) / "m2-settings.png", full_page=True)
                 assert not errors, errors
                 assert not external, external
-                assert len(commands) == 5
+                assert len(commands) == 6
                 browser.close()
-            print("PASS M2 persisted policy, preview, draft protection, conflict, 3 injected batch failures, approval/rejection, polling/offline, CAS; provider calls=0")
+            print("PASS M2 persisted policy, preview, draft protection, actual partial batch, 3 injected command failures, approval/rejection, polling/offline, CAS; provider calls=0")
         finally:
             server.should_exit = True
             thread.join(timeout=10)

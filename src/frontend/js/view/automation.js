@@ -613,11 +613,8 @@ async function transitionRequests(root, button, rerender) {
     : $$('[data-tag-request-select]:checked:not(:disabled)', root).map((item) => Number(item.value));
   if (!ids.length) return;
   const approve = button.dataset.operation === "approve";
-  if (approve && selectionConflict(requestItems.filter((item) => ids.includes(item.id)))) {
-    showBatchFeedback(root, batchFailureMarkup({ code: "TAG_REQUEST_SCOPE_CONFLICT", status: 409 }, ids));
-    return;
-  }
-  const dialog = openDialog(approve ? "确认通过标签建议" : "确认拒绝标签建议", `<p>本次选择 ${ids.length} 项：${ids.map((id) => `#${id}`).join("、")}。</p><p>${approve ? "同一账目 + 维度只能选一项；服务端将重新核对版本、账目和人工标签，冲突不会强制覆盖。" : "只将这些申请标为已拒绝，不修改现有标签。"}</p><p>当前服务仍是整批事务；逐项部分成功将在 M2-CORE 接通。超时结果未知时请先刷新核对。</p><div class="actions"><button type="button" class="quiet" data-close>取消</button><button type="button" class="primary" data-confirm-batch>确认${approve ? "通过" : "拒绝"}</button></div>`);
+  const conflict = approve && selectionConflict(requestItems.filter((item) => ids.includes(item.id)));
+  const dialog = openDialog(approve ? "确认通过标签建议" : "确认拒绝标签建议", `<p>本次选择 ${ids.length} 项：${ids.map((id) => `#${id}`).join("、")}。</p><p>${approve ? "同一账目 + 维度只能选一项；服务端将重新核对版本、账目和人工标签，冲突不会强制覆盖。" : "只将这些申请标为已拒绝，不修改现有标签。"}</p>${conflict ? '<p class="error">选择中有同范围冲突项，这些项不会通过；其他有效范围仍可处理。可取消后调整选择。</p>' : ""}<p>返回逐项结果；有效项会提交，失败项不改变标签。重复已处理项不重复计数；超时结果未知时请先刷新核对。</p><div class="actions"><button type="button" class="quiet" data-close>取消</button><button type="button" class="primary" data-confirm-batch>确认${approve ? "通过" : "拒绝"}</button></div>`);
   $('[data-confirm-batch]', dialog).addEventListener("click", async (event) => {
     event.currentTarget.disabled = true;
     root.dataset.commandPending = "true";

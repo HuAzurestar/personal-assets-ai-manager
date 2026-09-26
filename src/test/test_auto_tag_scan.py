@@ -38,6 +38,7 @@ from backend.schema.target_review import (
 )
 from backend.service.auto_tag_scan_service import AutoTagScanService
 from backend.service.llm_privacy_service import LlmPrivacyService
+from backend.service.tag_assignment_request_service import TagAssignmentRequestService
 from backend.service.target_economic_service import TargetEconomicService
 
 NOW = datetime(2026, 9, 22, 8, tzinfo=timezone.utc)
@@ -780,8 +781,9 @@ def test_cron_tick_creates_request_without_manual_notification(scan_runtime):
         assert db.get(AutoTagRule, rule_id).scan_after_ledger_id == ledger_id
 
 
+@pytest.mark.parametrize("approved", [False, True])
 def test_review_revoke_and_restore_invalidate_scan_and_pending_request(
-    scan_runtime,
+    scan_runtime, approved,
 ):
     sessions, _, view_id, tag_ids = scan_runtime
     with sessions() as db:
@@ -825,7 +827,7 @@ def test_review_revoke_and_restore_invalidate_scan_and_pending_request(
     with sessions() as db:
         db.execute(update(AutoTagRule).where(
             AutoTagRule.id == rule_id,
-        ).values(scan_after_ledger_id=ledger_id))
+        ).values(scan_after_ledger_id=ledger_id, analyzed_count=1, suggested_count=1))
         db.add(TagAssignmentRequest(
             rule_id=rule_id,
             rule_revision=1,
@@ -838,6 +840,12 @@ def test_review_revoke_and_restore_invalidate_scan_and_pending_request(
             updated_time=NOW,
         ))
         db.commit()
+
+    if approved:
+        with sessions() as db:
+            request_id = db.scalar(select(TagAssignmentRequest.id).where(TagAssignmentRequest.rule_id == rule_id))
+        with sessions() as db:
+            assert TagAssignmentRequestService(db).approve([request_id]).items[0].result == "APPROVED"
 
     with sessions() as db:
         revoked = TargetEconomicService(db).revoke(
@@ -852,7 +860,8 @@ def test_review_revoke_and_restore_invalidate_scan_and_pending_request(
         ))
         assert rule.scan_epoch == 2
         assert rule.scan_after_ledger_id == ledger_id - 1
-        assert request.status == TAG_REQUEST_STATUS_CANCELLED
+        assert request.status == (5 if approved else TAG_REQUEST_STATUS_CANCELLED)
+        assert (rule.accepted_count, rule.rejected_count) == (int(approved), 0)
 
     with sessions() as db:
         restored = TargetEconomicService(db).restore(
@@ -864,3 +873,6 @@ def test_review_revoke_and_restore_invalidate_scan_and_pending_request(
         rule = db.get(AutoTagRule, rule_id)
         assert rule.scan_epoch == 3
         assert rule.rule_revision == 1
+        request = db.scalar(select(TagAssignmentRequest).where(TagAssignmentRequest.rule_id == rule_id))
+        assert request.status == (5 if approved else TAG_REQUEST_STATUS_CANCELLED)
+        assert (rule.accepted_count, rule.rejected_count) == (int(approved), 0)
