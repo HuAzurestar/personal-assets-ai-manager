@@ -37,6 +37,7 @@ from backend.schema.target_review import (
     TargetReviewTransitionRequest,
 )
 from backend.service.auto_tag_scan_service import AutoTagScanService
+from backend.service.llm_privacy_service import LlmPrivacyService
 from backend.service.target_economic_service import TargetEconomicService
 
 NOW = datetime(2026, 9, 22, 8, tzinfo=timezone.utc)
@@ -255,6 +256,126 @@ def _suggest(payload, *tag_ids: int) -> LlmAnalysisResult:
 
 def _run(coroutine):
     return asyncio.run(coroutine)
+
+
+@pytest.mark.parametrize("currency_code", ["CNY", "CNY_4"])
+@pytest.mark.parametrize("amount_mode", [1, 2])
+def test_protected_split_uses_ledger_amount_not_original_fact(
+    scan_runtime, currency_code, amount_mode,
+):
+    sessions, _, view_id, _ = scan_runtime
+    with sessions() as db:
+        fact = TransactionFact(
+            fact_key="pirc24-gate-fictional-split", occurred_time=NOW,
+            cash_direction=2, amount=5000, currency_code=currency_code,
+            account_code="fixture", counterparty_name="Synthetic merchant",
+            counterparty_account_ref="", summary="Synthetic purchase",
+            created_time=NOW, updated_time=NOW,
+        )
+        db.add(fact)
+        db.flush()
+        fact_id = fact.id
+        economics = TargetEconomicService(db)
+        economics.ensure_defaults([fact_id], commit=True)
+        review = economics.create(TargetEconomicReviewCreateRequest(
+            behavior_type=1, title="Synthetic split",
+            economics=[{"client_key": "claim", "economic_type": "CLAIM"}],
+            allocations=[{
+                "fact_id": fact_id, "economic_key": "claim", "amount": 1000,
+            }],
+            idempotency_key="synthetic-split",
+        ))
+        split_id = review.allocations[0].ledger_entry_id
+    rule_id = _seed_rule(sessions, view_id, amount_mode=amount_mode)
+    with sessions() as db:
+        mapper = AutoTagScanMapper(db)
+        page = mapper.read_page(rule_id, limit=100)
+        source = mapper.read_protected_source(split_id, synthetic_only=True)
+        assert source.amount == 1000
+        assert source.currency_code == currency_code
+        assert source.direction == "OUT"
+        assert db.get(TransactionFact, fact_id).amount == 5000
+        active_sources = [
+            mapper.read_protected_source(ledger_id)
+            for ledger_id in page.active_ledger_ids
+        ]
+        assert sorted(item.amount for item in active_sources) == [1000, 4000]
+        payload = LlmPrivacyService({
+            "amount_bands": {currency_code: {"boundaries": [0, 3000, 10000]}},
+        }).build_payload(page, source)
+        if amount_mode == 1:
+            assert payload.amount.band_label == "[0,3000)"
+            assert payload.amount.amount_units is None
+        else:
+            assert payload.amount.amount_units == 1000
+            assert payload.amount.band_label is None
+
+
+def _protected_ledgers(sessions, tag_id):
+    ids = [_seed_ledger(sessions, tag_id) for _ in range(2)]
+    with sessions() as db:
+        db.add_all([
+            TransactionFact(
+                id=ledger_id, fact_key=f"pirc24-gate-fictional-{ledger_id}",
+                occurred_time=NOW, cash_direction=1, amount=12300,
+                currency_code="CNY", account_code="fixture",
+                counterparty_name="店" * 201, counterparty_account_ref="",
+                summary="茶" * 501 if index == 0 else "Synthetic purchase",
+                created_time=NOW, updated_time=NOW,
+            )
+            for index, ledger_id in enumerate(ids)
+        ])
+        db.commit()
+    return ids
+
+
+def test_long_protected_summary_does_not_block_following_ledger(scan_runtime):
+    sessions, _, view_id, tag_ids = scan_runtime
+    ids = _protected_ledgers(sessions, tag_ids["unclassified"])
+    rule_id = _seed_rule(sessions, view_id)
+    analyzer = FakeAnalyzer(lambda _, payload: _suggest(payload, tag_ids["food"]))
+    service = AutoTagScanService(sessions, analyzer)
+    result = _run(service.run_protected(
+        rule_id, _context(), LlmPrivacyService(), synthetic_only=True,
+    ))
+    assert result.stopped_reason == "PAGE_COMPLETE"
+    assert (result.submitted_count, result.request_count, result.failed_count) == (2, 2, 0)
+    assert len(analyzer.calls[0][2].summary) == 500
+    assert len(analyzer.calls[0][2].merchant) == 200
+    with sessions() as db:
+        assert len(db.get(TransactionFact, ids[0]).summary) == 501
+        assert db.get(AutoTagRule, rule_id).scan_after_ledger_id == ids[-1]
+        assert db.get(AutoTagRule, rule_id).analyzed_count == 2
+    resumed = _run(service.run_protected(rule_id, _context(), LlmPrivacyService()))
+    assert resumed.submitted_count == 0
+    assert len(analyzer.calls) == 2
+
+
+def test_invalid_protected_input_counts_once_and_continues(scan_runtime, caplog):
+    sessions, _, view_id, tag_ids = scan_runtime
+    ids = _protected_ledgers(sessions, tag_ids["unclassified"])
+    rule_id = _seed_rule(sessions, view_id)
+
+    class InvalidFirstInput(LlmPrivacyService):
+        def build_payload(self, page, source):
+            if len(source.summary) > 500:
+                raise ValueError("PRIVATE_SOURCE_MUST_NOT_BE_LOGGED")
+            return super().build_payload(page, source)
+
+    analyzer = FakeAnalyzer(lambda _, payload: _suggest(payload, tag_ids["food"]))
+    service = AutoTagScanService(sessions, analyzer)
+    result = _run(service.run_protected(rule_id, _context(), InvalidFirstInput()))
+    assert result.stopped_reason == "PAGE_COMPLETE"
+    assert (result.submitted_count, result.request_count, result.failed_count) == (1, 1, 1)
+    assert result.input_failed_count == 1
+    assert "PRIVATE_SOURCE_MUST_NOT_BE_LOGGED" not in caplog.text
+    with sessions() as db:
+        rule = db.get(AutoTagRule, rule_id)
+        assert (rule.scan_after_ledger_id, rule.analyzed_count, rule.failed_count) == (
+            ids[-1], 2, 1,
+        )
+    _run(service.run_protected(rule_id, _context(), InvalidFirstInput()))
+    assert len(analyzer.calls) == 1
 
 
 def test_multi_rule_page_commits_suggestions_failures_and_insufficient(

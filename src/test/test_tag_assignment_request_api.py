@@ -23,10 +23,12 @@ from backend.entity import (
 from backend.mapper.auto_tag_rule_mapper import AutoTagRuleMapper
 from backend.mapper.setting_mapper import SettingMapper
 from backend.mapper.target_tag_mapper import TargetTagMapper
+from backend.mapper.target_tag_assignment_mapper import TargetTagAssignmentMapper
 from backend.router.dependency import get_db
 from backend.router.error import register_error_handlers
 from backend.router.ledger import router as ledger_router
 from backend.router.tag_assignment_request import router as request_router
+from backend.router.tag_assignment import router as assignment_router
 from backend.schema.auto_tag_scan import SyntheticTagScanFixture
 from backend.schema.llm_analysis import (
     LlmAmountDisclosure,
@@ -84,6 +86,7 @@ def request_api(tmp_path):
     register_error_handlers(app)
     app.include_router(request_router)
     app.include_router(ledger_router)
+    app.include_router(assignment_router)
 
     def override_db():
         with sessions() as db:
@@ -430,3 +433,209 @@ def test_stale_rule_and_inactive_ledger_are_rejected(request_api):
     )
     assert inactive.status_code == 409
     assert inactive.json()["body"]["details"]["reason"] == "LEDGER_INACTIVE"
+
+
+def _request_id(sessions, rule_id, ledger_id):
+    with sessions() as db:
+        return db.scalar(select(TagAssignmentRequest.id).where(
+            TagAssignmentRequest.rule_id == rule_id,
+            TagAssignmentRequest.ledger_id == ledger_id,
+        ))
+
+
+def _approve(client, request_id):
+    response = client.post(
+        "/paam/tag/v1/assignment_request/batch_approve",
+        json={"request_ids": [request_id]},
+    )
+    assert response.status_code == 200, response.text
+
+
+def _assignment(client, ledger_id):
+    response = client.get(f"/paam/tag/v1/assignment/{ledger_id}")
+    assert response.status_code == 200, response.text
+    return response.json()["body"]
+
+
+def _manual(client, ledger_id, state, token, *, view_names=None):
+    return client.put(f"/paam/tag/v1/assignment/{ledger_id}", json={
+        "expected_updated_time": token, "tag_state": state,
+        "view_names": view_names,
+    })
+
+
+@pytest.mark.parametrize("approve_mood", [False, True])
+def test_manual_reset_replaces_old_source_and_allows_new_approval(
+    request_api, approve_mood,
+):
+    client, sessions, category_id, mood_id, tag_ids = request_api
+    ledger_id = _ledger(
+        sessions, tag_ids["category"]["unclassified"], tag_ids["mood"]["unclassified"],
+    )
+    food_rule = _rule(sessions, category_id, "Food")
+    mood_rule = _rule(sessions, mood_id, "Mood")
+    _scan(sessions, food_rule, ledger_id, tag_ids["category"]["food"], "Food")
+    _scan(sessions, mood_rule, ledger_id, tag_ids["mood"]["happy"], "Happy")
+    food_request = _request_id(sessions, food_rule, ledger_id)
+    mood_request = _request_id(sessions, mood_rule, ledger_id)
+    _approve(client, food_request)
+    if approve_mood:
+        _approve(client, mood_request)
+    with sessions() as db:
+        untouched = db.execute(select(
+            LedgerEntryTag.id, LedgerEntryTag.updated_time,
+        ).where(
+            LedgerEntryTag.ledger_id == ledger_id,
+            LedgerEntryTag.tag_id.in_(tag_ids["mood"].values()),
+        )).one()
+    opened = _assignment(client, ledger_id)
+    response = _manual(client, ledger_id, {
+        **opened["tag_state"], "category": "unclassified",
+    }, opened["updated_time"])
+    assert response.status_code == 200, response.text
+    assert _assignment(client, ledger_id) == response.json()["body"]
+    with sessions() as db:
+        assert db.get(TagAssignmentRequest, food_request).status == 5
+        assert db.get(TagAssignmentRequest, mood_request).status == (2 if approve_mood else 1)
+        assert db.execute(select(
+            LedgerEntryTag.id, LedgerEntryTag.updated_time,
+        ).where(
+            LedgerEntryTag.ledger_id == ledger_id,
+            LedgerEntryTag.tag_id.in_(tag_ids["mood"].values()),
+        )).one() == untouched
+        food = db.get(AutoTagRule, food_rule)
+        assert (food.accepted_count, food.rejected_count) == (1, 0)
+    travel_rule = _rule(sessions, category_id, "Travel after manual reset")
+    _scan(sessions, travel_rule, ledger_id, tag_ids["category"]["travel"], "Travel")
+    _approve(client, _request_id(sessions, travel_rule, ledger_id))
+    assert _assignment(client, ledger_id)["tag_state"]["category"] == "travel"
+
+
+def test_same_value_manual_save_takes_ownership_and_is_then_idempotent(request_api):
+    client, sessions, category_id, _, tag_ids = request_api
+    ledger_id = _ledger(
+        sessions, tag_ids["category"]["unclassified"], tag_ids["mood"]["unclassified"],
+    )
+    rule_id = _rule(sessions, category_id, "Food")
+    _scan(sessions, rule_id, ledger_id, tag_ids["category"]["food"], "Food")
+    request_id = _request_id(sessions, rule_id, ledger_id)
+    _approve(client, request_id)
+    opened = _assignment(client, ledger_id)
+    saved = _manual(client, ledger_id, opened["tag_state"], opened["updated_time"])
+    assert saved.status_code == 200, saved.text
+    current = saved.json()["body"]
+    assert current["updated_time"] > opened["updated_time"]
+    assert _assignment(client, ledger_id) == current
+    replay = _manual(client, ledger_id, current["tag_state"], current["updated_time"])
+    assert replay.status_code == 200
+    assert replay.json()["body"] == current
+    assert _manual(client, ledger_id, opened["tag_state"], opened["updated_time"]).status_code == 409
+    tags = client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]["ledger_entry"]["tags"]
+    category = next(item for item in tags if item["view_system_name"] == "category")
+    assert category["source_type"] == "MANUAL"
+    assert category["request_id"] is None
+    with sessions() as db:
+        assert db.get(TagAssignmentRequest, request_id).status == 5
+        assert db.get(AutoTagRule, rule_id).accepted_count == 1
+        assert db.get(AutoTagRule, rule_id).rejected_count == 0
+
+
+@pytest.mark.parametrize("category", ["food", "unclassified"])
+def test_manual_assignment_cancels_pending_only_for_target_ledger(request_api, category):
+    client, sessions, category_id, _, tag_ids = request_api
+    ledger_id = _ledger(
+        sessions, tag_ids["category"]["unclassified"], tag_ids["mood"]["unclassified"],
+    )
+    other_id = _ledger(
+        sessions, tag_ids["category"]["unclassified"], tag_ids["mood"]["happy"],
+    )
+    rule_id = _rule(sessions, category_id, "Pending food")
+    _scan(sessions, rule_id, ledger_id, tag_ids["category"]["food"], "Food")
+    _scan(sessions, rule_id, other_id, tag_ids["category"]["food"], "Food")
+    opened = _assignment(client, ledger_id)
+    saved = _manual(client, ledger_id, {
+        **opened["tag_state"], "category": category,
+    }, opened["updated_time"])
+    assert saved.status_code == 200, saved.text
+    request_id = _request_id(sessions, rule_id, ledger_id)
+    other_request = _request_id(sessions, rule_id, other_id)
+    assert other_request is not None
+    assert client.post(
+        "/paam/tag/v1/assignment_request/batch_approve",
+        json={"request_ids": [request_id]},
+    ).status_code == 409
+    with sessions() as db:
+        assert db.get(TagAssignmentRequest, request_id).status == 4
+        assert db.get(TagAssignmentRequest, other_request).status == 1
+        rule = db.get(AutoTagRule, rule_id)
+        assert (rule.accepted_count, rule.rejected_count) == (0, 0)
+
+
+@pytest.mark.parametrize("category", ["food", "unclassified"])
+def test_manual_request_state_and_tag_write_roll_back_together(
+    request_api, monkeypatch, category,
+):
+    client, sessions, category_id, _, tag_ids = request_api
+    ledger_id = _ledger(
+        sessions, tag_ids["category"]["unclassified"], tag_ids["mood"]["unclassified"],
+    )
+    rule_id = _rule(sessions, category_id, "Pending food")
+    _scan(sessions, rule_id, ledger_id, tag_ids["category"]["food"], "Food")
+    request_id = _request_id(sessions, rule_id, ledger_id)
+    opened = _assignment(client, ledger_id)
+    replace = TargetTagAssignmentMapper.replace
+
+    def fail_after_write(self, *args, **kwargs):
+        replace(self, *args, **kwargs)
+        self.db.flush()
+        raise RuntimeError("synthetic write failure")
+
+    monkeypatch.setattr(TargetTagAssignmentMapper, "replace", fail_after_write)
+    failed = _manual(client, ledger_id, {
+        **opened["tag_state"], "category": category,
+    }, opened["updated_time"])
+    assert failed.status_code == 500
+    assert _assignment(client, ledger_id) == opened
+    with sessions() as db:
+        assert db.get(TagAssignmentRequest, request_id).status == 1
+        assert db.get(AutoTagRule, rule_id).accepted_count == 0
+
+
+def test_scoped_same_value_takeover_preserves_other_auto_view(request_api):
+    client, sessions, category_id, mood_id, tag_ids = request_api
+    ledger_id = _ledger(
+        sessions, tag_ids["category"]["unclassified"], tag_ids["mood"]["unclassified"],
+    )
+    category_rule = _rule(sessions, category_id, "Food")
+    mood_rule = _rule(sessions, mood_id, "Mood")
+    _scan(sessions, category_rule, ledger_id, tag_ids["category"]["food"], "Food")
+    _scan(sessions, mood_rule, ledger_id, tag_ids["mood"]["happy"], "Happy")
+    category_request = _request_id(sessions, category_rule, ledger_id)
+    mood_request = _request_id(sessions, mood_rule, ledger_id)
+    _approve(client, category_request)
+    _approve(client, mood_request)
+    opened = _assignment(client, ledger_id)
+    noop = _manual(
+        client, ledger_id, opened["tag_state"], opened["updated_time"], view_names=[],
+    )
+    assert noop.json()["body"] == opened
+    for view_names in (["missing"], ["category", "category"], []):
+        invalid = _manual(client, ledger_id, {
+            **opened["tag_state"], "category": "unclassified",
+        }, opened["updated_time"], view_names=view_names)
+        assert invalid.status_code == 422, invalid.text
+    saved = _manual(
+        client, ledger_id, opened["tag_state"], opened["updated_time"],
+        view_names=["category"],
+    )
+    assert saved.status_code == 200, saved.text
+    current = saved.json()["body"]
+    assert current["updated_time"] > opened["updated_time"]
+    replay = _manual(
+        client, ledger_id, current["tag_state"], current["updated_time"],
+        view_names=["category"],
+    )
+    assert replay.json()["body"] == current
+    with sessions() as db:
+        assert db.get(TagAssignmentRequest, category_request).status == 5
+        assert db.get(TagAssignmentRequest, mood_request).status == 2

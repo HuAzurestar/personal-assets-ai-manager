@@ -64,6 +64,8 @@ class TargetTagAssignmentRequest(BaseModel):
 
     expected_updated_time: datetime | None
     tag_state: dict[str, str]
+    # Optional for existing callers; [] explicitly means no View was assigned.
+    view_names: list[str] | None = Field(default=None, max_length=100)
 
 
 class TargetTagRead(BaseModel):

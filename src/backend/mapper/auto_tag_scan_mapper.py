@@ -207,12 +207,15 @@ class AutoTagScanMapper:
         self, ledger_id: int, *, synthetic_only: bool = False,
     ) -> ProtectedScanSource | None:
         row = self.db.execute(select(
-            TransactionFact.cash_direction,
-            TransactionFact.amount,
-            TransactionFact.currency_code,
+            LedgerEntry.entry_direction,
+            LedgerEntry.amount,
+            LedgerEntry.currency_code,
             TransactionFact.counterparty_name,
             TransactionFact.summary,
         ).select_from(ReviewAllocation).join(
+            LedgerEntry,
+            LedgerEntry.id == ReviewAllocation.ledger_entry_id,
+        ).join(
             ReviewCase,
             ReviewCase.id == ReviewAllocation.review_case_id,
         ).join(
@@ -229,7 +232,7 @@ class AutoTagScanMapper:
         if row is None:
             return None
         return ProtectedScanSource(
-            direction="IN" if row["cash_direction"] == 1 else "OUT",
+            direction="IN" if row["entry_direction"] == 1 else "OUT",
             amount=int(row["amount"]),
             currency_code=str(row["currency_code"]),
             merchant=str(row["counterparty_name"]),

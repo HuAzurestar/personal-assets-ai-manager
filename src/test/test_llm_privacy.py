@@ -1,3 +1,5 @@
+import pytest
+
 from backend.mapper.auto_tag_scan_mapper import (
     ProtectedScanSource,
     ScanPage,
@@ -84,3 +86,20 @@ def test_model_reason_with_identifier_is_rejected():
         pass
     else:
         raise AssertionError("unsafe model reason was accepted")
+
+
+@pytest.mark.parametrize("length", [500, 501, 8000])
+def test_protected_text_is_bounded_after_sanitizing_without_changing_source(length):
+    source = ProtectedScanSource(
+        direction="OUT", amount=1000, currency_code="CNY",
+        merchant="店" * 195 + " 订单号 ABC-12345678 " + "铺" * length,
+        summary="茶" * 495 + " https://example.test/private " + "点" * length,
+    )
+    payload = LlmPrivacyService().build_payload(_page(), source)
+    assert payload is not None
+    assert len(payload.merchant) == 200
+    assert len(payload.summary) == 500
+    assert "ABC" not in payload.merchant
+    assert "http" not in payload.summary
+    assert "订单号 ABC-12345678" in source.merchant
+    assert "https://example.test/private" in source.summary

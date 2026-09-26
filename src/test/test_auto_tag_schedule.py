@@ -214,15 +214,17 @@ def test_persisted_enabled_rules_are_restored_and_ticks_use_shared_fifo(tmp_path
 
 
 @pytest.mark.parametrize(
-    ("report_counts", "reason", "expected_result", "expected_code"),
+    ("report_counts", "reason", "input_failed", "expected_result", "expected_code"),
     [
-        ((1, 1, 0, 1), "OUTPUT_JSON_INVALID", "FAILED", "OUTPUT_JSON_INVALID"),
-        ((2, 2, 1, 1), "PAGE_COMPLETE", "PARTIAL_FAILURE", "ITEM_FAILURE"),
-        ((0, 0, 0, 0), "MODEL_DISABLED", "FAILED", "MODEL_DISABLED"),
+        ((1, 1, 0, 1), "OUTPUT_JSON_INVALID", 0, "FAILED", "OUTPUT_JSON_INVALID"),
+        ((2, 2, 1, 1), "PAGE_COMPLETE", 0, "PARTIAL_FAILURE", "ITEM_FAILURE"),
+        ((0, 0, 0, 0), "MODEL_DISABLED", 0, "FAILED", "MODEL_DISABLED"),
+        ((2, 1, 1, 1), "PAGE_COMPLETE", 1, "PARTIAL_FAILURE", "ITEM_FAILURE"),
+        ((1, 0, 0, 1), "PAGE_COMPLETE", 1, "FAILED", "ITEM_FAILURE"),
     ],
 )
 def test_scan_outcome_is_visible_in_shared_scheduler(
-    tmp_path, report_counts, reason, expected_result, expected_code,
+    tmp_path, report_counts, reason, input_failed, expected_result, expected_code,
 ):
     engine, sessions, rule_id = _runtime(tmp_path)
     scheduler = JobScheduler()
@@ -234,7 +236,9 @@ def test_scan_outcome_is_visible_in_shared_scheduler(
         async def run_protected(self, actual_rule_id, context, privacy, *, synthetic_only=False):
             assert synthetic_only is True
             del context, privacy
-            return ScanRunReport(actual_rule_id, *report_counts, reason)
+            return ScanRunReport(
+                actual_rule_id, *report_counts, reason, input_failed_count=input_failed,
+            )
 
     service._scan = FakeScan()
 

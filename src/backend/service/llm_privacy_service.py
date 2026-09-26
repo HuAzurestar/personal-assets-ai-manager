@@ -48,8 +48,14 @@ class LlmPrivacyService:
         source: ProtectedScanSource,
     ) -> ProtectedLlmAnalysisInput | None:
         prompt = self.sanitize_text(page.prompt, amount_mode=page.amount_mode)
-        merchant = self.sanitize_text(source.merchant, amount_mode=page.amount_mode)
-        summary = self.sanitize_text(source.summary, amount_mode=page.amount_mode)
+        # Clean complete source text before applying the provider DTO's limits;
+        # clipping first can turn a secret spanning the boundary into plain text.
+        merchant = self.sanitize_text(
+            source.merchant, amount_mode=page.amount_mode,
+        )[:200].strip()
+        summary = self.sanitize_text(
+            source.summary, amount_mode=page.amount_mode,
+        )[:500].strip()
         candidates = []
         for target in page.targets:
             name = self.sanitize_text(target.name, amount_mode=page.amount_mode)

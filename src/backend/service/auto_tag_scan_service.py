@@ -48,6 +48,7 @@ class ScanRunReport:
     request_count: int
     failed_count: int
     stopped_reason: str
+    input_failed_count: int = 0
 
 
 class _PayloadStop(ValueError):
@@ -137,7 +138,15 @@ class AutoTagScanService:
         if not page.targets:
             return ScanRunReport(rule_id, 0, 0, 0, 0, "NO_ACTIVE_TARGETS")
 
-        inspected = submitted = request_count = failed = 0
+        inspected = submitted = request_count = failed = input_failed = 0
+
+        def report(reason: str, *, inspected_count: int | None = None):
+            return ScanRunReport(
+                rule_id, inspected if inspected_count is None else inspected_count,
+                submitted, request_count, failed, reason,
+                input_failed_count=input_failed,
+            )
+
         token = page.token
         for ledger_id in page.ledger_ids:
             inspected += 1
@@ -145,32 +154,35 @@ class AutoTagScanService:
             if skip_reason is not None:
                 result = self._commit(token, ledger_id, "SKIP", ())
                 if result.status == "STALE":
-                    return ScanRunReport(
-                        rule_id, inspected, submitted, request_count, failed,
-                        result.reason,
-                    )
+                    return report(result.reason)
                 token = self._advanced(token, ledger_id)
                 continue
 
             if not context.may_start_work():
-                return ScanRunReport(
-                    rule_id, inspected - 1, submitted, request_count, failed,
-                    "SOFT_BUDGET_EXHAUSTED",
-                )
+                return report("SOFT_BUDGET_EXHAUSTED", inspected_count=inspected - 1)
             try:
                 payload = payload_builder(page, ledger_id)
             except _PayloadStop as error:
-                return ScanRunReport(
-                    rule_id, inspected, submitted, request_count, failed,
-                    error.reason,
+                return report(error.reason)
+            except (ValidationError, ValueError, TypeError) as error:
+                # Invalid business input is one failed item, not a permanent
+                # poison record that prevents the rule from reaching later IDs.
+                logger.warning(
+                    "Auto-tag input rejected rule=%s ledger=%s error_type=%s",
+                    rule_id, ledger_id, type(error).__name__,
                 )
+                result = self._commit(token, ledger_id, "ITEM_FAILURE", ())
+                if result.status == "STALE":
+                    return report(result.reason)
+                if result.reason == "ANALYSIS_COMMITTED":
+                    failed += 1
+                    input_failed += 1
+                token = self._advanced(token, ledger_id)
+                continue
             if payload is None:
                 result = self._commit(token, ledger_id, "NO_SUGGESTION", ())
                 if result.status == "STALE":
-                    return ScanRunReport(
-                        rule_id, inspected, submitted, request_count, failed,
-                        result.reason,
-                    )
+                    return report(result.reason)
                 token = self._advanced(token, ledger_id)
                 continue
 
@@ -209,10 +221,7 @@ class AutoTagScanService:
                     error.code,
                 )
                 if error.code in {"AUTH_ERROR", "CONFIG_ERROR"}:
-                    return ScanRunReport(
-                        rule_id, inspected, submitted, request_count, failed,
-                        error.code,
-                    )
+                    return report(error.code)
                 kind = "ITEM_FAILURE"
                 item_failed = True
                 provider_error_code = error.code
@@ -237,10 +246,7 @@ class AutoTagScanService:
 
             result = self._commit(token, ledger_id, kind, suggestions)
             if result.status == "STALE":
-                return ScanRunReport(
-                    rule_id, inspected, submitted, request_count, failed,
-                    result.reason,
-                )
+                return report(result.reason)
             request_count += result.request_count
             if item_failed or result.reason == "INVALID_SUGGESTION":
                 failed += 1
@@ -252,18 +258,9 @@ class AutoTagScanService:
                 )
             token = self._advanced(token, ledger_id)
             if stop_on_provider_error and provider_error_code is not None:
-                return ScanRunReport(
-                    rule_id,
-                    inspected,
-                    submitted,
-                    request_count,
-                    failed,
-                    provider_error_code,
-                )
+                return report(provider_error_code)
 
-        return ScanRunReport(
-            rule_id, inspected, submitted, request_count, failed, "PAGE_COMPLETE"
-        )
+        return report("PAGE_COMPLETE")
 
     async def _analyze_with_policy(
         self,

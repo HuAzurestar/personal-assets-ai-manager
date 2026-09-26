@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import (
+    case,
     delete,
     distinct,
     exists,
@@ -19,6 +20,7 @@ from backend.entity import (
     TAG_REQUEST_STATUS_ENABLED,
     TAG_REQUEST_STATUS_PENDING,
     TAG_REQUEST_STATUS_REJECTED,
+    TAG_REQUEST_STATUS_REPLACED,
     AutoTagRule,
     LedgerEntry,
     LedgerEntryTag,
@@ -338,6 +340,29 @@ class TagAssignmentRequestMapper:
             status=TAG_REQUEST_STATUS_REJECTED,
             updated_time=now,
         ))
+
+    def supersede_by_manual_assignment(
+        self, ledger_id: int, tag_ids: set[int], *, now: datetime,
+    ) -> bool:
+        """End automatic ownership only in the explicitly assigned Views."""
+        if not tag_ids:
+            return False
+        view_ids = select(TargetTag.view_id).where(TargetTag.id.in_(tag_ids))
+        result = self.db.execute(update(TagAssignmentRequest).where(
+            TagAssignmentRequest.ledger_id == ledger_id,
+            TagAssignmentRequest.view_id.in_(view_ids),
+            TagAssignmentRequest.status.in_((
+                TAG_REQUEST_STATUS_PENDING, TAG_REQUEST_STATUS_ENABLED,
+            )),
+        ).values(
+            status=case(
+                (TagAssignmentRequest.status == TAG_REQUEST_STATUS_PENDING,
+                 TAG_REQUEST_STATUS_CANCELLED),
+                else_=TAG_REQUEST_STATUS_REPLACED,
+            ),
+            updated_time=now,
+        ).execution_options(synchronize_session=False))
+        return result.rowcount > 0
 
     def create_many(
         self,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, select, text, update
 from sqlalchemy.orm import Session
 
 from backend.entity import (
@@ -69,9 +69,19 @@ class TargetTagAssignmentMapper:
         ledger_id: int,
         tag_ids: list[int],
         now: datetime,
+        *,
+        previous_tag_ids: tuple[int, ...],
+        touched_tag_ids: set[int],
     ) -> None:
         self.db.execute(delete(LedgerEntryTag).where(
-            LedgerEntryTag.ledger_id == ledger_id
+            LedgerEntryTag.ledger_id == ledger_id,
+            LedgerEntryTag.tag_id.not_in(tag_ids),
+        ))
+        self.db.execute(update(LedgerEntryTag).where(
+            LedgerEntryTag.ledger_id == ledger_id,
+            LedgerEntryTag.tag_id.in_(touched_tag_ids),
+        ).values(
+            updated_time=now,
         ))
         self.db.add_all([
             LedgerEntryTag(
@@ -81,6 +91,7 @@ class TargetTagAssignmentMapper:
                 updated_time=now,
             )
             for tag_id in tag_ids
+            if tag_id not in previous_tag_ids
         ])
 
     def commit(self) -> None:

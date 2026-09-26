@@ -678,7 +678,7 @@ async function editTags(ledgerId) {
   if (renderVersion !== state.renderVersion) return;
   if (!views.length) return toast("请先创建标签维度", true);
   const current = assignment.tag_state;
-  const dialog = modal("编辑最终流水标签", `<form data-form="tag-assignment" data-ledger="${ledgerId}" data-updated-time="${esc(assignment.updated_time || "")}" class="stack">${views.map((view) => `<label>${esc(view.name)}<select name="${esc(view.system_name)}">${view.tags.filter((tag) => tag.status === "ACTIVE").map((tag) => `<option value="${esc(tag.system_name)}" ${(current[view.system_name] || "unclassified") === tag.system_name ? "selected" : ""}>${esc(tag.name)}</option>`).join("")}</select></label>`).join("")}<div class="actions"><button class="primary">保存标签</button></div></form>`);
+  const dialog = modal("编辑最终流水标签", `<form data-form="tag-assignment" data-ledger="${ledgerId}" data-updated-time="${esc(assignment.updated_time || "")}" class="stack"><p>修改标签只影响对应维度；标签不变时，可勾选将该维度接管为人工。</p>${views.map((view) => `<div><label>${esc(view.name)}<select name="${esc(view.system_name)}" data-original="${esc(current[view.system_name] || "unclassified")}">${view.tags.filter((tag) => tag.status === "ACTIVE").map((tag) => `<option value="${esc(tag.system_name)}" ${(current[view.system_name] || "unclassified") === tag.system_name ? "selected" : ""}>${esc(tag.name)}</option>`).join("")}</select></label><label><input type="checkbox" data-manual-view="${esc(view.system_name)}">将${esc(view.name)}接管为人工</label></div>`).join("")}<div class="actions"><button class="primary">保存标签</button></div></form>`);
   bindPage(dialog);
 }
 
@@ -1446,6 +1446,15 @@ window.addEventListener("paam:automation-saved", async (event) => {
   await render();
 });
 
+function manualTagViewNames(form) {
+  const changed = [...form.querySelectorAll("select[name]")]
+    .filter((select) => select.value !== select.dataset.original)
+    .map((select) => select.name);
+  const claimed = [...form.querySelectorAll("[data-manual-view]:checked")]
+    .map((checkbox) => checkbox.dataset.manualView);
+  return [...new Set([...changed, ...claimed])];
+}
+
 async function submitTags(event) {
   event.preventDefault(); const form = event.currentTarget; const data = new FormData(form);
   if (!beginSubmit(form)) return;
@@ -1453,6 +1462,7 @@ async function submitTags(event) {
     await jsonRequest(`/paam/tag/v1/assignment/${form.dataset.ledger}`, "PUT", {
       expected_updated_time: form.dataset.updatedTime || null,
       tag_state: Object.fromEntries(data),
+      view_names: manualTagViewNames(form),
     });
     closeDialogs(); toast("标签已保存"); await render();
   } catch (error) { endSubmit(form); showFormError(form, error); }

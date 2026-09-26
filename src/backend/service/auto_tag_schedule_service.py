@@ -100,7 +100,9 @@ class AutoTagScheduleService:
                 return JobOutcome(
                     result=(
                         "PARTIAL_FAILURE"
-                        if report.submitted_count > report.failed_count
+                        if report.submitted_count > (
+                            report.failed_count - report.input_failed_count
+                        )
                         else "FAILED"
                     ),
                     error_code=(
