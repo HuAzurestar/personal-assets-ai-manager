@@ -11,4 +11,7 @@ COPY src/test ./src/test
 COPY src/script/serve_m2_ui.py ./src/script/serve_m2_ui.py
 ENV PYTHONDONTWRITEBYTECODE=1 PAAM_AUTOTAG_REAL_ANALYSIS=0 PAAM_AUTOTAG_SYNTHETIC_ACCEPTANCE=0
 EXPOSE 8765
+# The dependency image's acceptance entrypoint ignores CMD and seeds its own DB.
+# Explicitly clear it so only this dedicated fictional harness owns initialization.
+ENTRYPOINT []
 CMD ["python", "src/script/serve_m2_ui.py", "--data-dir", "/data/m2-ui", "--host", "0.0.0.0", "--port", "8765"]
