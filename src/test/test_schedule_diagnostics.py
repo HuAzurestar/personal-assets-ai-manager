@@ -120,6 +120,44 @@ async def finish_tick(scheduler, key):
     raise AssertionError("worker did not finish")
 
 
+def test_natural_idle_heartbeats_keep_worker_alive_for_later_timer():
+    # Exercise real wait_for timeouts on supported Python 3.10, not a fake clock.
+    async def scenario():
+        scheduler = JobScheduler()
+        completed = asyncio.Event()
+
+        async def maintenance(_):
+            completed.set()
+            return JobOutcome("COMPLETED")
+
+        await scheduler.start()
+        try:
+            for _ in range(2):
+                previous = scheduler.snapshot().worker_heartbeat_at
+
+                async def next_heartbeat():
+                    while True:
+                        snapshot = scheduler.snapshot()
+                        assert snapshot.worker_state == "HEALTHY" and snapshot.accepting
+                        if snapshot.worker_heartbeat_at > previous:
+                            return
+                        await asyncio.sleep(.02)
+
+                await asyncio.wait_for(next_heartbeat(), timeout=8)
+            # A natural shared timer, registered after idling, must still execute.
+            scheduler.register_interval(
+                "system:import-preview-timeout", seconds=1, callback=maintenance,
+            )
+            await asyncio.wait_for(completed.wait(), timeout=3)
+            assert scheduler.snapshot().tasks[0].last_result == "COMPLETED"
+            assert scheduler.snapshot().worker_state == "HEALTHY"
+            assert not any(event["code"] == "WORKER_UNHEALTHY" for event in scheduler.diagnostics.events())
+        finally:
+            await scheduler.shutdown()
+
+    asyncio.run(scenario())
+
+
 def test_live_progress_and_failure_survive_a_later_empty_tick(tmp_path):
     async def scenario():
         scheduler = JobScheduler(diagnostics=ScheduleDiagnostics(tmp_path))

@@ -538,7 +538,7 @@ class JobScheduler:
                     try:
                         # This is the shared worker's liveness wait, not a new timer.
                         await asyncio.wait_for(self._condition.wait(), timeout=5)
-                    except TimeoutError:
+                    except asyncio.TimeoutError:
                         self._heartbeat_at = self._now()
 
             context = JobRunContext(
