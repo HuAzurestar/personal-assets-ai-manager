@@ -590,3 +590,87 @@ def test_disclosure_invalidation_overflow_rolls_back_everything(setting_runtime)
             rule = db.get(AutoTagRule, 1)
             assert (rule.rule_revision, rule.scan_after_ledger_id) == (1, 20)
             assert db.get(TagAssignmentRequest, 1).status == 1
+
+
+@pytest.mark.parametrize("mode", [1, 2, 3])
+@pytest.mark.parametrize("sample, amount", [("MEAL_SMALL", 2900), ("MEAL_LARGE", 350000)])
+def test_disclosure_preview_uses_saved_policy_without_model_or_writes(
+    setting_runtime, monkeypatch, mode, sample, amount,
+):
+    sessions, _, store = setting_runtime
+    monkeypatch.setattr(socket, "create_connection", lambda *a, **k: pytest.fail("network"))
+    monkeypatch.setattr(
+        "backend.service.llm_adapter.LiteLlmAdapter._analyze",
+        lambda *a, **k: pytest.fail("model was called"),
+    )
+    monkeypatch.setattr(store, "is_configured", lambda *a: pytest.fail("credential access"))
+    uri = "/paam/system/v1/setting/automation"
+    with _client(sessions, store) as client:
+        response = client.post(f"{uri}/disclosure_preview", json={
+            "sample": sample, "amount_mode": mode,
+        })
+        assert response.status_code == 200, response.text
+        body = response.json()["body"]
+        assert body["mode"] == "SYNTHETIC_PREVIEW"
+        assert body["model_called"] is False
+        assert body["input_eligible"] is True
+        messages = body["messages"]
+        assert "DEMO" not in json.dumps(messages)
+        model_input = json.loads(messages[1]["content"])
+        assert model_input["item"].startswith("item_")
+        assert "ledger_id" not in model_input
+        assert [item["id"] for item in model_input["candidates"]] == ["t1", "t2"]
+        if mode == 1:
+            assert model_input["amount_band"] == ("[0,3000)" if amount == 2900 else "[300000,+∞)")
+            assert "amount_units" not in model_input
+        elif mode == 2:
+            assert model_input["amount_units"] == amount
+            assert "amount_band" not in model_input
+        else:
+            assert not any(key.startswith("amount") for key in model_input)
+        with sessions() as db:
+            assert db.get(Setting, 1) is None
+            assert db.scalar(select(AutoTagRule.id)) is None
+            assert db.scalar(select(TagAssignmentRequest.id)) is None
+
+
+def test_preview_currency_boundaries_and_insufficient_context(setting_runtime):
+    sessions, _, store = setting_runtime
+    uri = "/paam/system/v1/setting/automation"
+    with _client(sessions, store) as client:
+        missing = client.post(f"{uri}/disclosure_preview", json={"currency_code": "CNY_4"})
+        assert missing.status_code == 200
+        missing_body = missing.json()["body"]
+        assert "amount_band" not in json.loads(missing_body["messages"][1]["content"])
+        assert any("未配置区间" in warning for warning in missing_body["warnings"])
+        saved = client.put(uri, json={
+            "expected_updated_time": None,
+            "disclosure": {"amount_bands": {"CNY_4": {"boundaries": [0, 290000, 500000]}}},
+        })
+        assert saved.status_code == 200
+        exact_boundary = client.post(f"{uri}/disclosure_preview", json={"currency_code": "CNY_4"})
+        value = json.loads(exact_boundary.json()["body"]["messages"][1]["content"])
+        assert value["amount_band"] == "[290000,500000)"
+        assert client.get(uri).json()["body"] == saved.json()["body"]
+        empty = client.post(f"{uri}/disclosure_preview", json={"sample": "NO_CONTEXT"})
+        assert empty.status_code == 200
+        assert empty.json()["body"]["input_eligible"] is False
+        assert empty.json()["body"]["messages"] == []
+        non_meal = client.post(f"{uri}/disclosure_preview", json={"sample": "NON_MEAL_SMALL"})
+        assert non_meal.status_code == 200
+        assert "文具" in non_meal.json()["body"]["messages"][1]["content"]
+        assert "decision" not in json.loads(non_meal.json()["body"]["messages"][1]["content"])
+
+
+@pytest.mark.parametrize("payload", [
+    {"ledger_id": 60}, {"summary": "not a fixed fixture"},
+    {"sample": "REAL_LEDGER"}, {"amount_mode": True},
+    {"amount_mode": "1"}, {"amount_mode": 0}, {"currency_code": "USD_9"},
+])
+def test_disclosure_preview_rejects_arbitrary_source_data(setting_runtime, payload):
+    sessions, _, store = setting_runtime
+    with _client(sessions, store) as client:
+        response = client.post(
+            "/paam/system/v1/setting/automation/disclosure_preview", json=payload,
+        )
+    assert response.status_code == 422
