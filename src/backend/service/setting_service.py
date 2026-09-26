@@ -16,6 +16,7 @@ from backend.mapper.auto_tag_rule_mapper import AutoTagRuleMapper
 from backend.mapper.setting_mapper import SETTING_SCHEMA_VERSION, SettingMapper
 from backend.mapper.tag_assignment_request_mapper import TagAssignmentRequestMapper
 from backend.schema.setting import (
+    AutomationDisclosure,
     AutomationModelRead,
     AutomationModelWrite,
     AutomationSettingRead,
@@ -51,13 +52,13 @@ class SettingService:
         self,
         payload: AutomationSettingUpdateRequest,
     ) -> AutomationSettingRead:
-        key_states = {
+        key_states = None if payload.models is None else {
             model.id: self.secret_store.is_configured(model.id)
             for model in payload.models
         }
         missing_enabled_ids = sorted(
             model.id
-            for model in payload.models
+            for model in payload.models or []
             if model.enabled and not key_states[model.id]
         )
         if missing_enabled_ids:
@@ -76,7 +77,8 @@ class SettingService:
 
             current_models = self._models_from_value(value)
             current_by_id = {model.id: model for model in current_models}
-            new_by_id = {model.id: model for model in payload.models}
+            next_models = current_models if payload.models is None else payload.models
+            new_by_id = {model.id: model for model in next_models}
             removed_ids = sorted(set(current_by_id) - set(new_by_id))
             if removed_ids:
                 raise SettingError(
@@ -101,14 +103,26 @@ class SettingService:
                     "stored automation setting is invalid",
                     code="SETTING_DATA_INVALID",
                 )
-            automation.setdefault("disclosure", deepcopy(DEFAULT_DISCLOSURE))
-            automation["models"] = [
-                model.model_dump(mode="json", exclude_unset=True)
-                for model in payload.models
-            ]
-            next_time, affected_rule_ids = self.rule_mapper.advance_for_model_ids(
+            current_disclosure = AutomationDisclosure.model_validate(
+                automation.get("disclosure", {}),
+            )
+            next_disclosure = payload.disclosure or current_disclosure
+            if payload.disclosure is not None:
+                automation["disclosure"] = next_disclosure.model_dump(mode="json")
+            if payload.models is not None:
+                automation["models"] = [
+                    model.model_dump(mode="json", exclude_unset=True)
+                    for model in next_models
+                ]
+            next_time, affected_rule_ids = self.rule_mapper.advance_for_configuration(
                 changed_parameter_ids,
                 now=next_time,
+                amount_bands_changed=(
+                    current_disclosure.amount_bands != next_disclosure.amount_bands
+                ),
+                date_granularity_changed=(
+                    current_disclosure.date_granularity != next_disclosure.date_granularity
+                ),
             )
             self.request_mapper.cancel_pending_for_rule_ids(
                 affected_rule_ids,
@@ -278,7 +292,7 @@ class SettingService:
         ]
         return AutomationSettingRead(
             models=models,
-            disclosure=deepcopy(disclosure),
+            disclosure=AutomationDisclosure.model_validate(disclosure),
             updated_time=updated_time,
         )
 

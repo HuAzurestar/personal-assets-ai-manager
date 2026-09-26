@@ -28,7 +28,7 @@ class LlmAmountDisclosure(BaseModel):
 
     mode: Literal["BAND", "EXACT", "NONE"]
     currency_code: str = Field(pattern=r"^[A-Z][A-Z0-9_]{2,11}$")
-    band_code: str | None = Field(default=None, min_length=1, max_length=32)
+    band_code: str | None = Field(default=None, min_length=1, max_length=64)
     band_label: str | None = Field(default=None, min_length=1, max_length=120)
     amount_units: int | None = None
 

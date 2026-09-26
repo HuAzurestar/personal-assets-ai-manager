@@ -42,6 +42,7 @@ const ledger = {
 };
 const context = {
   request: async (url) => (requestedUrls.push(url), url.includes("auto_rule/list") ? { items: [rule] }
+    : url.includes("auto_rule/1/summary") ? { ...rule, execution_success_count: "1", execution_success_rate: 1, decision_count: "0", acceptance_rate: null }
     : url.includes("auto_rule/1") ? rule
     : url.includes("assignment_request/list") ? { items: [suggestion], total: 1, page_index: 1, page_size: 20 }
     : url.includes("assignment_request/8") ? suggestion
@@ -56,6 +57,8 @@ const context = {
   URLSearchParams,
 };
 vm.createContext(context);
+vm.runInContext(fs.readFileSync(path.resolve(__dirname, "../frontend/js/view/automation_feedback.js"), "utf8")
+  .replace(/^import .*;\r?\n/gm, "").replace(/^export /gm, ""), context);
 vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.testSettings = automationSettingsPage; globalThis.testRuleDetail = ruleDetailMarkup; globalThis.testRequestDetail = requestDetailMarkup; globalThis.testScheduleExplanation = scheduleExplanation; globalThis.testRulePage = autoRulesPage; globalThis.testReviewPage = tagReviewPage; globalThis.testFilterParams = tagReviewFilterParams;`, context);
 
 (async () => {

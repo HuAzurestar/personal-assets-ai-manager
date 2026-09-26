@@ -166,6 +166,10 @@ class AutoTagRuleSummaryRead(BaseModel):
     suggested_count: str
     accepted_count: str
     rejected_count: str
+    execution_success_count: str
+    execution_success_rate: float | None
+    decision_count: str
+    acceptance_rate: float | None
 
 
 class AutoTagRuleSummaryResponse(SuccessResponse[AutoTagRuleSummaryRead]):

@@ -34,7 +34,10 @@ export async function request(url, options = {}) {
     const text = Array.isArray(detail)
       ? detail.map((item) => typeof item === "string" ? item : item?.msg).filter(Boolean).join("；")
       : detail || `请求失败（${response.status}）`;
-    throw new Error(text);
+    const error = new Error(text);
+    error.code = payload?.body?.code;
+    error.status = response.status;
+    throw error;
   }
   const isEnvelope = payload && Object.hasOwn(payload, "body")
     && (payload.status === response.status || payload.status === "success");

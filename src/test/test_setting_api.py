@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, update
 from sqlalchemy.orm import sessionmaker
 
 from backend.core.target_database import init_target_db
@@ -417,3 +417,260 @@ def test_keyring_adapter_uses_fixed_identity_and_never_falls_back(monkeypatch):
     with pytest.raises(ProtectedSecretStoreError) as error:
         store.is_configured(7)
     assert error.value.status_code == 503
+
+
+def _seed_disclosure_rules(sessions):
+    now = datetime(2026, 9, 26, tzinfo=timezone.utc)
+    with sessions() as db:
+        db.add_all([
+            AutoTagRule(
+                id=mode, name=f"Synthetic mode {mode}", view_id=3,
+                method_config_json=json.dumps({
+                    "schema_version": 1, "model_id": 1, "prompt": "synthetic only",
+                }),
+                amount_mode=mode, scan_after_ledger_id=20,
+                created_time=now, updated_time=now,
+            )
+            for mode in (1, 2, 3)
+        ])
+        db.add_all([
+            TagAssignmentRequest(
+                id=mode, rule_id=mode, rule_revision=1, ledger_id=11,
+                view_id=3, proposed_tag_id=5, status=1, reason_summary="synthetic",
+                created_time=now, updated_time=now,
+            )
+            for mode in (1, 2, 3)
+        ])
+        db.add(TagAssignmentRequest(
+            id=4, rule_id=1, rule_revision=1, ledger_id=12,
+            view_id=3, proposed_tag_id=5, status=2, reason_summary="synthetic enabled",
+            created_time=now, updated_time=now,
+        ))
+        db.commit()
+
+
+def test_disclosure_partial_update_scoped_invalidation_and_restart(setting_runtime):
+    sessions, engine, store = setting_runtime
+    uri = "/paam/system/v1/setting/automation"
+    disclosure = {
+        "date_granularity": "DAY",
+        "amount_bands": {
+            "CNY": {"boundaries": [0, 3000, 350000]},
+            "CNY_4": {"boundaries": [0, 300000, 9_000_000_000_000]},
+            "USD": {"boundaries": [0]},
+        },
+    }
+    with _client(sessions, store) as client:
+        initial = client.put(uri, json={
+            "expected_updated_time": None, "models": [_model_payload()],
+        }).json()["body"]
+        _seed_disclosure_rules(sessions)
+        saved = client.put(uri, json={
+            "expected_updated_time": initial["updated_time"], "disclosure": disclosure,
+        })
+        assert saved.status_code == 200, saved.text
+        first = saved.json()["body"]
+        assert first["disclosure"] == disclosure
+        assert first["models"] == initial["models"]
+        with sessions() as db:
+            rules = db.scalars(select(AutoTagRule).order_by(AutoTagRule.id)).all()
+            assert [rule.rule_revision for rule in rules] == [2, 1, 1]
+            assert [rule.scan_epoch for rule in rules] == [2, 1, 1]
+            assert [rule.scan_after_ledger_id for rule in rules] == [0, 20, 20]
+            requests = db.scalars(select(TagAssignmentRequest).order_by(
+                TagAssignmentRequest.id,
+            )).all()
+            assert [request.status for request in requests] == [4, 1, 1, 2]
+            assert all(rule.analyzed_count == 0 for rule in rules)
+        # Reusing the exact returned token succeeds; unchanged policy does not reset.
+        repeated = client.put(uri, json={
+            "expected_updated_time": first["updated_time"], "disclosure": disclosure,
+        })
+        assert repeated.status_code == 200, repeated.text
+        second = repeated.json()["body"]
+        assert second["updated_time"] != first["updated_time"]
+        stale = client.put(uri, json={
+            "expected_updated_time": first["updated_time"],
+            "disclosure": {"date_granularity": "NONE", "amount_bands": {}},
+        })
+        assert stale.status_code == 409
+        assert stale.json()["body"]["code"] == "SETTING_VERSION_CONFLICT"
+        assert client.get(uri).json()["body"] == second
+        with sessions() as db:
+            assert db.get(AutoTagRule, 1).rule_revision == 2
+    engine.dispose()
+    with _client(sessions, store) as client:
+        assert client.get(uri).json()["body"] == second
+
+
+@pytest.mark.parametrize("disclosure", [
+    {"amount_bands": {"CNY": {"boundaries": []}}},
+    {"amount_bands": {"CNY": {"boundaries": [1, 2]}}},
+    {"amount_bands": {"CNY": {"boundaries": [0, 2, 2]}}},
+    {"amount_bands": {"CNY": {"boundaries": [0, 2, 1]}}},
+    {"amount_bands": {"CNY": {"boundaries": [0, -1]}}},
+    {"amount_bands": {"CNY": {"boundaries": [0, True]}}},
+    {"amount_bands": {"CNY": {"boundaries": [0, 1.5]}}},
+    {"amount_bands": {"CNY": {"boundaries": [0, "10"]}}},
+    {"amount_bands": {"CNY": {"boundaries": [0, 9_000_000_000_001]}}},
+    {"amount_bands": {"CNY": {"boundaries": list(range(65))}}},
+    {"amount_bands": {"XYZ": {"boundaries": [0]}}},
+    {"amount_bands": {"CNY_9": {"boundaries": [0]}}},
+    {"amount_bands": {"cny": {"boundaries": [0]}}},
+    {"amount_bands": {"CNY": {"boundaries": [0], "extra": True}}},
+    {"date_granularity": "SECOND"},
+    {"disable_identity_protection": True},
+])
+def test_invalid_disclosure_is_rejected_without_writes(setting_runtime, disclosure):
+    sessions, _, store = setting_runtime
+    with _client(sessions, store) as client:
+        response = client.put("/paam/system/v1/setting/automation", json={
+            "expected_updated_time": None, "disclosure": disclosure,
+        })
+    assert response.status_code == 422, response.text
+    with sessions() as db:
+        assert db.get(Setting, 1) is None
+
+
+@pytest.mark.parametrize("extra", [{}, {"models": None}, {"disclosure": None}])
+def test_empty_or_null_setting_sections_do_not_silently_clear(setting_runtime, extra):
+    sessions, _, store = setting_runtime
+    with _client(sessions, store) as client:
+        response = client.put("/paam/system/v1/setting/automation", json={
+            "expected_updated_time": None, **extra,
+        })
+    assert response.status_code == 422
+
+
+def test_combined_model_and_disclosure_change_advances_each_rule_once(setting_runtime):
+    sessions, _, store = setting_runtime
+    uri = "/paam/system/v1/setting/automation"
+    with _client(sessions, store) as client:
+        initial = client.put(uri, json={
+            "expected_updated_time": None, "models": [_model_payload()],
+        }).json()["body"]
+        _seed_disclosure_rules(sessions)
+        combined = client.put(uri, json={
+            "expected_updated_time": initial["updated_time"],
+            "models": [_model_payload(temperature=0.3)],
+            "disclosure": {"date_granularity": "DAY", "amount_bands": {}},
+        })
+        assert combined.status_code == 200, combined.text
+        with sessions() as db:
+            assert [rule.rule_revision for rule in db.scalars(select(AutoTagRule))] == [2, 2, 2]
+        changed_time = client.put(uri, json={
+            "expected_updated_time": combined.json()["body"]["updated_time"],
+            "disclosure": {"date_granularity": "MONTH", "amount_bands": {}},
+        })
+        assert changed_time.status_code == 200
+        with sessions() as db:
+            assert [rule.rule_revision for rule in db.scalars(select(AutoTagRule))] == [3, 3, 3]
+
+
+def test_disclosure_invalidation_overflow_rolls_back_everything(setting_runtime):
+    sessions, _, store = setting_runtime
+    uri = "/paam/system/v1/setting/automation"
+    with _client(sessions, store) as client:
+        initial = client.put(uri, json={
+            "expected_updated_time": None, "models": [_model_payload()],
+        }).json()["body"]
+        _seed_disclosure_rules(sessions)
+        with sessions() as db:
+            db.execute(update(AutoTagRule).where(AutoTagRule.id == 1).values(
+                scan_epoch=9_223_372_036_854_775_807,
+            ))
+            db.commit()
+        response = client.put(uri, json={
+            "expected_updated_time": initial["updated_time"],
+            "disclosure": {"date_granularity": "DAY", "amount_bands": {}},
+        })
+        assert response.status_code == 409
+        assert client.get(uri).json()["body"] == initial
+        with sessions() as db:
+            rule = db.get(AutoTagRule, 1)
+            assert (rule.rule_revision, rule.scan_after_ledger_id) == (1, 20)
+            assert db.get(TagAssignmentRequest, 1).status == 1
+
+
+@pytest.mark.parametrize("mode", [1, 2, 3])
+@pytest.mark.parametrize("sample, amount", [("MEAL_SMALL", 2900), ("MEAL_LARGE", 350000)])
+def test_disclosure_preview_uses_saved_policy_without_model_or_writes(
+    setting_runtime, monkeypatch, mode, sample, amount,
+):
+    sessions, _, store = setting_runtime
+    monkeypatch.setattr(socket, "create_connection", lambda *a, **k: pytest.fail("network"))
+    monkeypatch.setattr(
+        "backend.service.llm_adapter.LiteLlmAdapter._analyze",
+        lambda *a, **k: pytest.fail("model was called"),
+    )
+    monkeypatch.setattr(store, "is_configured", lambda *a: pytest.fail("credential access"))
+    uri = "/paam/system/v1/setting/automation"
+    with _client(sessions, store) as client:
+        response = client.post(f"{uri}/disclosure_preview", json={
+            "sample": sample, "amount_mode": mode,
+        })
+        assert response.status_code == 200, response.text
+        body = response.json()["body"]
+        assert body["mode"] == "SYNTHETIC_PREVIEW"
+        assert body["model_called"] is False
+        assert body["input_eligible"] is True
+        messages = body["messages"]
+        assert "DEMO" not in json.dumps(messages)
+        model_input = json.loads(messages[1]["content"])
+        assert model_input["item"].startswith("item_")
+        assert "ledger_id" not in model_input
+        assert [item["id"] for item in model_input["candidates"]] == ["t1", "t2"]
+        if mode == 1:
+            assert model_input["amount_band"] == ("[0,3000)" if amount == 2900 else "[300000,+∞)")
+            assert "amount_units" not in model_input
+        elif mode == 2:
+            assert model_input["amount_units"] == amount
+            assert "amount_band" not in model_input
+        else:
+            assert not any(key.startswith("amount") for key in model_input)
+        with sessions() as db:
+            assert db.get(Setting, 1) is None
+            assert db.scalar(select(AutoTagRule.id)) is None
+            assert db.scalar(select(TagAssignmentRequest.id)) is None
+
+
+def test_preview_currency_boundaries_and_insufficient_context(setting_runtime):
+    sessions, _, store = setting_runtime
+    uri = "/paam/system/v1/setting/automation"
+    with _client(sessions, store) as client:
+        missing = client.post(f"{uri}/disclosure_preview", json={"currency_code": "CNY_4"})
+        assert missing.status_code == 200
+        missing_body = missing.json()["body"]
+        assert "amount_band" not in json.loads(missing_body["messages"][1]["content"])
+        assert any("未配置区间" in warning for warning in missing_body["warnings"])
+        saved = client.put(uri, json={
+            "expected_updated_time": None,
+            "disclosure": {"amount_bands": {"CNY_4": {"boundaries": [0, 290000, 500000]}}},
+        })
+        assert saved.status_code == 200
+        exact_boundary = client.post(f"{uri}/disclosure_preview", json={"currency_code": "CNY_4"})
+        value = json.loads(exact_boundary.json()["body"]["messages"][1]["content"])
+        assert value["amount_band"] == "[290000,500000)"
+        assert client.get(uri).json()["body"] == saved.json()["body"]
+        empty = client.post(f"{uri}/disclosure_preview", json={"sample": "NO_CONTEXT"})
+        assert empty.status_code == 200
+        assert empty.json()["body"]["input_eligible"] is False
+        assert empty.json()["body"]["messages"] == []
+        non_meal = client.post(f"{uri}/disclosure_preview", json={"sample": "NON_MEAL_SMALL"})
+        assert non_meal.status_code == 200
+        assert "文具" in non_meal.json()["body"]["messages"][1]["content"]
+        assert "decision" not in json.loads(non_meal.json()["body"]["messages"][1]["content"])
+
+
+@pytest.mark.parametrize("payload", [
+    {"ledger_id": 60}, {"summary": "not a fixed fixture"},
+    {"sample": "REAL_LEDGER"}, {"amount_mode": True},
+    {"amount_mode": "1"}, {"amount_mode": 0}, {"currency_code": "USD_9"},
+])
+def test_disclosure_preview_rejects_arbitrary_source_data(setting_runtime, payload):
+    sessions, _, store = setting_runtime
+    with _client(sessions, store) as client:
+        response = client.post(
+            "/paam/system/v1/setting/automation/disclosure_preview", json=payload,
+        )
+    assert response.status_code == 422

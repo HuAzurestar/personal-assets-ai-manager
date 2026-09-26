@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
 from pydantic import (
@@ -13,6 +13,7 @@ from pydantic import (
     model_validator,
 )
 
+from backend.core.money import MAX_ABS_AMOUNT, normalize_currency_code
 from backend.schema.response import SuccessResponse
 
 
@@ -124,11 +125,44 @@ class AutomationModelRead(AutomationModelWrite):
     key_configured: bool
 
 
+class AmountBandSetting(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    boundaries: list[Annotated[int, Field(strict=True, ge=0, le=MAX_ABS_AMOUNT)]] = Field(
+        min_length=1, max_length=64,
+    )
+
+    @field_validator("boundaries")
+    @classmethod
+    def validate_boundaries(cls, value: list[int]) -> list[int]:
+        if value[0] != 0 or any(left >= right for left, right in zip(value, value[1:])):
+            raise ValueError("amount boundaries must start at zero and strictly increase")
+        return value
+
+
+class AutomationDisclosure(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    date_granularity: Literal["DAY", "MONTH", "NONE"] = "DAY"
+    amount_bands: dict[str, AmountBandSetting] = Field(default_factory=dict, max_length=64)
+
+    @field_validator("amount_bands")
+    @classmethod
+    def validate_currencies(
+        cls, value: dict[str, AmountBandSetting],
+    ) -> dict[str, AmountBandSetting]:
+        for code in value:
+            if normalize_currency_code(code) != code:
+                raise ValueError("amount band currency codes must use canonical currency units")
+        return value
+
+
 class AutomationSettingUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     expected_updated_time: datetime | None
-    models: list[AutomationModelWrite]
+    models: list[AutomationModelWrite] | None = None
+    disclosure: AutomationDisclosure | None = None
 
     @field_validator("expected_updated_time")
     @classmethod
@@ -142,7 +176,12 @@ class AutomationSettingUpdateRequest(BaseModel):
 
     @model_validator(mode="after")
     def reject_duplicate_model_ids(self) -> "AutomationSettingUpdateRequest":
-        model_ids = [model.id for model in self.models]
+        if self.models is None and self.disclosure is None:
+            raise ValueError("provide models or disclosure to update")
+        sections = self.model_fields_set - {"expected_updated_time"}
+        if any(getattr(self, field) is None for field in sections):
+            raise ValueError("omit unchanged sections instead of sending null")
+        model_ids = [model.id for model in self.models or []]
         if len(set(model_ids)) != len(model_ids):
             raise ValueError("model ids must be unique")
         return self
@@ -150,7 +189,7 @@ class AutomationSettingUpdateRequest(BaseModel):
 
 class AutomationSettingRead(BaseModel):
     models: list[AutomationModelRead]
-    disclosure: dict[str, Any]
+    disclosure: AutomationDisclosure
     updated_time: datetime | None
 
 

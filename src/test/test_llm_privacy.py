@@ -73,6 +73,18 @@ def test_band_without_currency_config_omits_amount_and_none_removes_hints():
     assert "聚餐" in none_payload.summary
 
 
+def test_configurable_large_currency_band_fits_the_model_dto():
+    privacy = LlmPrivacyService({
+        "amount_bands": {"CNY_4": {"boundaries": [0, 8_000_000_000_000, 9_000_000_000_000]}},
+    })
+    payload = privacy.build_payload(_page(), ProtectedScanSource(
+        "OUT", 8_000_000_000_001, "CNY_4", "餐厅", "聚餐",
+    ))
+    assert payload is not None
+    assert payload.amount.band_code == "CNY_4:8000000000000:9000000000000"
+    assert payload.amount.band_label == "[8000000000000,9000000000000)"
+
+
 def test_model_reason_with_identifier_is_rejected():
     privacy = LlmPrivacyService()
     suggestion = LlmResolvedSuggestion(

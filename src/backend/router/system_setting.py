@@ -6,6 +6,10 @@ from sqlalchemy.orm import Session
 from backend.core import ProtectedSecretStore
 from backend.router.dependency import get_db, get_protected_secret_store
 from backend.router.error import DomainErrorRoute
+from backend.schema.disclosure_preview import (
+    DisclosurePreviewRequest,
+    DisclosurePreviewResponse,
+)
 from backend.schema.setting import (
     AutomationSettingResponse,
     AutomationSettingUpdateRequest,
@@ -13,6 +17,7 @@ from backend.schema.setting import (
     ModelSecretStateResponse,
     ModelSecretUpdateRequest,
 )
+from backend.service.disclosure_preview_service import DisclosurePreviewService
 from backend.service.setting_service import SettingService
 
 
@@ -52,6 +57,18 @@ def update_automation_setting(
         status=200,
         message="ok",
         body=_service(db, secret_store).update_automation(payload),
+    )
+
+
+@router.post("/disclosure_preview", response_model=DisclosurePreviewResponse)
+def preview_disclosure(
+    payload: DisclosurePreviewRequest,
+    db: Session = Depends(get_db),
+):
+    return DisclosurePreviewResponse(
+        status=200,
+        message="ok",
+        body=DisclosurePreviewService(db).preview(payload),
     )
 
 
