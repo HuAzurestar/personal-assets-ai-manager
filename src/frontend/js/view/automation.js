@@ -1,10 +1,21 @@
-import { request, jsonRequest } from "../api/client.js?v=20260922.3";
+import { request, jsonRequest } from "../api/client.js?v=20260926.3";
 import { $, $$, esc, money } from "../util/core.js";
+import { startVisiblePoll } from "../util/visible_poll.js?v=20260926.3";
+import { openDisclosureEditor, openDisclosurePreview } from "./disclosure.js?v=20260926.3";
+import { batchResults, batchResultMarkup, selectionConflict, ruleStatistics, runtimeMarkup, interactionScenarios, interactionMarkup } from "./automation_feedback.js?v=20260926.3";
 
 let setting = null;
 let rules = [];
 let views = [];
 let scheduleStatus = null;
+let stopPolling = () => {};
+let requestItems = [];
+let batchFeedback = "";
+const boundRoots = new WeakSet();
+const ruleListUrl = "/paam/tag/v1/auto_rule/list?page_index=1&page_size=100&sorter=%5B%7B%22key%22%3A%22id%22%2C%22direction%22%3A%22asc%22%7D%5D";
+const freshnessMarkup = '<p class="automation-freshness" data-auto-freshness role="status" aria-live="polite">已读取页面数据；可见页每 5 秒刷新业务状态，编辑或确认期间暂停更新。</p>';
+
+export function stopAutomationPolling() { stopPolling(); stopPolling = () => {}; }
 
 const amountModeNames = { 1: "金额区间（BAND）", 2: "精确金额（EXACT）", 3: "不发送金额（NONE）" };
 
@@ -28,7 +39,7 @@ function modelSummary(model) {
     <dl class="automation-definition">${details}</dl>
     <div class="automation-card-note"><span>API Key</span><strong>${model.key_configured ? "已安全配置，不会回显" : "尚未配置"}</strong></div>
     <div class="automation-actions">
-      <button type="button" class="quiet" data-action="model-test" data-id="${model.id}">虚构数据测试</button>
+      <button type="button" class="quiet" data-action="model-test" data-id="${model.id}">配置检查（模拟）</button>
       ${model.key_configured ? `<button type="button" class="quiet danger-text" data-action="model-secret-delete" data-id="${model.id}">清除密钥</button>` : ""}
       <button type="button" data-action="model-edit" data-id="${model.id}">编辑</button>
     </div>
@@ -42,7 +53,8 @@ export async function automationSettingsPage() {
   const bands = Object.entries(setting.disclosure?.amount_bands || {}).map(([currency, config]) =>
     `<div class="disclosure-row"><strong>${esc(currency)}</strong><span>${esc((config.boundaries || []).join(" → "))}</span></div>`,
   ).join("");
-  return `<div class="automation-page">
+  scheduleStatus = await request("/paam/system/v1/schedule/status").catch(() => null);
+  return `<div class="automation-page" data-auto-page="settings">
     <section class="automation-hero">
       <div><span class="eyebrow">SETTINGS · AUTOMATION</span><h2>自动化设置</h2><p>模型连接保存在本地设置中；密钥进入系统凭据存储，普通读取永不回显。</p></div>
       <button type="button" class="primary" data-action="model-new">＋ 添加模型</button>
@@ -52,10 +64,11 @@ export async function automationSettingsPage() {
       <div class="automation-section-head"><div><h3 id="automation-model-title">模型连接</h3><p>${setting.models.length ? `共 ${setting.models.length} 个本地配置` : "添加首个模型后，规则才可选择模型"}</p></div></div>
       <div class="automation-grid">${modelCards || '<div class="panel empty-state"><strong>尚未配置模型</strong><p>添加一个 LiteLLM 兼容配置；启用前必须保存 API Key。</p><button type="button" data-action="model-new">添加模型</button></div>'}</div>
     </section>
-    <section class="automation-section disclosure-readonly" aria-labelledby="automation-disclosure-title">
-      <div class="automation-section-head"><div><h3 id="automation-disclosure-title">金额披露</h3><p>本阶段只读展示；编辑与安全预览属于 DEV-013。</p></div><span class="automation-status inactive"><i></i>尚未接通编辑</span></div>
+    <section class="automation-section" aria-labelledby="automation-disclosure-title">
+      <div class="automation-section-head"><div><h3 id="automation-disclosure-title">金额披露</h3><p>全局按币种分档；每条规则独立选择 BAND / EXACT / NONE。</p></div><div class="automation-actions"><button type="button" class="quiet" data-action="disclosure-preview">虚构披露预览</button><button type="button" data-action="disclosure-edit">编辑披露策略</button></div></div>
       <div class="disclosure-card"><div><span>时间粒度</span><strong>${esc(setting.disclosure?.date_granularity || "未配置")}</strong></div><div><span>按币种区间（最小货币单位）</span>${bands || "<strong>尚未配置</strong>"}</div></div>
     </section>
+    <section class="automation-section"><h3>调度运行状态</h3>${freshnessMarkup}<div data-auto-runtime>${runtimeMarkup(scheduleStatus)}</div><button type="button" class="quiet" data-action="interaction-demo">M2 交互演示（虚构，不写数据）</button></section>
   </div>`;
 }
 
@@ -113,7 +126,7 @@ function scheduleNotice() {
 export async function autoRulesPanel(tagViews) {
   views = tagViews;
   const [rulePage, currentSetting, currentSchedule] = await Promise.all([
-    request("/paam/tag/v1/auto_rule/list?page_index=1&page_size=100&sorter=%5B%7B%22key%22%3A%22id%22%2C%22direction%22%3A%22asc%22%7D%5D"),
+    request(ruleListUrl),
     request("/paam/system/v1/setting/automation"),
     request("/paam/system/v1/schedule/status"),
   ]);
@@ -123,8 +136,8 @@ export async function autoRulesPanel(tagViews) {
   const canCreate = views.some((item) => item.status === "ACTIVE") && setting.models.some((item) => item.enabled && item.key_configured);
   return `<section class="tag-manager automation-rules" aria-labelledby="auto-rule-title">
     <div class="tag-manager-head"><div><h2 id="auto-rule-title">自动打标签规则</h2><p>同一标签维度可配置多条独立规则；配置和进度从 SQLite 实时读取。</p></div><button type="button" class="primary" data-action="rule-new" ${canCreate ? "" : 'disabled title="需要启用中的标签维度和模型"'}>＋ 新建规则</button></div>
-    ${scheduleNotice()}
-    <div class="automation-table-wrap"><table class="automation-table rule-table"><thead><tr><th>规则</th><th>View / 模型</th><th>调度 / 进度</th><th>累计统计</th><th>状态 / 操作</th></tr></thead><tbody>${rules.map(ruleRow).join("") || '<tr><td colspan="5" class="table-empty"><strong>尚未创建自动规则</strong><span>启用模型并准备标签维度后即可保存第一条规则。</span></td></tr>'}</tbody></table></div>
+    ${freshnessMarkup}<div data-auto-notice>${scheduleNotice()}</div>
+    <div class="automation-table-wrap"><table class="automation-table rule-table"><thead><tr><th>规则</th><th>View / 模型</th><th>调度 / 进度</th><th>累计统计</th><th>状态 / 操作</th></tr></thead><tbody data-auto-rule-rows>${rules.map(ruleRow).join("") || '<tr><td colspan="5" class="table-empty"><strong>尚未创建自动规则</strong><span>启用模型并准备标签维度后即可保存第一条规则。</span></td></tr>'}</tbody></table></div>
   </section>`;
 }
 
@@ -136,19 +149,20 @@ export async function autoRulesPage(params = new URLSearchParams()) {
       filter: JSON.stringify({ key: "rule_id", op: "=", val: ruleId }),
       sorter: JSON.stringify([{ key: "created_time", direction: "desc" }]),
     });
-    const [rule, viewPage, currentSetting, schedule, recent] = await Promise.all([
+    const [rule, viewPage, currentSetting, schedule, recent, summary] = await Promise.all([
       request(`/paam/tag/v1/auto_rule/${ruleId}`),
       request("/paam/tag/v1/view/list?page_index=1&page_size=100"),
       request("/paam/system/v1/setting/automation"),
       request("/paam/system/v1/schedule/status"),
       request(`/paam/tag/v1/assignment_request/list?${query}`),
+      request(`/paam/tag/v1/auto_rule/${ruleId}/summary`),
     ]);
     views = viewPage.items;
     setting = currentSetting;
-    return `<div class="auto-rules-page automation-detail-page"><button type="button" class="quiet" data-action="rule-detail-back">← 返回规则列表</button><h2>规则 #${ruleId} · ${esc(rule.name)}</h2>${ruleDetailMarkup(rule, schedule, recent)}</div>`;
+    return `<div class="auto-rules-page automation-detail-page" data-auto-page="rule" data-rule-id="${ruleId}" data-recent-query="${esc(query.toString())}"><button type="button" class="quiet" data-action="rule-detail-back">← 返回规则列表</button><h2>规则 #${ruleId} · ${esc(rule.name)}</h2>${freshnessMarkup}<div data-auto-rule-detail>${ruleDetailMarkup(rule, schedule, recent, summary)}</div></div>`;
   }
   const viewPage = await request("/paam/tag/v1/view/list?page_index=1&page_size=100");
-  return `<div class="auto-rules-page">${await autoRulesPanel(viewPage.items)}</div>`;
+  return `<div class="auto-rules-page" data-auto-page="rules">${await autoRulesPanel(viewPage.items)}</div>`;
 }
 
 const requestStatusNames = {
@@ -161,6 +175,27 @@ function requestStatusPill(status) {
   return `<span class="automation-status ${active ? "active" : pending ? "pending" : "inactive"}"><i></i>${esc(requestStatusNames[status] || status)}</span>`;
 }
 
+function requestRowsMarkup(items) {
+  return items.map((item) => `<tr data-tag-request-row="${item.id}">
+    <td><label class="request-selector"><input type="checkbox" data-tag-request-select value="${item.id}" ${item.status === 1 ? "" : "disabled"}><span><strong>Request #${item.id} · ${esc(item.ledger_counterparty_name || "未记录交易对方")}</strong><small>${esc(item.ledger_summary || "无账目摘要；请查看详情")}</small></span></label></td>
+    <td><strong>${item.ledger_amount == null ? `Ledger #${item.ledger_id}` : esc(money({ amount: item.ledger_amount, currency_code: item.ledger_currency_code }))}</strong><small>Ledger #${item.ledger_id} · ${esc(item.view_name)} · ${item.ledger_active ? "当前有效" : "Ledger 已失效"}</small></td>
+    <td><strong>${esc(item.proposed_tag_name)}</strong><small>${esc(item.proposed_tag_system_name)}</small></td>
+    <td><strong>${esc(item.rule_name)}</strong><small>Rule #${item.rule_id} · Revision ${item.rule_revision}</small></td>
+    <td>${requestStatusPill(item.status)}</td>
+    <td><div class="automation-actions request-actions"><button type="button" class="quiet" data-action="tag-request-detail" data-id="${item.id}">查看依据</button>${requestActionsMarkup(item)}</div></td>
+  </tr>`).join("") || '<tr><td colspan="6" class="table-empty"><strong>没有符合条件的建议请求</strong><span>可选择「全部状态」查看已处理建议；只有已注册的规则扫描任务才会自动产生新建议。</span></td></tr>';
+}
+
+function requestActionsMarkup(item) {
+  return item.status === 1 ? `<button type="button" class="primary" data-action="tag-request-transition" data-operation="approve" data-id="${item.id}">通过并打标</button><button type="button" class="quiet" data-action="tag-request-transition" data-operation="reject" data-id="${item.id}">拒绝</button>` : "";
+}
+
+function requestPagerMarkup(result) {
+  const lastPage = Math.max(1, Math.ceil(result.total / result.page_size));
+  const page = result.page_index;
+  return `<div class="request-pager"><span>共 ${result.total} 条 · 第 ${page}/${lastPage} 页</span><div><button type="button" class="quiet" data-action="tag-request-page" data-page="${page - 1}" ${page <= 1 ? "disabled" : ""}>上一页</button><button type="button" class="quiet" data-action="tag-request-page" data-page="${page + 1}" ${page >= lastPage ? "disabled" : ""}>下一页</button></div></div>`;
+}
+
 export async function tagReviewPage(params = new URLSearchParams()) {
   const requestId = Number(params.get("request_id"));
   if (Number.isSafeInteger(requestId) && requestId > 0) {
@@ -169,7 +204,8 @@ export async function tagReviewPage(params = new URLSearchParams()) {
       request(`/paam/ledger/v1/flow/${item.ledger_id}`),
       request(`/paam/tag/v1/auto_rule/${item.rule_id}`),
     ]);
-    return `<div class="tag-review-page automation-detail-page"><button type="button" class="quiet" data-action="tag-request-detail-back">← 返回建议列表</button><h2>建议请求 #${requestId} · 判断依据</h2>${requestDetailMarkup(item, ledger, rule)}${item.status === 1 ? `<div class="automation-actions"><button type="button" class="primary" data-action="tag-request-transition" data-operation="approve" data-id="${item.id}">通过并打标</button><button type="button" class="quiet" data-action="tag-request-transition" data-operation="reject" data-id="${item.id}">拒绝</button></div>` : ""}</div>`;
+    requestItems = [item];
+    return `<div class="tag-review-page automation-detail-page" data-auto-page="request" data-request-id="${requestId}"><button type="button" class="quiet" data-action="tag-request-detail-back">← 返回建议列表</button><h2>建议请求 #${requestId} · 判断依据</h2>${freshnessMarkup}<div data-batch-feedback>${batchFeedback}</div><div data-auto-request-detail>${requestDetailMarkup(item, ledger, rule)}<div class="automation-actions">${requestActionsMarkup(item)}</div></div></div>`;
   }
   const page = Math.max(1, Number(params.get("page") || 1));
   const pageSize = Math.min(100, Math.max(1, Number(params.get("page_size") || 20)));
@@ -191,22 +227,14 @@ export async function tagReviewPage(params = new URLSearchParams()) {
     request("/paam/tag/v1/auto_rule/list?page_index=1&page_size=100&sorter=%5B%7B%22key%22%3A%22id%22%2C%22direction%22%3A%22asc%22%7D%5D"),
   ]);
   const result = await request(`/paam/tag/v1/assignment_request/list?${query}`);
+  requestItems = result.items;
   const viewOptions = viewPage.items.map((item) => `<option value="${item.id}" ${String(item.id) === viewId ? "selected" : ""}>${esc(item.name)}</option>`).join("");
   const ruleOptions = rulePage.items.map((item) => `<option value="${item.id}" ${String(item.id) === ruleId ? "selected" : ""}>${esc(item.name)}</option>`).join("");
-  const rows = result.items.map((item) => `<tr data-tag-request-row="${item.id}">
-    <td><label class="request-selector"><input type="checkbox" data-tag-request-select value="${item.id}" ${item.status === 1 ? "" : "disabled"}><span><strong>Request #${item.id} · ${esc(item.ledger_counterparty_name || "未记录交易对方")}</strong><small>${esc(item.ledger_summary || "无账目摘要；请查看详情")}</small></span></label></td>
-    <td><strong>${item.ledger_amount == null ? `Ledger #${item.ledger_id}` : esc(money({ amount: item.ledger_amount, currency_code: item.ledger_currency_code }))}</strong><small>Ledger #${item.ledger_id} · ${esc(item.view_name)} · ${item.ledger_active ? "当前有效" : "Ledger 已失效"}</small></td>
-    <td><strong>${esc(item.proposed_tag_name)}</strong><small>${esc(item.proposed_tag_system_name)}</small></td>
-    <td><strong>${esc(item.rule_name)}</strong><small>Rule #${item.rule_id} · Revision ${item.rule_revision}</small></td>
-    <td>${requestStatusPill(item.status)}</td>
-    <td><div class="automation-actions request-actions"><button type="button" class="quiet" data-action="tag-request-detail" data-id="${item.id}">查看依据</button>${item.status === 1 ? `<button type="button" class="primary" data-action="tag-request-transition" data-operation="approve" data-id="${item.id}">通过并打标</button><button type="button" class="quiet" data-action="tag-request-transition" data-operation="reject" data-id="${item.id}">拒绝</button>` : ""}</div></td>
-  </tr>`).join("");
-  const lastPage = Math.max(1, Math.ceil(result.total / result.page_size));
-  const pager = `<div class="request-pager"><span>共 ${result.total} 条 · 第 ${result.page_index}/${lastPage} 页</span><div><button type="button" class="quiet" data-action="tag-request-page" data-page="${page - 1}" ${page <= 1 ? "disabled" : ""}>上一页</button><button type="button" class="quiet" data-action="tag-request-page" data-page="${page + 1}" ${page >= lastPage ? "disabled" : ""}>下一页</button></div></div>`;
-  return `<div class="tag-review-page">
+  return `<div class="tag-review-page" data-auto-page="requests" data-request-query="${esc(query.toString())}">
     <section class="tag-manager automation-requests" aria-labelledby="tag-request-title">
       <div class="tag-manager-head"><div><h2 id="tag-request-title">标签建议请求</h2><p>列表展示交易对方、摘要和金额；点击「查看依据」核对账目、现有标签与建议理由后再决定。</p></div><div class="request-batch-actions"><button type="button" class="primary" data-action="tag-request-batch" data-operation="approve" disabled>批量通过</button><button type="button" class="quiet" data-action="tag-request-batch" data-operation="reject" disabled>批量拒绝</button></div></div>
       <div class="automation-notice compact" role="status" aria-live="polite"><strong>人工确认边界</strong><span>通过时会重新核对规则版本、Ledger、View、候选标签和当前人工标签；冲突不会强制覆盖。请求超时请刷新核对状态。</span></div>
+      ${freshnessMarkup}<div data-batch-feedback>${batchFeedback}</div>
       <div class="review-filter-skeleton" aria-labelledby="tag-review-filter-title">
         <form class="form-grid three" data-form="tag-request-filter">
           <label>标签维度<select name="view_id"><option value="">全部 View</option>${viewOptions}</select></label>
@@ -214,8 +242,8 @@ export async function tagReviewPage(params = new URLSearchParams()) {
           <label>建议状态<select name="status"><option value="" ${status === "" ? "selected" : ""}>全部状态</option>${Object.entries(requestStatusNames).map(([value, label]) => `<option value="${value}" ${status === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>
         </form>
       </div>
-      <div class="automation-table-wrap"><table class="automation-table request-table" aria-labelledby="tag-review-list-title"><thead><tr><th id="tag-review-list-title"><label class="request-select-all"><input type="checkbox" data-tag-request-select-all> 请求</label></th><th>Ledger / View</th><th>建议标签</th><th>来源规则</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows || '<tr><td colspan="6" class="table-empty"><strong>没有符合条件的建议请求</strong><span>可选择「全部状态」查看已处理建议；只有已注册的规则扫描任务才会自动产生新建议。</span></td></tr>'}</tbody></table></div>
-      ${pager}
+      <div class="automation-table-wrap"><table class="automation-table request-table" aria-labelledby="tag-review-list-title"><thead><tr><th id="tag-review-list-title"><label class="request-select-all"><input type="checkbox" data-tag-request-select-all> 请求</label></th><th>Ledger / View</th><th>建议标签</th><th>来源规则</th><th>状态</th><th>操作</th></tr></thead><tbody data-auto-request-rows>${requestRowsMarkup(result.items)}</tbody></table></div>
+      <div data-auto-request-pager>${requestPagerMarkup(result)}</div>
     </section>
   </div>`;
 }
@@ -407,11 +435,18 @@ function scheduleExplanation(code) {
     NO_ACTIVE_TARGETS: "目标标签维度没有可用的候选标签。",
     ITEM_FAILURE: "至少一条账目分析失败；逐项错误目前未持久化。",
     JOB_CALLBACK_FAILED: "调度回调异常；需要查看服务端日志。",
+    OUTPUT_JSON_INVALID: "模型输出不是合法 JSON；本项没有生成申请。请检查模型兼容性，不会自动单项重扫。",
+    OUTPUT_SCHEMA_INVALID: "模型 JSON 结构不符合打标协议；本项没有生成申请。请检查字段及模型兼容性。",
+    OUTPUT_SEMANTIC_INVALID: "输出未通过业务或隐私校验；本项没有生成申请。历史记录没有保留具体字段，不能判断是哪条校验失败。",
+    PROVIDER_UNAVAILABLE: "模型供应商暂时不可用；本轮未完成。请检查供应商状态及连接，后续由 CRON 按策略处理。",
+    REQUEST_TIMEOUT: "模型调用超时；本轮未完成。请检查超时配置或供应商响应。",
+    RATE_LIMITED: "模型供应商限流；请检查额度及调用频率。",
+    REGISTRATION_FAILED: "规则调度注册失败，不会触发；请检查 CRON 和时区配置。",
   };
   return code ? `${explanations[code] || "执行失败，请查看服务端日志。"}（${code}）` : "无错误码记录";
 }
 
-function ruleDetailMarkup(rule, schedule, recent) {
+function ruleDetailMarkup(rule, schedule, recent, summary = null) {
   const view = views.find((item) => item.id === rule.view_id);
   const model = setting?.models.find((item) => item.id === rule.method_config.model_id);
   const task = schedule.tasks?.find((item) => item.task_key === `tag-scan:${rule.id}`);
@@ -437,7 +472,8 @@ function ruleDetailMarkup(rule, schedule, recent) {
       ["累计", `分析 ${rule.analyzed_count} · 失败 ${rule.failed_count} · 建议 ${rule.suggested_count} · 通过 ${rule.accepted_count} · 拒绝 ${rule.rejected_count}`],
     ])}<p class="automation-detail-note">调度器仅提供当前进程的最近结果和下一次触发；不保存每次运行的完整日志。累计计数从数据库读取。资格预览不会请求模型，也不会推进游标。</p></section>
     <section><h3>最近建议 / 审查结果</h3>${recent.items.length ? `<div class="automation-detail-list">${recent.items.map((item) => `<div><button type="button" class="quiet" data-action="tag-request-detail" data-id="${item.id}">Request #${item.id} · ${esc(item.ledger_counterparty_name || item.ledger_summary || `Ledger #${item.ledger_id}`)}</button><span>${esc(item.proposed_tag_name)} · ${esc(requestStatusNames[item.status])} · ${esc(displayTime(item.created_time))}</span></div>`).join("")}</div>` : "<p>尚无建议请求；失败的调度也可能未生成请求。</p>"}</section>
-    <section><h3>模型输入与输出</h3><p class="automation-detail-note">历史模型请求正文与原始响应未被保存，不能准确回放；当前只保留建议标签和清洗后的理由。此处不会将资格预览冒充模型审查结果。</p></section>
+    <section><h3>统计口径与采纳反馈</h3>${ruleStatistics(summary)}</section>
+    <section><h3>模型输入与输出</h3><p class="automation-detail-note">历史模型请求正文与原始响应未被保存，不能准确回放；当前只保留建议标签和清洗后的理由。此处不会将资格预览冒充模型审查结果。</p><button type="button" class="quiet" data-action="disclosure-preview" data-mode="${rule.amount_mode}">查看系统约束与虚构披露预览</button></section>
   </div>`;
 }
 
@@ -473,71 +509,184 @@ function tagReviewFilterParams(entries) {
   return params;
 }
 
-export function bindAutomation(root, rerender, notify, navigate) {
-  $$('[data-action="model-new"]', root).forEach((button) => button.addEventListener("click", () => modelDialog()));
-  $$('[data-action="model-edit"]', root).forEach((button) => button.addEventListener("click", () => modelDialog(setting.models.find((item) => item.id === Number(button.dataset.id)))));
-  $$('[data-action="model-test"]', root).forEach((button) => button.addEventListener("click", () => testModel(button)));
-  $$('[data-action="model-secret-delete"]', root).forEach((button) => button.addEventListener("click", async () => {
-    if (!window.confirm("清除该模型的本地 API Key？启用状态可能因此不可用。")) return;
-    button.disabled = true;
+function updateRequestActions(root) {
+  const selection = $$('[data-tag-request-select]:not(:disabled)', root);
+  const selected = selection.filter((item) => item.checked).length;
+  $$('[data-action="tag-request-batch"]', root).forEach((button) => {
+    button.disabled = selected === 0 || root.dataset.commandPending === "true" || root.dataset.autoStale === "true";
+  });
+  const all = $('[data-tag-request-select-all]', root);
+  if (all) { all.checked = selected > 0 && selected === selection.length; all.indeterminate = selected > 0 && selected < selection.length; }
+}
+
+async function loadAutomationSnapshot(page, signal) {
+  const read = (url) => request(url, { signal, cache: "no-store" });
+  const kind = page.dataset.autoPage;
+  if (kind === "settings") return { schedule: await read("/paam/system/v1/schedule/status") };
+  if (kind === "requests") return { requests: await read(`/paam/tag/v1/assignment_request/list?${page.dataset.requestQuery}`) };
+  if (kind === "request") {
+    const item = await read(`/paam/tag/v1/assignment_request/${page.dataset.requestId}`);
+    const [ledger, rule] = await Promise.all([read(`/paam/ledger/v1/flow/${item.ledger_id}`), read(`/paam/tag/v1/auto_rule/${item.rule_id}`)]);
+    return { item, ledger, rule };
+  }
+  const [schedule, currentSetting, viewPage] = await Promise.all([
+    read("/paam/system/v1/schedule/status"), read("/paam/system/v1/setting/automation"), read("/paam/tag/v1/view/list?page_index=1&page_size=100"),
+  ]);
+  if (kind === "rules") return { schedule, currentSetting, viewPage, rulePage: await read(ruleListUrl) };
+  const [rule, summary, recent] = await Promise.all([
+    read(`/paam/tag/v1/auto_rule/${page.dataset.ruleId}`), read(`/paam/tag/v1/auto_rule/${page.dataset.ruleId}/summary`),
+    read(`/paam/tag/v1/assignment_request/list?${page.dataset.recentQuery}`),
+  ]);
+  return { schedule, currentSetting, viewPage, rule, summary, recent };
+}
+
+function applyAutomationSnapshot(root, page, data) {
+  const focused = root.contains(document.activeElement) ? document.activeElement : null;
+  const focusMatch = focused?.hasAttribute("data-tag-request-select") ? (node) => node.value === focused.value
+    : focused?.dataset.action ? (node) => node.dataset.action === focused.dataset.action && node.dataset.id === focused.dataset.id : null;
+  if (data.schedule) scheduleStatus = data.schedule;
+  if (data.currentSetting) setting = data.currentSetting;
+  if (data.viewPage) views = data.viewPage.items;
+  root.dataset.autoStale = "false";
+  if (page.dataset.autoPage === "settings") $('[data-auto-runtime]', root).innerHTML = runtimeMarkup(data.schedule);
+  if (data.rulePage) {
+    rules = data.rulePage.items;
+    $('[data-auto-notice]', root).innerHTML = scheduleNotice();
+    $('[data-auto-rule-rows]', root).innerHTML = rules.map(ruleRow).join("") || '<tr><td colspan="5">尚无规则</td></tr>';
+    const create = $('[data-action="rule-new"]', root);
+    if (create) create.disabled = !views.some((item) => item.status === "ACTIVE") || !setting.models.some((item) => item.enabled && item.key_configured);
+  }
+  if (data.summary) $('[data-auto-rule-detail]', root).innerHTML = ruleDetailMarkup(data.rule, data.schedule, data.recent, data.summary);
+  if (data.requests) {
+    const selected = new Set($$('[data-tag-request-select]:checked', root).map((item) => item.value));
+    requestItems = data.requests.items;
+    $('[data-auto-request-rows]', root).innerHTML = requestRowsMarkup(requestItems);
+    $('[data-auto-request-pager]', root).innerHTML = requestPagerMarkup(data.requests);
+    $$('[data-tag-request-select]:not(:disabled)', root).forEach((item) => { item.checked = selected.has(item.value); });
+    updateRequestActions(root);
+  }
+  if (data.item) {
+    requestItems = [data.item];
+    $('[data-auto-request-detail]', root).innerHTML = `${requestDetailMarkup(data.item, data.ledger, data.rule)}<div class="automation-actions">${requestActionsMarkup(data.item)}</div>`;
+  }
+  if (focusMatch && !focused.isConnected) $$('[data-tag-request-select], [data-action]', root).find(focusMatch)?.focus({ preventScroll: true });
+}
+
+function startAutomationRefresh(root) {
+  const page = $('[data-auto-page]', root);
+  if (!page) return;
+  stopAutomationPolling();
+  root.dataset.autoStale = "false";
+  const route = location.hash;
+  stopPolling = startVisiblePoll({
+    isAlive: () => page.isConnected && location.hash === route,
+    canPoll: () => !document.querySelector("dialog[open]") && root.dataset.commandPending !== "true"
+      && !(root.contains(document.activeElement) && document.activeElement.matches("input:not([type='checkbox']), select, textarea")),
+    load: (signal) => loadAutomationSnapshot(page, signal),
+    apply: (data) => applyAutomationSnapshot(root, page, data),
+    onState: ({ state, lastSuccess }) => {
+      const feedback = $('[data-auto-freshness]', root);
+      if (!feedback) return;
+      const last = lastSuccess ? displayTime(lastSuccess) : "本页初次读取";
+      feedback.textContent = state === "UNKNOWN" ? `当前状态未知：业务接口连接失败或超时。下方是旧快照，不能证明正在分析；最后成功刷新：${last}。可见页会继续尝试只读刷新。`
+        : state === "PAUSED" ? `页面隐藏，已停止轮询；最后成功刷新：${last}。`
+        : state === "CURRENT" ? `业务状态已更新：${last}。可见页每 5 秒刷新；编辑或确认期间暂停更新。`
+        : "等待业务状态刷新；可见页每 5 秒读取，页面隐藏后停止。";
+      if (state === "UNKNOWN") {
+        root.dataset.autoStale = "true";
+        $$('[data-action="tag-request-transition"]', root).forEach((button) => { button.disabled = true; });
+      }
+      updateRequestActions(root);
+    },
+  });
+}
+
+function showBatchFeedback(root, markup) {
+  batchFeedback = markup;
+  const slot = $('[data-batch-feedback]', root);
+  if (slot) { slot.innerHTML = markup; slot.scrollIntoView({ block: "nearest" }); }
+}
+
+async function transitionRequests(root, button, rerender) {
+  if (root.dataset.commandPending === "true" || root.dataset.autoStale === "true") return;
+  const ids = button.dataset.id ? [Number(button.dataset.id)]
+    : $$('[data-tag-request-select]:checked:not(:disabled)', root).map((item) => Number(item.value));
+  if (!ids.length) return;
+  const approve = button.dataset.operation === "approve";
+  if (approve && selectionConflict(requestItems.filter((item) => ids.includes(item.id)))) {
+    showBatchFeedback(root, batchResultMarkup(batchResults({ items: ids.map((request_id) => ({ request_id, result: "SCOPE_CONFLICT" })) }, ids, "approve")));
+    return;
+  }
+  const dialog = openDialog(approve ? "确认通过标签建议" : "确认拒绝标签建议", `<p>本次选择 ${ids.length} 项：${ids.map((id) => `#${id}`).join("、")}。</p><p>${approve ? "同一账目 + 维度只能选一项；服务端将重新核对版本、账目和人工标签，冲突不会强制覆盖。" : "只将这些申请标为已拒绝，不修改现有标签。"}</p><p>当前服务仍是整批事务；逐项部分成功将在 M2-CORE 接通。超时结果未知时请先刷新核对。</p><div class="actions"><button type="button" class="quiet" data-close>取消</button><button type="button" class="primary" data-confirm-batch>确认${approve ? "通过" : "拒绝"}</button></div>`);
+  $('[data-confirm-batch]', dialog).addEventListener("click", async (event) => {
+    event.currentTarget.disabled = true;
+    root.dataset.commandPending = "true";
+    $$('[data-action="tag-request-transition"], [data-action="tag-request-batch"]', root).forEach((item) => { item.disabled = true; });
+    dialog.close();
     try {
-      await request(`/paam/system/v1/setting/automation/model/${button.dataset.id}/secret`, { method: "DELETE" });
-      notify("密钥已从系统凭据存储清除");
-      await rerender();
-    } catch (error) { button.disabled = false; notify(error.message, true); }
-  }));
-  $('[data-action="rule-new"]', root)?.addEventListener("click", () => ruleDialog());
-  $$('[data-action="rule-edit"]', root).forEach((button) => button.addEventListener("click", () => ruleDialog(rules.find((item) => item.id === Number(button.dataset.id)))));
-  $$('[data-action="rule-preview"]', root).forEach((button) => button.addEventListener("click", () => previewRule(button)));
-  $$('[data-action="rule-detail"]', root).forEach((button) => button.addEventListener("click", () => navigate?.("auto-rules", new URLSearchParams({ rule_id: button.dataset.id }))));
-  $('[data-action="rule-detail-back"]', root)?.addEventListener("click", () => navigate?.("auto-rules"));
-  $$('[data-action="tag-request-detail"]', root).forEach((button) => button.addEventListener("click", () => {
-    const params = new URLSearchParams(location.hash.split("?")[1] || "");
-    params.set("request_id", button.dataset.id);
-    navigate?.("tag-review", params);
-  }));
-  $('[data-action="tag-request-detail-back"]', root)?.addEventListener("click", () => {
-    const params = new URLSearchParams(location.hash.split("?")[1] || "");
-    params.delete("request_id");
-    navigate?.("tag-review", params);
-  });
-  const requestFilter = $('[data-form="tag-request-filter"]', root);
-  requestFilter?.addEventListener("change", () => {
-    navigate?.("tag-review", tagReviewFilterParams(new FormData(requestFilter)));
-  });
-  $$('[data-action="tag-request-page"]', root).forEach((button) => button.addEventListener("click", () => {
-    const params = new URLSearchParams(location.hash.split("?")[1] || "");
-    params.set("page", button.dataset.page);
-    navigate?.("tag-review", params);
-  }));
-  const selection = $$('[data-tag-request-select]', root);
-  const updateRequestActions = () => {
-    const selected = selection.filter((item) => item.checked).length;
-    $$('[data-action="tag-request-batch"]', root).forEach((button) => {
-      button.disabled = selected === 0;
-    });
-  };
-  selection.forEach((checkbox) => checkbox.addEventListener("change", updateRequestActions));
-  $('[data-tag-request-select-all]', root)?.addEventListener("change", (event) => {
-    selection.filter((item) => !item.disabled).forEach((item) => { item.checked = event.currentTarget.checked; });
-    updateRequestActions();
-  });
-  const transitionRequests = async (button) => {
-    const ids = button.dataset.id
-      ? [Number(button.dataset.id)]
-      : selection.filter((item) => item.checked).map((item) => Number(item.value));
-    if (!ids.length) return;
-    const approve = button.dataset.operation === "approve";
-    if (!window.confirm(approve ? `通过并应用 ${ids.length} 条标签建议？` : `拒绝 ${ids.length} 条标签建议？`)) return;
-    button.disabled = true;
-    try {
-      await jsonRequest(`/paam/tag/v1/assignment_request/batch_${approve ? "approve" : "reject"}`, "POST", { request_ids: ids });
-      notify(approve ? "建议已通过，标签与来源已回读" : "建议已拒绝，当前标签未改变");
+      const body = await jsonRequest(`/paam/tag/v1/assignment_request/batch_${approve ? "approve" : "reject"}`, "POST", { request_ids: ids });
+      showBatchFeedback(root, batchResultMarkup(batchResults(body, ids, approve ? "approve" : "reject")));
       await rerender();
     } catch (error) {
-      button.disabled = false;
-      notify(`${error.message}；若请求超时，请刷新核对状态后再重试`, true);
+      const codes = { TAG_REQUEST_SCOPE_CONFLICT: "SCOPE_CONFLICT", TAG_REQUEST_STALE: "RULE_STALE", TAG_REQUEST_NOT_FOUND: "NOT_FOUND", TAG_REQUEST_NOT_PENDING: "REQUEST_STATE_CONFLICT" };
+      const result = codes[error.code] || "UNKNOWN";
+      showBatchFeedback(root, batchResultMarkup(batchResults({ items: ids.map((request_id) => ({ request_id, result })) }, ids, approve ? "approve" : "reject")));
+      // Do not automatically resubmit an ambiguous command. The next read refreshes state.
+    } finally {
+      root.dataset.commandPending = "false";
+      updateRequestActions(root);
     }
-  };
-  $$('[data-action="tag-request-transition"], [data-action="tag-request-batch"]', root).forEach((button) => button.addEventListener("click", () => transitionRequests(button)));
+  }, { once: true });
+}
+
+export function bindAutomation(root, rerender, notify, navigate) {
+  startAutomationRefresh(root);
+  if (boundRoots.has(root)) return;
+  boundRoots.add(root);
+  root.addEventListener("change", (event) => {
+    const filter = event.target.closest('[data-form="tag-request-filter"]');
+    if (filter) { batchFeedback = ""; navigate?.("tag-review", tagReviewFilterParams(new FormData(filter))); return; }
+    if (event.target.matches('[data-tag-request-select-all]')) {
+      $$('[data-tag-request-select]:not(:disabled)', root).forEach((item) => { item.checked = event.target.checked; });
+    }
+    updateRequestActions(root);
+  });
+  root.addEventListener("click", async (event) => {
+    const button = event.target.closest('[data-action]');
+    if (!button || !root.contains(button) || button.disabled) return;
+    const action = button.dataset.action;
+    const id = Number(button.dataset.id);
+    const params = new URLSearchParams(location.hash.split("?")[1] || "");
+    try {
+      if (action === "model-new") modelDialog();
+      if (action === "model-edit") modelDialog(setting.models.find((item) => item.id === id));
+      if (action === "model-test") await testModel(button);
+      if (action === "model-secret-delete") {
+        if (!window.confirm("清除该模型的本地 API Key？启用状态可能因此不可用。")) return;
+        button.disabled = true;
+        await request(`/paam/system/v1/setting/automation/model/${id}/secret`, { method: "DELETE" });
+        notify("密钥已从系统凭据存储清除"); await rerender();
+      }
+      if (action === "disclosure-edit") openDisclosureEditor(setting, openDialog, (saved) => {
+        setting = saved;
+        window.dispatchEvent(new CustomEvent("paam:automation-saved", { detail: { message: "披露策略已保存并回读；受影响规则的待审申请已失效" } }));
+      });
+      if (action === "disclosure-preview") openDisclosurePreview(openDialog, Number(button.dataset.mode || 1));
+      if (action === "interaction-demo") {
+        const dialog = openDialog("M2 未接核心的交互预览", `<label>虚构场景<select data-interaction-scenario>${Object.entries(interactionScenarios).map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select></label><div data-interaction-result>${interactionMarkup("PARTIAL")}</div>`);
+        $('[data-interaction-scenario]', dialog).addEventListener("change", (event) => {
+          $('[data-interaction-result]', dialog).innerHTML = interactionMarkup(event.target.value);
+        });
+      }
+      if (action === "rule-new") ruleDialog();
+      if (action === "rule-edit") ruleDialog(rules.find((item) => item.id === id));
+      if (action === "rule-preview") await previewRule(button);
+      if (action === "rule-detail") navigate?.("auto-rules", new URLSearchParams({ rule_id: String(id) }));
+      if (action === "rule-detail-back") navigate?.("auto-rules");
+      if (action === "tag-request-detail") { batchFeedback = ""; params.set("request_id", String(id)); navigate?.("tag-review", params); }
+      if (action === "tag-request-detail-back") { params.delete("request_id"); navigate?.("tag-review", params); }
+      if (action === "tag-request-page") { batchFeedback = ""; params.set("page", button.dataset.page); navigate?.("tag-review", params); }
+      if (["tag-request-transition", "tag-request-batch"].includes(action)) await transitionRequests(root, button, rerender);
+    } catch (error) { button.disabled = false; notify(error.message, true); }
+  });
 }
