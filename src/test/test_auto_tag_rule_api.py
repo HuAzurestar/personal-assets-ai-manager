@@ -98,6 +98,46 @@ def _client(sessions) -> TestClient:
     return TestClient(app)
 
 
+@pytest.mark.parametrize("counts, expected", [
+    ((0, 0, 0, 0, 0), ("0", None, "0", None)),
+    ((20, 2, 24, 6, 2), ("18", 0.9, "8", 0.75)),
+    (
+        (9_223_372_036_854_775_807, 1, 9_223_372_036_854_775_807,
+         9_223_372_036_854_775_806, 1),
+        ("9223372036854775806", 1.0, "9223372036854775807", 1.0),
+    ),
+])
+def test_rule_summary_exact_counter_strings_and_rate_denominators(
+    auto_rule_runtime, counts, expected,
+):
+    sessions, _, view_id = auto_rule_runtime
+    with _client(sessions) as client:
+        created = client.post("/paam/tag/v1/auto_rule", json=_rule_payload(view_id))
+        assert created.status_code == 200
+        rule_id = created.json()["body"]["id"]
+        fields = (
+            "analyzed_count", "failed_count", "suggested_count",
+            "accepted_count", "rejected_count",
+        )
+        with sessions() as db:
+            db.execute(update(AutoTagRule).where(AutoTagRule.id == rule_id).values(
+                **dict(zip(fields, counts)),
+            ))
+            db.commit()
+        response = client.get(f"/paam/tag/v1/auto_rule/{rule_id}/summary")
+        assert response.status_code == 200
+        body = response.json()["body"]
+        assert [body[field] for field in fields] == [str(value) for value in counts]
+        assert tuple(body[field] for field in (
+            "execution_success_count", "execution_success_rate", "decision_count",
+            "acceptance_rate",
+        )) == expected
+        assert "producing_analysis_rate" not in body
+        assert "pending_count" not in body
+    with _client(sessions) as client:
+        assert client.get(f"/paam/tag/v1/auto_rule/{rule_id}/summary").json()["body"] == body
+
+
 def _rule_payload(
     view_id: int,
     *,

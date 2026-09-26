@@ -192,6 +192,10 @@ class AutoTagRuleService:
 
     def summary(self, rule_id: int) -> AutoTagRuleSummaryRead:
         rule = self._required(rule_id)
+        analyzed = int(rule["analyzed_count"])
+        successful = analyzed - int(rule["failed_count"])
+        accepted = int(rule["accepted_count"])
+        decisions = accepted + int(rule["rejected_count"])
         return AutoTagRuleSummaryRead(
             id=int(rule["id"]),
             rule_revision=int(rule["rule_revision"]),
@@ -202,6 +206,10 @@ class AutoTagRuleService:
             suggested_count=str(rule["suggested_count"]),
             accepted_count=str(rule["accepted_count"]),
             rejected_count=str(rule["rejected_count"]),
+            execution_success_count=str(successful),
+            execution_success_rate=successful / analyzed if analyzed else None,
+            decision_count=str(decisions),
+            acceptance_rate=accepted / decisions if decisions else None,
         )
 
     def candidate_preview(self, rule_id: int) -> AutoTagCandidatePreviewRead:

@@ -273,19 +273,22 @@ class AutoTagRuleMapper:
             "active_target_count": active_target_count,
         }
 
-    def advance_for_model_ids(
+    def advance_for_configuration(
         self,
         model_ids: set[int],
         *,
         now: datetime,
+        amount_bands_changed: bool = False,
+        date_granularity_changed: bool = False,
     ) -> tuple[datetime, list[int]]:
-        """Invalidate rules whose effective model parameters changed."""
+        """Invalidate each affected rule once for an atomic setting update."""
 
-        if not model_ids:
+        if not model_ids and not amount_bands_changed and not date_granularity_changed:
             return now, []
         rows = self.db.execute(select(
             AutoTagRule.id,
             AutoTagRule.method_config_json,
+            AutoTagRule.amount_mode,
             AutoTagRule.rule_revision,
             AutoTagRule.scan_epoch,
             AutoTagRule.updated_time,
@@ -294,7 +297,11 @@ class AutoTagRuleMapper:
         effective_time = now
         for row in rows:
             method_config = decode_method_config(row["method_config_json"])
-            if method_config["model_id"] not in model_ids:
+            if not (
+                method_config["model_id"] in model_ids
+                or date_granularity_changed
+                or (amount_bands_changed and row["amount_mode"] == AMOUNT_MODE_BAND)
+            ):
                 continue
             if (
                 row["rule_revision"] >= MAX_COUNTER_VALUE

@@ -8,7 +8,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from backend.entity import Setting
-from backend.schema.setting import AutomationModelWrite
+from backend.schema.setting import AutomationDisclosure, AutomationModelWrite
 
 
 SETTING_SCHEMA_VERSION = 1
@@ -34,11 +34,12 @@ def decode_setting_value(value_json: str) -> dict[str, object]:
         if not isinstance(disclosure, dict):
             raise ValueError("setting automation disclosure must be a JSON object")
         try:
+            AutomationDisclosure.model_validate(disclosure)
             parsed_models = [
                 AutomationModelWrite.model_validate(model) for model in models
             ]
         except ValidationError as error:
-            raise ValueError("setting automation model is invalid") from error
+            raise ValueError("setting automation configuration is invalid") from error
         model_ids = [model.id for model in parsed_models]
         if len(set(model_ids)) != len(model_ids):
             raise ValueError("setting automation model ids must be unique")
