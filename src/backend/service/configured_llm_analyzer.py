@@ -84,11 +84,11 @@ class ConfiguredLlmAnalyzer:
             automation = value.get("automation", {})
             raw_models = automation.get("models", [])
             models = [AutomationModelWrite.model_validate(item) for item in raw_models]
-        except (AttributeError, TypeError, ValueError, ValidationError) as error:
+        except (AttributeError, TypeError, ValueError, ValidationError):
             raise LlmAdapterError(
                 "The stored model configuration is invalid",
                 code="CONFIG_ERROR",
-            ) from error
+            ) from None
         profile = next((item for item in models if item.id == model_id), None)
         if profile is None or not profile.enabled:
             raise LlmAdapterError(

@@ -247,7 +247,7 @@ def _suggest(payload, *tag_ids: int) -> LlmAnalysisResult:
             LlmResolvedSuggestion(
                 tag_id=tag_id,
                 tag_name=names[tag_id],
-                reason="synthetic reason",
+                reason="餐饮语义。",
             )
             for tag_id in tag_ids
         ],
@@ -269,7 +269,7 @@ def test_protected_split_uses_ledger_amount_not_original_fact(
             fact_key="pirc24-gate-fictional-split", occurred_time=NOW,
             cash_direction=2, amount=5000, currency_code=currency_code,
             account_code="fixture", counterparty_name="Synthetic merchant",
-            counterparty_account_ref="", summary="Synthetic purchase",
+            counterparty_account_ref="", summary="文具购买",
             created_time=NOW, updated_time=NOW,
         )
         db.add(fact)
@@ -319,8 +319,8 @@ def _protected_ledgers(sessions, tag_id):
                 id=ledger_id, fact_key=f"pirc24-gate-fictional-{ledger_id}",
                 occurred_time=NOW, cash_direction=1, amount=12300,
                 currency_code="CNY", account_code="fixture",
-                counterparty_name="店" * 201, counterparty_account_ref="",
-                summary="茶" * 501 if index == 0 else "Synthetic purchase",
+                counterparty_name="咖啡馆" * 67, counterparty_account_ref="",
+                summary="茶" * 501 if index == 0 else "文具购买",
                 created_time=NOW, updated_time=NOW,
             )
             for index, ledger_id in enumerate(ids)

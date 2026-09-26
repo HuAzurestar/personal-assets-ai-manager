@@ -114,7 +114,8 @@ def test_import_cron_json_request_reject_restart_and_pause_are_separate(
     def completion(**request):
         payload = json.loads(request["messages"][1]["content"])
         assert re.fullmatch(r"item_[0-9a-f]{32}", payload["item"])
-        assert payload["merchant"] == "示例餐厅"
+        # Unknown names are reduced to a confirmed-safe business category.
+        assert payload["merchant"] == "餐厅"
         assert "午餐" in payload["summary"]
         for forbidden in ("AZ12345678", "29.00", "ordinary-live-import", "account_code", "ledger_id"):
             assert forbidden not in request["messages"][1]["content"]

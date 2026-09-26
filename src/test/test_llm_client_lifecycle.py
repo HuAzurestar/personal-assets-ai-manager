@@ -128,3 +128,25 @@ def test_provider_session_swap_is_serialized_and_restored(offline_client, monkey
     assert maximum == 1
     assert all(client is offline_client["clients"][0] for client in transports)
     assert litellm.client_session is previous
+
+
+def test_raw_logging_and_external_callbacks_are_disabled(offline_client, monkeypatch, caplog, capsys):
+    import litellm
+
+    def forbidden_callback(*args, **kwargs):
+        pytest.fail("external callback received model data")
+
+    monkeypatch.setattr(litellm, "set_verbose", True)
+    monkeypatch.setattr(litellm, "log_raw_request_response", True)
+    monkeypatch.setattr(litellm, "turn_off_message_logging", False)
+    monkeypatch.setattr(litellm, "callbacks", [forbidden_callback])
+    request = _request("private-logging")
+    request["messages"] = [{"role": "user", "content": "PRIVATE_MESSAGE_CANARY"}]
+    llm_adapter._direct_litellm_completion(**request)
+    assert litellm.set_verbose is False
+    assert litellm.telemetry is False
+    assert litellm.turn_off_message_logging is True
+    assert litellm.log_raw_request_response is False
+    assert litellm.callbacks == []
+    output = capsys.readouterr()
+    assert "PRIVATE_MESSAGE_CANARY" not in caplog.text + output.out + output.err

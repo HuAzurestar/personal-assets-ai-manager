@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Literal
 
 from sqlalchemy import distinct, select, text, update
@@ -76,6 +76,8 @@ class ProtectedScanSource:
     currency_code: str
     merchant: str
     summary: str
+    occurred_time: datetime | None = None
+    payment_channel: str = ""
 
 
 class AutoTagScanMapper:
@@ -210,6 +212,7 @@ class AutoTagScanMapper:
             LedgerEntry.entry_direction,
             LedgerEntry.amount,
             LedgerEntry.currency_code,
+            LedgerEntry.occurred_time,
             TransactionFact.counterparty_name,
             TransactionFact.summary,
         ).select_from(ReviewAllocation).join(
@@ -237,6 +240,7 @@ class AutoTagScanMapper:
             currency_code=str(row["currency_code"]),
             merchant=str(row["counterparty_name"]),
             summary=str(row["summary"]),
+            occurred_time=row["occurred_time"],
         )
 
     def commit_item(

@@ -104,8 +104,8 @@ def test_model_reason_with_identifier_is_rejected():
 def test_protected_text_is_bounded_after_sanitizing_without_changing_source(length):
     source = ProtectedScanSource(
         direction="OUT", amount=1000, currency_code="CNY",
-        merchant="店" * 195 + " 订单号 ABC-12345678 " + "铺" * length,
-        summary="茶" * 495 + " https://example.test/private " + "点" * length,
+        merchant="咖啡馆" * 65 + " 订单号 ABC-12345678 " + "咖啡馆" * length,
+        summary="茶" * 495 + " https://example.test/private " + "午餐" * length,
     )
     payload = LlmPrivacyService().build_payload(_page(), source)
     assert payload is not None

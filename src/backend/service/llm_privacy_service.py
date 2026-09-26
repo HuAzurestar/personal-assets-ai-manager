@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import re
 import secrets
 import unicodedata
 from collections.abc import Mapping
 
+from backend.core.money import decimal_from_amount
 from backend.mapper.auto_tag_scan_mapper import ProtectedScanSource, ScanPage
 from backend.schema.llm_analysis import (
     LlmAmountDisclosure,
@@ -14,9 +17,13 @@ from backend.schema.llm_analysis import (
     LlmResolvedSuggestion,
     ProtectedLlmAnalysisInput,
 )
+from backend.schema.setting import AutomationDisclosure
+from backend.service.llm_safe_text import is_safe_reason, semantic_text
+
+_SEAL_KEY = secrets.token_bytes(32)
 
 _URL = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
-_EMAIL = re.compile(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}")
+_EMAIL = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}")
 _LABELED_SECRET = re.compile(
     r"(?:交易单号|交易订单号|商家订单号|商户单号|商户编号|设备序列号|"
     r"账号|账户|卡号|尾号|订单号|流水号|取餐码|验证码|兑换码|券码|收款码|"
@@ -35,8 +42,7 @@ _IDENTITY = re.compile(
     r"\s*[:：]?\s*[^\s,，;；。]+"
 )
 _PRIVATE_FRAGMENT = re.compile(
-    r"[^,，;；。\n]*(?:身份证|护照|住址|地址|门牌|"
-    r"[\u4e00-\u9fff]{1,15}(?:路|街|巷)\s*\d)[^,，;；。\n]*"
+    r"身份证|护照|住址|地址|门牌|[\u4e00-\u9fff]{1,15}(?:路|街|巷)\s*\d"
 )
 _MEASUREMENT = re.compile(
     r"(?<![A-Za-z0-9])\d{1,5}(?:\.\d+)?\s*"
@@ -50,6 +56,7 @@ _MONEY = re.compile(
     re.IGNORECASE,
 )
 _CHINESE_MONEY = re.compile(
+    r"(?<![零〇一二两三四五六七八九十百千万亿壹贰叁肆伍陆柒捌玖拾佰仟萬億])"
     r"[零〇一二两三四五六七八九十百千万亿壹贰叁肆伍陆柒捌玖拾佰仟萬億]+(?:元|圆|块|角|分)"
 )
 _AMOUNT_HINT = re.compile(r"(?:小额|大额|高额|低额|金额不大|金额较大)")
@@ -60,9 +67,10 @@ class LlmPrivacyService:
     """Build the only production payload allowed to cross the model boundary."""
 
     def __init__(self, disclosure: Mapping[str, object] | None = None):
-        value = disclosure if isinstance(disclosure, Mapping) else {}
-        bands = value.get("amount_bands", {})
-        self._bands = bands if isinstance(bands, Mapping) else {}
+        # Same typed snapshot as Settings and preview; corrupted configuration
+        # is not silently sorted, coerced, or substituted with a currency default.
+        self._policy = AutomationDisclosure.model_validate(dict(disclosure or {}))
+        self._bands = self._policy.amount_bands
 
     def build_payload(
         self,
@@ -74,27 +82,43 @@ class LlmPrivacyService:
         merchant_text = self._normalize_text(source.merchant).strip()
         identity = merchant_text if self._personal_merchant(merchant_text) else ""
 
-        def clean(value: str) -> str:
+        def clean(value: str, *, grammar: bool = False) -> str:
             value = self._normalize_text(value)
             if identity:
                 value = value.replace(identity, "[个人]")
-            return self.sanitize_text(value, amount_mode=page.amount_mode)
+            return semantic_text(
+                self.sanitize_text(value, amount_mode=page.amount_mode), grammar=grammar,
+            )
 
-        prompt = clean(page.prompt)
+        if page.amount_mode not in (1, 2, 3) or source.direction not in ("IN", "OUT"):
+            raise ValueError("invalid protected classification input")
+        # Resolve currency quantum even in NONE; never guess a unit or direction.
+        decimal_from_amount(source.amount, source.currency_code)
+        prompt = clean(page.prompt, grammar=True)
         # Clean complete source text before applying the provider DTO's limits;
         # clipping first can turn a secret spanning the boundary into plain text.
         merchant = "" if identity else clean(source.merchant)[:200].strip()
         summary = clean(source.summary)[:500].strip()
         candidates = []
         for target in page.targets:
-            name = clean(target.name)
+            name = clean(target.name, grammar=True)[:120].strip()
             if name:
                 candidates.append(LlmCandidate(tag_id=target.tag_id, name=name))
         if not prompt or not candidates or not (
             merchant or summary.replace("[个人]", "").strip(" ,，;；。")
         ):
             return None
-        return ProtectedLlmAnalysisInput(
+        date = None
+        if source.occurred_time is not None and self._policy.date_granularity != "NONE":
+            date = source.occurred_time.strftime(
+                "%Y-%m-%d" if self._policy.date_granularity == "DAY" else "%Y-%m",
+            )
+        channel = self.sanitize_text(source.payment_channel, amount_mode=page.amount_mode)
+        channel = next((
+            name for name in ("银行卡", "余额支付", "现金", "微信支付", "支付宝", "云闪付")
+            if name in channel
+        ), None)
+        payload = ProtectedLlmAnalysisInput(
             source="PROTECTED_LEDGER",
             # Independent 128-bit correlation nonce, never an encoding/hash of
             # the Ledger ID. The local scan context owns the Ledger mapping.
@@ -103,9 +127,15 @@ class LlmPrivacyService:
             merchant=merchant,
             summary=summary,
             rule_prompt=prompt,
+            date=date,
+            payment_channel=channel,
             amount=self._amount(source, page.amount_mode),
             candidates=candidates,
         )
+        if page.amount_mode == 1 and payload.amount.mode == "NONE":
+            payload._privacy_warnings = ("AMOUNT_BAND_UNCONFIGURED",)
+        payload._privacy_seal = _seal(payload)
+        return payload
 
     def validate_suggestions(
         self,
@@ -116,17 +146,25 @@ class LlmPrivacyService:
         for suggestion in suggestions:
             cleaned = self.sanitize_text(suggestion.reason, amount_mode=amount_mode)
             normalized = unicodedata.normalize("NFKC", suggestion.reason).strip()
-            if not cleaned or cleaned != normalized:
+            if not cleaned or cleaned != normalized or not is_safe_reason(normalized):
                 raise ValueError("model reason failed the privacy output boundary")
 
     @staticmethod
     def sanitize_text(value: str, *, amount_mode: int) -> str:
+        if len(value) > 32768:
+            # Omit an oversized fragment, never inspect a clipped identifier.
+            return ""
         text = LlmPrivacyService._normalize_text(value)
         # Normalize obfuscation before matching; reserve private-use placeholders
         # internally so input cannot impersonate a protected measurement.
         text = _URL.sub(" ", text)
         text = _EMAIL.sub(" ", text)
-        text = _PRIVATE_FRAGMENT.sub(" ", text)
+        # Split first: a greedy 'whole fragment' regex at every character had
+        # quadratic cost on long remarks without any identity marker.
+        text = "".join(
+            " " if _PRIVATE_FRAGMENT.search(fragment) else fragment
+            for fragment in re.split(r"([,，;；。\n])", text)
+        )
         text = _IDENTITY.sub(" ", text)
         text = _LABELED_SECRET.sub(" ", text)
         text = _PHONE_OR_ACCOUNT.sub(" ", text)
@@ -217,10 +255,15 @@ class LlmPrivacyService:
 
     def _currency_boundaries(self, currency_code: str) -> tuple[int, ...] | None:
         raw = self._bands.get(currency_code)
-        if not isinstance(raw, Mapping):
-            return None
-        values = raw.get("boundaries", [])
-        if not isinstance(values, list):
-            return None
-        valid = sorted({int(value) for value in values if isinstance(value, int) and value >= 0})
-        return tuple(valid) or None
+        return tuple(raw.boundaries) if raw is not None else None
+
+
+def _seal(payload: ProtectedLlmAnalysisInput) -> str:
+    return hmac.new(_SEAL_KEY, payload.model_dump_json().encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def require_protected_payload(payload: ProtectedLlmAnalysisInput) -> None:
+    if not isinstance(payload, ProtectedLlmAnalysisInput) or not hmac.compare_digest(
+        payload._privacy_seal, _seal(payload),
+    ):
+        raise ValueError("protected input must come from the unmodified privacy boundary")

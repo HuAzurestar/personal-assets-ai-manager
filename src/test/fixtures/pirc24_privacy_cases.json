@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "purpose": "仅为字段级脱敏设计样例；所有值虚构；不是生产API Schema或模型质量验收数据",
+  "amount_bands": {"CNY": {"quantum": "0.01", "boundaries": [0, 3000, 10000, 50000, 300000]}},
+  "date_granularity": "DAY",
+  "cases": [
+    {
+      "id": "SYN-WECHAT-MEAL",
+      "source_shape": "微信XLSX风格",
+      "input": {
+        "交易时间": "2030-01-02 12:34:56",
+        "交易类型": "商户消费",
+        "交易对方": "示例餐馆",
+        "商品": "午餐套餐",
+        "收/支": "支出",
+        "金额(元)": "29.00",
+        "支付方式": "银行卡(尾号7788)",
+        "当前状态": "支付成功",
+        "交易单号": "MOCK-WX-TRANSACTION-01",
+        "商户单号": "MOCK-WX-MERCHANT-01",
+        "备注": "午餐，实付￥29.00，取餐码MOCK-PICKUP-51"
+      },
+      "normalized_money": {"amount": 2900, "currency_code": "CNY", "direction": "EXPENSE"},
+      "forbidden_in_expected": ["MOCK-WX-TRANSACTION-01", "MOCK-WX-MERCHANT-01", "MOCK-PICKUP-51", "7788", "12:34:56", "29.00"],
+      "expected_by_mode": {
+        "BAND": {"item": "item_1", "date": "2030-01-02", "direction": "EXPENSE", "currency_code": "CNY", "merchant": "示例餐馆", "description": "午餐套餐", "payment_channel": "银行卡", "amount_band": {"lower_inclusive": 0, "upper_exclusive": 3000}},
+        "EXACT": {"item": "item_1", "date": "2030-01-02", "direction": "EXPENSE", "currency_code": "CNY", "merchant": "示例餐馆", "description": "午餐套餐", "payment_channel": "银行卡", "amount": 2900},
+        "NONE": {"item": "item_1", "date": "2030-01-02", "direction": "EXPENSE", "currency_code": "CNY", "merchant": "示例餐馆", "description": "午餐套餐", "payment_channel": "银行卡"}
+      }
+    },
+    {
+      "id": "SYN-ALIPAY-GROUP-MEAL",
+      "source_shape": "支付宝CSV风格",
+      "input": {
+        "交易时间": "2030-01-03 18:45:12",
+        "交易分类": "餐饮美食",
+        "交易对方": "示例宴会餐厅",
+        "对方账号": "mock-merchant@example.invalid",
+        "收/支": "支出",
+        "金额": "3500.00",
+        "收/付款方式": "银行卡(尾号8899)",
+        "交易状态": "交易成功",
+        "交易订单号": "MOCK-ALI-TRANSACTION-02",
+        "商家订单号": "MOCK-ALI-MERCHANT-02",
+        "备注": "聚餐；实付3,500.00元；券码MOCK-VOUCHER-02"
+      },
+      "normalized_money": {"amount": 350000, "currency_code": "CNY", "direction": "EXPENSE"},
+      "forbidden_in_expected": ["mock-merchant@example.invalid", "8899", "MOCK-ALI-TRANSACTION-02", "MOCK-ALI-MERCHANT-02", "MOCK-VOUCHER-02", "18:45:12", "3500.00", "3,500.00"],
+      "expected_by_mode": {
+        "BAND": {"item": "item_1", "date": "2030-01-03", "direction": "EXPENSE", "currency_code": "CNY", "merchant": "示例宴会餐厅", "description": "聚餐", "payment_channel": "银行卡", "amount_band": {"lower_inclusive": 300000, "upper_exclusive": null}},
+        "EXACT": {"item": "item_1", "date": "2030-01-03", "direction": "EXPENSE", "currency_code": "CNY", "merchant": "示例宴会餐厅", "description": "聚餐", "payment_channel": "银行卡", "amount": 350000},
+        "NONE": {"item": "item_1", "date": "2030-01-03", "direction": "EXPENSE", "currency_code": "CNY", "merchant": "示例宴会餐厅", "description": "聚餐", "payment_channel": "银行卡"}
+      }
+    },
+    {
+      "id": "SYN-BANK-STATIONERY",
+      "source_shape": "银行XLS风格；消费负号为本构造来源约定，由既有导入/账务语义规范化",
+      "input": {
+        "摘要": "文具购买；商户编号MOCK-MERCHANT-03；实付二十九元",
+        "交易日期": "2030-01-04",
+        "交易金额": "-29.00",
+        "账户余额": "8765.43"
+      },
+      "normalized_money": {"amount": 2900, "currency_code": "CNY", "direction": "EXPENSE"},
+      "forbidden_in_expected": ["MOCK-MERCHANT-03", "8765.43", "-29.00", "二十九元"],
+      "expected_by_mode": {
+        "BAND": {"item": "item_1", "date": "2030-01-04", "direction": "EXPENSE", "currency_code": "CNY", "description": "文具购买", "amount_band": {"lower_inclusive": 0, "upper_exclusive": 3000}},
+        "EXACT": {"item": "item_1", "date": "2030-01-04", "direction": "EXPENSE", "currency_code": "CNY", "description": "文具购买", "amount": 2900},
+        "NONE": {"item": "item_1", "date": "2030-01-04", "direction": "EXPENSE", "currency_code": "CNY", "description": "文具购买"}
+      }
+    },
+    {
+      "id": "SYN-BANK-PERSONAL-TRANSFER",
+      "source_shape": "银行PDF风格；身份及附言为安全反例构造",
+      "input": {
+        "记账日期": "2030-01-05",
+        "账号": "MOCK-BANK-ACCOUNT-04",
+        "户名": "虚构用户甲",
+        "币种": "CNY",
+        "交易金额": "300.00",
+        "余额": "9065.43",
+        "流水号": "MOCK-BANK-REFERENCE-04",
+        "摘要": "个人转账",
+        "附言": "退还垫款300元；虚构用户乙；账号mock-person@example.invalid；验证码MOCK-OTP-04"
+      },
+      "normalized_money": {"amount": 30000, "currency_code": "CNY", "direction": "INCOME"},
+      "forbidden_in_expected": ["MOCK-BANK-ACCOUNT-04", "虚构用户甲", "虚构用户乙", "9065.43", "MOCK-BANK-REFERENCE-04", "mock-person@example.invalid", "MOCK-OTP-04", "300.00", "300元"],
+      "expected_by_mode": {
+        "BAND": {"item": "item_1", "date": "2030-01-05", "direction": "INCOME", "currency_code": "CNY", "description": "个人转账，退还垫款", "amount_band": {"lower_inclusive": 10000, "upper_exclusive": 50000}},
+        "EXACT": {"item": "item_1", "date": "2030-01-05", "direction": "INCOME", "currency_code": "CNY", "description": "个人转账，退还垫款", "amount": 30000},
+        "NONE": {"item": "item_1", "date": "2030-01-05", "direction": "INCOME", "currency_code": "CNY", "description": "个人转账，退还垫款"}
+      }
+    }
+  ]
+}

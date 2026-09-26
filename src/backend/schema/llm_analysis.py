@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 
 class LlmCandidate(BaseModel):
@@ -62,6 +62,8 @@ class _LlmAnalysisInput(BaseModel):
     merchant: str = Field(default="", max_length=200)
     summary: str = Field(default="", max_length=500)
     rule_prompt: str = Field(min_length=1, max_length=4000)
+    date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}(?:-\d{2})?$")
+    payment_channel: Literal["银行卡", "余额支付", "现金", "微信支付", "支付宝", "云闪付"] | None = None
     amount: LlmAmountDisclosure
     candidates: list[LlmCandidate] = Field(min_length=1, max_length=100)
 
@@ -96,6 +98,11 @@ class ProtectedLlmAnalysisInput(_LlmAnalysisInput):
     """Production input containing only privacy-filtered business fields."""
 
     source: Literal["PROTECTED_LEDGER"]
+    # Process-local integrity seal: not serialized or persisted, and not a
+    # credential. Prevents a caller from constructing/mutating a DTO after the
+    # only privacy transform and then bypassing it at the SDK boundary.
+    _privacy_seal: str = PrivateAttr(default="")
+    _privacy_warnings: tuple[str, ...] = PrivateAttr(default=())
 
 
 LlmAnalysisInput = SyntheticLlmAnalysisInput | ProtectedLlmAnalysisInput

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 from datetime import datetime
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
@@ -33,7 +34,13 @@ _FORBIDDEN_PARAMETER_KEYS = {
     "response_format",
     "stream",
     "tools",
+    "prompt", "system", "metadata", "user", "headers", "extra_headers",
+    "client", "client_session", "logger_fn", "logging_obj", "mock_response",
+    "num_retries", "max_retries", "cache", "caching", "base_url",
+    "set_verbose", "suppress_debug_info", "log_raw_request_response", "drop_params",
 }
+
+_TEXT_PARAMETER_ENUMS = {"reasoning_effort": {"none", "minimal", "low", "medium", "high", "xhigh"}}
 
 
 def _validate_provider_value(value: Any, *, path: tuple[str, ...] = ()) -> None:
@@ -48,10 +55,12 @@ def _validate_provider_value(value: Any, *, path: tuple[str, ...] = ()) -> None:
                 or "password" in key
                 or "secret" in key
                 or key.startswith("__")
+                or any(part in key for part in ("callback", "logging", "telemetry", "trace"))
+                or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", key)
+                or re.search(r"\d{7,}", key)
+                or (path and key in {"model", "api_base", "stream", "response_format"})
             ):
-                raise ValueError(
-                    f"provider parameter {'.'.join((*path, raw_key))} is forbidden"
-                )
+                raise ValueError("provider parameter is forbidden by the safety boundary")
             _validate_provider_value(child, path=(*path, raw_key))
         return
     if isinstance(value, list):
@@ -60,6 +69,9 @@ def _validate_provider_value(value: Any, *, path: tuple[str, ...] = ()) -> None:
         return
     if isinstance(value, float) and not math.isfinite(value):
         raise ValueError("provider parameters must contain finite numbers")
+    if isinstance(value, str) and path not in {("model",), ("api_base",)}:
+        if not path or value not in _TEXT_PARAMETER_ENUMS.get(path[-1], set()):
+            raise ValueError("unrecognized provider text parameter cannot be sent safely")
     if value is None or isinstance(value, (str, int, float, bool)):
         return
     raise ValueError("provider parameters must contain JSON-compatible values")
@@ -86,7 +98,7 @@ class LiteLLMParams(BaseModel):
     @field_validator("model")
     @classmethod
     def validate_model(cls, value: str) -> str:
-        if value.strip() != value or not value:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_./:@-]{0,511}", value):
             raise ValueError("model must be non-empty and cannot have outer whitespace")
         return value
 
@@ -100,6 +112,8 @@ class LiteLLMParams(BaseModel):
             or parsed.username is not None
             or parsed.password is not None
             or parsed.fragment
+            or parsed.query
+            or re.search(r"[\s%]", value)
         ):
             raise ValueError("api_base must be an HTTPS URL without credentials or fragment")
         return value

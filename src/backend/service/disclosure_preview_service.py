@@ -1,5 +1,7 @@
 """Preview the existing privacy/message boundary without network or business writes."""
 
+from datetime import datetime
+
 from sqlalchemy.orm import Session
 
 from backend.core.money import amount_from_decimal
@@ -71,10 +73,11 @@ class DisclosurePreviewService:
         payload = LlmPrivacyService(disclosure).build_payload(page, ProtectedScanSource(
             direction="OUT", amount=sample.amount, currency_code=sample.currency_code,
             merchant=sample.merchant, summary=sample.summary,
+            occurred_time=datetime(2030, 1, 2, 12, 34, 56),
         ))
         warnings = [
             "固定虚构样例，仅使用已保存配置；未请求模型、未扫描账本、未创建打标申请。",
-            "当前外发结构省略交易时间；保存时间粒度不意味着已发送日期字段。",
+            "日期按已保存的DAY/MONTH/NONE策略披露，不发送时分秒。",
         ]
         if payload is None:
             warnings.append("清洗后没有足够业务语义，不会请求模型。")
