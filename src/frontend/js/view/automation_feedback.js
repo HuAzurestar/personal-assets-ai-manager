@@ -70,16 +70,47 @@ export function ruleStatistics(summary) {
     <p class="automation-detail-note">已分析包含失败、模型依据不足和清洗后未调用模型的条目。执行成功率 =（已分析 − 失败）/ 已分析，成功不代表产生建议；采纳率 = 人工通过 /（人工通过 + 人工拒绝）。自动取消不算拒绝；建议按请求数累计。这两项都不是模型准确率，不能据此反推无建议或待审数量。</p>`;
 }
 
+const phaseCopy = { SCAN: "检查候选", CALL: "请求模型", RETRY_WAIT: "等待重试", COMMIT: "原子提交", FINISH: "本轮结束" };
+const outcomeCopy = { NO_DATA: "无待分析数据", NO_CALL: "清洗后未调用模型", INSUFFICIENT: "模型依据不足",
+  SUGGESTION: "已生成待审申请", SKIPPED: "不满足分析条件", RETRY_DEFERRED: "本项留到后续 CRON",
+  SOFT_BUDGET_EXHAUSTED: "本轮预算结束", RUN_COMPLETED: "正常完成" };
+const localTime = (value) => value ? new Date(value).toLocaleString("zh-CN", { timeZone: "Asia/Hong_Kong" }) : "—";
+
+export function scheduleProgressMarkup(progress) {
+  if (!progress) return "";
+  return `<small>${esc(phaseCopy[progress.phase] || progress.phase)} · 已检查 ${esc(progress.inspected_count || 0)} / ${esc(progress.page_total || 0)} · 调用模型项 ${esc(progress.submitted_count || 0)} · 尝试 ${esc(progress.attempt || 0)} / 3</small>
+    <small>未调用 ${esc(progress.no_call_count || 0)} · 依据不足 ${esc(progress.insufficient_count || 0)} · 待审申请 ${esc(progress.request_count || 0)} · 失败 ${esc(progress.failed_count || 0)} · 跳过 ${esc(progress.skipped_count || 0)}</small>`;
+}
+
 export function runtimeMarkup(schedule) {
   if (!schedule) return '<div class="automation-result error">调度状态未知，无法确认正在运行。请检查本地服务。</div>';
   const tasks = schedule.tasks || [];
   const queue = tasks.filter((task) => task.queue_state === "QUEUED").sort((a, b) => a.queue_position - b.queue_position);
   const running = tasks.filter((task) => task.queue_state === "RUNNING");
-  const rows = tasks.map((task) => `<tr><td>${esc(task.task_key)}</td><td>${esc(task.queue_state)}${task.queue_position == null ? "" : ` · 排队第 ${esc(task.queue_position)} 位`}</td><td>${esc(task.last_result || "尚无结果")}${task.last_error_code ? ` · ${esc(task.last_error_code)}` : ""}</td><td>${esc(task.next_run_at || "—")}</td></tr>`).join("");
+  const rows = tasks.map((task) => `<tr><td><strong>${task.task_key === "system:import-preview-timeout" ? "导入预览超时清理（系统维护）" : esc(task.display_name || task.task_key)}</strong><small>${esc(task.task_key)}</small></td>
+    <td>${esc(task.queue_state)}${task.queue_position == null ? "" : ` · 排队第 ${esc(task.queue_position)} 位 · 已等待 ${Math.floor((task.wait_ms || 0) / 1000)} 秒<small>入队 ${esc(localTime(task.enqueued_at))}</small>`}
+    ${task.queue_state === "RUNNING" ? `<small>开始 ${esc(localTime(task.started_at))} · 已耗时 ${Math.floor((task.elapsed_ms || 0) / 1000)} 秒</small>${scheduleProgressMarkup(task.progress)}` : ""}
+    ${task.queue_state === "BLOCKED" ? `<small>已阻塞，连续 ${esc(task.blocked_attempts || 1)} 轮；${task.last_error_code === "REGISTER_FAILED" ? "请重新保存规则" : "后续 CRON 只尝试恢复，不推进未处理项"}</small>` : ""}</td>
+    <td>${esc(task.last_result || "尚未运行")}${task.last_error_code ? ` · ${esc(task.last_error_code)}` : ` · ${esc(outcomeCopy[task.last_outcome_code] || "")}`}
+    ${scheduleProgressMarkup(task.last_progress)}${task.last_run_id ? `<small>诊断编号 <code>${esc(task.last_run_id)}</code></small>` : ""}</td><td>${esc(localTime(task.next_run_at))}</td></tr>`).join("");
+  const failures = tasks.filter((task) => task.last_failure).map((task) => `<div class="automation-result error"><strong>${esc(task.task_key)} · 最近失败（不会被空扫描清除）</strong><p>${esc(task.last_failure.safe_message)}（${esc(task.last_failure.code)}）</p><small>${esc(localTime(task.last_failure.time))} · 诊断编号 <code>${esc(task.last_failure.run_id)}</code></small></div>`).join("");
   return `<p>调度器 ${esc(schedule.scheduler_state)} · Worker ${esc(schedule.worker_state)} · 等待 ${queue.length} · 运行 ${running.length}</p>
     <p>共享 FIFO：${queue.length ? queue.map((task) => esc(task.task_key)).join(" → ") : "没有等待项"}。运行中的任务不计入等待数量。</p>
     <div class="automation-table-wrap"><table class="automation-table"><thead><tr><th>任务</th><th>当前状态</th><th>最近结果</th><th>下次触发</th></tr></thead><tbody>${rows || '<tr><td colspan="4">尚无已注册任务</td></tr>'}</tbody></table></div>
-    <p class="automation-detail-note">真实进程快照：${esc(schedule.captured_at || "未提供时间")}。重启后瞬态队列和最近结果不恢复；数据库游标、累计与申请保留。当前接口不提供逐项阶段进度、安全诊断事件历史或日志轮转；这些属于 M2-CORE，调度健康不代表模型分析成功。</p>`;
+    ${failures}${schedule.diagnostics_health === "DEGRADED" ? '<div class="automation-result error" role="alert">安全诊断存储异常或部分历史损坏；当前仅保证最近 100 条内存记录，请检查本地日志目录权限和磁盘。</div>' : ""}
+    <p class="automation-detail-note">真实进程快照：${esc(localTime(schedule.captured_at))} · 最近 Worker 活动 ${esc(localTime(schedule.worker_heartbeat_at))}。导入超时清理不是标签扫描；CRON 不负责导入，也不自动批准申请。重启后瞬态队列和最近结果不恢复；数据库游标、累计与申请保留。安全诊断最多 3×5 MiB，轮转后历史不完整，调度健康不代表模型分析成功。</p>`;
+}
+
+export function diagnosticsMarkup(page, { taskKey = "", severity = "ERROR", code = "" } = {}) {
+  const current = page?.page_index || 1;
+  const last = Math.max(1, Math.ceil((page?.total || 0) / (page?.page_size || 10)));
+  return `<section data-diagnostic-state data-page="${current}" data-task-key="${esc(taskKey)}"><h3>安全诊断记录</h3>
+    <form class="form-grid three" data-form="schedule-diagnostics"><label>任务<input name="task_key" maxlength="96" value="${esc(taskKey)}" placeholder="例如 tag-scan:3"></label>
+      <label>级别<select name="severity">${[["ERROR", "仅错误"], ["WARNING", "仅警告"], ["INFO", "仅正常结果"], ["", "全部"]].map(([value, label]) => `<option value="${value}" ${value === severity ? "selected" : ""}>${label}</option>`).join("")}</select></label>
+      <label>错误码<input name="code" maxlength="96" value="${esc(code)}" placeholder="可留空"></label><button type="submit" class="quiet">筛选诊断</button></form>
+    ${!page ? '<p class="error" role="alert">诊断历史读取失败，状态未知；不等于没有错误。</p>' : `<div class="automation-detail-list">${page.items.map((event) => `<div><strong>${esc(localTime(event.time))} · ${esc(event.task_key)} · ${esc(event.phase)}</strong><span>${esc(event.safe_message)}（${esc(event.code)}${event.detail_code ? ` / ${esc(event.detail_code)}` : ""}）</span><small>${event.ledger_id == null ? "" : `本地 Ledger #${esc(event.ledger_id)} · `}${event.attempt == null ? "" : `第 ${esc(event.attempt)} 次尝试 · `}诊断编号 <code>${esc(event.run_id)}</code></small><button type="button" class="quiet" data-action="copy-diagnostic" data-run-id="${esc(event.run_id)}">复制诊断编号</button></div>`).join("") || "<p>当前筛选没有保留的诊断记录。日志会轮转，不代表从未失败。</p>"}</div>`}
+    <div class="request-pager"><span>保留记录 ${esc(page?.total ?? "未知")} · 第 ${current}/${last} 页</span><div><button type="button" class="quiet" data-action="diagnostic-page" data-diagnostic-page="${current - 1}" ${current <= 1 ? "disabled" : ""}>上一页</button><button type="button" class="quiet" data-action="diagnostic-page" data-diagnostic-page="${current + 1}" ${current >= last ? "disabled" : ""}>下一页</button></div></div>
+    <p class="automation-detail-note">仅保存固定白名单诊断，不含密钥、账单正文、Prompt 或原始模型输出。上次进程中断时显示“结果未知”；请核对申请和游标，不会据此重跑或批准。</p></section>`;
 }
 
 // UI-phase examples, explicitly separated from live APIs and persisted counters.
@@ -94,12 +125,12 @@ export const interactionScenarios = {
 };
 
 export function interactionMarkup(scenario) {
-  const intro = '<div class="automation-notice compact"><strong>虚构交互演示 · M2-UI</strong><span>以下全部为固定样例，不读取或修改真实账本，不发送批准请求，不是当前运行结果。逐项部分成功、完整保护与持久诊断仍待 M2-CORE。</span></div>';
+  const intro = '<div class="automation-notice compact"><strong>虚构交互演示 · M2-UI</strong><span>以下全部为固定样例，不读取或修改真实账本，不发送批准请求，不是当前运行结果。M2-CORE 的实际结果请看运行状态及安全诊断。</span></div>';
   if (scenario === "PARTIAL" || scenario === "MANUAL") {
     const codes = scenario === "PARTIAL" ? ["APPROVED", "NOT_FOUND", "ALREADY_APPROVED", "RULE_STALE"] : ["MANUAL_TAG_CONFLICT", "SCOPE_CONFLICT"];
     const items = codes.map((result, index) => ({ request_id: 1001 + index, result }));
     return intro + batchResultMarkup(batchResults({ items }, items.map((item) => item.request_id), "approve"), true)
-      + (scenario === "MANUAL" ? "<p>同值人工操作也应成为人工来源；旧自动申请不得覆盖。只调整目标 View，其他 View 保持不变。此处演示预期保护，不表示后端已补齐该竞态。</p>" : "");
+      + (scenario === "MANUAL" ? "<p>同值人工操作也成为人工来源；旧自动申请不得覆盖。只调整目标 View，其他 View 保持不变。此处仅为固定演示。</p>" : "");
   }
   if (scenario === "ZERO" || scenario === "LARGE") {
     const big = scenario === "LARGE";
@@ -114,5 +145,5 @@ export function interactionMarkup(scenario) {
       + "<p>未来进度演示：规则 7 处于 CALLING，已检查 3 / 100，耗时 20 秒；规则 8 等待 20 秒。</p><p>安全诊断演示：PARSE · OUTPUT_JSON_INVALID · 第 1 次尝试 · 虚构 Ledger #104。只展示白名单定位字段，不展示 Prompt、原始模型输出或密钥。</p>";
   if (scenario === "OFFLINE") return intro + runtimeMarkup(null)
     + "<p>注册失败：REGISTRATION_FAILED，请检查 CRON / 时区；保存不等于成功注册。</p><p>鉴权失败：AUTH_ERROR，请检查模型凭据；不能用健康检查成功覆盖业务失败。</p><p>离线时保留旧快照仅供参考，不标为当前运行，也不自动重发人工确认。</p>";
-  return intro + "<ul><li>无新增数据：本轮没有可分析条目，未调用模型。</li><li>清洗后无业务语义：不调用模型；按现有合同记为已分析，不产生建议。</li><li>模型依据不足：调用成功，decision=insufficient，不产生申请。</li><li>合法建议：后端校验后只生成待审 request，仍需人工批准或拒绝。</li><li>OUTPUT_SEMANTIC_INVALID：分析失败，不生成申请；不能从现有历史错误码猜测具体字段。</li></ul><p>这些是不同结果，不把“已分析”都解释成模型已给出建议。逐项安全诊断的真实历史展示将在 M2-CORE 接入。</p>";
+  return intro + "<ul><li>无新增数据：本轮没有可分析条目，未调用模型。</li><li>清洗后无业务语义：不调用模型；按现有合同记为已分析，不产生建议。</li><li>模型依据不足：调用成功，decision=insufficient，不产生申请。</li><li>合法建议：后端校验后只生成待审 request，仍需人工批准或拒绝。</li><li>OUTPUT_SEMANTIC_INVALID：分析失败，不生成申请；新记录提供固定细分原因，旧日志不能补造具体字段。</li></ul><p>这些是不同结果，不把“已分析”都解释成模型已给出建议。</p>";
 }

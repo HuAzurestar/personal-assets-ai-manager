@@ -131,6 +131,8 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
   assert.equal(allParams.get("page"), "1");
   const allPage = await context.testReviewPage(allParams);
   assert.match(allPage, /全部状态/);
+  assert.match(allPage, /data-request-page=/);
+  assert.doesNotMatch(allPage, /<button[^>]*data-page=/); // Reserved for global navigation.
   assert.doesNotMatch(requestedUrls.at(-1), /filter=/);
   const pendingParams = context.testFilterParams([["status", "1"]]);
   await context.testReviewPage(pendingParams);

@@ -28,6 +28,7 @@ from backend.schema.auto_tag_rule import (
     auto_tag_rule_filter,
 )
 from backend.schema.setting import AutomationModelWrite
+from backend.schema.response import ResponseWarning
 
 
 class AutoTagRuleService:
@@ -36,13 +37,14 @@ class AutoTagRuleService:
     def __init__(
         self,
         db: Session,
-        on_saved: Callable[[int], None] | None = None,
+        on_saved: Callable[[int], bool | None] | None = None,
     ):
         self.mapper = AutoTagRuleMapper(db)
         self.request_mapper = TagAssignmentRequestMapper(db)
         self.setting_mapper = SettingMapper(db)
         self.tag_mapper = TargetTagMapper(db)
         self._on_saved = on_saved
+        self.warnings: list[ResponseWarning] = []
 
     def get(self, rule_id: int) -> AutoTagRuleRead:
         return self._read(self._required(rule_id))
@@ -87,8 +89,7 @@ class AutoTagRuleService:
             )
             self.mapper.commit()
             result = self._read(self._required(rule_id))
-            if self._on_saved is not None:
-                self._on_saved(rule_id)
+            self._after_saved(rule_id)
             return result
         except AutoTagRuleError:
             self.mapper.rollback()
@@ -135,7 +136,9 @@ class AutoTagRuleService:
             ))
             if not any_changed:
                 self.mapper.rollback()
-                return self._read(current)
+                result = self._read(current)
+                self._after_saved(rule_id)
+                return result
 
             revision = int(current["rule_revision"])
             epoch = int(current["scan_epoch"])
@@ -173,8 +176,7 @@ class AutoTagRuleService:
                 )
             self.mapper.commit()
             result = self._read(self._required(rule_id))
-            if self._on_saved is not None:
-                self._on_saved(rule_id)
+            self._after_saved(rule_id)
             return result
         except AutoTagRuleError:
             self.mapper.rollback()
@@ -189,6 +191,19 @@ class AutoTagRuleService:
         except Exception:
             self.mapper.rollback()
             raise
+
+    def _after_saved(self, rule_id: int) -> None:
+        if self._on_saved is None:
+            return
+        try:
+            registered = self._on_saved(rule_id)
+        except Exception:
+            registered = False
+        if registered is False:
+            self.warnings.append(ResponseWarning(
+                code="REGISTER_FAILED",
+                message="规则已保存，但调度注册失败；请在调度诊断中核对并重新保存。",
+            ))
 
     def summary(self, rule_id: int) -> AutoTagRuleSummaryRead:
         rule = self._required(rule_id)

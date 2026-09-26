@@ -238,6 +238,8 @@ def test_scan_outcome_is_visible_in_shared_scheduler(
             del context, privacy
             return ScanRunReport(
                 actual_rule_id, *report_counts, reason, input_failed_count=input_failed,
+                successful_count=report_counts[1] - report_counts[3] + input_failed,
+                last_error_code=reason if reason.startswith("OUTPUT_") else None,
             )
 
     service._scan = FakeScan()

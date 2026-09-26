@@ -1,8 +1,8 @@
-import { request, jsonRequest } from "../api/client.js?v=20260926.3";
+import { request, jsonRequest } from "../api/client.js?v=20260927.1";
 import { $, $$, esc, money } from "../util/core.js";
-import { startVisiblePoll } from "../util/visible_poll.js?v=20260926.3";
-import { openDisclosureEditor, openDisclosurePreview } from "./disclosure.js?v=20260926.3";
-import { batchResults, batchResultMarkup, batchFailureMarkup, selectionConflict, ruleStatistics, runtimeMarkup, interactionScenarios, interactionMarkup } from "./automation_feedback.js?v=20260926.3";
+import { startVisiblePoll } from "../util/visible_poll.js?v=20260927.1";
+import { openDisclosureEditor, openDisclosurePreview } from "./disclosure.js?v=20260927.1";
+import { batchResults, batchResultMarkup, batchFailureMarkup, selectionConflict, ruleStatistics, runtimeMarkup, diagnosticsMarkup, interactionScenarios, interactionMarkup } from "./automation_feedback.js?v=20260927.1";
 
 let setting = null;
 let rules = [];
@@ -32,7 +32,7 @@ function modelSummary(model) {
     ["API 地址", params.api_base],
     ["温度", params.temperature ?? "默认"],
     ["最大输出", params.max_tokens ?? "默认"],
-    ["超时", params.timeout == null ? "默认" : `${params.timeout} 秒`],
+    ["超时", params.timeout == null ? "默认 60 秒" : `${params.timeout} 秒`],
   ].map(([label, value]) => `<div><dt>${label}</dt><dd>${esc(value)}</dd></div>`).join("");
   return `<article class="automation-card" data-model-card="${model.id}">
     <header><div><span class="eyebrow">MODEL #${model.id}</span><h3>${esc(model.name)}</h3></div>${statusPill(model.enabled, model.key_configured)}</header>
@@ -54,6 +54,7 @@ export async function automationSettingsPage() {
     `<div class="disclosure-row"><strong>${esc(currency)}</strong><span>${esc((config.boundaries || []).join(" → "))}</span></div>`,
   ).join("");
   scheduleStatus = await request("/paam/system/v1/schedule/status").catch(() => null);
+  const diagnostics = await readScheduleDiagnostics().catch(() => null);
   return `<div class="automation-page" data-auto-page="settings">
     <section class="automation-hero">
       <div><span class="eyebrow">SETTINGS · AUTOMATION</span><h2>自动化设置</h2><p>模型连接保存在本地设置中；密钥进入系统凭据存储，普通读取永不回显。</p></div>
@@ -68,7 +69,7 @@ export async function automationSettingsPage() {
       <div class="automation-section-head"><div><h3 id="automation-disclosure-title">金额披露</h3><p>全局按币种分档；每条规则独立选择 BAND / EXACT / NONE。</p></div><div class="automation-actions"><button type="button" class="quiet" data-action="disclosure-preview">虚构披露预览</button><button type="button" data-action="disclosure-edit">编辑披露策略</button></div></div>
       <div class="disclosure-card"><div><span>时间粒度</span><strong>${esc(setting.disclosure?.date_granularity || "未配置")}</strong></div><div><span>按币种区间（最小货币单位）</span>${bands || "<strong>尚未配置</strong>"}</div></div>
     </section>
-    <section class="automation-section"><h3>调度运行状态</h3>${freshnessMarkup}<div data-auto-runtime>${runtimeMarkup(scheduleStatus)}</div><button type="button" class="quiet" data-action="interaction-demo">M2 交互演示（虚构，不写数据）</button></section>
+    <section class="automation-section"><h3>调度运行状态</h3>${freshnessMarkup}<div data-auto-runtime>${runtimeMarkup(scheduleStatus)}</div><div data-auto-diagnostics>${diagnosticsMarkup(diagnostics)}</div><button type="button" class="quiet" data-action="interaction-demo">M2 交互演示（虚构，不写数据）</button></section>
   </div>`;
 }
 
@@ -88,6 +89,7 @@ function ruleRow(rule) {
     : scheduleStatus?.tag_scan_guard === "NON_SYNTHETIC_FACT" ? statusPill(true, false, "安全阻断")
     : !scheduleTask ? statusPill(true, false, "已保存·未调度")
     : scheduleTask.queue_state === "PAUSED" ? statusPill(true, false, "扫描已暂停")
+    : scheduleTask.queue_state === "BLOCKED" ? statusPill(true, false, "调度阻塞·查看诊断")
     : !schedulerRunning ? statusPill(true, false, "调度已停止")
     : statusPill(true);
   const resultNames = { COMPLETED: "完成", PARTIAL_FAILURE: "部分失败", FAILED: "失败", CANCELLED: "已取消" };
@@ -159,7 +161,9 @@ export async function autoRulesPage(params = new URLSearchParams()) {
     ]);
     views = viewPage.items;
     setting = currentSetting;
-    return `<div class="auto-rules-page automation-detail-page" data-auto-page="rule" data-rule-id="${ruleId}" data-recent-query="${esc(query.toString())}"><button type="button" class="quiet" data-action="rule-detail-back">← 返回规则列表</button><h2>规则 #${ruleId} · ${esc(rule.name)}</h2>${freshnessMarkup}<div data-auto-rule-detail>${ruleDetailMarkup(rule, schedule, recent, summary)}</div></div>`;
+    const diagnosticOptions = { taskKey: `tag-scan:${ruleId}` };
+    const diagnostics = await readScheduleDiagnostics(diagnosticOptions).catch(() => null);
+    return `<div class="auto-rules-page automation-detail-page" data-auto-page="rule" data-rule-id="${ruleId}" data-recent-query="${esc(query.toString())}"><button type="button" class="quiet" data-action="rule-detail-back">← 返回规则列表</button><h2>规则 #${ruleId} · ${esc(rule.name)}</h2>${freshnessMarkup}<div data-auto-rule-detail>${ruleDetailMarkup(rule, schedule, recent, summary)}</div><div data-auto-diagnostics>${diagnosticsMarkup(diagnostics, diagnosticOptions)}</div></div>`;
   }
   const viewPage = await request("/paam/tag/v1/view/list?page_index=1&page_size=100");
   return `<div class="auto-rules-page" data-auto-page="rules">${await autoRulesPanel(viewPage.items)}</div>`;
@@ -193,7 +197,7 @@ function requestActionsMarkup(item) {
 function requestPagerMarkup(result) {
   const lastPage = Math.max(1, Math.ceil(result.total / result.page_size));
   const page = result.page_index;
-  return `<div class="request-pager"><span>共 ${result.total} 条 · 第 ${page}/${lastPage} 页</span><div><button type="button" class="quiet" data-action="tag-request-page" data-page="${page - 1}" ${page <= 1 ? "disabled" : ""}>上一页</button><button type="button" class="quiet" data-action="tag-request-page" data-page="${page + 1}" ${page >= lastPage ? "disabled" : ""}>下一页</button></div></div>`;
+  return `<div class="request-pager"><span>共 ${result.total} 条 · 第 ${page}/${lastPage} 页</span><div><button type="button" class="quiet" data-action="tag-request-page" data-request-page="${page - 1}" ${page <= 1 ? "disabled" : ""}>上一页</button><button type="button" class="quiet" data-action="tag-request-page" data-request-page="${page + 1}" ${page >= lastPage ? "disabled" : ""}>下一页</button></div></div>`;
 }
 
 export async function tagReviewPage(params = new URLSearchParams()) {
@@ -377,9 +381,10 @@ async function submitRule(event) {
     };
     if (existing) payload.expected_updated_time = existing.updated_time;
     else payload.view_id = Number(data.get("view_id"));
-    await jsonRequest(existing ? `/paam/tag/v1/auto_rule/${id}` : "/paam/tag/v1/auto_rule", existing ? "PUT" : "POST", payload);
+    const saved = await jsonRequest(existing ? `/paam/tag/v1/auto_rule/${id}` : "/paam/tag/v1/auto_rule", existing ? "PUT" : "POST", payload, true);
     form.closest("dialog").close();
-    window.dispatchEvent(new CustomEvent("paam:automation-saved", { detail: { message: "规则已保存并从 SQLite 回读" } }));
+    const warning = saved.warnings?.some((item) => item.code === "REGISTER_FAILED");
+    window.dispatchEvent(new CustomEvent("paam:automation-saved", { detail: { message: warning ? "规则已保存，但调度注册失败；请查看安全诊断并重新保存" : "规则已保存并从 SQLite 回读" } }));
   } catch (error) {
     button.disabled = false;
     showFormError(form, error);
@@ -433,14 +438,17 @@ function scheduleExplanation(code) {
     AUTH_ERROR: "模型供应商鉴权失败；请核对 API Key。",
     CONFIG_ERROR: "模型或金额披露配置有误；请核对设置。",
     NO_ACTIVE_TARGETS: "目标标签维度没有可用的候选标签。",
-    ITEM_FAILURE: "至少一条账目分析失败；逐项错误目前未持久化。",
-    JOB_CALLBACK_FAILED: "调度回调异常；需要查看服务端日志。",
+    ITEM_FAILURE: "至少一条账目分析失败；请查看下方安全诊断记录。",
+    JOB_CALLBACK_FAILED: "调度回调异常；请查看安全诊断记录并核对业务结果。",
     OUTPUT_JSON_INVALID: "模型输出不是合法 JSON；本项没有生成申请。请检查模型兼容性，不会自动单项重扫。",
     OUTPUT_SCHEMA_INVALID: "模型 JSON 结构不符合打标协议；本项没有生成申请。请检查字段及模型兼容性。",
-    OUTPUT_SEMANTIC_INVALID: "输出未通过业务或隐私校验；本项没有生成申请。历史记录没有保留具体字段，不能判断是哪条校验失败。",
+    OUTPUT_SEMANTIC_INVALID: "输出未通过业务或隐私校验；本项没有生成申请。新诊断记录包含固定细分原因；旧记录不能补造字段。",
     PROVIDER_UNAVAILABLE: "模型供应商暂时不可用；本轮未完成。请检查供应商状态及连接，后续由 CRON 按策略处理。",
     REQUEST_TIMEOUT: "模型调用超时；本轮未完成。请检查超时配置或供应商响应。",
     RATE_LIMITED: "模型供应商限流；请检查额度及调用频率。",
+    RATE_LIMIT: "模型供应商限流；按 Retry-After 和本轮预算处理。",
+    COMMIT_FAILED: "本条写入已回滚，游标与计数未提交；请查看诊断。",
+    REGISTER_FAILED: "配置已保存但注册失败；请检查并重新保存规则。",
     REGISTRATION_FAILED: "规则调度注册失败，不会触发；请检查 CRON 和时区配置。",
   };
   return code ? `${explanations[code] || "执行失败，请查看服务端日志。"}（${code}）` : "无错误码记录";
@@ -470,7 +478,7 @@ function ruleDetailMarkup(rule, schedule, recent, summary = null) {
       ["调度状态", scheduling], ["最近结果", latest],
       ["扫描游标", `Ledger #${rule.scan_after_ledger_id} · Epoch ${rule.scan_epoch}`],
       ["累计", `分析 ${rule.analyzed_count} · 失败 ${rule.failed_count} · 建议 ${rule.suggested_count} · 通过 ${rule.accepted_count} · 拒绝 ${rule.rejected_count}`],
-    ])}<p class="automation-detail-note">调度器仅提供当前进程的最近结果和下一次触发；不保存每次运行的完整日志。累计计数从数据库读取。资格预览不会请求模型，也不会推进游标。</p></section>
+    ])}${task ? runtimeMarkup({ ...schedule, tasks: [task] }) : ""}<p class="automation-detail-note">上方进度属于当前进程；下方为有限保留的安全诊断，不是完整模型请求历史。累计计数从数据库读取。资格预览不会请求模型，也不会推进游标。</p></section>
     <section><h3>最近建议 / 审查结果</h3>${recent.items.length ? `<div class="automation-detail-list">${recent.items.map((item) => `<div><button type="button" class="quiet" data-action="tag-request-detail" data-id="${item.id}">Request #${item.id} · ${esc(item.ledger_counterparty_name || item.ledger_summary || `Ledger #${item.ledger_id}`)}</button><span>${esc(item.proposed_tag_name)} · ${esc(requestStatusNames[item.status])} · ${esc(displayTime(item.created_time))}</span></div>`).join("")}</div>` : "<p>尚无建议请求；失败的调度也可能未生成请求。</p>"}</section>
     <section><h3>统计口径与采纳反馈</h3>${ruleStatistics(summary)}</section>
     <section><h3>模型输入与输出</h3><p class="automation-detail-note">历史模型请求正文与原始响应未被保存，不能准确回放；当前只保留建议标签和清洗后的理由。此处不会将资格预览冒充模型审查结果。</p><button type="button" class="quiet" data-action="disclosure-preview" data-mode="${rule.amount_mode}">查看系统约束与虚构披露预览</button></section>
@@ -519,10 +527,45 @@ function updateRequestActions(root) {
   if (all) { all.checked = selected > 0 && selected === selection.length; all.indeterminate = selected > 0 && selected < selection.length; }
 }
 
+function diagnosticOptions(root) {
+  const form = $('[data-form="schedule-diagnostics"]', root);
+  return { taskKey: $('[name="task_key"]', form)?.value || "", severity: $('[name="severity"]', form)?.value ?? "ERROR", code: $('[name="code"]', form)?.value || "" };
+}
+
+async function readScheduleDiagnostics({ taskKey = "", severity = "ERROR", code = "" } = {}, page = 1, signal) {
+  const fields = [["task_key", taskKey], ["severity", severity], ["code", code]].filter(([, value]) => value)
+    .map(([key, val]) => ({ key, op: "=", val }));
+  const query = new URLSearchParams({ page_index: String(page), page_size: "10" });
+  if (fields.length) query.set("filter", JSON.stringify(fields.length === 1 ? fields[0] : { op: "AND", expression: fields }));
+  const result = await request(`/paam/system/v1/schedule/event/list?${query}`, { signal, cache: "no-store" });
+  if (!Array.isArray(result?.items)) throw new Error("安全诊断响应不可用");
+  return result;
+}
+
+async function diagnosticSnapshot(root, signal) {
+  const options = diagnosticOptions(root);
+  const pageIndex = Number($('[data-diagnostic-state]', root)?.dataset.page || 1);
+  return { options, pageIndex, events: await readScheduleDiagnostics(options, pageIndex, signal) };
+}
+
+async function refreshDiagnostics(root, pageIndex = 1) {
+  if (root.dataset.commandPending === "true") return;
+  root.dataset.commandPending = "true";
+  const target = $('[data-auto-diagnostics]', root);
+  const options = diagnosticOptions(root);
+  try {
+    const events = await readScheduleDiagnostics(options, pageIndex);
+    if (target.isConnected) target.innerHTML = diagnosticsMarkup(events, options);
+  } finally { root.dataset.commandPending = "false"; }
+}
+
 async function loadAutomationSnapshot(page, signal) {
   const read = (url) => request(url, { signal, cache: "no-store" });
   const kind = page.dataset.autoPage;
-  if (kind === "settings") return { schedule: await read("/paam/system/v1/schedule/status") };
+  if (kind === "settings") {
+    const [schedule, diagnostics] = await Promise.all([read("/paam/system/v1/schedule/status"), diagnosticSnapshot(page, signal)]);
+    return { schedule, diagnostics };
+  }
   if (kind === "requests") return { requests: await read(`/paam/tag/v1/assignment_request/list?${page.dataset.requestQuery}`) };
   if (kind === "request") {
     const item = await read(`/paam/tag/v1/assignment_request/${page.dataset.requestId}`);
@@ -537,7 +580,7 @@ async function loadAutomationSnapshot(page, signal) {
     read(`/paam/tag/v1/auto_rule/${page.dataset.ruleId}`), read(`/paam/tag/v1/auto_rule/${page.dataset.ruleId}/summary`),
     read(`/paam/tag/v1/assignment_request/list?${page.dataset.recentQuery}`),
   ]);
-  return { schedule, currentSetting, viewPage, rule, summary, recent };
+  return { schedule, currentSetting, viewPage, rule, summary, recent, diagnostics: await diagnosticSnapshot(page, signal) };
 }
 
 function applyAutomationSnapshot(root, page, data) {
@@ -557,6 +600,10 @@ function applyAutomationSnapshot(root, page, data) {
     if (create) create.disabled = !views.some((item) => item.status === "ACTIVE") || !setting.models.some((item) => item.enabled && item.key_configured);
   }
   if (data.summary) $('[data-auto-rule-detail]', root).innerHTML = ruleDetailMarkup(data.rule, data.schedule, data.recent, data.summary);
+  if (data.diagnostics && JSON.stringify(data.diagnostics.options) === JSON.stringify(diagnosticOptions(root))
+    && data.diagnostics.pageIndex === Number($('[data-diagnostic-state]', root)?.dataset.page || 1)) {
+    $('[data-auto-diagnostics]', root).innerHTML = diagnosticsMarkup(data.diagnostics.events, data.diagnostics.options);
+  }
   if (data.requests) {
     const selected = new Set($$('[data-tag-request-select]:checked', root).map((item) => item.value));
     requestItems = data.requests.items;
@@ -638,6 +685,11 @@ export function bindAutomation(root, rerender, notify, navigate) {
   startAutomationRefresh(root);
   if (boundRoots.has(root)) return;
   boundRoots.add(root);
+  root.addEventListener("submit", async (event) => {
+    if (!event.target.matches('[data-form="schedule-diagnostics"]')) return;
+    event.preventDefault();
+    try { await refreshDiagnostics(root); } catch (error) { notify(error.message, true); }
+  });
   root.addEventListener("change", (event) => {
     const filter = event.target.closest('[data-form="tag-request-filter"]');
     if (filter) { batchFeedback = ""; navigate?.("tag-review", tagReviewFilterParams(new FormData(filter))); return; }
@@ -653,6 +705,8 @@ export function bindAutomation(root, rerender, notify, navigate) {
     const id = Number(button.dataset.id);
     const params = new URLSearchParams(location.hash.split("?")[1] || "");
     try {
+      if (action === "diagnostic-page") await refreshDiagnostics(root, Number(button.dataset.diagnosticPage));
+      if (action === "copy-diagnostic") { await navigator.clipboard.writeText(button.dataset.runId); notify("诊断编号已复制"); }
       if (action === "model-new") modelDialog();
       if (action === "model-edit") modelDialog(setting.models.find((item) => item.id === id));
       if (action === "model-test") await testModel(button);
@@ -668,7 +722,7 @@ export function bindAutomation(root, rerender, notify, navigate) {
       });
       if (action === "disclosure-preview") openDisclosurePreview(openDialog, Number(button.dataset.mode || 1));
       if (action === "interaction-demo") {
-        const dialog = openDialog("M2 未接核心的交互预览", `<label>虚构场景<select data-interaction-scenario>${Object.entries(interactionScenarios).map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select></label><div data-interaction-result>${interactionMarkup("PARTIAL")}</div>`);
+        const dialog = openDialog("M2 虚构交互演示", `<label>虚构场景<select data-interaction-scenario>${Object.entries(interactionScenarios).map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select></label><div data-interaction-result>${interactionMarkup("PARTIAL")}</div>`);
         $('[data-interaction-scenario]', dialog).addEventListener("change", (event) => {
           $('[data-interaction-result]', dialog).innerHTML = interactionMarkup(event.target.value);
         });
@@ -680,7 +734,7 @@ export function bindAutomation(root, rerender, notify, navigate) {
       if (action === "rule-detail-back") navigate?.("auto-rules");
       if (action === "tag-request-detail") { batchFeedback = ""; params.set("request_id", String(id)); navigate?.("tag-review", params); }
       if (action === "tag-request-detail-back") { params.delete("request_id"); navigate?.("tag-review", params); }
-      if (action === "tag-request-page") { batchFeedback = ""; params.set("page", button.dataset.page); navigate?.("tag-review", params); }
+      if (action === "tag-request-page") { batchFeedback = ""; params.set("page", button.dataset.requestPage); navigate?.("tag-review", params); }
       if (["tag-request-transition", "tag-request-batch"].includes(action)) await transitionRequests(root, button, rerender);
     } catch (error) { button.disabled = false; notify(error.message, true); }
   });

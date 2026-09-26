@@ -15,7 +15,7 @@ function setConnectionState(state) {
   if (label) label.textContent = connectionCopy[state];
 }
 
-export async function request(url, options = {}) {
+export async function request(url, options = {}, includeEnvelope = false) {
   const response = await fetch(url, options).catch((error) => {
     if (error.name === "AbortError") throw error;
     setConnectionState("disconnected");
@@ -41,7 +41,7 @@ export async function request(url, options = {}) {
   }
   const isEnvelope = payload && Object.hasOwn(payload, "body")
     && (payload.status === response.status || payload.status === "success");
-  return isEnvelope
+  return isEnvelope && !includeEnvelope
     ? payload.body
     : payload;
 }
@@ -61,8 +61,8 @@ export async function checkConnection() {
   }
 }
 
-export const jsonRequest = (url, method, body) => request(url, {
+export const jsonRequest = (url, method, body, includeEnvelope = false) => request(url, {
   method,
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify(body),
-});
+}, includeEnvelope);

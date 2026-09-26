@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from copy import deepcopy
 
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from backend.core.job_scheduler import JobOutcome, JobRunContext, JobScheduler
@@ -53,7 +54,7 @@ class AutoTagScheduleService:
         for rule_id, expression in schedules:
             self._register(rule_id, expression)
 
-    def sync_rule(self, rule_id: int) -> None:
+    def sync_rule(self, rule_id: int) -> bool | None:
         if not (self._synthetic_acceptance_enabled or self._real_analysis_enabled):
             try:
                 self._scheduler.remove(self.task_key(rule_id))
@@ -77,14 +78,17 @@ class AutoTagScheduleService:
             except KeyError:
                 pass
             return
-        self._register(rule_id, str(rule["cron"]))
+        return self._register(rule_id, str(rule["cron"]))
 
-    def _register(self, rule_id: int, expression: str) -> None:
-        self._scheduler.register_cron(
-            self.task_key(rule_id),
-            expression=expression,
-            callback=self._callback(rule_id),
-        )
+    def _register(self, rule_id: int, expression: str) -> bool:
+        try:
+            self._scheduler.register_cron(
+                self.task_key(rule_id), expression=expression, callback=self._callback(rule_id),
+            )
+        except Exception:
+            self._scheduler.registration_failed(self.task_key(rule_id))
+            return False
+        return True
 
     def _callback(self, rule_id: int):
         async def run(context: JobRunContext) -> JobOutcome:
@@ -100,37 +104,51 @@ class AutoTagScheduleService:
                     except KeyError:
                         pass
                     return JobOutcome("FAILED", "ACCEPTANCE_DATABASE_REQUIRED")
+            try:
+                privacy = self._privacy_service()
+            except (ValidationError, ValueError, TypeError):
+                return JobOutcome("FAILED", "CONFIG_ERROR")
             report = await self._scan.run_protected(
                 rule_id,
                 context,
-                self._privacy_service(),
+                privacy,
                 synthetic_only=not self._real_analysis_enabled,
             )
             if report.failed_count:
                 return JobOutcome(
                     result=(
                         "PARTIAL_FAILURE"
-                        if report.submitted_count > (
-                            report.failed_count - report.input_failed_count
-                        )
+                        if report.successful_count > 0
                         else "FAILED"
                     ),
                     error_code=(
                         report.stopped_reason
-                        if report.stopped_reason != "PAGE_COMPLETE"
-                        else "ITEM_FAILURE"
+                        if report.stopped_reason in {
+                            "CONFIG_ERROR", "AUTH_ERROR", "COMMIT_FAILED", "COUNTER_EXHAUSTED",
+                            "VIEW_INACTIVE", "NO_ACTIVE_TARGETS", "MODEL_DISABLED",
+                        }
+                        else report.last_error_code or "ITEM_FAILURE"
                     ),
                 )
             if report.stopped_reason in {
                 "RULE_NOT_FOUND", "MODEL_DISABLED", "NO_ACTIVE_TARGETS",
                 "CONFIG_ERROR", "AUTH_ERROR",
+                "VIEW_INACTIVE", "COMMIT_FAILED", "COUNTER_EXHAUSTED",
+                "SYNTHETIC_FIXTURE_MISSING", "SYNTHETIC_FIXTURE_INVALID",
             }:
                 return JobOutcome("FAILED", report.stopped_reason)
             if report.stopped_reason in {
                 "RULE_TOKEN_CHANGED", "CURSOR_ALREADY_ADVANCED",
             }:
                 return JobOutcome("CANCELLED")
-            return JobOutcome("COMPLETED")
+            outcome = report.stopped_reason
+            if outcome == "PAGE_COMPLETE":
+                outcome = (
+                    "SUGGESTION" if report.request_count else
+                    "INSUFFICIENT" if report.insufficient_count else
+                    "NO_CALL" if report.no_call_count else "SKIPPED"
+                )
+            return JobOutcome("COMPLETED", outcome_code=outcome)
 
         return run
 

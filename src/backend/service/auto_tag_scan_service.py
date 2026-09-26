@@ -1,10 +1,11 @@
-"""Bounded automatic-tag scan orchestration for test and scheduled runs."""
+"""Bounded automatic-tag scans with safe, correlated diagnostic outcomes."""
 
 from __future__ import annotations
 
-import logging
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+import asyncio
+import math
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import asdict, dataclass
 from typing import Protocol
 
 from pydantic import ValidationError
@@ -14,7 +15,7 @@ from backend.core.job_scheduler import JobCallback, JobRunContext
 from backend.error import LlmAdapterError
 from backend.mapper.auto_tag_scan_mapper import (
     AutoTagScanMapper,
-    ScanCommitKind,
+    ScanCommitResult,
     ScanPage,
     ScanToken,
 )
@@ -27,16 +28,10 @@ from backend.schema.llm_analysis import (
 )
 from backend.service.llm_privacy_service import LlmPrivacyService
 
-logger = logging.getLogger(__name__)
-
 
 class TagAnalyzer(Protocol):
     async def analyze(
-        self,
-        payload: LlmAnalysisInput,
-        *,
-        rule_id: int,
-        model_id: int,
+        self, payload: LlmAnalysisInput, *, rule_id: int, model_id: int,
     ) -> LlmAnalysisResult: ...
 
 
@@ -49,6 +44,24 @@ class ScanRunReport:
     failed_count: int
     stopped_reason: str
     input_failed_count: int = 0
+    no_call_count: int = 0
+    insufficient_count: int = 0
+    skipped_count: int = 0
+    successful_count: int = 0
+    last_error_code: str | None = None
+
+
+@dataclass
+class _Counts:
+    inspected_count: int = 0
+    submitted_count: int = 0
+    request_count: int = 0
+    failed_count: int = 0
+    input_failed_count: int = 0
+    no_call_count: int = 0
+    insufficient_count: int = 0
+    skipped_count: int = 0
+    successful_count: int = 0
 
 
 class _PayloadStop(ValueError):
@@ -57,246 +70,250 @@ class _PayloadStop(ValueError):
         self.reason = reason
 
 
+class _RetryDeferred(Exception):
+    """A current item remains uncommitted until a later ordinary CRON tick."""
+
+
 PayloadBuilder = Callable[[ScanPage, int], LlmAnalysisInput | None]
 SuggestionValidator = Callable[[tuple, int], None]
 
 
 class AutoTagScanService:
-    """Run one bounded page with provider calls outside write transactions."""
+    """Provider calls/retry waits stay outside short atomic write transactions."""
 
-    def __init__(
-        self,
-        sessions: Callable[[], Session],
-        analyzer: TagAnalyzer,
-    ):
+    def __init__(self, sessions: Callable[[], Session], analyzer: TagAnalyzer, *, sleep: Callable[[float], Awaitable] = asyncio.sleep):
         self._sessions = sessions
         self._analyzer = analyzer
+        self._sleep = sleep
 
-    async def run_synthetic(
-        self,
-        rule_id: int,
-        fixtures: Mapping[int, SyntheticTagScanFixture],
-        context: JobRunContext,
-    ) -> ScanRunReport:
-        def build(page: ScanPage, ledger_id: int) -> SyntheticLlmAnalysisInput:
+    async def run_synthetic(self, rule_id: int, fixtures: Mapping[int, SyntheticTagScanFixture], context: JobRunContext) -> ScanRunReport:
+        def build(page: ScanPage, ledger_id: int):
             fixture = fixtures.get(ledger_id)
             if fixture is None:
                 raise _PayloadStop("SYNTHETIC_FIXTURE_MISSING")
             try:
                 return self._synthetic_payload(page, fixture, ledger_id=ledger_id)
-            except (ValidationError, ValueError, TypeError) as error:
-                raise _PayloadStop("SYNTHETIC_FIXTURE_INVALID") from error
-
+            except (ValidationError, ValueError, TypeError):
+                raise _PayloadStop("SYNTHETIC_FIXTURE_INVALID") from None
         return await self._run(rule_id, context, build)
 
-    async def run_protected(
-        self,
-        rule_id: int,
-        context: JobRunContext,
-        privacy: LlmPrivacyService,
-        *,
-        synthetic_only: bool = False,
-    ) -> ScanRunReport:
+    async def run_protected(self, rule_id: int, context: JobRunContext, privacy: LlmPrivacyService, *, synthetic_only: bool = False) -> ScanRunReport:
         def build(page: ScanPage, ledger_id: int):
             with self._sessions() as db:
-                source = AutoTagScanMapper(db).read_protected_source(
-                    ledger_id, synthetic_only=synthetic_only,
-                )
-            if source is None:
-                return None
-            return privacy.build_payload(page, source)
+                source = AutoTagScanMapper(db).read_protected_source(ledger_id, synthetic_only=synthetic_only)
+            return privacy.build_payload(page, source) if source is not None else None
 
-        def validate(suggestions: tuple, amount_mode: int) -> None:
+        def validate(suggestions: tuple, amount_mode: int):
             privacy.validate_suggestions(suggestions, amount_mode=amount_mode)
 
         return await self._run(
-            rule_id,
-            context,
-            build,
-            suggestion_validator=validate,
-            stop_on_provider_error=True,
+            rule_id, context, build, suggestion_validator=validate, stop_on_provider_error=True,
         )
 
     async def _run(
-        self,
-        rule_id: int,
-        context: JobRunContext,
-        payload_builder: PayloadBuilder,
-        *,
-        suggestion_validator: SuggestionValidator | None = None,
-        stop_on_provider_error: bool = False,
+        self, rule_id: int, context: JobRunContext, payload_builder: PayloadBuilder,
+        *, suggestion_validator: SuggestionValidator | None = None, stop_on_provider_error=False,
     ) -> ScanRunReport:
+        counts = _Counts()
+        last_error_code = None
+
+        def report(reason):
+            context.progress(phase="FINISH", **asdict(counts))
+            return ScanRunReport(rule_id=rule_id, stopped_reason=reason, last_error_code=last_error_code, **asdict(counts))
+
+        context.progress(phase="SCAN")
         page = self._read_page(rule_id, min(context.page_limit, 100))
-        if page is None:
-            return ScanRunReport(rule_id, 0, 0, 0, 0, "RULE_NOT_FOUND")
-        if not page.enabled:
-            return ScanRunReport(rule_id, 0, 0, 0, 0, "RULE_DISABLED")
-        if not page.view_active:
-            return ScanRunReport(rule_id, 0, 0, 0, 0, "VIEW_INACTIVE")
-        if not page.model_enabled:
-            return ScanRunReport(rule_id, 0, 0, 0, 0, "MODEL_DISABLED")
-        if not page.targets:
-            return ScanRunReport(rule_id, 0, 0, 0, 0, "NO_ACTIVE_TARGETS")
+        for invalid, reason in (
+            (page is None, "RULE_NOT_FOUND"),
+            (page is not None and not page.enabled, "RULE_DISABLED"),
+            (page is not None and not page.view_active, "VIEW_INACTIVE"),
+            (page is not None and not page.model_enabled, "MODEL_DISABLED"),
+            (page is not None and not page.targets, "NO_ACTIVE_TARGETS"),
+        ):
+            if invalid:
+                return report(reason)
+        assert page is not None
+        token = page.token
+        context.progress(page_total=len(page.ledger_ids), rule_revision=token.rule_revision)
+        if not page.ledger_ids:
+            return report("NO_DATA")
 
-        inspected = submitted = request_count = failed = input_failed = 0
-
-        def report(reason: str, *, inspected_count: int | None = None):
-            return ScanRunReport(
-                rule_id, inspected if inspected_count is None else inspected_count,
-                submitted, request_count, failed, reason,
-                input_failed_count=input_failed,
+        def emit(code, ledger_id, *, phase="SCAN", detail_code=None):
+            context.emit(
+                code, phase=phase, ledger_id=ledger_id,
+                rule_revision=token.rule_revision, detail_code=detail_code,
             )
 
-        token = page.token
+        def commit(ledger_id, kind, suggestions=()):
+            context.progress(phase="COMMIT", **asdict(counts))
+            try:
+                return self._commit(token, ledger_id, kind, suggestions)
+            except OverflowError:
+                emit("COUNTER_EXHAUSTED", ledger_id, phase="COMMIT")
+                return ScanCommitResult("STALE", "COUNTER_EXHAUSTED")
+            except Exception:  # No raw DB exception/parameters enter diagnostics.
+                emit("COMMIT_FAILED", ledger_id, phase="COMMIT")
+                return ScanCommitResult("STALE", "COMMIT_FAILED")
+
         for ledger_id in page.ledger_ids:
-            inspected += 1
-            skip_reason = self._initial_skip_reason(page, ledger_id)
-            if skip_reason is not None:
-                result = self._commit(token, ledger_id, "SKIP", ())
+            if not context.may_start_work():
+                return report("SOFT_BUDGET_EXHAUSTED")
+            counts.inspected_count += 1
+            context.progress(phase="SCAN", attempt=0, **asdict(counts))
+            if self._initial_skip_reason(page, ledger_id) is not None:
+                result = commit(ledger_id, "SKIP")
                 if result.status == "STALE":
                     return report(result.reason)
+                counts.skipped_count += 1
+                emit("SKIPPED", ledger_id)
                 token = self._advanced(token, ledger_id)
                 continue
 
-            if not context.may_start_work():
-                return report("SOFT_BUDGET_EXHAUSTED", inspected_count=inspected - 1)
             try:
                 payload = payload_builder(page, ledger_id)
             except _PayloadStop as error:
                 return report(error.reason)
-            except (ValidationError, ValueError, TypeError) as error:
-                # Invalid business input is one failed item, not a permanent
-                # poison record that prevents the rule from reaching later IDs.
-                logger.warning(
-                    "Auto-tag input rejected rule=%s ledger=%s error_type=%s",
-                    rule_id, ledger_id, type(error).__name__,
-                )
-                result = self._commit(token, ledger_id, "ITEM_FAILURE", ())
+            except (ValidationError, ValueError, TypeError):
+                result = commit(ledger_id, "ITEM_FAILURE")
                 if result.status == "STALE":
                     return report(result.reason)
                 if result.reason == "ANALYSIS_COMMITTED":
-                    failed += 1
-                    input_failed += 1
+                    counts.failed_count += 1
+                    counts.input_failed_count += 1
+                    last_error_code = "INPUT_INVALID"
+                    emit("INPUT_INVALID", ledger_id)
+                else:
+                    counts.skipped_count += 1
+                    emit("SKIPPED", ledger_id)
                 token = self._advanced(token, ledger_id)
                 continue
             if payload is None:
-                result = self._commit(token, ledger_id, "NO_SUGGESTION", ())
+                result = commit(ledger_id, "NO_SUGGESTION")
                 if result.status == "STALE":
                     return report(result.reason)
+                if result.reason == "ANALYSIS_COMMITTED":
+                    counts.no_call_count += 1
+                    counts.successful_count += 1
+                    emit("NO_CALL", ledger_id)
+                else:
+                    counts.skipped_count += 1
+                    emit("SKIPPED", ledger_id)
                 token = self._advanced(token, ledger_id)
                 continue
+            for warning in getattr(payload, "_privacy_warnings", ()):
+                emit(warning, ledger_id)
+            if not context.may_start_work():
+                return report("SOFT_BUDGET_EXHAUSTED")
 
-            submitted += 1
-            kind: ScanCommitKind
+            counts.submitted_count += 1
+            context.progress(phase="CALL", **asdict(counts))
             suggestions = ()
-            item_failed = False
-            provider_error_code = None
+            failure = None
+            detail = None
             try:
-                analysis = LlmAnalysisResult.model_validate(
-                    await self._analyze_with_policy(
-                        payload,
-                        rule_id=rule_id,
-                        model_id=page.model_id,
-                        context=context,
-                    )
-                )
+                analysis = LlmAnalysisResult.model_validate(await self._analyze_with_policy(
+                    payload, rule_id=rule_id, model_id=page.model_id, context=context,
+                    ledger_id=ledger_id, rule_revision=token.rule_revision,
+                ))
                 if analysis.item != payload.item:
-                    raise ValueError("analysis item does not match request")
-                if analysis.kind == "SUGGESTED":
-                    if not analysis.suggestions:
-                        raise ValueError("suggested analysis requires suggestions")
-                    kind = "SUGGESTED"
-                    suggestions = tuple(analysis.suggestions)
-                    if suggestion_validator is not None:
-                        suggestion_validator(suggestions, page.amount_mode)
-                else:
-                    if analysis.suggestions:
-                        raise ValueError("insufficient analysis cannot suggest tags")
-                    kind = "NO_SUGGESTION"
+                    raise LlmAdapterError("Item mismatch", code="OUTPUT_SEMANTIC_INVALID",
+                                          details={"reason_code": "ITEM_MISMATCH"})
+                if (analysis.kind == "SUGGESTED") != bool(analysis.suggestions):
+                    raise LlmAdapterError("Decision mismatch", code="OUTPUT_SEMANTIC_INVALID",
+                                          details={"reason_code": "DECISION_MISMATCH"})
+                kind = "SUGGESTED" if analysis.kind == "SUGGESTED" else "NO_SUGGESTION"
+                suggestions = tuple(analysis.suggestions)
+                if suggestion_validator is not None:
+                    suggestion_validator(suggestions, page.amount_mode)
+            except _RetryDeferred:
+                emit("RETRY_DEFERRED", ledger_id, phase="RETRY_WAIT")
+                return report("RETRY_DEFERRED")
             except LlmAdapterError as error:
-                logger.warning(
-                    "Auto-tag provider failure rule=%s ledger=%s code=%s",
-                    rule_id,
-                    ledger_id,
-                    error.code,
-                )
                 if error.code in {"AUTH_ERROR", "CONFIG_ERROR"}:
+                    emit(error.code, ledger_id, phase="CALL")
                     return report(error.code)
                 kind = "ITEM_FAILURE"
-                item_failed = True
-                provider_error_code = error.code
-            except (ValidationError, ValueError, TypeError) as error:
-                logger.warning(
-                    "Auto-tag output rejected rule=%s ledger=%s error_type=%s",
-                    rule_id,
-                    ledger_id,
-                    type(error).__name__,
-                )
+                failure = error.code
+                detail = error.details.get("reason_code")
+            except (ValidationError, ValueError, TypeError):
                 kind = "ITEM_FAILURE"
-                item_failed = True
-            except Exception as error:  # noqa: BLE001 - isolate one item
-                logger.warning(
-                    "Auto-tag item failed rule=%s ledger=%s error_type=%s",
-                    rule_id,
-                    ledger_id,
-                    type(error).__name__,
-                )
+                failure = "OUTPUT_SEMANTIC_INVALID"
+                detail = "UNSAFE_REASON"
+            except Exception:
                 kind = "ITEM_FAILURE"
-                item_failed = True
+                failure = "ITEM_FAILURE"
 
-            result = self._commit(token, ledger_id, kind, suggestions)
+            # A paused/replaced registration must not commit an in-flight response.
+            # Budget expiry alone is soft and does allow this item's atomic commit.
+            if not context.is_active():
+                return report("RULE_TOKEN_CHANGED")
+            result = commit(ledger_id, kind, suggestions)
             if result.status == "STALE":
                 return report(result.reason)
-            request_count += result.request_count
-            if item_failed or result.reason == "INVALID_SUGGESTION":
-                failed += 1
+            counts.request_count += result.request_count
             if result.reason == "INVALID_SUGGESTION":
-                logger.warning(
-                    "Auto-tag suggestion rejected rule=%s ledger=%s",
-                    rule_id,
-                    ledger_id,
-                )
+                failure, detail = "OUTPUT_SEMANTIC_INVALID", "INVALID_SUGGESTION"
+            if result.reason not in {"ANALYSIS_COMMITTED", "INVALID_SUGGESTION"}:
+                counts.skipped_count += 1
+                emit("SKIPPED", ledger_id, phase="COMMIT")
+            elif failure is not None:
+                counts.failed_count += 1
+                last_error_code = failure
+                emit(failure, ledger_id, phase="CALL", detail_code=detail)
+            elif result.request_count:
+                counts.successful_count += 1
+                emit("SUGGESTION", ledger_id, phase="COMMIT")
+            else:
+                counts.insufficient_count += 1
+                counts.successful_count += 1
+                emit("INSUFFICIENT", ledger_id, phase="COMMIT")
             token = self._advanced(token, ledger_id)
-            if stop_on_provider_error and provider_error_code is not None:
-                return report(provider_error_code)
+            # Exhausted transport retries stop this page, not all remaining items.
+            # Output validation failures are not retryable and can move to the next.
+            if stop_on_provider_error and failure in {
+                "RATE_LIMIT", "PROVIDER_UNAVAILABLE", "REQUEST_TIMEOUT",
+            }:
+                return report(failure)
 
         return report("PAGE_COMPLETE")
 
     async def _analyze_with_policy(
-        self,
-        payload: LlmAnalysisInput,
-        *,
-        rule_id: int,
-        model_id: int,
-        context: JobRunContext,
+        self, payload: LlmAnalysisInput, *, rule_id: int, model_id: int, context: JobRunContext,
+        ledger_id: int | None = None, rule_revision: int | None = None,
     ) -> LlmAnalysisResult:
-        attempts = 0
-        while True:
-            attempts += 1
+        for attempt in range(1, 4):
+            if not context.may_start_work():
+                raise _RetryDeferred()
+            context.progress(phase="CALL", attempt=attempt)
             try:
-                return await self._analyzer.analyze(
-                    payload,
-                    rule_id=rule_id,
-                    model_id=model_id,
-                )
+                return await self._analyzer.analyze(payload, rule_id=rule_id, model_id=model_id)
             except LlmAdapterError as error:
-                retryable = error.details.get("retryable") is True
-                if (
-                    error.code in {"AUTH_ERROR", "CONFIG_ERROR"}
-                    or not retryable
-                    or attempts >= 3
-                    or not context.may_start_work()
-                ):
+                if (error.code in {"AUTH_ERROR", "CONFIG_ERROR"}
+                        or error.details.get("retryable") is not True or attempt == 3):
                     raise
+                raw_delay = error.details.get("retry_after_seconds")
+                delay = (
+                    float(raw_delay)
+                    if type(raw_delay) in (int, float) and math.isfinite(raw_delay) and raw_delay >= 0
+                    else float(2 ** (attempt - 1))
+                )
+                context.emit(
+                    error.code, phase="CALL", attempt=attempt,
+                    ledger_id=ledger_id, rule_revision=rule_revision,
+                )
+                if delay >= context.remaining_seconds():
+                    raise _RetryDeferred() from None
+                context.progress(phase="RETRY_WAIT", attempt=attempt)
+                context.emit(
+                    "RETRY_SCHEDULED", phase="RETRY_WAIT", attempt=attempt,
+                    ledger_id=ledger_id, rule_revision=rule_revision,
+                )
+                await self._sleep(delay)
+        raise AssertionError("retry loop must return or raise")
 
-    def callback(
-        self,
-        rule_id: int,
-        fixtures: Mapping[int, SyntheticTagScanFixture],
-    ) -> JobCallback:
+    def callback(self, rule_id, fixtures) -> JobCallback:
         async def run(context: JobRunContext) -> None:
             await self.run_synthetic(rule_id, fixtures, context)
-
         return run
 
     def _read_page(self, rule_id: int, limit: int) -> ScanPage | None:
@@ -306,10 +323,7 @@ class AutoTagScanService:
     def _commit(self, token, ledger_id, kind, suggestions):
         with self._sessions() as db:
             return AutoTagScanMapper(db).commit_item(
-                token,
-                ledger_id=ledger_id,
-                kind=kind,
-                suggestions=suggestions,
+                token, ledger_id=ledger_id, kind=kind, suggestions=suggestions,
             )
 
     @staticmethod
@@ -323,39 +337,21 @@ class AutoTagScanService:
         return None
 
     @staticmethod
-    def _synthetic_payload(
-        page: ScanPage,
-        fixture: SyntheticTagScanFixture,
-        *,
-        ledger_id: int,
-    ) -> SyntheticLlmAnalysisInput:
+    def _synthetic_payload(page, fixture, *, ledger_id) -> SyntheticLlmAnalysisInput:
         if fixture.ledger_id != ledger_id:
             raise ValueError("fixture ledger_id does not match candidate")
-        expected_mode = {1: "BAND", 2: "EXACT", 3: "NONE"}[page.amount_mode]
-        if fixture.amount.mode != expected_mode:
-            raise ValueError(
-                f"fixture amount mode {fixture.amount.mode} does not match rule "
-                f"mode {expected_mode}"
-            )
+        if fixture.amount.mode != {1: "BAND", 2: "EXACT", 3: "NONE"}[page.amount_mode]:
+            raise ValueError("fixture amount mode does not match rule")
         return SyntheticLlmAnalysisInput(
-            source=fixture.source,
-            item=fixture.item,
-            direction=fixture.direction,
-            merchant=fixture.merchant,
-            summary=fixture.summary,
-            rule_prompt=page.prompt,
+            source=fixture.source, item=fixture.item, direction=fixture.direction,
+            merchant=fixture.merchant, summary=fixture.summary, rule_prompt=page.prompt,
             amount=fixture.amount,
-            candidates=[
-                LlmCandidate(tag_id=target.tag_id, name=target.name)
-                for target in page.targets
-            ],
+            candidates=[LlmCandidate(tag_id=target.tag_id, name=target.name) for target in page.targets],
         )
 
     @staticmethod
     def _advanced(token: ScanToken, ledger_id: int) -> ScanToken:
         return ScanToken(
-            rule_id=token.rule_id,
-            rule_revision=token.rule_revision,
-            scan_epoch=token.scan_epoch,
-            scan_after_ledger_id=ledger_id,
+            rule_id=token.rule_id, rule_revision=token.rule_revision,
+            scan_epoch=token.scan_epoch, scan_after_ledger_id=ledger_id,
         )

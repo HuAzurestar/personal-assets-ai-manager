@@ -62,6 +62,16 @@ const runtime = context.runtimeMarkup({ scheduler_state: "RUNNING", worker_state
   { task_key: "a", queue_state: "RUNNING" }, { task_key: "b", queue_state: "QUEUED", queue_position: 1 },
 ] });
 assert.match(runtime, /等待 1 · 运行 1/);
+const persistedDiagnostics = context.diagnosticsMarkup({ page_index: 2, page_size: 10, total: 12, items: [{
+  time: "2026-09-27T00:00:00Z", run_id: "a".repeat(32), task_key: "tag-scan:3", phase: "CALL",
+  code: "OUTPUT_SEMANTIC_INVALID", detail_code: "ITEM_MISMATCH", ledger_id: 12, attempt: 1,
+  safe_message: "临时代号不匹配 <script>",
+}] });
+assert.match(persistedDiagnostics, /第 2\/2 页/);
+assert.match(persistedDiagnostics, /ITEM_MISMATCH/);
+assert.match(persistedDiagnostics, /data-diagnostic-page=/);
+assert.doesNotMatch(persistedDiagnostics, /<button[^>]*data-page=|<script>/);
+assert.match(context.diagnosticsMarkup(null), /读取失败，状态未知/);
 
 function harness() {
   let counter = 0;

@@ -607,17 +607,12 @@ def test_atomic_commit_rolls_back_request_when_rule_update_fails(scan_runtime):
 
     event.listen(engine, "before_cursor_execute", fail_rule_update)
     try:
-        with pytest.raises(RuntimeError, match="injected rule update failure"):
-            _run(AutoTagScanService(
-                sessions,
-                FakeAnalyzer(lambda _, payload: _suggest(
-                    payload, tag_ids["food"]
-                )),
-            ).run_synthetic(
-                rule_id,
-                {ledger_id: _fixture(ledger_id)},
-                _context(),
-            ))
+        report = _run(AutoTagScanService(
+            sessions,
+            FakeAnalyzer(lambda _, payload: _suggest(payload, tag_ids["food"])),
+        ).run_synthetic(rule_id, {ledger_id: _fixture(ledger_id)}, _context()))
+        assert report.stopped_reason == "COMMIT_FAILED"
+        assert report.request_count == report.failed_count == 0
     finally:
         event.remove(engine, "before_cursor_execute", fail_rule_update)
 
@@ -665,17 +660,11 @@ def test_counter_overflow_aborts_whole_item_commit(scan_runtime):
         ).values(analyzed_count=MAX_COUNTER_VALUE))
         db.commit()
 
-    with pytest.raises(OverflowError, match="analyzed_count"):
-        _run(AutoTagScanService(
-            sessions,
-            FakeAnalyzer(
-                lambda _, payload: _suggest(payload, tag_ids["food"])
-            ),
-        ).run_synthetic(
-            rule_id,
-            {ledger_id: _fixture(ledger_id)},
-            _context(),
-        ))
+    report = _run(AutoTagScanService(
+        sessions, FakeAnalyzer(lambda _, payload: _suggest(payload, tag_ids["food"])),
+    ).run_synthetic(rule_id, {ledger_id: _fixture(ledger_id)}, _context()))
+    assert report.stopped_reason == "COUNTER_EXHAUSTED"
+    assert report.request_count == report.failed_count == 0
 
     with sessions() as db:
         rule = db.get(AutoTagRule, rule_id)

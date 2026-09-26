@@ -60,6 +60,14 @@ class AutoTagRuleMapper:
     def __init__(self, db: Session):
         self.db = db
 
+    def display_names(self, rule_ids: list[int]) -> dict[int, str]:
+        names = {}
+        for start in range(0, len(rule_ids), 500):
+            names.update(self.db.execute(select(AutoTagRule.id, AutoTagRule.name).where(
+                AutoTagRule.id.in_(rule_ids[start:start + 500]),
+            )).all())
+        return names
+
     @staticmethod
     def _columns():
         return (

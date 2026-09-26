@@ -5,8 +5,11 @@ from __future__ import annotations
 import atexit
 import json
 import logging
+import math
 import os
 from collections.abc import Callable, Mapping
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from threading import RLock
 from typing import Literal
 
@@ -144,6 +147,7 @@ def build_litellm_request(
         **params,
         "stream": False,
         "num_retries": 0,
+        "timeout": profile.litellm_params.timeout or 60.0,
         "no-log": True,
         "messages": build_messages(payload, response_mode=response_mode),
         "response_format": _response_format(payload, response_mode),
@@ -241,7 +245,7 @@ def parse_provider_response(
 ) -> LlmAnalysisResult:
     status_code = _field(response, "status_code")
     if isinstance(status_code, int) and status_code != 200:
-        raise _http_error(status_code)
+        raise _http_error(status_code, _field(response, "headers"))
 
     choices = _field(response, "choices")
     if not isinstance(choices, (list, tuple)) or len(choices) != 1:
@@ -312,19 +316,19 @@ def parse_business_output(
         raise _error(
             "OUTPUT_SEMANTIC_INVALID",
             "The model output item does not match the request",
-            details={"field_path": "item"},
+            details={"field_path": "item", "reason_code": "ITEM_MISMATCH"},
         )
     if (value.decision == "suggestion") != bool(value.suggestions):
         raise _error(
             "OUTPUT_SEMANTIC_INVALID",
             "The model decision and suggestions disagree",
-            details={"field_path": "suggestions"},
+            details={"field_path": "suggestions", "reason_code": "DECISION_MISMATCH"},
         )
     if len(value.suggestions) > len(payload.candidates):
         raise _error(
             "OUTPUT_SEMANTIC_INVALID",
             "The model returned too many suggestions",
-            details={"field_path": "suggestions"},
+            details={"field_path": "suggestions", "reason_code": "TOO_MANY_SUGGESTIONS"},
         )
 
     aliases = {
@@ -336,13 +340,13 @@ def parse_business_output(
         raise _error(
             "OUTPUT_SEMANTIC_INVALID",
             "The model returned a duplicate candidate",
-            details={"field_path": "suggestions.tag"},
+            details={"field_path": "suggestions.tag", "reason_code": "DUPLICATE_TAG"},
         )
     if any(alias not in aliases for alias in output_aliases):
         raise _error(
             "OUTPUT_SEMANTIC_INVALID",
             "The model returned an unknown candidate",
-            details={"field_path": "suggestions.tag"},
+            details={"field_path": "suggestions.tag", "reason_code": "UNKNOWN_TAG"},
         )
 
     suggestions = [
@@ -361,7 +365,7 @@ def parse_business_output(
         except ValueError:
             raise _error(
                 "OUTPUT_SEMANTIC_INVALID", "The model reason failed the privacy boundary",
-                details={"field_path": "suggestions.reason"},
+                details={"field_path": "suggestions.reason", "reason_code": "UNSAFE_REASON"},
             ) from None
     return LlmAnalysisResult(
         kind="SUGGESTED" if suggestions else "NO_SUGGESTION",
@@ -537,15 +541,22 @@ def _field(value: object, name: str) -> object:
 
 def _provider_exception(error: Exception) -> LlmAdapterError:
     status_code = getattr(error, "status_code", None)
+    headers = getattr(error, "headers", None)
+    if headers is None:
+        headers = _field(getattr(error, "response", None), "headers")
+    retry_after = _retry_after_seconds(headers)
+    details = {"retry_after_seconds": retry_after} if retry_after is not None else None
     if status_code in (401, 403):
         return _error("AUTH_ERROR", "The model provider rejected the credential")
     if status_code == 429:
         return _error(
-            "RATE_LIMIT", "The model provider rate limit was reached", retryable=True
+            "RATE_LIMIT", "The model provider rate limit was reached", retryable=True,
+            details=details,
         )
     if isinstance(status_code, int) and status_code >= 500:
         return _error(
-            "PROVIDER_UNAVAILABLE", "The model provider is unavailable", retryable=True
+            "PROVIDER_UNAVAILABLE", "The model provider is unavailable", retryable=True,
+            details=details,
         )
     if isinstance(status_code, int) and status_code in (400, 404, 422):
         return _error("CONFIG_ERROR", "The model provider rejected the configuration")
@@ -558,13 +569,36 @@ def _provider_exception(error: Exception) -> LlmAdapterError:
     )
 
 
-def _http_error(status_code: int) -> LlmAdapterError:
+def _http_error(status_code: int, headers: object = None) -> LlmAdapterError:
     class ProviderStatusError(Exception):
         pass
 
     error = ProviderStatusError()
     error.status_code = status_code  # type: ignore[attr-defined]
+    error.headers = headers  # type: ignore[attr-defined]
     return _provider_exception(error)
+
+
+def _retry_after_seconds(headers: object) -> float | None:
+    if not isinstance(headers, Mapping):
+        return None
+    raw = headers.get("retry-after", headers.get("Retry-After"))
+    if not isinstance(raw, str) or len(raw) > 128:
+        return None
+    try:
+        seconds = float(raw)
+    except ValueError:
+        try:
+            deadline = parsedate_to_datetime(raw)
+            if deadline.tzinfo is None:
+                return None
+            seconds = (deadline - datetime.now(timezone.utc)).total_seconds()
+        except (ValueError, TypeError, OverflowError):
+            return None
+    if not math.isfinite(seconds):
+        return None
+    # Only this numeric delay crosses the boundary, never headers/provider text.
+    return min(86400.0, max(0.0, seconds))
 
 
 def _error(

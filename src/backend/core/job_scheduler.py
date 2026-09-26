@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import re
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from threading import RLock
 from typing import Literal
@@ -23,21 +22,41 @@ from backend.core.cron_expression import (
     cron_trigger,
     validate_cron_expression,
 )
-
-logger = logging.getLogger(__name__)
+from backend.core.config import DATA_DIR
+from backend.core.schedule_diagnostics import PHASES, ScheduleDiagnostics, new_run_id, safe_code
 
 TASK_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9-]*(?::[a-zA-Z0-9._-]+)+$")
 DEFAULT_PAGE_LIMIT = 100
 DEFAULT_SOFT_BUDGET_SECONDS = 30.0
 
-QueueState = Literal["IDLE", "QUEUED", "RUNNING", "PAUSED"]
+QueueState = Literal["IDLE", "QUEUED", "RUNNING", "PAUSED", "BLOCKED"]
 LastResult = Literal["COMPLETED", "PARTIAL_FAILURE", "FAILED", "CANCELLED"]
+BLOCKING_CODES = frozenset({
+    "CONFIG_ERROR", "AUTH_ERROR", "MODEL_DISABLED", "NO_ACTIVE_TARGETS",
+    "VIEW_INACTIVE", "REGISTER_FAILED", "COUNTER_EXHAUSTED",
+})
+
+
+@dataclass(frozen=True, slots=True)
+class JobProgress:
+    phase: str = "SCAN"
+    page_total: int = 0
+    inspected_count: int = 0
+    submitted_count: int = 0
+    request_count: int = 0
+    failed_count: int = 0
+    no_call_count: int = 0
+    insufficient_count: int = 0
+    skipped_count: int = 0
+    attempt: int = 0
+    rule_revision: int = 0
 
 
 @dataclass(frozen=True, slots=True)
 class JobOutcome:
     result: LastResult
     error_code: str | None = None
+    outcome_code: str = "RUN_COMPLETED"
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,11 +69,26 @@ class JobRunContext:
     _active: Callable[[], bool] = field(
         default=lambda: True, repr=False, compare=False,
     )
+    run_id: str = ""
+    _progress: Callable[[dict], None] = field(default=lambda _: None, repr=False, compare=False)
+    _event: Callable[[dict], None] = field(default=lambda _: None, repr=False, compare=False)
 
     def may_start_work(self) -> bool:
         """Return false once this run's soft start budget is exhausted."""
 
         return self._monotonic() < self.deadline_monotonic and self._active()
+
+    def remaining_seconds(self) -> float:
+        return max(0.0, self.deadline_monotonic - self._monotonic()) if self._active() else 0.0
+
+    def is_active(self) -> bool:
+        return self._active()
+
+    def progress(self, **values) -> None:
+        self._progress(values)
+
+    def emit(self, code: str, *, phase: str, **values) -> None:
+        self._event({"code": code, "phase": phase, **values})
 
 
 JobCallback = Callable[[JobRunContext], Awaitable[JobOutcome | None]]
@@ -70,15 +104,27 @@ class JobSnapshot:
     next_run_at: datetime | None
     last_result: LastResult | None
     last_error_code: str | None
+    run_id: str | None = None
+    last_run_id: str | None = None
+    elapsed_ms: int | None = None
+    wait_ms: int | None = None
+    progress: JobProgress = field(default_factory=JobProgress)
+    last_progress: JobProgress | None = None
+    last_outcome_code: str | None = None
+    last_failure: dict | None = None
+    blocked_attempts: int = 0
 
 
 @dataclass(frozen=True, slots=True)
 class SchedulerSnapshot:
     scheduler_state: Literal["RUNNING", "STOPPED"]
-    worker_state: Literal["HEALTHY", "STOPPED"]
+    worker_state: Literal["HEALTHY", "STOPPED", "UNHEALTHY"]
     accepting: bool
     captured_at: datetime
     tasks: tuple[JobSnapshot, ...]
+    diagnostics_health: str = "HEALTHY"
+    diagnostics_persistent: bool = False
+    worker_heartbeat_at: datetime | None = None
 
 
 @dataclass(slots=True)
@@ -95,6 +141,16 @@ class _RuntimeState:
     started_at: datetime | None = None
     last_result: LastResult | None = None
     last_error_code: str | None = None
+    run_id: str | None = None
+    last_run_id: str | None = None
+    started_monotonic: float | None = None
+    enqueued_monotonic: float | None = None
+    progress: JobProgress = field(default_factory=JobProgress)
+    last_progress: JobProgress | None = None
+    last_outcome_code: str | None = None
+    last_failure: dict | None = None
+    blocked_code: str | None = None
+    blocked_attempts: int = 0
 
 
 class JobScheduler:
@@ -107,6 +163,7 @@ class JobScheduler:
         monotonic: Callable[[], float] = time.monotonic,
         page_limit: int = DEFAULT_PAGE_LIMIT,
         soft_budget_seconds: float = DEFAULT_SOFT_BUDGET_SECONDS,
+        diagnostics: ScheduleDiagnostics | None = None,
     ):
         if page_limit <= 0:
             raise ValueError("page_limit must be positive")
@@ -126,6 +183,10 @@ class JobScheduler:
         self._state_lock = RLock()
         self._worker_task: asyncio.Task[None] | None = None
         self._accepting = False
+        self.diagnostics = diagnostics or ScheduleDiagnostics()
+        self._worker_failed = False
+        self._heartbeat_at: datetime | None = None
+        self._registration_failures: set[str] = set()
 
     @staticmethod
     def _new_scheduler() -> AsyncIOScheduler:
@@ -196,7 +257,38 @@ class JobScheduler:
             self._states.setdefault(task_key, _RuntimeState())
             accepting = self._accepting
         if accepting:
-            self._install(registration)
+            try:
+                self._install(registration)
+            except Exception:
+                self.registration_failed(task_key)
+                raise RuntimeError("Schedule registration failed") from None
+        with self._state_lock:
+            self._registration_failures.discard(task_key)
+            if self._states[task_key].blocked_code == "REGISTER_FAILED":
+                self._states[task_key].blocked_code = None
+
+    def registration_failed(self, task_key: str) -> None:
+        """Retain a visible failed registration, without a runnable stale job."""
+        self._validate_task_key(task_key)
+        with self._state_lock:
+            if task_key in self._registration_failures:
+                return
+            self._registrations.pop(task_key, None)
+            self._discard_queued(task_key)
+            state = self._states.setdefault(task_key, _RuntimeState())
+            state.blocked_code = state.last_error_code = "REGISTER_FAILED"
+            state.last_result = "FAILED"
+            state.last_run_id = new_run_id()
+            state.last_failure = self.diagnostics.record(
+                run_id=state.last_run_id, task_key=task_key,
+                phase="REGISTER", code="REGISTER_FAILED",
+            )
+            self._registration_failures.add(task_key)
+        if self._scheduler.running:
+            try:
+                self._scheduler.remove_job(task_key)
+            except JobLookupError:
+                pass
 
     async def start(self) -> None:
         if self._accepting:
@@ -208,16 +300,23 @@ class JobScheduler:
         # FastAPI TestClient and process reloads may create a fresh event loop.
         # Rebuild loop-bound primitives only after the previous worker stopped.
         self._condition = asyncio.Condition()
+        self.diagnostics.recover_interrupted()
+        self._worker_failed = False
         self._accepting = True
         self._worker_task = asyncio.create_task(
             self._worker(),
             name="paam-job-worker",
         )
+        self._worker_task.add_done_callback(self._worker_finished)
+        self._heartbeat_at = self._now()
         try:
             with self._state_lock:
                 registrations = tuple(self._registrations.values())
             for registration in registrations:
-                self._install(registration)
+                try:
+                    self._install(registration)
+                except Exception:
+                    self.registration_failed(registration.task_key)
             self._scheduler.start()
         except Exception:
             self._accepting = False
@@ -250,6 +349,9 @@ class JobScheduler:
             self._active_keys.clear()
             self._registrations.clear()
             self._states.clear()
+            self._registration_failures.clear()
+            self._worker_failed = False
+            self._heartbeat_at = None
         self._scheduler = self._new_scheduler()
 
     async def _await_cancelled_worker(self) -> None:
@@ -259,6 +361,9 @@ class JobScheduler:
         try:
             await worker
         except asyncio.CancelledError:
+            pass
+        except Exception:
+            # The done callback records only a fixed diagnostic; never a traceback.
             pass
         finally:
             self._worker_task = None
@@ -271,6 +376,8 @@ class JobScheduler:
                 registration = self._registrations.get(task_key)
                 if (
                     not self._accepting
+                    or self._worker_task is None
+                    or self._worker_task.done()
                     or registration is None
                     or registration.paused
                     or task_key in self._active_keys
@@ -280,6 +387,7 @@ class JobScheduler:
                 self._queue.append(task_key)
                 state = self._states[task_key]
                 state.enqueued_at = self._now()
+                state.enqueued_monotonic = self._monotonic()
                 state.started_at = None
             self._condition.notify()
             return True
@@ -301,8 +409,10 @@ class JobScheduler:
 
     def remove(self, task_key: str) -> None:
         with self._state_lock:
-            self._required(task_key)
-            self._registrations.pop(task_key)
+            if task_key not in self._registration_failures:
+                self._required(task_key)
+            self._registrations.pop(task_key, None)
+            self._registration_failures.discard(task_key)
             self._discard_queued(task_key)
             if self._running_key != task_key:
                 self._states.pop(task_key, None)
@@ -318,15 +428,17 @@ class JobScheduler:
                 task_key: index for index, task_key in enumerate(self._queue, start=1)
             }
             tasks = []
-            for task_key in sorted(self._registrations):
-                registration = self._registrations[task_key]
+            for task_key in sorted(set(self._registrations) | self._registration_failures):
+                registration = self._registrations.get(task_key)
                 state = self._states[task_key]
                 if self._running_key == task_key:
                     queue_state: QueueState = "RUNNING"
                 elif task_key in positions:
                     queue_state = "QUEUED"
-                elif registration.paused:
+                elif registration is not None and registration.paused:
                     queue_state = "PAUSED"
+                elif state.blocked_code is not None:
+                    queue_state = "BLOCKED"
                 else:
                     queue_state = "IDLE"
                 tasks.append(
@@ -339,17 +451,30 @@ class JobScheduler:
                         next_run_at=self._next_run_time(task_key),
                         last_result=state.last_result,
                         last_error_code=state.last_error_code,
+                        run_id=state.run_id,
+                        last_run_id=state.last_run_id,
+                        elapsed_ms=self._elapsed(state.started_monotonic),
+                        wait_ms=self._elapsed(state.enqueued_monotonic),
+                        progress=state.progress,
+                        last_progress=state.last_progress,
+                        last_outcome_code=state.last_outcome_code,
+                        last_failure=dict(state.last_failure) if state.last_failure else None,
+                        blocked_attempts=state.blocked_attempts,
                     )
                 )
             worker = self._worker_task
             return SchedulerSnapshot(
                 scheduler_state="RUNNING" if self._accepting else "STOPPED",
                 worker_state=(
-                    "HEALTHY" if worker is not None and not worker.done() else "STOPPED"
+                    "UNHEALTHY" if self._worker_failed
+                    else "HEALTHY" if worker is not None and not worker.done() else "STOPPED"
                 ),
                 accepting=self._accepting,
                 captured_at=self._now(),
                 tasks=tuple(tasks),
+                diagnostics_health=self.diagnostics.health,
+                diagnostics_persistent=self.diagnostics.persistent,
+                worker_heartbeat_at=self._heartbeat_at,
             )
 
     @staticmethod
@@ -399,10 +524,22 @@ class JobScheduler:
                             self._running_key = task_key
                             state = self._states[task_key]
                             state.enqueued_at = None
+                            state.enqueued_monotonic = None
                             state.started_at = self._now()
-                            state.last_error_code = None
+                            state.started_monotonic = self._monotonic()
+                            state.run_id = new_run_id()
+                            state.progress = JobProgress()
+                            self._heartbeat_at = state.started_at
+                            self.diagnostics.record(
+                                run_id=state.run_id, task_key=task_key,
+                                phase="SCAN", code="RUN_STARTED",
+                            )
                             break
-                    await self._condition.wait()
+                    try:
+                        # This is the shared worker's liveness wait, not a new timer.
+                        await asyncio.wait_for(self._condition.wait(), timeout=5)
+                    except TimeoutError:
+                        self._heartbeat_at = self._now()
 
             context = JobRunContext(
                 task_key=task_key,
@@ -413,19 +550,28 @@ class JobScheduler:
                 _active=lambda key=task_key, current=registration: (
                     self._registration_is_active(key, current)
                 ),
+                run_id=state.run_id,
+                _progress=lambda values, key=task_key, run=state.run_id: self._progress(key, run, values),
+                _event=lambda values, key=task_key, run=state.run_id: self._event(key, run, values),
             )
             try:
                 outcome = await registration.callback(context)
+                if outcome is not None and (
+                    not isinstance(outcome, JobOutcome)
+                    or outcome.result not in {"COMPLETED", "PARTIAL_FAILURE", "FAILED", "CANCELLED"}
+                ):
+                    raise ValueError("Scheduled callback returned an invalid outcome")
             except asyncio.CancelledError:
                 with self._state_lock:
                     state.last_result = "CANCELLED"
                     state.last_error_code = None
+                    state.last_outcome_code = "RUN_CANCELLED"
                 raise
             except Exception:  # noqa: BLE001 - isolate arbitrary job callbacks
                 with self._state_lock:
                     state.last_result = "FAILED"
                     state.last_error_code = "JOB_CALLBACK_FAILED"
-                logger.error("Scheduled callback failed for %s", task_key)
+                    state.last_outcome_code = "JOB_CALLBACK_FAILED"
             else:
                 with self._state_lock:
                     state.last_result = (
@@ -433,16 +579,104 @@ class JobScheduler:
                         if self._accepting else "CANCELLED"
                     )
                     state.last_error_code = (
-                        outcome.error_code if self._accepting and outcome is not None
+                        safe_code(outcome.error_code) if self._accepting and outcome is not None
+                        and outcome.error_code is not None
                         else None
                     )
+                    state.last_outcome_code = safe_code(outcome.outcome_code) if outcome else "RUN_COMPLETED"
             finally:
                 with self._state_lock:
+                    self._finish_run(task_key, state)
                     state.started_at = None
+                    state.started_monotonic = None
+                    state.run_id = None
                     self._active_keys.discard(task_key)
                     self._running_key = None
-                    if task_key not in self._registrations:
+                    if task_key not in self._registrations and task_key not in self._registration_failures:
                         self._states.pop(task_key, None)
+
+    def _finish_run(self, task_key: str, state: _RuntimeState) -> None:
+        if task_key in self._registration_failures:
+            self.diagnostics.record(
+                run_id=state.run_id or new_run_id(), task_key=task_key,
+                phase="FINISH", code="RUN_CANCELLED",
+            )
+            state.last_result = "FAILED"
+            state.last_error_code = state.last_outcome_code = state.blocked_code = "REGISTER_FAILED"
+            state.last_run_id = state.last_failure["run_id"] if state.last_failure else None
+            state.last_progress = state.progress
+            return
+        code = state.last_error_code or (
+            "RUN_CANCELLED" if state.last_result == "CANCELLED" else state.last_outcome_code
+        ) or "RUN_COMPLETED"
+        repeated_block = state.blocked_code == code and code in BLOCKING_CODES
+        if repeated_block:
+            state.blocked_attempts += 1
+            self.diagnostics.record(
+                run_id=state.run_id or new_run_id(), task_key=task_key,
+                phase="FINISH", code="BLOCKED_PROBE",
+            )
+        else:
+            has_detail = state.last_failure and state.last_failure["run_id"] == state.run_id
+            event = self.diagnostics.record(
+                run_id=state.run_id or new_run_id(), task_key=task_key,
+                phase="FINISH", code=(
+                    "RUN_ENDED_WITH_ERRORS" if has_detail and state.last_error_code else code
+                ),
+                rule_revision=state.progress.rule_revision,
+            )
+            if event["severity"] == "ERROR" and not has_detail:
+                state.last_failure = event
+            state.blocked_attempts = int(code in BLOCKING_CODES)
+        state.last_run_id = state.run_id
+        state.last_progress = state.progress
+        state.blocked_code = code if code in BLOCKING_CODES else None
+        self._heartbeat_at = self._now()
+
+    def _progress(self, task_key: str, run_id: str, values: dict) -> None:
+        with self._state_lock:
+            state = self._states.get(task_key)
+            if state is None or state.run_id != run_id:
+                return
+            allowed = {}
+            for key, value in values.items():
+                if key == "phase" and value in PHASES:
+                    allowed[key] = value
+                elif key in JobProgress.__dataclass_fields__ and key != "phase" and type(value) is int and 0 <= value <= 2**63 - 1:
+                    allowed[key] = value
+            state.progress = replace(state.progress, **allowed)
+            self._heartbeat_at = self._now()
+
+    def _event(self, task_key: str, run_id: str, values: dict) -> None:
+        with self._state_lock:
+            state = self._states.get(task_key)
+            if state is None or state.run_id != run_id or task_key in self._registration_failures:
+                return
+            if state.blocked_code == values.get("code"):
+                return
+            allowed = {key: value for key, value in values.items() if key in {
+                "phase", "code", "ledger_id", "rule_revision", "attempt", "detail_code",
+            }}
+            event = self.diagnostics.record(run_id=run_id, task_key=task_key, **allowed)
+            if event["severity"] == "ERROR":
+                state.last_failure = event
+
+    def _worker_finished(self, worker: asyncio.Task) -> None:
+        if not self._accepting:
+            return
+        with self._state_lock:
+            self._accepting = False
+            self._worker_failed = True
+            # Consume exceptions without formatting them or exposing their chain.
+            if not worker.cancelled():
+                worker.exception()
+            self.diagnostics.record(
+                run_id=new_run_id(), task_key="system:worker",
+                phase="WORKER", code="WORKER_UNHEALTHY",
+            )
+
+    def _elapsed(self, started: float | None) -> int | None:
+        return max(0, int((self._monotonic() - started) * 1000)) if started is not None else None
 
     def _required(self, task_key: str) -> _Registration:
         registration = self._registrations.get(task_key)
@@ -469,6 +703,7 @@ class JobScheduler:
         state = self._states.get(task_key)
         if state is not None:
             state.enqueued_at = None
+            state.enqueued_monotonic = None
 
     def _next_run_time(self, task_key: str) -> datetime | None:
         if not self._scheduler.running:
@@ -484,8 +719,8 @@ class JobScheduler:
 
     @staticmethod
     def _validate_task_key(task_key: str) -> None:
-        if TASK_KEY_PATTERN.fullmatch(task_key) is None:
+        if len(task_key) > 96 or TASK_KEY_PATTERN.fullmatch(task_key) is None:
             raise ValueError("task_key must be a stable namespaced identifier")
 
 
-job_scheduler = JobScheduler()
+job_scheduler = JobScheduler(diagnostics=ScheduleDiagnostics(DATA_DIR / "schedule-logs"))

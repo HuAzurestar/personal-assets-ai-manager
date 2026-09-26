@@ -63,7 +63,12 @@ class ConfiguredLlmAnalyzer:
                 code="CONFIG_ERROR",
             )
         profile = self._profile(model_id)
-        secret = self._secret_store.get_for_provider(model_id)
+        try:
+            secret = self._secret_store.get_for_provider(model_id)
+        except ProtectedSecretStoreError:
+            raise LlmAdapterError(
+                "The configured credential store is unavailable", code="CONFIG_ERROR",
+            ) from None
         if not secret:
             raise LlmAdapterError(
                 "The configured model credential is missing",

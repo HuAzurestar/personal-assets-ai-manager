@@ -30,10 +30,13 @@ def create_rule(
     request: Request,
     db: Session = Depends(get_db),
 ):
+    service = _write_service(db, request)
+    body = service.create(payload)
     return AutoTagRuleResponse(
         status=200,
         message="ok",
-        body=_write_service(db, request).create(payload),
+        body=body,
+        warnings=service.warnings,
     )
 
 
@@ -82,10 +85,13 @@ def update_rule(
     request: Request,
     db: Session = Depends(get_db),
 ):
+    service = _write_service(db, request)
+    body = service.update(rule_id, payload)
     return AutoTagRuleResponse(
         status=200,
         message="ok",
-        body=_write_service(db, request).update(rule_id, payload),
+        body=body,
+        warnings=service.warnings,
     )
 
 

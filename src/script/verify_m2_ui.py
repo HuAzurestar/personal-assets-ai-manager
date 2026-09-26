@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import json
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import socket
@@ -38,6 +39,40 @@ def run():
                 time.sleep(.1)
             else:
                 raise RuntimeError("UI fixture server did not start")
+            from backend.core.job_scheduler import JobOutcome, job_scheduler
+            from backend.core.schedule_diagnostics import new_run_id
+            # Exercise the real scheduler and readonly APIs with synthetic events;
+            # this callback has no model, SQL, import, or approval side effects.
+            loop = job_scheduler._scheduler._eventloop
+
+            async def prepare_diagnostics():
+                release = asyncio.Event()
+                entered = asyncio.Event()
+                calls = 0
+
+                async def work(context):
+                    nonlocal calls
+                    calls += 1
+                    if calls > 1:
+                        return JobOutcome("COMPLETED", outcome_code="NO_DATA")
+                    context.progress(phase="CALL", page_total=3, inspected_count=2, submitted_count=2)
+                    entered.set()
+                    await release.wait()
+                    context.emit("OUTPUT_SEMANTIC_INVALID", phase="CALL", ledger_id=1, detail_code="ITEM_MISMATCH")
+                    context.progress(phase="FINISH", failed_count=1, request_count=1)
+                    return JobOutcome("PARTIAL_FAILURE", "ITEM_FAILURE")
+
+                job_scheduler.register_interval("tag-scan:999", seconds=3600, callback=work)
+                for _ in range(12):
+                    job_scheduler.diagnostics.record(
+                        run_id=new_run_id(), task_key="tag-scan:999", phase="CALL",
+                        code="OUTPUT_JSON_INVALID", ledger_id=1,
+                    )
+                await job_scheduler.notify("tag-scan:999")
+                await entered.wait()
+                return release
+
+            release = asyncio.run_coroutine_threadsafe(prepare_diagnostics(), loop).result(timeout=5)
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(channel="msedge" if os.name == "nt" else None, headless=True)
                 page = browser.new_page(viewport={"width": 1440, "height": 1000}, locale="zh-CN")
@@ -49,6 +84,27 @@ def run():
                 page.on("request", lambda req: commands.append(req.url) if req.method == "POST" and "batch_" in req.url else None)
                 page.goto(f"{base}/#settings/automation")
                 expect(page.locator("[data-auto-runtime]")).to_contain_text("共享 FIFO")
+                expect(page.locator("[data-auto-runtime]")).to_contain_text("请求模型 · 已检查 2 / 3")
+                expect(page.locator("[data-auto-runtime]")).to_contain_text("导入预览超时清理（系统维护）")
+                diagnostics = page.locator("[data-auto-diagnostics]")
+                expect(diagnostics.locator('[data-action="copy-diagnostic"]')).to_have_count(10)
+                diagnostics.locator('[data-action="diagnostic-page"]').last.click()
+                expect(diagnostics).to_contain_text("第 2/2 页")
+                loop.call_soon_threadsafe(release.set)
+                expect(page.locator("[data-auto-runtime]")).to_contain_text("临时代号与本次请求不一致", timeout=12000)
+
+                async def empty_tick():
+                    while job_scheduler.snapshot().tasks[-1].queue_state == "RUNNING":
+                        await asyncio.sleep(.01)
+                    await job_scheduler.notify("tag-scan:999")
+
+                asyncio.run_coroutine_threadsafe(empty_tick(), loop).result(timeout=5)
+                expect(page.locator("[data-auto-runtime]")).to_contain_text("无待分析数据", timeout=12000)
+                expect(page.locator("[data-auto-runtime]")).to_contain_text("最近失败（不会被空扫描清除）")
+                diagnostics.locator('[name="task_key"]').fill("tag-scan:999")
+                diagnostics.locator('[name="severity"]').select_option("INFO")
+                diagnostics.locator('button[type="submit"]').click()
+                expect(diagnostics).to_contain_text("正常完成，无待分析数据")
                 page.locator('[data-action="disclosure-edit"]').click()
                 form = page.locator("[data-disclosure-form]")
                 form.locator('[name="boundaries"]').fill('{"CNY":[0,0]}')
@@ -196,7 +252,7 @@ def run():
                 assert not external, external
                 assert len(commands) == 6
                 browser.close()
-            print("PASS M2 persisted policy, preview, draft protection, actual partial batch, 3 injected command failures, approval/rejection, polling/offline, CAS; provider calls=0")
+            print("PASS M2 persisted policy, preview, draft protection, actual partial batch, 3 injected command failures, approval/rejection, polling/offline, CAS, live scheduler progress, retained failure, diagnostic pagination/filter; provider calls=0")
         finally:
             server.should_exit = True
             thread.join(timeout=10)
