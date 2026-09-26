@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import socket
@@ -114,16 +115,49 @@ def run():
                 page.wait_for_timeout(5400)
                 expect(page.locator(f'[data-tag-request-select][value="{conflict[0]["id"]}"]')).to_be_checked()
                 expect(page.locator('[data-form="tag-request-filter"] [name="status"]')).to_have_value("1")
+                other = next(item for item in ids if item["ledger_id"] == 2 and item["status"] == 1)
+                page.locator(f'[data-tag-request-select][value="{other["id"]}"]').check()
+                # Whole-command failures provide no per-item result. Even a stale
+                # manual source must not be relabelled as a rule revision failure.
+                batch_url = "**/paam/tag/v1/assignment_request/batch_approve"
+                for code, status, expected in [
+                    ("TAG_REQUEST_NOT_FOUND", 404, "至少一条请求不存在"),
+                    ("TAG_REQUEST_STALE", 409, "适用条件已变化"),
+                    (None, None, "提交结果未知"),
+                ]:
+                    if code:
+                        payload = {"status": status, "message": "private details", "body": {
+                            "code": code, "details": {"reason": "MANUAL_TAG_CONFLICT"},
+                        }}
+                        page.route(batch_url, lambda route, _request, payload=payload, status=status: route.fulfill(
+                            status=status, content_type="application/json", body=json.dumps(payload),
+                        ))
+                    else:
+                        page.route(batch_url, lambda route: route.abort())
+                    page.locator('[data-action="tag-request-batch"][data-operation="approve"]').click()
+                    page.locator("[data-confirm-batch]").click()
+                    feedback = page.locator("[data-batch-feedback]")
+                    expect(feedback).to_contain_text(expected)
+                    expect(feedback).to_contain_text("未获得逐项结果")
+                    expect(feedback).not_to_contain_text("规则版本已变化")
+                    expect(feedback).not_to_contain_text("Request #")
+                    expect(feedback).not_to_contain_text("private details")
+                    if code is None:
+                        expect(feedback).not_to_contain_text("整批未提交")
+                    page.unroute(batch_url)
+                    expect(selectors).to_have_count(3)
+                assert len(commands) == 3
+                page.locator(f'[data-tag-request-select][value="{other["id"]}"]').uncheck()
                 page.locator('[data-action="tag-request-batch"][data-operation="approve"]').click()
                 page.locator("[data-confirm-batch]").click()
                 expect(page.locator("[data-batch-feedback]")).to_contain_text("成功 1")
                 expect(selectors).to_have_count(1)
-                assert len(commands) == 1
+                assert len(commands) == 4
                 page.locator('[data-action="tag-request-transition"][data-operation="reject"]').click()
                 page.locator("[data-confirm-batch]").click()
                 expect(page.locator("[data-batch-feedback]")).to_contain_text("已拒绝，未改变标签")
                 expect(selectors).to_have_count(0)
-                assert len(commands) == 2
+                assert len(commands) == 5
 
                 page.goto(f"{base}/#details/auto-rule?rule_id=1")
                 expect(page.locator("[data-auto-rule-detail]")).to_contain_text("不是模型准确率")
@@ -152,9 +186,9 @@ def run():
                     page.screenshot(path=Path(evidence_dir) / "m2-settings.png", full_page=True)
                 assert not errors, errors
                 assert not external, external
-                assert len(commands) == 2
+                assert len(commands) == 5
                 browser.close()
-            print("PASS M2 persisted policy, preview, draft protection, conflict, approval/rejection, polling/offline, CAS; provider calls=0")
+            print("PASS M2 persisted policy, preview, draft protection, conflict, 3 injected batch failures, approval/rejection, polling/offline, CAS; provider calls=0")
         finally:
             server.should_exit = True
             thread.join(timeout=10)

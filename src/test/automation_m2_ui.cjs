@@ -34,6 +34,20 @@ const resultMarkup = context.batchResultMarkup(results);
 assert.match(resultMarkup, /成功 1 · 已处理 1 · 失败\/未知 2/);
 assert.match(resultMarkup, /Request #2：规则版本已变化/);
 assert.equal(context.batchResults({ items: [{ id: 7, status: 3 }] }, [7], "reject")[0].result, "REJECTED");
+for (const [code, status] of [["TAG_REQUEST_NOT_FOUND", 404], ["TAG_REQUEST_NOT_PENDING", 409], ["TAG_REQUEST_STALE", 409], ["TAG_REQUEST_SCOPE_CONFLICT", 409]]) {
+  const failure = context.batchFailureMarkup({ code, status, message: "<script>private details</script>" }, [1, 2, 3]);
+  assert.match(failure, /整批未提交/);
+  assert.match(failure, /本次选择：#1、#2、#3/);
+  assert.match(failure, /未获得逐项结果/);
+  assert.doesNotMatch(failure, /Request #|规则版本已变化|private|<script>|成功 \d|失败\/未知/);
+}
+for (const error of [new Error("network private details"), { status: 500, code: "TAG_REQUEST_NOT_FOUND" }, { status: 409, code: "UNKNOWN" }, { code: "__proto__" }]) {
+  const failure = context.batchFailureMarkup(error, [1]);
+  assert.match(failure, /提交结果未知/);
+  assert.match(failure, /可能已经执行/);
+  assert.doesNotMatch(failure, /整批未提交|Request #|private/);
+}
+assert.match(context.batchFailureMarkup(null, ["<script>"]), /&lt;script&gt;/);
 for (const scenario of ["PARTIAL", "MANUAL", "QUEUE", "EMPTY", "ZERO", "LARGE", "OFFLINE"]) {
   assert.match(context.interactionMarkup(scenario), /虚构交互演示/);
   assert.match(context.interactionMarkup(scenario), /M2-CORE/);

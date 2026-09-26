@@ -2,7 +2,7 @@ import { request, jsonRequest } from "../api/client.js?v=20260926.3";
 import { $, $$, esc, money } from "../util/core.js";
 import { startVisiblePoll } from "../util/visible_poll.js?v=20260926.3";
 import { openDisclosureEditor, openDisclosurePreview } from "./disclosure.js?v=20260926.3";
-import { batchResults, batchResultMarkup, selectionConflict, ruleStatistics, runtimeMarkup, interactionScenarios, interactionMarkup } from "./automation_feedback.js?v=20260926.3";
+import { batchResults, batchResultMarkup, batchFailureMarkup, selectionConflict, ruleStatistics, runtimeMarkup, interactionScenarios, interactionMarkup } from "./automation_feedback.js?v=20260926.3";
 
 let setting = null;
 let rules = [];
@@ -614,7 +614,7 @@ async function transitionRequests(root, button, rerender) {
   if (!ids.length) return;
   const approve = button.dataset.operation === "approve";
   if (approve && selectionConflict(requestItems.filter((item) => ids.includes(item.id)))) {
-    showBatchFeedback(root, batchResultMarkup(batchResults({ items: ids.map((request_id) => ({ request_id, result: "SCOPE_CONFLICT" })) }, ids, "approve")));
+    showBatchFeedback(root, batchFailureMarkup({ code: "TAG_REQUEST_SCOPE_CONFLICT", status: 409 }, ids));
     return;
   }
   const dialog = openDialog(approve ? "确认通过标签建议" : "确认拒绝标签建议", `<p>本次选择 ${ids.length} 项：${ids.map((id) => `#${id}`).join("、")}。</p><p>${approve ? "同一账目 + 维度只能选一项；服务端将重新核对版本、账目和人工标签，冲突不会强制覆盖。" : "只将这些申请标为已拒绝，不修改现有标签。"}</p><p>当前服务仍是整批事务；逐项部分成功将在 M2-CORE 接通。超时结果未知时请先刷新核对。</p><div class="actions"><button type="button" class="quiet" data-close>取消</button><button type="button" class="primary" data-confirm-batch>确认${approve ? "通过" : "拒绝"}</button></div>`);
@@ -628,9 +628,7 @@ async function transitionRequests(root, button, rerender) {
       showBatchFeedback(root, batchResultMarkup(batchResults(body, ids, approve ? "approve" : "reject")));
       await rerender();
     } catch (error) {
-      const codes = { TAG_REQUEST_SCOPE_CONFLICT: "SCOPE_CONFLICT", TAG_REQUEST_STALE: "RULE_STALE", TAG_REQUEST_NOT_FOUND: "NOT_FOUND", TAG_REQUEST_NOT_PENDING: "REQUEST_STATE_CONFLICT" };
-      const result = codes[error.code] || "UNKNOWN";
-      showBatchFeedback(root, batchResultMarkup(batchResults({ items: ids.map((request_id) => ({ request_id, result })) }, ids, approve ? "approve" : "reject")));
+      showBatchFeedback(root, batchFailureMarkup(error, ids));
       // Do not automatically resubmit an ambiguous command. The next read refreshes state.
     } finally {
       root.dataset.commandPending = "false";

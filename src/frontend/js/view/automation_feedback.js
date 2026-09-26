@@ -31,6 +31,23 @@ export function batchResultMarkup(items, simulated = false) {
     <span>成功项无需再次提交；失败项请先核对。不会自动重试或强制覆盖人工标签。</span></div>`;
 }
 
+// An atomic command error is not a per-request result. Only known pre-commit
+// rejections prove that nothing was submitted; transport/unknown errors do not.
+export function batchFailureMarkup(error, ids) {
+  const rejections = {
+    TAG_REQUEST_NOT_FOUND: [404, "至少一条请求不存在，请刷新核对选择。"],
+    TAG_REQUEST_NOT_PENDING: [409, "至少一条请求已处理或失效，请刷新核对选择。"],
+    TAG_REQUEST_STALE: [409, "至少一条申请的适用条件已变化（账目、规则、标签或人工来源），请刷新核对。"],
+    TAG_REQUEST_SCOPE_CONFLICT: [409, "本次选择存在冲突：同一账目和维度只能选择一项，请调整选择。"],
+  };
+  const rejection = Object.hasOwn(rejections, error?.code) ? rejections[error.code] : null;
+  const known = rejection && error?.status === rejection[0];
+  return `<div class="automation-result error" role="status" aria-live="polite">
+    <strong>${known ? "整批未提交" : "提交结果未知"}</strong>
+    <p>${known ? rejection[1] : "可能已经执行，请先刷新核对，再决定是否重试。不会自动重发。"}</p>
+    <p>本次选择：${ids.map((id) => `#${esc(id)}`).join("、")}。未获得逐项结果，不能据此判断每一项的原因。</p></div>`;
+}
+
 export function selectionConflict(items) {
   const scopes = new Set();
   for (const item of items) {
