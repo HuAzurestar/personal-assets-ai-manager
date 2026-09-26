@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import atexit
 import json
 import os
 from collections.abc import Callable, Mapping
 from threading import RLock
 from typing import Literal
 
+import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from backend.error import LlmAdapterError
@@ -25,6 +27,7 @@ MAX_JSON_DEPTH = 12
 ResponseMode = Literal["json_object", "json_schema"]
 Completion = Callable[..., object]
 _LITELLM_LOCK = RLock()
+_LITELLM_HTTP_CLIENT: httpx.Client | None = None
 
 
 class _DuplicateJsonKey(ValueError):
@@ -392,21 +395,32 @@ def _response_format(
 
 
 def _direct_litellm_completion(**request):
-    """Use a request-scoped client without inheriting ambient proxy variables."""
-
-    import httpx
-    import litellm
+    """Keep cached provider clients' transport alive for the process lifetime."""
 
     os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "true")
-    client = httpx.Client(trust_env=False)
+    import litellm
+
+    global _LITELLM_HTTP_CLIENT
     with _LITELLM_LOCK:
+        if _LITELLM_HTTP_CLIENT is None:
+            _LITELLM_HTTP_CLIENT = httpx.Client(trust_env=False)
         previous = litellm.client_session
-        litellm.client_session = client
+        litellm.client_session = _LITELLM_HTTP_CLIENT
         try:
             return litellm.completion(**request)
         finally:
             litellm.client_session = previous
-            client.close()
+
+
+def _close_litellm_http_client() -> None:
+    # LiteLLM caches SDK clients that retain this transport. Do not close it
+    # after a request or an ASGI lifespan restart in the same process.
+    with _LITELLM_LOCK:
+        if _LITELLM_HTTP_CLIENT is not None:
+            _LITELLM_HTTP_CLIENT.close()
+
+
+atexit.register(_close_litellm_http_client)
 
 
 def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
