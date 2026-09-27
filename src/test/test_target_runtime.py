@@ -215,7 +215,10 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
             assert "/paam/system/v1/schedule/status" in automation_script.text
             assert "没有已注册的自动标签任务" in automation_script.text
             assert "等待不会产生新建议" in automation_script.text
-            assert "已保存·未调度" in automation_script.text
+            explanation_script = client.get("/static/js/view/automation_explain.js")
+            assert explanation_script.status_code == 200
+            assert "尚未调度" in explanation_script.text
+            assert "启用只是配置，不代表正在分析" in explanation_script.text
             assert "保存后按 CRON 执行" not in automation_script.text
             assert "启用后立即注册" not in automation_script.text
             assert "尚未启动调度" not in automation_script.text
@@ -228,8 +231,8 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
             assert inspection_script.status_code == 200
             assert "AUTO_RULE" in inspection_script.text
             assert "Request #" in inspection_script.text
-            assert "SIMULATED_LOCAL" in automation_script.text
-            assert "模型已停用" in automation_script.text
+            assert "不调用模型" in explanation_script.text
+            assert "模型不可用" in explanation_script.text
             assert 'data-action="rule-run"' not in automation_script.text
             assert 'data-action="rule-rescan"' not in automation_script.text
             navigation_script = client.get("/static/js/navigation.js")

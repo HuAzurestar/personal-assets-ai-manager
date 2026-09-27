@@ -179,6 +179,11 @@ class AutoTagRuleSummaryResponse(SuccessResponse[AutoTagRuleSummaryRead]):
 class AutoTagCandidateSample(BaseModel):
     ledger_id: int
     reason: Literal["ELIGIBLE"]
+    amount: int
+    currency_code: str
+    occurred_time: datetime
+    counterparty_name: str | None = None
+    summary: str | None = None
 
 
 class AutoTagCandidatePreviewRead(BaseModel):

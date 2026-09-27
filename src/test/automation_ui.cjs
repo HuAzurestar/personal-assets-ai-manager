@@ -11,7 +11,7 @@ const code = fs.readFileSync(source, "utf8")
   .replace(/^export /gm, "");
 const rule = {
   id: 1, rule_revision: 3, name: "虚构早餐", enabled: true,
-  view_id: 1, cron: "*/10 * * * * *", scan_after_ledger_id: 1, scan_epoch: 3,
+  view_id: 1, amount_mode: 1, cron: "*/10 * * * * *", scan_after_ledger_id: 1, scan_epoch: 3,
   analyzed_count: 1, failed_count: 0, suggested_count: 1,
   accepted_count: 0, rejected_count: 0,
   method_config: { model_id: 2, prompt: "只判断虚构早餐" },
@@ -29,7 +29,7 @@ let schedule = {
 const requestedUrls = [];
 const suggestion = {
   id: 8, status: 1, created_time: "2026-09-23T14:00:00+08:00",
-  proposed_tag_name: "餐饮", view_name: "消费分类", view_system_name: "category",
+  proposed_tag_name: "餐饮", view_id: 1, view_name: "消费分类", view_system_name: "category",
   reason_summary: "工作日早餐", rule_name: "早餐规则", rule_id: 1,
   rule_revision: 3, ledger_id: 12, ledger_counterparty_name: "虚构咖啡店",
 };
@@ -57,6 +57,8 @@ const context = {
   URLSearchParams,
 };
 vm.createContext(context);
+vm.runInContext(fs.readFileSync(path.resolve(__dirname, "../frontend/js/view/automation_explain.js"), "utf8")
+  .replace(/^import .*;\r?\n/gm, "").replace(/^export /gm, ""), context);
 vm.runInContext(fs.readFileSync(path.resolve(__dirname, "../frontend/js/view/automation_feedback.js"), "utf8")
   .replace(/^import .*;\r?\n/gm, "").replace(/^export /gm, ""), context);
 vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.testSettings = automationSettingsPage; globalThis.testRuleDetail = ruleDetailMarkup; globalThis.testRequestDetail = requestDetailMarkup; globalThis.testScheduleExplanation = scheduleExplanation; globalThis.testRulePage = autoRulesPage; globalThis.testReviewPage = tagReviewPage; globalThis.testFilterParams = tagReviewFilterParams;`, context);
@@ -66,8 +68,8 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
   const idle = await context.testPanel(views);
   assert.match(idle, /服务未启用自动标签扫描/);
   assert.match(idle, /等待不会产生新建议/);
-  assert.match(idle, /已保存·服务未开启扫描/);
-  assert.match(idle, /服务扫描开关关闭，规则未注册/);
+  assert.match(idle, /服务未开启扫描/);
+  assert.match(idle, /配置已启用/);
   assert.match(idle, /PAAM_AUTOTAG_REAL_ANALYSIS=1/);
   assert.match(idle, /无需重新导入数据/);
   assert.doesNotMatch(idle, /验收库混入/);
@@ -81,7 +83,14 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
   assert.match(active, /CRON 调度运行中 · 1 条规则已注册/);
   assert.match(active, /上次执行：完成/);
   assert.doesNotMatch(active, /已保存·未调度/);
-  assert.match(active, /审查详情/);
+  assert.match(active, /规则详情/);
+  assert.match(active, /查看待分析账目/);
+  assert.match(active, /编辑规则/);
+  assert.match(active, /累计通过/);
+  assert.match(active, /历史累计，不代表当前生效数量/);
+  assert.match(active, /规则如何运行/);
+  assert.match(active, /待确认 → 已取消/);
+  assert.match(active, /已通过 → 已替换/);
 
   schedule.tag_scan_guard = "REAL_READY";
   const real = await context.testPanel(views);
@@ -111,7 +120,7 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
   assert.match(blocked, /已注册任务会暂停且不再按 CRON 重试/);
   assert.doesNotMatch(blocked, /下一次触发/);
   const blockedDetail = context.testRuleDetail(rule, schedule, { items: [] });
-  assert.match(blockedDetail, /安全门禁阻止/);
+  assert.match(blockedDetail, /安全阻断/);
   assert.match(blockedDetail, /ACCEPTANCE_DATABASE_REQUIRED/);
   schedule.tasks = [];
   const blockedAfterRestart = await context.testPanel(views);
@@ -162,6 +171,65 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
 
   const settings = await context.testSettings();
   assert.match(settings, /真实流水自动分析须由服务显式启用/);
+  assert.match(settings, /data-preserve="runtime"/);
+  assert.match(settings, /data-preserve="model-2"/);
+  assert.doesNotMatch(settings, /interaction-demo|M2 交互演示|automation-hero/);
+
+  // Current execution is distinct from the configuration switch and last outcome.
+  const model = setting.models[0];
+  for (const [queue_state, label] of Object.entries({ RUNNING: "分析中", QUEUED: "排队中", IDLE: "等待定时触发", PAUSED: "已暂停", BLOCKED: "执行受阻" })) {
+    const snapshot = { scheduler_state: "RUNNING", worker_state: "HEALTHY", tag_scan_guard: "REAL_READY",
+      tasks: [{ task_key: "tag-scan:1", queue_state, queue_position: 3, last_result: "FAILED" }] };
+    assert.equal(context.ruleExecution(rule, snapshot, model, views[0]).label, label);
+    if (queue_state === "QUEUED") assert.match(context.ruleExecution(rule, snapshot, model, views[0]).reason, /第 3 位/);
+  }
+  assert.equal(context.ruleExecution(rule, null, model, views[0]).label, "状态未知");
+  assert.equal(context.ruleExecution({ ...rule, enabled: false }, null, model, views[0]).label, "已停用");
+  assert.equal(context.ruleExecution(rule, schedule, { ...model, enabled: false }, views[0]).label, "模型不可用");
+
+  const draft = { prompt: rule.method_config.prompt, model_id: "2", amount_mode: "1", name: "仅改名", cron: "* * * * *", enabled: false };
+  assert.equal(context.semanticRuleChange(rule, draft), false);
+  assert.equal(context.semanticRuleChange(rule, { ...draft, prompt: `  ${draft.prompt}\n` }), false);
+  for (const change of [{ prompt: "新判断" }, { model_id: 3 }, { amount_mode: 2 }]) {
+    const changed = { ...draft, ...change };
+    assert.equal(context.semanticRuleChange(rule, changed), true);
+    assert.match(context.ruleEditImpact(rule, changed, 7), /当前 7 条待确认建议将被取消/);
+    assert.match(context.ruleEditImpact(rule, changed, null), /数量尚未读取/);
+  }
+  assert.match(context.ruleEditImpact(rule, draft, 7), /不取消已有建议/);
+
+  const revised = { ...rule, rule_revision: 4 };
+  assert.match(context.requestVersionCopy(suggestion, revised), /版本已过期，不能通过/);
+  for (const status of [2, 3, 4, 5]) {
+    const historical = context.testRequestDetail({ ...suggestion, status }, ledger, revised);
+    assert.match(historical, /仅供追溯/);
+    assert.match(historical, /当前判断说明（非历史快照）/);
+    assert.doesNotMatch(historical, /通过时会因版本变化而拒绝|data-operation="approve"/);
+  }
+  const related = { pending: { total: 2, items: [suggestion, { ...suggestion, id: 9, proposed_tag_name: "交通" }] }, approved: { total: 0, items: [] } };
+  const decision = context.testRequestDetail(suggestion, ledger, rule, related);
+  assert.match(decision, /其他待确认 1 条/);
+  assert.match(decision, /其他待确认建议会被取消/);
+  assert.match(decision, /原已通过建议会被标为已替换/);
+  assert.match(decision, /data-id="9"/);
+  const staleDecision = context.testRequestDetail(suggestion, ledger, revised, related);
+  assert.match(staleDecision, /data-operation="approve"[^>]*disabled/);
+  const missingScope = context.testRequestDetail(suggestion, ledger, rule);
+  assert.match(missingScope, /影响数量未知/);
+  assert.match(missingScope, /data-operation="approve"[^>]*disabled/);
+
+  await context.testReviewPage(new URLSearchParams({ ledger_id: "12", view_id: "1", status: "" }));
+  assert.match(decodeURIComponent(requestedUrls.at(-1)), /"key":"ledger_id","op":"=","val":12/);
+  assert.match(decodeURIComponent(requestedUrls.at(-1)), /"key":"view_id","op":"=","val":1/);
+  const preview = context.candidatePreviewMarkup({ scan_after_ledger_id: 42, inspected_count: 100, eligible_count: 21,
+    reason_counts: { ELIGIBLE: 21, ALREADY_CLASSIFIED: 79 }, samples: [{ ledger_id: 43, amount: 2500, currency_code: "CNY", occurred_time: suggestion.created_time, counterparty_name: "合成早餐店", summary: "测试午餐" }] });
+  assert.match(preview, /账目 #42/);
+  assert.match(preview, /最多检查 100 条/);
+  assert.match(preview, /最多展示 20 条/);
+  assert.match(preview, /满足本地筛选条件/);
+  assert.match(preview, /合成早餐店/);
+  assert.match(preview, /data-preview-ledger="43"/);
+  assert.doesNotMatch(preview, /SIMULATED_LOCAL|ELIGIBLE/);
   console.log("RESULT=PASS DEFAULT_NOT_SCHEDULED=1 SYNTHETIC_REGISTERED=1 RULE_DETAIL=1 REQUEST_DETAIL=1");
 })().catch((error) => {
   console.error(error);

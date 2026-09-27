@@ -24,7 +24,7 @@ export function openDisclosureEditor(setting, openDialog, saved) {
   const boundaries = Object.fromEntries(Object.entries(config.amount_bands || {}).map(([code, value]) => [code, value.boundaries]));
   const dialog = openDialog("编辑金额披露", `<form class="stack automation-form" data-disclosure-form>
     <div class="form-error-slot" role="alert" aria-live="assertive"></div>
-    <label>时间粒度<select name="date_granularity">${["DAY", "MONTH", "NONE"].map((value) => `<option ${value === (config.date_granularity || "DAY") ? "selected" : ""}>${value}</option>`).join("")}</select><small>当前消息结构省略交易时间；这里保存策略，不宣称已外发日期。</small></label>
+    <label>时间粒度<select name="date_granularity">${[["DAY", "精确到日"], ["MONTH", "精确到月"], ["NONE", "不发送时间"]].map(([value, label]) => `<option value="${value}" ${value === (config.date_granularity || "DAY") ? "selected" : ""}>${label}</option>`).join("")}</select><small>当前消息结构省略交易时间；这里保存策略，不宣称已外发日期。</small></label>
     <label>按币种配置金额边界（JSON）<textarea name="boundaries" rows="10" required spellcheck="false">${esc(JSON.stringify(boundaries, null, 2))}</textarea></label>
     <p>填写最小货币单位整数：CNY 的 3000 表示 30 元；CNY_4 的 3000 表示 0.3000 元。左闭右开，最后一档无上界。未配置币种时 BAND 省略金额，不套用 CNY 区间。</p>
     <div class="automation-notice compact"><strong>保存的影响</strong><span>区间变更使 BAND 规则修订与扫描周期递增、游标归零并取消其待审申请；时间策略变更影响全部规则。既有已通过标签不回滚。启用中的规则会在后续 CRON 重新扫描，真实模型可能计费。</span></div>

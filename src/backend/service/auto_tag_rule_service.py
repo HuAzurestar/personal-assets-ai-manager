@@ -242,7 +242,7 @@ class AutoTagRuleService:
         tag_states = page["tag_states"]
         request_ids = page["request_ids"]
         reason_counts: dict[str, int] = {}
-        samples: list[AutoTagCandidateSample] = []
+        sample_ids: list[int] = []
 
         global_reason = None
         if not bool(rule["enabled"]):
@@ -269,20 +269,21 @@ class AutoTagRuleService:
                     reason = "EXISTING_REQUEST"
                 else:
                     reason = "ELIGIBLE"
-                    if len(samples) < 20:
-                        samples.append(AutoTagCandidateSample(
-                            ledger_id=ledger_id,
-                            reason="ELIGIBLE",
-                        ))
+                    if len(sample_ids) < 20:
+                        sample_ids.append(ledger_id)
             reason_counts[reason] = reason_counts.get(reason, 0) + 1
 
+        sample_details = self.mapper.candidate_sample_details(sample_ids)
         return AutoTagCandidatePreviewRead(
             rule_id=rule_id,
             mode="SIMULATED_LOCAL",
             inspected_count=len(ledger_ids),
             eligible_count=reason_counts.get("ELIGIBLE", 0),
             reason_counts=reason_counts,
-            samples=samples,
+            samples=[
+                AutoTagCandidateSample(reason="ELIGIBLE", **sample_details[ledger_id])
+                for ledger_id in sample_ids if ledger_id in sample_details
+            ],
             scan_after_ledger_id=int(rule["scan_after_ledger_id"]),
             page_limit=100,
             sample_limit=20,

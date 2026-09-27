@@ -17,6 +17,7 @@ from backend.entity import (
     ReviewCase,
     TagAssignmentRequest,
     TargetTag,
+    TransactionFact,
 )
 from backend.entity.auto_tag_rule import MAX_COUNTER_VALUE
 from backend.schema.auto_tag_rule import (
@@ -280,6 +281,25 @@ class AutoTagRuleMapper:
             "request_ids": request_ids,
             "active_target_count": active_target_count,
         }
+
+    def candidate_sample_details(self, ledger_ids: list[int]) -> dict[int, dict]:
+        """Read at most twenty local preview summaries in one bounded query."""
+        if not ledger_ids:
+            return {}
+        first_fact_id = select(ReviewAllocation.transaction_fact_id).where(
+            ReviewAllocation.ledger_entry_id == LedgerEntry.id,
+        ).order_by(ReviewAllocation.id).limit(1).correlate(LedgerEntry).scalar_subquery()
+        rows = self.db.execute(select(
+            LedgerEntry.id.label("ledger_id"),
+            LedgerEntry.amount,
+            LedgerEntry.currency_code,
+            LedgerEntry.occurred_time,
+            TransactionFact.counterparty_name,
+            TransactionFact.summary,
+        ).outerjoin(
+            TransactionFact, TransactionFact.id == first_fact_id,
+        ).where(LedgerEntry.id.in_(ledger_ids))).mappings().all()
+        return {row["ledger_id"]: dict(row) for row in rows}
 
     def advance_for_configuration(
         self,
