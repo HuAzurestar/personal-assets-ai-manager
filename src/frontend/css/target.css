@@ -402,11 +402,12 @@
 .target-shell .automation-hero h2 { margin:6px 0; font-size:28px; }
 .target-shell .automation-hero p { max-width:680px; margin:0; color:var(--muted); }
 .target-shell .automation-notice {
-  display:flex; align-items:flex-start; gap:12px; padding:14px 16px;
+  display:flex; flex-wrap:wrap; align-items:flex-start; gap:12px; padding:14px 16px;
   border:1px solid color-mix(in srgb,var(--accent) 25%,var(--line)); border-radius:10px;
   background:color-mix(in srgb,var(--soft) 62%,var(--surface)); color:var(--muted); font-size:13px;
 }
-.target-shell .automation-notice strong { flex:0 0 auto; color:var(--text); }
+.target-shell .automation-notice strong { flex:0 0 auto; max-width:100%; overflow-wrap:anywhere; color:var(--text); }
+.target-shell .automation-notice > span { flex:1 1 260px; min-width:0; overflow-wrap:anywhere; }
 .target-shell .automation-notice.compact { padding:11px 14px; }
 .target-shell .automation-section { display:grid; gap:14px; min-width:0; }
 .target-shell [data-auto-runtime] { min-width:0; }
