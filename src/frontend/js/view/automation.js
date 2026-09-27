@@ -1,7 +1,7 @@
 import { request, jsonRequest } from "../api/client.js?v=20260927.1";
 import { $, $$, esc, money } from "../util/core.js";
 import { startVisiblePoll } from "../util/visible_poll.js?v=20260927.1";
-import { openDisclosureEditor, openDisclosurePreview } from "./disclosure.js?v=20260927.1";
+import { openDisclosureEditor, openDisclosurePreview } from "./disclosure.js?v=20260927.3";
 import { batchResults, batchResultMarkup, batchFailureMarkup, selectionConflict, ruleStatistics, runtimeMarkup, diagnosticsMarkup, interactionScenarios, interactionMarkup } from "./automation_feedback.js?v=20260927.1";
 
 let setting = null;
@@ -13,11 +13,11 @@ let requestItems = [];
 let batchFeedback = "";
 const boundRoots = new WeakSet();
 const ruleListUrl = "/paam/tag/v1/auto_rule/list?page_index=1&page_size=100&sorter=%5B%7B%22key%22%3A%22id%22%2C%22direction%22%3A%22asc%22%7D%5D";
-const freshnessMarkup = '<p class="automation-freshness" data-auto-freshness role="status" aria-live="polite">已读取页面数据；可见页每 5 秒刷新业务状态，编辑或确认期间暂停更新。</p>';
+const freshnessMarkup = '<p class="automation-freshness" data-auto-freshness role="status" aria-live="polite">状态自动更新</p>';
 
 export function stopAutomationPolling() { stopPolling(); stopPolling = () => {}; }
 
-const amountModeNames = { 1: "金额区间（BAND）", 2: "精确金额（EXACT）", 3: "不发送金额（NONE）" };
+const amountModeNames = { 1: "仅发送金额区间", 2: "发送精确金额", 3: "不发送金额" };
 
 function statusPill(enabled, available = true, unavailableCopy = "缺少密钥") {
   const active = enabled && available;
@@ -27,20 +27,10 @@ function statusPill(enabled, available = true, unavailableCopy = "缺少密钥")
 
 function modelSummary(model) {
   const params = model.litellm_params;
-  const details = [
-    ["模型", params.model],
-    ["API 地址", params.api_base],
-    ["温度", params.temperature ?? "默认"],
-    ["最大输出", params.max_tokens ?? "默认"],
-    ["超时", params.timeout == null ? "默认 60 秒" : `${params.timeout} 秒`],
-  ].map(([label, value]) => `<div><dt>${label}</dt><dd>${esc(value)}</dd></div>`).join("");
   return `<article class="automation-card" data-model-card="${model.id}">
-    <header><div><span class="eyebrow">MODEL #${model.id}</span><h3>${esc(model.name)}</h3></div>${statusPill(model.enabled, model.key_configured)}</header>
-    <dl class="automation-definition">${details}</dl>
-    <div class="automation-card-note"><span>API Key</span><strong>${model.key_configured ? "已安全配置，不会回显" : "尚未配置"}</strong></div>
+    <header><div><h3>${esc(model.name)}</h3><small>${esc(params.model)}</small></div>${statusPill(model.enabled, model.key_configured)}</header>
     <div class="automation-actions">
-      <button type="button" class="quiet" data-action="model-test" data-id="${model.id}">配置检查（模拟）</button>
-      ${model.key_configured ? `<button type="button" class="quiet danger-text" data-action="model-secret-delete" data-id="${model.id}">清除密钥</button>` : ""}
+      <button type="button" class="quiet" data-action="model-test" data-id="${model.id}">检查连接</button>
       <button type="button" data-action="model-edit" data-id="${model.id}">编辑</button>
     </div>
     <div class="automation-result" data-model-result="${model.id}" aria-live="polite" hidden></div>
@@ -50,26 +40,23 @@ function modelSummary(model) {
 export async function automationSettingsPage() {
   setting = await request("/paam/system/v1/setting/automation");
   const modelCards = setting.models.map(modelSummary).join("");
-  const bands = Object.entries(setting.disclosure?.amount_bands || {}).map(([currency, config]) =>
-    `<div class="disclosure-row"><strong>${esc(currency)}</strong><span>${esc((config.boundaries || []).join(" → "))}</span></div>`,
-  ).join("");
+  const currencies = Object.keys(setting.disclosure?.amount_bands || {});
   scheduleStatus = await request("/paam/system/v1/schedule/status").catch(() => null);
   const diagnostics = await readScheduleDiagnostics().catch(() => null);
   return `<div class="automation-page" data-auto-page="settings">
     <section class="automation-hero">
-      <div><span class="eyebrow">SETTINGS · AUTOMATION</span><h2>自动化设置</h2><p>模型连接保存在本地设置中；密钥进入系统凭据存储，普通读取永不回显。</p></div>
+      <div><h2>自动化设置</h2></div>
       <button type="button" class="primary" data-action="model-new">＋ 添加模型</button>
     </section>
-    <div class="automation-notice" role="note"><strong>模型安全边界</strong><span>真实流水自动分析须由服务显式启用；请在自动规则页查看实际调度状态。启用后会按规则调用真实模型并可能产生费用，只生成待人工处理的打标申请。API Key 只从系统凭据存储读取，不写入 SQLite，也不会回显。</span></div>
     <section class="automation-section" aria-labelledby="automation-model-title">
-      <div class="automation-section-head"><div><h3 id="automation-model-title">模型连接</h3><p>${setting.models.length ? `共 ${setting.models.length} 个本地配置` : "添加首个模型后，规则才可选择模型"}</p></div></div>
-      <div class="automation-grid">${modelCards || '<div class="panel empty-state"><strong>尚未配置模型</strong><p>添加一个 LiteLLM 兼容配置；启用前必须保存 API Key。</p><button type="button" data-action="model-new">添加模型</button></div>'}</div>
+      <div class="automation-section-head"><h3 id="automation-model-title">模型连接</h3></div>
+      <div class="automation-grid">${modelCards || '<p>尚未配置模型，请先添加模型。</p>'}</div>
     </section>
+    <section class="automation-section"><h3>自动打标</h3><div data-auto-notice>${scheduleNotice()}</div><nav class="automation-links"><a href="#details/auto-rule">管理规则 →</a><a href="#workbench/tag-review">查看待审建议 →</a></nav></section>
     <section class="automation-section" aria-labelledby="automation-disclosure-title">
-      <div class="automation-section-head"><div><h3 id="automation-disclosure-title">金额披露</h3><p>全局按币种分档；每条规则独立选择 BAND / EXACT / NONE。</p></div><div class="automation-actions"><button type="button" class="quiet" data-action="disclosure-preview">虚构披露预览</button><button type="button" data-action="disclosure-edit">编辑披露策略</button></div></div>
-      <div class="disclosure-card"><div><span>时间粒度</span><strong>${esc(setting.disclosure?.date_granularity || "未配置")}</strong></div><div><span>按币种区间（最小货币单位）</span>${bands || "<strong>尚未配置</strong>"}</div></div>
+      <div class="automation-section-head"><div><h3 id="automation-disclosure-title">金额发送方式</h3><p>${currencies.length ? `${esc(currencies.join("、"))} 已配置区间` : "尚未配置区间"}；每条规则可选择区间、精确金额或不发送。</p></div><div class="automation-actions"><button type="button" class="quiet" data-action="disclosure-preview">预览</button><button type="button" data-action="disclosure-edit">编辑区间</button></div></div>
     </section>
-    <section class="automation-section"><h3>调度运行状态</h3>${freshnessMarkup}<div data-auto-runtime>${runtimeMarkup(scheduleStatus)}</div><div data-auto-diagnostics>${diagnosticsMarkup(diagnostics)}</div><button type="button" class="quiet" data-action="interaction-demo">M2 交互演示（虚构，不写数据）</button></section>
+    ${freshnessMarkup}<details class="automation-diagnostics"><summary>运行详情与诊断</summary><div data-auto-runtime>${runtimeMarkup(scheduleStatus)}</div><div data-auto-diagnostics>${diagnosticsMarkup(diagnostics)}</div></details>
   </div>`;
 }
 
@@ -88,11 +75,12 @@ function ruleRow(rule) {
     : !modelAvailable ? statusPill(true, false, unavailableCopy)
     : scheduleStatus?.tag_scan_guard === "DISABLED" ? statusPill(true, false, "已保存·服务未开启扫描")
     : scheduleStatus?.tag_scan_guard === "NON_SYNTHETIC_FACT" ? statusPill(true, false, "安全阻断")
+    : !scheduleStatus ? statusPill(true, false, "状态未知")
     : !scheduleTask ? statusPill(true, false, "已保存·未调度")
     : scheduleTask.queue_state === "PAUSED" ? statusPill(true, false, "扫描已暂停")
     : scheduleTask.queue_state === "BLOCKED" ? statusPill(true, false, "调度阻塞·查看诊断")
     : !schedulerRunning ? statusPill(true, false, "调度已停止")
-    : statusPill(true);
+    : statusPill(true, false, scheduleTask.queue_state === "RUNNING" ? "扫描中" : scheduleTask.queue_state === "QUEUED" ? "排队中" : ["FAILED", "PARTIAL_FAILURE"].includes(scheduleTask.last_result) ? "上次执行失败" : "等待下次扫描");
   const resultNames = { COMPLETED: "完成", PARTIAL_FAILURE: "部分失败", FAILED: "失败", CANCELLED: "已取消" };
   const lastRun = scheduleTask?.last_result
     ? `上次执行：${resultNames[scheduleTask.last_result] || scheduleTask.last_result}${scheduleTask.last_error_code ? ` · ${scheduleTask.last_error_code === "ACCEPTANCE_DATABASE_REQUIRED" ? "验收库含非虚构记录" : scheduleTask.last_error_code}` : ""}`
@@ -100,11 +88,11 @@ function ruleRow(rule) {
     : scheduleStatus?.tag_scan_guard === "DISABLED" ? "服务扫描开关关闭，规则未注册"
     : "未注册到调度器";
   return `<tr data-rule-row="${rule.id}">
-    <td class="rule-identity"><span class="eyebrow">RULE #${rule.id} · REV ${rule.rule_revision}</span><strong>${esc(rule.name)}</strong><small>${esc(rule.method_config.prompt)}</small></td>
-    <td><strong>${esc(view?.name || `View #${rule.view_id}`)}</strong><small>${esc(model?.name || `Model #${rule.method_config.model_id}`)}</small></td>
-    <td class="rule-schedule"><code>${esc(rule.cron || "未设置")}</code><small>Ledger #${rule.scan_after_ledger_id} · Epoch ${rule.scan_epoch}</small><small>${esc(lastRun)}</small></td>
-    <td><div class="rule-counts">${counts}</div></td>
-    <td class="rule-operation">${ruleStatus}<div class="automation-actions"><button type="button" class="quiet" data-action="rule-detail" data-id="${rule.id}">审查详情</button><button type="button" class="quiet" data-action="rule-preview" data-id="${rule.id}">资格预览</button><button type="button" data-action="rule-edit" data-id="${rule.id}">编辑</button></div></td>
+    <td class="rule-identity"><a href="#details/auto-rule?rule_id=${rule.id}">${esc(rule.name)}</a><small>${esc(rule.method_config.prompt)}</small></td>
+    <td data-label="维度 / 模型"><strong>${esc(view?.name || `View #${rule.view_id}`)}</strong><small>${esc(model?.name || `Model #${rule.method_config.model_id}`)}</small></td>
+    <td class="rule-schedule" data-label="调度"><code>${esc(rule.cron || "未设置")}</code><small>${esc(lastRun)}</small><small>下次：${displayTime(scheduleTask?.next_run_at)}</small></td>
+    <td class="rule-statistics"><details><summary>累计统计</summary><div class="rule-counts">${counts}</div></details></td>
+    <td class="rule-operation">${ruleStatus}<div class="automation-actions"><button type="button" data-action="rule-edit" data-id="${rule.id}">编辑</button><details><summary>更多</summary><button type="button" class="quiet" data-action="rule-preview" data-id="${rule.id}">资格预览</button></details></div></td>
   </tr>`;
 }
 
@@ -120,17 +108,16 @@ function scheduleNotice() {
     : disabled ? "服务未启用自动标签扫描"
     : blockedByData ? "当前库不允许自动标签扫描"
     : !tasks.length ? "没有已注册的自动标签任务"
-    : running ? `CRON 调度运行中 · ${tasks.length} 条规则已注册` : "CRON 调度未运行";
+    : running ? `自动扫描已就绪 · ${tasks.length} 条规则` : "自动扫描已停止";
   const next = !scheduleStatus ? "请检查服务连接并刷新；不能据此判断规则已停用"
-    : disabled ? "等待不会产生新建议。服务级扫描开关关闭，保存规则或模型密钥不会自动开启。启用真实账单分析需设置 PAAM_AUTOTAG_REAL_ANALYSIS=1 并重启服务；请先确认外发授权和模型费用。无需重新导入数据"
+    : disabled ? "保存规则不会开启扫描，当前不会产生新建议"
     : blockedByData
     ? "验收库含非虚构记录；安全门禁在模型调用前阻断扫描，已注册任务会暂停且不再按 CRON 重试。请改用独立的纯虚构验收库"
     : !tasks.length
     ? realAnalysis ? "真实流水分析已启用，但没有启用的规则；请配置模型和自动规则" : "等待不会产生新建议。默认模式不扫描账单；纯虚构验收库混入普通记录后也不会注册标签任务。规则已启用不等于已调度"
     : nextRuns.length ? `下一次触发：${new Date(nextRuns[0]).toLocaleString("zh-CN", { timeZone: "Asia/Hong_Kong" })}` : "当前没有待触发的启用规则";
   const failure = failed && !blockedByData ? `；${failed} 条规则上次执行失败，请打开规则详情查看具体原因` : "";
-  const mode = realAnalysis ? "真实流水自动分析已启用：新增 Ledger 将在后续 CRON 中检查；真实模型调用可能计费，只生成待审申请，批准或拒绝由人处理。" : "";
-  return `<div class="automation-notice compact" role="status" aria-live="polite"><strong>${esc(title)}</strong><span>${esc(mode + next + failure)}。CRON 触发进入共享 FIFO；本页仍不提供手动执行或重扫入口。</span></div>`;
+  return `<div class="automation-notice compact" role="status" aria-live="polite"><strong>${esc(title)}</strong><span>${esc(next + failure)}。</span></div>${disabled ? '<details class="scan-help"><summary>如何开启扫描</summary><p>确认模型、规则和调用费用后，由部署者设置 PAAM_AUTOTAG_REAL_ANALYSIS=1 并重启服务，保持 PAAM_AUTOTAG_SYNTHETIC_ACCEPTANCE=0。无需重新导入。只生成待审建议，仍需人工通过。</p></details>' : ""}`;
 }
 
 export async function autoRulesPanel(tagViews) {
@@ -138,14 +125,14 @@ export async function autoRulesPanel(tagViews) {
   const [rulePage, currentSetting, currentSchedule] = await Promise.all([
     request(ruleListUrl),
     request("/paam/system/v1/setting/automation"),
-    request("/paam/system/v1/schedule/status"),
+    request("/paam/system/v1/schedule/status").catch(() => null),
   ]);
   rules = rulePage.items;
   setting = currentSetting;
   scheduleStatus = currentSchedule;
   const canCreate = views.some((item) => item.status === "ACTIVE") && setting.models.some((item) => item.enabled && item.key_configured);
   return `<section class="tag-manager automation-rules" aria-labelledby="auto-rule-title">
-    <div class="tag-manager-head"><div><h2 id="auto-rule-title">自动打标签规则</h2><p>同一标签维度可配置多条独立规则；配置和进度从 SQLite 实时读取。</p></div><button type="button" class="primary" data-action="rule-new" ${canCreate ? "" : 'disabled title="需要启用中的标签维度和模型"'}>＋ 新建规则</button></div>
+    <div class="tag-manager-head"><div><h2 id="auto-rule-title">自动打标签规则</h2>${canCreate ? "" : '<p>请先<a href="#settings/automation">配置并启用模型</a>，以及<a href="#details/tag">准备标签维度</a>。</p>'}</div><button type="button" class="primary" data-action="rule-new" ${canCreate ? "" : 'disabled title="需要启用中的标签维度和模型"'}>＋ 新建规则</button></div>
     ${freshnessMarkup}<div data-auto-notice>${scheduleNotice()}</div>
     <div class="automation-table-wrap"><table class="automation-table rule-table"><thead><tr><th>规则</th><th>View / 模型</th><th>调度 / 进度</th><th>累计统计</th><th>状态 / 操作</th></tr></thead><tbody data-auto-rule-rows>${rules.map(ruleRow).join("") || '<tr><td colspan="5" class="table-empty"><strong>尚未创建自动规则</strong><span>启用模型并准备标签维度后即可保存第一条规则。</span></td></tr>'}</tbody></table></div>
   </section>`;
@@ -205,6 +192,7 @@ function requestActionsMarkup(item) {
 function requestPagerMarkup(result) {
   const lastPage = Math.max(1, Math.ceil(result.total / result.page_size));
   const page = result.page_index;
+  if (lastPage === 1 && page === 1) return `<p class="request-pager">共 ${result.total} 条</p>`;
   return `<div class="request-pager"><span>共 ${result.total} 条 · 第 ${page}/${lastPage} 页</span><div><button type="button" class="quiet" data-action="tag-request-page" data-request-page="${page - 1}" ${page <= 1 ? "disabled" : ""}>上一页</button><button type="button" class="quiet" data-action="tag-request-page" data-request-page="${page + 1}" ${page >= lastPage ? "disabled" : ""}>下一页</button></div></div>`;
 }
 
@@ -284,14 +272,15 @@ function modelDialog(model = null) {
   const params = value.litellm_params;
   const dialog = openDialog(model ? `编辑模型 #${model.id}` : "添加模型", `<form data-form="automation-model" data-id="${value.id}" class="stack automation-form">
     <div class="form-error-slot" aria-live="assertive"></div>
-    <div class="form-grid"><label>显示名称<input name="name" required maxlength="120" value="${esc(value.name)}" placeholder="例如：本地 Qwen"></label><label>模型 ID<input value="${value.id}" disabled><small>稳定 ID 不会因改名改变。</small></label></div>
+    <label>显示名称<input name="name" required maxlength="120" value="${esc(value.name)}" placeholder="例如：我的 Qwen"></label>
     <label>LiteLLM 模型名<input name="model" required maxlength="512" value="${esc(params.model || "")}" placeholder="openai/Qwen/Qwen3-8B"></label>
     <label>HTTPS API 地址<input name="api_base" type="url" required maxlength="2048" pattern="https://.*" value="${esc(params.api_base || "")}" placeholder="https://api.example.test/v1"></label>
-    <div class="form-grid three"><label>Temperature<input name="temperature" type="number" step="any" value="${params.temperature ?? ""}" placeholder="供应商默认"></label><label>Max tokens<input name="max_tokens" type="number" min="1" step="1" value="${params.max_tokens ?? ""}" placeholder="供应商默认"></label><label>Timeout（秒）<input name="timeout" type="number" min="0.001" step="any" value="${params.timeout ?? ""}" placeholder="供应商默认"></label></div>
+    <details class="model-advanced"><summary>高级参数</summary><div class="form-grid three"><label>温度<input name="temperature" type="number" step="any" value="${params.temperature ?? ""}" placeholder="供应商默认"></label><label>最大输出长度<input name="max_tokens" type="number" min="1" step="1" value="${params.max_tokens ?? ""}" placeholder="供应商默认"></label><label>超时（秒）<input name="timeout" type="number" min="0.001" step="any" value="${params.timeout ?? ""}" placeholder="供应商默认"></label></div>
     <label>其他供应商参数（JSON 对象）<textarea name="extras" rows="5" placeholder='{"extra_body":{"enable_thinking":false}}'>${esc(extrasFor(value))}</textarea><small>保留 0 / false；禁止在这里写 api_key、password 或 secret。</small></label>
-    <label>API Key（可选）<input name="secret" type="password" autocomplete="new-password" placeholder="${value.key_configured ? "留空则保持现有密钥" : "保存到系统凭据存储，不写入 SQLite"}"></label>
+    </details><label>API Key<input name="secret" type="password" autocomplete="new-password" placeholder="${value.key_configured ? "留空则保持现有密钥" : "密钥仅保存到系统凭据库"}"></label>
+    ${value.key_configured ? '<label class="check-row"><input name="delete_secret" type="checkbox">保存时清除密钥并停用模型</label>' : ""}
     <label class="check-row"><input name="enabled" type="checkbox" ${value.enabled ? "checked" : ""}> 启用此模型</label>
-    <div class="actions"><button type="button" class="quiet" data-close>取消</button><button type="submit" class="primary">保存并回读</button></div>
+    <div class="actions"><button type="button" class="quiet" data-close>取消</button><button type="submit" class="primary">保存</button></div>
   </form>`);
   $("[data-form='automation-model']", dialog).addEventListener("submit", submitModel);
 }
@@ -332,12 +321,15 @@ async function submitModel(event) {
     };
     const desired = { id, name: String(data.get("name")), enabled: data.has("enabled"), litellm_params: litellmParams };
     const secret = String(data.get("secret") || "");
+    if (data.has("delete_secret") && secret) throw new Error("清除密钥与填写新密钥不能同时选择");
+    if (data.has("delete_secret")) desired.enabled = false;
     if (!existing && desired.enabled && !secret.trim()) throw new Error("新模型启用前必须填写 API Key");
     let models = setting.models.filter((item) => item.id !== id).map(({ key_configured: _key, ...item }) => item);
     models.push(existing || !desired.enabled ? desired : { ...desired, enabled: false });
     let saved;
     if (existing && secret) await jsonRequest(`/paam/system/v1/setting/automation/model/${id}/secret`, "PUT", { secret });
     saved = await saveModels(models, setting.updated_time);
+    if (existing && data.has("delete_secret")) await jsonRequest(`/paam/system/v1/setting/automation/model/${id}/secret`, "DELETE");
     if (!existing && secret) await jsonRequest(`/paam/system/v1/setting/automation/model/${id}/secret`, "PUT", { secret });
     if (!existing && desired.enabled) {
       models = saved.models.map(({ key_configured: _key, ...item }) => item.id === id ? desired : item);
@@ -360,17 +352,54 @@ function ruleDialog(rule = null) {
     <div class="form-error-slot" aria-live="assertive"></div>
     <div class="form-grid"><label>规则名称<input name="name" required maxlength="120" value="${esc(value.name)}"></label><label>标签维度<select name="view_id" ${rule ? "disabled" : ""}>${enabledViews.map((item) => `<option value="${item.id}" ${item.id === value.view_id ? "selected" : ""}>${esc(item.name)}</option>`).join("")}</select></label></div>
     <label>使用模型<select name="model_id">${enabledModels.map((item) => `<option value="${item.id}" ${item.id === value.method_config.model_id ? "selected" : ""}>${esc(item.name)}${item.enabled ? "" : "（已停用）"}</option>`).join("")}</select></label>
-    <label>业务判断说明<textarea name="prompt" rows="5" required>${esc(value.method_config.prompt)}</textarea><small>这是业务 Prompt；后续执行时仍会经过统一脱敏和 system Prompt 边界。</small></label>
-    <div class="form-grid"><label>CRON（5 或 6 段）<input name="cron" value="${esc(value.cron)}" ${value.enabled ? "required" : ""} placeholder="*/5 * * * *"><small data-cron-copy>保存时严格校验；是否注册请以规则列表中的调度状态为准。</small></label><label>金额披露<select name="amount_mode">${Object.entries(amountModeNames).map(([id, label]) => `<option value="${id}" ${Number(id) === value.amount_mode ? "selected" : ""}>${label}</option>`).join("")}</select></label></div>
+    <label>判断模板<select name="prompt_template"><option value="">自定义说明</option><option value="purpose">消费用途</option><option value="channel">购买渠道</option></select></label>
+    <label>业务判断说明<textarea name="prompt" rows="3" required>${esc(value.method_config.prompt)}</textarea></label>
+    <div class="form-grid"><label>执行频率<select name="frequency">${[["five", "每 5 分钟"], ["hour", "每小时"], ["day", "每天"], ["custom", "自定义 CRON"]].map(([id,label]) => `<option value="${id}" ${cronPreset(value.cron).frequency === id ? "selected" : ""}>${label}</option>`).join("")}</select></label><label>金额发送方式<select name="amount_mode">${Object.entries(amountModeNames).map(([id, label]) => `<option value="${id}" ${Number(id) === value.amount_mode ? "selected" : ""}>${label}</option>`).join("")}</select></label></div>
+    <label data-daily-time>每天的时间<input name="daily_time" type="time" value="${cronPreset(value.cron).time}"></label>
+    <label data-custom-cron>CRON（5 或 6 段）<input name="cron" value="${esc(value.cron)}" placeholder="*/5 * * * *"></label>
+    <small data-cron-copy>执行时区：香港（UTC+8）。保存后可在规则列表查看下次执行时间。</small>
     <label class="check-row"><input name="enabled" type="checkbox" ${value.enabled ? "checked" : ""}> 启用规则配置</label>
     <div class="automation-notice compact"><strong>保存规则配置</strong><span>服务显式启用自动分析后，启用的规则会注册 CRON；是否正在调度请以列表状态为准。模型只生成待人工确认的建议，不会直接修改标签。修改 Prompt、模型或金额模式会从头重新扫描。</span></div>
-    <div class="actions"><button type="button" class="quiet" data-close>取消</button><button type="submit" class="primary">保存并回读</button></div>
+    <div class="actions"><button type="button" class="quiet" data-close>取消</button><button type="submit" class="primary">保存</button></div>
   </form>`);
   const form = $("[data-form='automation-rule']", dialog);
-  $("[name='enabled']", form).addEventListener("change", (event) => {
-    $("[name='cron']", form).required = event.currentTarget.checked;
+  const syncFrequency = () => {
+    const frequency = $('[name="frequency"]', form).value;
+    $('[data-daily-time]', form).hidden = frequency !== "day";
+    $('[data-custom-cron]', form).hidden = frequency !== "custom";
+  };
+  $('[name="frequency"]', form).addEventListener("change", syncFrequency);
+  $('[name="prompt_template"]', form).addEventListener("change", async (event) => {
+    const index = event.target.value === "purpose" ? 0 : event.target.value === "channel" ? 1 : null;
+    if (index === null) return;
+    const before = $('[name="prompt"]', form).value;
+    try {
+      const response = await fetch('/asset/tag/classification.json');
+      if (!response.ok) throw new Error("模板暂时无法读取");
+      const config = await response.json();
+      const preset = config.views?.[index];
+      if (!preset?.rule?.prompt) throw new Error("模板格式不正确");
+      if (form.isConnected && $('[name="prompt"]', form).value === before) $('[name="prompt"]', form).value = preset.rule.prompt;
+    } catch (error) { showFormError(form, error); }
   });
+  syncFrequency();
   form.addEventListener("submit", submitRule);
+}
+
+export function cronPreset(cron) {
+  if (cron === "*/5 * * * *") return { frequency: "five", time: "09:00" };
+  if (cron === "0 * * * *") return { frequency: "hour", time: "09:00" };
+  const daily = /^(\d|[1-5]\d) (\d|1\d|2[0-3]) \* \* \*$/.exec(cron);
+  return daily ? { frequency: "day", time: `${daily[2].padStart(2,"0")}:${daily[1].padStart(2,"0")}` } : { frequency: "custom", time: "09:00" };
+}
+
+export function frequencyCron(frequency, time, original) {
+  if (frequency === "five") return "*/5 * * * *";
+  if (frequency === "hour") return "0 * * * *";
+  if (frequency === "custom") return original;
+  if (frequency !== "day" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new Error("请选择每天执行的时间");
+  const [hour, minute] = time.split(":").map(Number);
+  return `${minute} ${hour} * * *`;
 }
 
 async function submitRule(event) {
@@ -385,14 +414,14 @@ async function submitRule(event) {
     const payload = {
       name: String(data.get("name")), method: 1,
       method_config: { schema_version: 1, model_id: Number(data.get("model_id")), prompt: String(data.get("prompt")) },
-      enabled: data.has("enabled"), cron: String(data.get("cron")), amount_mode: Number(data.get("amount_mode")),
+      enabled: data.has("enabled"), cron: frequencyCron(data.get("frequency"), data.get("daily_time"), String(data.get("cron"))), amount_mode: Number(data.get("amount_mode")),
     };
     if (existing) payload.expected_updated_time = existing.updated_time;
     else payload.view_id = Number(data.get("view_id"));
     const saved = await jsonRequest(existing ? `/paam/tag/v1/auto_rule/${id}` : "/paam/tag/v1/auto_rule", existing ? "PUT" : "POST", payload, true);
     form.closest("dialog").close();
     const warning = saved.warnings?.some((item) => item.code === "REGISTER_FAILED");
-    window.dispatchEvent(new CustomEvent("paam:automation-saved", { detail: { message: warning ? "规则已保存，但调度注册失败；请查看安全诊断并重新保存" : "规则已保存并从 SQLite 回读" } }));
+    window.dispatchEvent(new CustomEvent("paam:automation-saved", { detail: { message: warning ? "规则已保存，但调度注册失败；请查看诊断" : scheduleStatus?.tag_scan_guard === "DISABLED" ? "规则已保存；服务尚未开启扫描" : "规则已保存，请查看实际调度状态" } }));
   } catch (error) {
     button.disabled = false;
     showFormError(form, error);
@@ -401,17 +430,29 @@ async function submitRule(event) {
 
 async function testModel(button) {
   const result = $(`[data-model-result="${button.dataset.id}"]`);
-  button.disabled = true;
-  result.hidden = false;
-  result.textContent = "正在执行安全检查…";
-  try {
-    const body = await jsonRequest(`/paam/system/v1/setting/automation/model/${button.dataset.id}/test`, "POST", {});
-    result.className = "automation-result simulated";
-    result.innerHTML = `<strong>${esc(body.mode)} · 未连接供应商</strong><span>${esc(body.message)}</span>`;
-  } catch (error) {
-    result.className = "automation-result error";
-    result.textContent = error.message;
-  } finally { button.disabled = false; }
+  const expectedUpdatedTime = setting.updated_time;
+  const dialog = openDialog("检查模型连接", '<p>将使用已保存的配置发送一条固定测试消息，不包含账目。最多一次请求、32 个输出 token，可能产生少量费用。不会开启自动扫描。</p><div data-connection-feedback role="status"></div><div class="actions"><button type="button" data-close>取消</button><button type="button" class="primary" data-confirm-connection>开始检查</button></div>');
+  const confirm = $('[data-confirm-connection]', dialog);
+  confirm.addEventListener('click', async () => {
+    if (confirm.disabled) return;
+    confirm.disabled = true;
+    button.disabled = true;
+    result.hidden = false;
+    result.textContent = '正在检查连接…';
+    $('[data-connection-feedback]', dialog).textContent = '正在检查连接…';
+    try {
+      const body = await jsonRequest(`/paam/system/v1/setting/automation/model/${button.dataset.id}/connection_check`, "POST", {confirmed:true, expected_updated_time:expectedUpdatedTime});
+      const current = await request('/paam/system/v1/setting/automation');
+      const stale = current.updated_time !== body.configuration_updated_time;
+      const message = stale ? '配置已改变，本次检查结果已过期。请刷新后重试。' : `${body.connected ? '连接成功' : '连接未通过'} · ${body.message}（${displayTime(body.checked_at)}）`;
+      result.className = 'automation-result';
+      result.textContent = message;
+      $('[data-connection-feedback]', dialog).textContent = message;
+    } catch (error) {
+      result.textContent = error.message;
+      $('[data-connection-feedback]', dialog).textContent = error.message;
+    } finally { button.disabled = false; confirm.textContent = '检查已结束'; }
+  });
 }
 
 async function previewRule(button) {
@@ -529,6 +570,8 @@ function tagReviewFilterParams(entries) {
 function updateRequestActions(root) {
   const selection = $$('[data-tag-request-select]:not(:disabled)', root);
   const selected = selection.filter((item) => item.checked).length;
+  const toolbar = $('.request-batch-actions', root);
+  if (toolbar) toolbar.hidden = selected === 0;
   $$('[data-action="tag-request-batch"]', root).forEach((button) => {
     button.disabled = selected === 0 || root.dataset.commandPending === "true" || root.dataset.autoStale === "true";
   });
@@ -600,7 +643,14 @@ function applyAutomationSnapshot(root, page, data) {
   if (data.currentSetting) setting = data.currentSetting;
   if (data.viewPage) views = data.viewPage.items;
   root.dataset.autoStale = "false";
-  if (page.dataset.autoPage === "settings") $('[data-auto-runtime]', root).innerHTML = runtimeMarkup(data.schedule);
+  if (page.dataset.autoPage === "settings") {
+    $('[data-auto-runtime]', root).innerHTML = runtimeMarkup(data.schedule);
+    // Preserve the user's expanded setup instructions across polling.
+    const notice = $('[data-auto-notice]', root);
+    const opened = notice.querySelector('details')?.open;
+    notice.innerHTML = scheduleNotice();
+    if (opened && notice.querySelector('details')) notice.querySelector('details').open = true;
+  }
   if (data.rulePage) {
     rules = data.rulePage.items;
     $('[data-auto-notice]', root).innerHTML = scheduleNotice();
@@ -645,11 +695,13 @@ function startAutomationRefresh(root) {
       if (!feedback) return;
       const last = lastSuccess ? displayTime(lastSuccess) : "本页初次读取";
       feedback.textContent = state === "UNKNOWN" ? `当前状态未知：业务接口连接失败或超时。下方是旧快照，不能证明正在分析；最后成功刷新：${last}。可见页会继续尝试只读刷新。`
-        : state === "PAUSED" ? `页面隐藏，已停止轮询；最后成功刷新：${last}。`
-        : state === "CURRENT" ? `业务状态已更新：${last}。可见页每 5 秒刷新；编辑或确认期间暂停更新。`
-        : "等待业务状态刷新；可见页每 5 秒读取，页面隐藏后停止。";
+        : state === "PAUSED" ? `已暂停刷新 · ${last}`
+        : state === "CURRENT" ? `已更新 · ${last}`
+        : "状态自动更新";
       if (state === "UNKNOWN") {
         root.dataset.autoStale = "true";
+        const notice = $('[data-auto-notice]', root);
+        if (notice) notice.textContent = "状态未知：暂时无法连接服务，不能确认是否正在扫描。";
         $$('[data-action="tag-request-transition"]', root).forEach((button) => { button.disabled = true; });
       }
       updateRequestActions(root);

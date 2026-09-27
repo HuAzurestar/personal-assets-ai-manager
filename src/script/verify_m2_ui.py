@@ -83,6 +83,7 @@ def run():
                 page.on("request", lambda req: external.append(req.url) if not req.url.startswith(base) else None)
                 page.on("request", lambda req: commands.append(req.url) if req.method == "POST" and "batch_" in req.url else None)
                 page.goto(f"{base}/#settings/automation")
+                page.locator('.automation-diagnostics > summary').click()
                 expect(page.locator("[data-auto-runtime]")).to_contain_text("共享 FIFO")
                 expect(page.locator("[data-auto-runtime]")).to_contain_text("请求模型 · 已检查 2 / 3")
                 expect(page.locator("[data-auto-runtime]")).to_contain_text("导入预览超时清理（系统维护）")
@@ -107,19 +108,22 @@ def run():
                 expect(diagnostics).to_contain_text("正常完成，无待分析数据")
                 page.locator('[data-action="disclosure-edit"]').click()
                 form = page.locator("[data-disclosure-form]")
+                form.locator('[name="advanced"]').check()
                 form.locator('[name="boundaries"]').fill('{"CNY":[0,0]}')
-                form.locator('[name="acknowledged"]').check()
                 form.locator('button[type="submit"]').click()
                 expect(form.locator(".form-error-slot")).to_contain_text("严格递增")
                 form.locator('[name="boundaries"]').fill('{"CNY":[0,3000,10000,300000],"CNY_4":[0,290000,500000]}')
+                form.locator('[name="acknowledged"]').check()
                 # A poll interval elapses while the draft is open: the dialog is not replaced.
                 page.wait_for_timeout(5200)
                 expect(form.locator('[name="boundaries"]')).to_have_value('{"CNY":[0,3000,10000,300000],"CNY_4":[0,290000,500000]}')
                 form.locator('button[type="submit"]').click()
                 expect(page.locator("dialog[open]")).to_have_count(0)
-                expect(page.locator(".disclosure-card")).to_contain_text("CNY_4")
+                expect(page.locator('[aria-labelledby="automation-disclosure-title"]')).to_contain_text("CNY_4")
                 page.reload()
-                expect(page.locator(".disclosure-card")).to_contain_text("290000")
+                page.locator('[data-action="disclosure-edit"]').click()
+                expect(page.locator('[data-currency-row]').filter(has_text="CNY_4 区间").locator('[data-boundary]').nth(1)).to_have_value("29.0000")
+                page.locator('dialog [data-close]').first.click()
                 page.locator('[data-action="disclosure-preview"]').click()
                 preview_form = page.locator("[data-preview-form]")
                 preview_form.locator('button[type="submit"]').click()
@@ -132,11 +136,9 @@ def run():
                 preview_form.locator('button[type="submit"]').click()
                 expect(page.locator("[data-disclosure-preview]")).to_contain_text("清洗后不调用模型")
                 page.locator('dialog [data-close]').first.click()
-                page.locator('[data-action="interaction-demo"]').click()
-                expect(page.locator("[data-interaction-result]")).to_contain_text("成功 1 · 已处理 1 · 失败/未知 2")
-                page.locator("[data-interaction-scenario]").select_option("LARGE")
-                expect(page.locator("[data-interaction-result]")).to_contain_text("9223372036854775807")
-                page.locator('dialog [data-close]').first.click()
+                # Development-only demo is absent; actual batch and large-counter
+                # contracts remain exercised below and in automation_m2_ui.cjs.
+                expect(page.locator('[data-action="interaction-demo"]')).to_have_count(0)
                 assert commands == []
 
                 # Changing bands deliberately cancelled old pending fixtures. Restore
@@ -228,7 +230,7 @@ def run():
                 page.route("**/paam/system/v1/schedule/status", lambda route: route.abort())
                 expect(page.locator("[data-auto-freshness]")).to_contain_text("当前状态未知", timeout=16000)
                 page.unroute("**/paam/system/v1/schedule/status")
-                expect(page.locator("[data-auto-freshness]")).to_contain_text("业务状态已更新", timeout=16000)
+                expect(page.locator("[data-auto-freshness]")).to_contain_text("已更新", timeout=16000)
                 page.goto(f"{base}/#settings/automation")
                 page.locator('[data-action="disclosure-edit"]').click()
                 form = page.locator("[data-disclosure-form]")
@@ -237,13 +239,14 @@ def run():
                     "expected_updated_time": current["updated_time"], "disclosure": {"date_granularity": "NONE", "amount_bands": current["disclosure"]["amount_bands"]},
                 })
                 assert response.status == 200
+                form.locator('[data-boundary]').nth(1).fill("31")
                 form.locator('[name="acknowledged"]').check()
                 form.locator('button[type="submit"]').click()
                 expect(form.locator(".form-error-slot")).to_contain_text("配置已被修改")
                 expect(form).to_be_visible()
                 page.locator('dialog [data-close]').first.click()
                 page.reload()
-                expect(page.locator(".disclosure-card")).to_contain_text("NONE")
+                assert page.request.get(f"{base}/paam/system/v1/setting/automation").json()["body"]["disclosure"]["date_granularity"] == "NONE"
                 evidence_dir = os.environ.get("PAAM_UI_EVIDENCE_DIR")
                 if evidence_dir:
                     Path(evidence_dir).mkdir(parents=True, exist_ok=True)

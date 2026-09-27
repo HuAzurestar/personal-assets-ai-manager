@@ -243,3 +243,23 @@ class ModelConnectionTestRead(BaseModel):
 
 class ModelConnectionTestResponse(SuccessResponse[ModelConnectionTestRead]):
     body: ModelConnectionTestRead
+
+
+class ModelConnectionCheckRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    confirmed: Literal[True]
+    expected_updated_time: datetime
+
+
+class ModelConnectionCheckRead(BaseModel):
+    model_id: int
+    connected: bool
+    code: str
+    message: str
+    checked_at: datetime
+    configuration_updated_time: datetime
+    mode: Literal["LIVE"] = "LIVE"
+
+
+class ModelConnectionCheckResponse(SuccessResponse[ModelConnectionCheckRead]):
+    body: ModelConnectionCheckRead
