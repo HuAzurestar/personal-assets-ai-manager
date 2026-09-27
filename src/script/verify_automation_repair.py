@@ -49,6 +49,10 @@ def run():
                     return page.request.get(base + '/paam/system/v1/setting/automation').json()['body']
 
                 original = current()
+                page.goto(base + '/#workbench/tag-review')
+                page.locator('a[href^="#workbench/tag-review?request_id="]').first.click()
+                expect(page.locator('[data-auto-request-detail]')).to_be_visible()
+                page.goto(base + '/#settings/automation')
                 page.locator('[data-action="model-edit"]').click()
                 form = page.locator('[data-form="automation-model"]')
                 expect(form.locator('[name="extras"]')).to_be_hidden()
@@ -92,10 +96,6 @@ def run():
                 assert len(probes) == 1 and probes[0]['confirmed'] is True
                 page.locator('dialog[open] [data-close]').first.click()
 
-                page.goto(base + '/#workbench/tag-review')
-                page.locator('a[href^="#workbench/tag-review?request_id="]').first.click()
-                expect(page.locator('[data-auto-request-detail]')).to_be_visible()
-                page.goto(base + '/#settings/automation')
                 page.locator('[data-action="disclosure-edit"]').click()
                 count = len(writes)
                 page.locator('[data-disclosure-form] button[type="submit"]').click()
