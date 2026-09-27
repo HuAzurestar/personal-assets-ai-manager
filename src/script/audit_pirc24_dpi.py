@@ -36,7 +36,7 @@ MATRIX = [
 AUDIT = r"""() => {
  const root=document.querySelector('dialog[open]') || document.documentElement;
  const box=e=>{const r=e.getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height}};
- const visible=e=>e.getClientRects().length && getComputedStyle(e).visibility!=='hidden';
+ const visible=e=>e.checkVisibility({checkVisibilityCSS:true});
  const clips=[];
  for(const e of root.querySelectorAll('button,label,h2,h3,p,small,dt,dd,th,td,span')) {
    if(!visible(e))continue;
@@ -62,7 +62,7 @@ AUDIT = r"""() => {
  });
  const nav=root.querySelector('.secondary-nav'),active=nav?.querySelector('[aria-pressed="true"]');
  const navigationVisible=!active || (active.getBoundingClientRect().left>=nav.getBoundingClientRect().left-1 && active.getBoundingClientRect().right<=nav.getBoundingClientRect().right+1);
- const wrappedButtons=[...root.querySelectorAll('.rule-operation button')].filter(e=>{
+ const wrappedButtons=[...root.querySelectorAll('.rule-operation button')].filter(visible).filter(e=>{
    const range=document.createRange();range.selectNodeContents(e);
    return new Set([...range.getClientRects()].map(r=>r.y)).size>1;
  }).map(e=>e.textContent);
@@ -159,7 +159,6 @@ def run():
                             ("model-edit", "model-edit"),
                             ("disclosure-edit", "disclosure-edit"),
                             ("disclosure-preview", "disclosure-preview"),
-                            ("interaction-demo", "demo"),
                         ]:
                             dialog(action, state)
                         page.goto(base + "/#details/auto-rule")
@@ -168,6 +167,7 @@ def run():
                         ).to_be_visible()
                         capture("rules")
                         dialog("rule-edit", "rule-edit")
+                        page.locator('.rule-operation summary').first.click()
                         dialog("rule-preview", "rule-preview")
                         page.goto(base + "/#details/auto-rule?rule_id=1")
                         expect(page.locator("[data-auto-rule-detail]")).to_be_visible()
@@ -179,7 +179,7 @@ def run():
                         capture("requests")
                         page.locator("[data-tag-request-select]").first.check()
                         dialog("tag-request-batch", "batch-confirm")
-                        page.locator('[data-action="tag-request-detail"]').first.click()
+                        page.locator('a[href^="#workbench/tag-review?request_id="]').first.click()
                         expect(
                             page.locator("[data-auto-request-detail]")
                         ).to_be_visible()
@@ -229,7 +229,7 @@ def run():
                 f"CAPTURES={len(results)} ERRORS={len(errors)} EXTERNAL={len(external)}",
                 flush=True,
             )
-            assert len(results) == len(MATRIX) * 12
+            assert len(results) == len(MATRIX) * 11
             assert not errors and not external, (errors, external)
             failures = [
                 r

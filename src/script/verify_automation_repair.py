@@ -58,6 +58,21 @@ def run():
                 assert current()['models'][0]['litellm_params'] == original['models'][0]['litellm_params']
                 assert current()['models'][0]['key_configured']
 
+                # A stale/invalid configuration must not mutate credentials first.
+                page.locator('[data-action="model-edit"]').click()
+                form = page.locator('[data-form="automation-model"]')
+                form.locator('[name="secret"]').fill('fictional-replacement-key')
+                before_conflict = len(writes)
+                page.route('**/setting/automation', lambda route: route.fulfill(
+                    status=409, content_type='application/json',
+                    body=json.dumps({'status':409, 'message':'Configuration changed', 'body':None}),
+                ) if route.request.method == 'PUT' else route.continue_())
+                form.locator('button[type="submit"]').click()
+                expect(form.locator('.form-error-slot')).not_to_be_empty()
+                assert not any(url.endswith('/secret') for url in writes[before_conflict:])
+                page.unroute('**/setting/automation')
+                page.locator('dialog[open] [data-close]').first.click()
+
                 def answer_probe(route):
                     probes.append(route.request.post_data_json)
                     route.fulfill(status=200, content_type='application/json', body=json.dumps({
@@ -77,6 +92,10 @@ def run():
                 assert len(probes) == 1 and probes[0]['confirmed'] is True
                 page.locator('dialog[open] [data-close]').first.click()
 
+                page.goto(base + '/#workbench/tag-review')
+                page.locator('a[href^="#workbench/tag-review?request_id="]').first.click()
+                expect(page.locator('[data-auto-request-detail]')).to_be_visible()
+                page.goto(base + '/#settings/automation')
                 page.locator('[data-action="disclosure-edit"]').click()
                 count = len(writes)
                 page.locator('[data-disclosure-form] button[type="submit"]').click()
@@ -112,6 +131,8 @@ def run():
                         page.goto(base + '/#' + route)
                         page.locator(f'[data-auto-page="{selector}"]').wait_for()
                         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), (width,route)
+                        if selector == 'requests':
+                            expect(page.locator('[data-tag-request-select-all]')).to_be_visible()
                         for button in page.locator('[data-auto-page] button:visible').all():
                             box = button.bounding_box()
                             assert box['x'] >= 0 and box['x'] + box['width'] <= width + 1, (width,route,button.inner_text())

@@ -1,7 +1,7 @@
 import { request, jsonRequest } from "../api/client.js?v=20260927.1";
 import { $, $$, esc, money } from "../util/core.js";
 import { startVisiblePoll } from "../util/visible_poll.js?v=20260927.1";
-import { openDisclosureEditor, openDisclosurePreview } from "./disclosure.js?v=20260927.3";
+import { openDisclosureEditor, openDisclosurePreview } from "./disclosure.js?v=20260927.4";
 import { batchResults, batchResultMarkup, batchFailureMarkup, selectionConflict, ruleStatistics, runtimeMarkup, diagnosticsMarkup, interactionScenarios, interactionMarkup } from "./automation_feedback.js?v=20260927.1";
 
 let setting = null;
@@ -176,12 +176,12 @@ function requestStatusPill(status) {
 
 function requestRowsMarkup(items) {
   return items.map((item) => `<tr data-tag-request-row="${item.id}">
-    <td><label class="request-selector"><input type="checkbox" data-tag-request-select value="${item.id}" ${item.status === 1 ? "" : "disabled"}><span><strong>Request #${item.id} · ${esc(item.ledger_counterparty_name || "未记录交易对方")}</strong><small>${esc(item.ledger_summary || "无账目摘要；请查看详情")}</small></span></label></td>
+    <td><label class="request-selector"><input type="checkbox" data-tag-request-select value="${item.id}" ${item.status === 1 ? "" : "disabled"}><span><a href="#workbench/tag-review?request_id=${item.id}">${esc(item.ledger_counterparty_name || "未记录交易对方")} · 查看依据</a><small>${esc(item.ledger_summary || "无账目摘要；请查看详情")}</small></span></label></td>
     <td><strong>${item.ledger_amount == null ? `Ledger #${item.ledger_id}` : esc(money({ amount: item.ledger_amount, currency_code: item.ledger_currency_code }))}</strong><small>Ledger #${item.ledger_id} · ${esc(item.view_name)} · ${item.ledger_active ? "当前有效" : "Ledger 已失效"}</small></td>
     <td><strong>${esc(item.proposed_tag_name)}</strong><small>${esc(item.proposed_tag_system_name)}</small></td>
     <td><strong>${esc(item.rule_name)}</strong><small>Rule #${item.rule_id} · Revision ${item.rule_revision}</small></td>
     <td>${requestStatusPill(item.status)}</td>
-    <td><div class="automation-actions request-actions"><button type="button" class="quiet" data-action="tag-request-detail" data-id="${item.id}">查看依据</button>${requestActionsMarkup(item)}</div></td>
+    <td><div class="automation-actions request-actions">${requestActionsMarkup(item)}</div></td>
   </tr>`).join("") || '<tr><td colspan="6" class="table-empty"><strong>没有符合条件的建议请求</strong><span>可选择「全部状态」查看已处理建议；只有已注册的规则扫描任务才会自动产生新建议。</span></td></tr>';
 }
 
@@ -242,7 +242,8 @@ export async function tagReviewPage(params = new URLSearchParams()) {
           <label>建议状态<select name="status"><option value="" ${status === "" ? "selected" : ""}>全部状态</option>${Object.entries(requestStatusNames).map(([value, label]) => `<option value="${value}" ${status === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>
         </form>
       </div>
-      <div class="automation-table-wrap"><table class="automation-table request-table" aria-labelledby="tag-review-list-title"><thead><tr><th id="tag-review-list-title"><label class="request-select-all"><input type="checkbox" data-tag-request-select-all> 请求</label></th><th>Ledger / View</th><th>建议标签</th><th>来源规则</th><th>状态</th><th>操作</th></tr></thead><tbody data-auto-request-rows>${requestRowsMarkup(result.items)}</tbody></table></div>
+      <label class="request-select-all"><input type="checkbox" data-tag-request-select-all> 全选本页可处理请求</label>
+      <div class="automation-table-wrap"><table class="automation-table request-table" aria-labelledby="tag-review-list-title"><thead><tr><th id="tag-review-list-title">请求</th><th>Ledger / View</th><th>建议标签</th><th>来源规则</th><th>状态</th><th>操作</th></tr></thead><tbody data-auto-request-rows>${requestRowsMarkup(result.items)}</tbody></table></div>
       <div data-auto-request-pager>${requestPagerMarkup(result)}</div>
     </section>
   </div>`;
@@ -306,6 +307,7 @@ async function submitModel(event) {
   const form = event.currentTarget;
   const button = $("button[type='submit']", form);
   button.disabled = true;
+  let configurationSaved = false;
   try {
     const data = new FormData(form);
     const id = Number(form.dataset.id);
@@ -325,22 +327,24 @@ async function submitModel(event) {
     if (data.has("delete_secret")) desired.enabled = false;
     if (!existing && desired.enabled && !secret.trim()) throw new Error("新模型启用前必须填写 API Key");
     let models = setting.models.filter((item) => item.id !== id).map(({ key_configured: _key, ...item }) => item);
-    models.push(existing || !desired.enabled ? desired : { ...desired, enabled: false });
+    models.push(secret ? { ...desired, enabled: false } : desired);
     let saved;
-    if (existing && secret) await jsonRequest(`/paam/system/v1/setting/automation/model/${id}/secret`, "PUT", { secret });
     saved = await saveModels(models, setting.updated_time);
+    // Validate and version-check configuration before changing any credential.
+    setting = saved;
+    configurationSaved = true;
     if (existing && data.has("delete_secret")) await jsonRequest(`/paam/system/v1/setting/automation/model/${id}/secret`, "DELETE");
-    if (!existing && secret) await jsonRequest(`/paam/system/v1/setting/automation/model/${id}/secret`, "PUT", { secret });
-    if (!existing && desired.enabled) {
+    if (secret) await jsonRequest(`/paam/system/v1/setting/automation/model/${id}/secret`, "PUT", { secret });
+    if (secret && desired.enabled) {
       models = saved.models.map(({ key_configured: _key, ...item }) => item.id === id ? desired : item);
       saved = await saveModels(models, saved.updated_time);
     }
-    setting = saved;
+    setting = await request('/paam/system/v1/setting/automation');
     form.closest("dialog").close();
-    window.dispatchEvent(new CustomEvent("paam:automation-saved", { detail: { message: "模型配置已保存并从 SQLite 回读" } }));
+    window.dispatchEvent(new CustomEvent("paam:automation-saved", { detail: { message: "模型配置已保存" } }));
   } catch (error) {
     button.disabled = false;
-    showFormError(form, error);
+    showFormError(form, configurationSaved ? { message: `配置已保存，但后续步骤未完成：${error.message}。请核对密钥和启用状态。` } : error);
   }
 }
 
@@ -370,6 +374,7 @@ function ruleDialog(rule = null) {
   };
   $('[name="frequency"]', form).addEventListener("change", syncFrequency);
   $('[name="prompt_template"]', form).addEventListener("change", async (event) => {
+    const choice = event.target.value;
     const index = event.target.value === "purpose" ? 0 : event.target.value === "channel" ? 1 : null;
     if (index === null) return;
     const before = $('[name="prompt"]', form).value;
@@ -379,7 +384,7 @@ function ruleDialog(rule = null) {
       const config = await response.json();
       const preset = config.views?.[index];
       if (!preset?.rule?.prompt) throw new Error("模板格式不正确");
-      if (form.isConnected && $('[name="prompt"]', form).value === before) $('[name="prompt"]', form).value = preset.rule.prompt;
+      if (form.isConnected && $('[name="prompt_template"]', form).value === choice && $('[name="prompt"]', form).value === before) $('[name="prompt"]', form).value = preset.rule.prompt;
     } catch (error) { showFormError(form, error); }
   });
   syncFrequency();
