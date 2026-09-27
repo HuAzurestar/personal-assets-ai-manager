@@ -17,7 +17,7 @@ import {
 } from "../util/core.js";
 import {
   canonicalHash, parseHash, shellMarkup, syncNavigation,
-} from "../navigation.js?v=20260921.3";
+} from "../navigation.js?v=20260927.3";
 import {
   accountsMarkup, cursorFromParam, monthBounds,
 } from "./account.js?v=20260917.10";

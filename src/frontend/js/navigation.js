@@ -147,6 +147,19 @@ export function shellMarkup() {
   </div>`;
 }
 
+function revealSelectedNavigation(navigation) {
+  const selected = navigation.querySelector('[aria-pressed="true"]');
+  if (!selected) return;
+  const container = navigation.getBoundingClientRect();
+  const button = selected.getBoundingClientRect();
+  if (button.left < container.left) navigation.scrollLeft += button.left - container.left;
+  else if (button.right > container.right) navigation.scrollLeft += button.right - container.right;
+}
+
+const navigationResizeObserver = new ResizeObserver((entries) => {
+  for (const entry of entries) revealSelectedNavigation(entry.target);
+});
+
 export function syncNavigation(page) {
   const active = pageModule(page);
   $$('[data-module]').forEach((button) => {
@@ -163,6 +176,8 @@ export function syncNavigation(page) {
       <button type="button" data-page="${id}" class="${id === selectedPage ? "active" : ""}" aria-pressed="${id === selectedPage}">
         <strong>${esc(label)}</strong><small>${esc(caption)}</small>
       </button>`).join("");
+    navigationResizeObserver.observe(secondaryNavigation);
+    revealSelectedNavigation(secondaryNavigation);
   }
   const domainNote = $(".domain-note");
   if (domainNote) domainNote.innerHTML = active === "settings"

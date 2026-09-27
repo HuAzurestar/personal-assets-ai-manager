@@ -489,6 +489,8 @@
 .target-shell .rule-counts strong { display:block; margin-top:3px; font-size:14px; }
 .target-shell .automation-table .rule-counts { min-width:240px; margin-top:0; }
 .target-shell .automation-table .automation-actions { justify-content:flex-start; margin-top:10px; flex-wrap:nowrap; }
+.target-shell .rule-operation .automation-actions { flex-wrap:wrap; }
+.target-shell .rule-operation button { flex-shrink:0; white-space:nowrap; }
 .target-shell .table-empty { height:210px; text-align:center; vertical-align:middle !important; }
 .target-shell .table-empty strong,
 .target-shell .table-empty span { display:block; }
@@ -538,6 +540,7 @@
 .target-shell [data-auto-stale="true"] [data-auto-runtime] { opacity:.6; }
 .automation-dialog .form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
 .automation-dialog .form-grid.three { grid-template-columns:repeat(3,minmax(0,1fr)); }
+.automation-dialog .form-grid > label { align-content:start; }
 .automation-dialog textarea { resize:vertical; }
 .automation-dialog .check-row { display:flex; align-items:center; gap:9px; }
 .automation-dialog .check-row input { width:auto; }

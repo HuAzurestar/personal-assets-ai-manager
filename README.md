@@ -75,6 +75,8 @@ Import File 标记为 `FAILED`，仍在当前进程中的预览仍可继续修�
 
 ## 文档
 
+- [自动标签部署与就绪检查](src/doc/auto-tag-deployment.md)：启用规则前确认服务级真实分析开关；健康接口成功不代表已注册扫描。
+- [PIRC-24 真实运行验证记录](src/report/pirc24-runtime-acceptance-2026-09-27.md)
 - [10 表逐字段字典](src/doc/data-model.md)
 - [SQL 重构清单](src/doc/sql-query-refactor.md)
 - [PIRC-9 验收记录](src/doc/pirc-9-verification.md)
