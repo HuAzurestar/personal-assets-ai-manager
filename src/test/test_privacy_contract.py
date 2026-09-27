@@ -46,6 +46,12 @@ def _user(payload):
     return json.loads(build_messages(payload)[1]["content"])
 
 
+def _business_json(user):
+    # The independently generated correlation nonce may coincidentally contain
+    # a few digits from a phone/account; inspect EVERY source-derived field.
+    return json.dumps({key: value for key, value in user.items() if key != "item"}, ensure_ascii=False)
+
+
 @pytest.mark.parametrize("case", CONTRACT["cases"], ids=lambda case: case["id"])
 @pytest.mark.parametrize("mode_name,mode", [("BAND", 1), ("EXACT", 2), ("NONE", 3)])
 def test_twelve_approved_source_fragments(case, mode_name, mode):
@@ -75,7 +81,7 @@ def test_twelve_approved_source_fragments(case, mode_name, mode):
     else:
         assert user["merchant"] == ""
     assert user.get("payment_channel") == expected.get("payment_channel")
-    safe = json.dumps(user, ensure_ascii=False)
+    safe = _business_json(user)
     assert all(value not in safe for value in case["forbidden_in_expected"])
     assert not {"ledger_id", "tag_id", "account", "balance", "source_shape"} & user.keys()
     if mode == 1:
@@ -96,7 +102,7 @@ def test_priv01_card_category_only(card):
     payload = _payload(_input(f"午餐 银行卡 {card}", channel=f"银行卡({card})"))
     user = _user(payload)
     assert user["payment_channel"] == "银行卡"
-    assert "7788" not in json.dumps(user)
+    assert "7788" not in _business_json(user)
 
 
 @pytest.mark.parametrize("mode", [1, 2, 3])
@@ -116,12 +122,16 @@ def test_priv02_all_text_channels_and_unknown_extras(mode):
             ProtectedLlmAnalysisInput.model_validate(value)
 
 
-def test_priv03_unlabelled_name_address_and_account():
+def test_priv03_unlabelled_name_address_and_account(monkeypatch):
+    # Make the old flaky substring assertion fail deterministically if it
+    # accidentally inspects the opaque nonce again.
+    monkeypatch.setattr("backend.service.llm_privacy_service.secrets.token_hex", lambda _: "1387788" + "a" * 25)
     payload = _payload(_input("个人转账，退还垫款；虚构用户乙；姓名张三；门牌示例路88号；13812345678；abc@example.test", merchant="张三"))
     user = _user(payload)
     assert user["summary"] == "个人转账,退还垫款"
     assert user["merchant"] == ""
-    assert all(value not in json.dumps(user, ensure_ascii=False) for value in ("用户乙", "张三", "示例路", "138", "example"))
+    assert user["item"] == "item_1387788" + "a" * 25
+    assert all(value not in _business_json(user) for value in ("用户乙", "张三", "示例路", "138", "example"))
 
 
 @pytest.mark.parametrize("mode", [1, 2, 3], ids=["PRIV-04-BAND", "PRIV-05-EXACT", "PRIV-06-NONE"])
@@ -129,7 +139,7 @@ def test_priv04_05_06_money_has_one_authoritative_representation(mode):
     payload = _payload(_input("小额午餐 实付￥29.00 / 2,900分 / 二十九元；余额8765.43"), mode)
     user = _user(payload)
     assert user["summary"] == "午餐"
-    assert all(secret not in json.dumps(user) for secret in ("29.00", "2,900", "8765"))
+    assert all(secret not in _business_json(user) for secret in ("29.00", "2,900", "8765"))
     assert user.get("amount_units") == (2900 if mode == 2 else None)
     assert ("amount_band" in user) is (mode == 1)
 

@@ -6,6 +6,7 @@ import io
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -15,6 +16,16 @@ from configure_tag_classification import install  # noqa: E402
 from test_auto_tag_scan import scan_runtime as scan_runtime  # noqa: E402, F401
 from test_live_tag_scan import _body, _install_runtime, _response, _set_enabled, _wait  # noqa: E402
 from backend import target_main  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def isolate_secret_presence(monkeypatch):
+    # Settings GET also queries key presence; never touch a host OS keyring.
+    # The independent provider stub is already installed by _install_runtime.
+    monkeypatch.setattr(
+        "backend.router.dependency.protected_secret_store",
+        SimpleNamespace(is_configured=lambda _: True),
+    )
 
 
 def test_preset_is_idempotent_and_import_cron_review_remain_independent(scan_runtime, monkeypatch):
