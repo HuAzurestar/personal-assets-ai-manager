@@ -86,6 +86,7 @@ function ruleRow(rule) {
   const schedulerRunning = scheduleStatus?.scheduler_state === "RUNNING" && scheduleStatus?.worker_state === "HEALTHY";
   const ruleStatus = !rule.enabled ? statusPill(false)
     : !modelAvailable ? statusPill(true, false, unavailableCopy)
+    : scheduleStatus?.tag_scan_guard === "DISABLED" ? statusPill(true, false, "已保存·服务未开启扫描")
     : scheduleStatus?.tag_scan_guard === "NON_SYNTHETIC_FACT" ? statusPill(true, false, "安全阻断")
     : !scheduleTask ? statusPill(true, false, "已保存·未调度")
     : scheduleTask.queue_state === "PAUSED" ? statusPill(true, false, "扫描已暂停")
@@ -95,7 +96,9 @@ function ruleRow(rule) {
   const resultNames = { COMPLETED: "完成", PARTIAL_FAILURE: "部分失败", FAILED: "失败", CANCELLED: "已取消" };
   const lastRun = scheduleTask?.last_result
     ? `上次执行：${resultNames[scheduleTask.last_result] || scheduleTask.last_result}${scheduleTask.last_error_code ? ` · ${scheduleTask.last_error_code === "ACCEPTANCE_DATABASE_REQUIRED" ? "验收库含非虚构记录" : scheduleTask.last_error_code}` : ""}`
-    : scheduleTask ? "尚未执行" : "未注册到调度器";
+    : scheduleTask ? "尚未执行"
+    : scheduleStatus?.tag_scan_guard === "DISABLED" ? "服务扫描开关关闭，规则未注册"
+    : "未注册到调度器";
   return `<tr data-rule-row="${rule.id}">
     <td class="rule-identity"><span class="eyebrow">RULE #${rule.id} · REV ${rule.rule_revision}</span><strong>${esc(rule.name)}</strong><small>${esc(rule.method_config.prompt)}</small></td>
     <td><strong>${esc(view?.name || `View #${rule.view_id}`)}</strong><small>${esc(model?.name || `Model #${rule.method_config.model_id}`)}</small></td>
@@ -107,15 +110,20 @@ function ruleRow(rule) {
 
 function scheduleNotice() {
   const tasks = (scheduleStatus?.tasks || []).filter((item) => item.task_key.startsWith("tag-scan:"));
+  const disabled = scheduleStatus?.tag_scan_guard === "DISABLED";
   const blockedByData = scheduleStatus?.tag_scan_guard === "NON_SYNTHETIC_FACT";
   const realAnalysis = scheduleStatus?.tag_scan_guard === "REAL_READY";
   const running = scheduleStatus?.scheduler_state === "RUNNING" && scheduleStatus?.worker_state === "HEALTHY";
   const nextRuns = tasks.map((item) => item.next_run_at).filter(Boolean).sort();
   const failed = tasks.filter((item) => ["FAILED", "PARTIAL_FAILURE"].includes(item.last_result)).length;
-  const title = blockedByData ? "当前库不允许自动标签扫描"
+  const title = !scheduleStatus ? "暂时无法读取调度状态"
+    : disabled ? "服务未启用自动标签扫描"
+    : blockedByData ? "当前库不允许自动标签扫描"
     : !tasks.length ? "没有已注册的自动标签任务"
     : running ? `CRON 调度运行中 · ${tasks.length} 条规则已注册` : "CRON 调度未运行";
-  const next = blockedByData
+  const next = !scheduleStatus ? "请检查服务连接并刷新；不能据此判断规则已停用"
+    : disabled ? "等待不会产生新建议。服务级扫描开关关闭，保存规则或模型密钥不会自动开启。启用真实账单分析需设置 PAAM_AUTOTAG_REAL_ANALYSIS=1 并重启服务；请先确认外发授权和模型费用。无需重新导入数据"
+    : blockedByData
     ? "验收库含非虚构记录；安全门禁在模型调用前阻断扫描，已注册任务会暂停且不再按 CRON 重试。请改用独立的纯虚构验收库"
     : !tasks.length
     ? realAnalysis ? "真实流水分析已启用，但没有启用的规则；请配置模型和自动规则" : "等待不会产生新建议。默认模式不扫描账单；纯虚构验收库混入普通记录后也不会注册标签任务。规则已启用不等于已调度"
@@ -460,6 +468,7 @@ function ruleDetailMarkup(rule, schedule, recent, summary = null) {
   const task = schedule.tasks?.find((item) => item.task_key === `tag-scan:${rule.id}`);
   const running = schedule.scheduler_state === "RUNNING" && schedule.worker_state === "HEALTHY";
   const scheduling = !rule.enabled ? "规则已停用，不会调度"
+    : schedule.tag_scan_guard === "DISABLED" ? "服务扫描开关关闭；保存规则或密钥不会自动开启，无需重新导入"
     : schedule.tag_scan_guard === "NON_SYNTHETIC_FACT" ? "安全门禁阻止：验收库含非虚构记录；不会继续扫描，也不会发送这些账目给模型"
     : !task ? "未注册 CRON 任务；当前环境可能未启用自动扫描"
     : task.queue_state === "PAUSED" ? "任务已暂停；不会按 CRON 触发"

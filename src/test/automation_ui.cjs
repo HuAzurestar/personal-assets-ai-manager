@@ -64,10 +64,13 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
 (async () => {
   const views = [{ id: 1, name: "分类", status: "ACTIVE" }];
   const idle = await context.testPanel(views);
-  assert.match(idle, /没有已注册的自动标签任务/);
+  assert.match(idle, /服务未启用自动标签扫描/);
   assert.match(idle, /等待不会产生新建议/);
-  assert.match(idle, /已保存·未调度/);
-  assert.match(idle, /未注册到调度器/);
+  assert.match(idle, /已保存·服务未开启扫描/);
+  assert.match(idle, /服务扫描开关关闭，规则未注册/);
+  assert.match(idle, /PAAM_AUTOTAG_REAL_ANALYSIS=1/);
+  assert.match(idle, /无需重新导入数据/);
+  assert.doesNotMatch(idle, /验收库混入/);
   assert.doesNotMatch(idle, /CRON 调度运行中/);
 
   schedule = {

@@ -10,6 +10,12 @@ from __future__ import annotations
 
 import re
 
+# Reviewed public platform names, not identities harvested from a ledger.
+# Exact matches also disambiguate short merchant names from personal names.
+PUBLIC_PLATFORM_WORDS = frozenset("""
+淘宝 淘宝网 天猫 京东 京东商城 拼多多 美团 美团外卖 饿了么
+""".split())
+
 BUSINESS_WORDS = frozenset("""
 个人转账 退还垫款 文具购买 午餐套餐 宴会餐厅 咖啡馆 矿泉水 饮用水
 餐饮 美食 早餐 午餐 晚餐 夜宵 聚餐 工作餐 套餐 餐费 饭店 餐厅 餐馆
@@ -21,9 +27,14 @@ BUSINESS_WORDS = frozenset("""
 工资 薪资 收入 支出 收款 付款 消费 转账 退款 退货 返还 垫款 报销
 借款 还款 贷款 利息 理财 投资 保险 捐赠 红包 礼物 服务 订阅
 银行卡 余额支付 现金 微信支付 支付宝 云闪付
+日用消耗品 消耗品 耗材 纸巾 卫生纸 洗衣液 洗发水 牙膏 清洁用品
+食品生鲜 生鲜 数码家电 居住缴费 教育学习 休闲娱乐 住宿旅游 通信订阅
+药店 药房 诊疗 体检 检查费 服饰 衣服 裤子 连衣裙 鞋子 运动鞋
+手机 电脑 耳机 网购 电商 网上商城 线上 线下 到店 门店 柜台 POS
+线上订单 购买渠道 消费用途
 Food Cafe Breakfast Lunch Dinner Meal Transport Travel Shopping Refund
 food cafe breakfast lunch dinner meal transport travel shopping refund
-""".split())
+""".split()) | PUBLIC_PLATFORM_WORDS
 
 GRAMMAR_WORDS = frozenset("""
 根据 依据 结合 参考 仅 只 安全 用途 语义 商户 商品 摘要 描述 信息
@@ -33,6 +44,7 @@ GRAMMAR_WORDS = frozenset("""
 不足 不明 无法 确定 时 返回 不得 外发 不 单独 决定 默认 优先
 与 和 及 或 为 是 的 中 有 无 此 该 本笔 一笔 这笔 可 不能 应
 选择一个标签 根据商户和摘要选择分类 Choose one tag select classify
+支付方式 表示 混合 商品用途 不适配
 insufficient suggestion category purpose evidence semantic synthetic reason
 """.split())
 

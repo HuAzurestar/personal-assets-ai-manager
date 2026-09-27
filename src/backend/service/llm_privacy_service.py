@@ -18,7 +18,7 @@ from backend.schema.llm_analysis import (
     ProtectedLlmAnalysisInput,
 )
 from backend.schema.setting import AutomationDisclosure
-from backend.service.llm_safe_text import is_safe_reason, semantic_text
+from backend.service.llm_safe_text import PUBLIC_PLATFORM_WORDS, is_safe_reason, semantic_text
 
 _SEAL_KEY = secrets.token_bytes(32)
 
@@ -200,6 +200,8 @@ class LlmPrivacyService:
     @staticmethod
     def _personal_merchant(value: str) -> bool:
         name = value.strip()
+        if name in PUBLIC_PLATFORM_WORDS:
+            return False
         business_words = (
             "店", "餐", "饭", "食", "茶", "咖啡", "超市", "商场", "公司", "银行",
             "公交", "地铁", "铁路", "航空", "医院", "学校", "酒店", "外卖", "打车",
