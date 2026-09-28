@@ -1,5 +1,9 @@
 import { esc } from "../util/core.js";
 
+export function helpTip(label, copy) {
+  return `<span class="automation-tip"><button type="button" class="automation-tip-trigger" aria-label="${esc(label)}" aria-description="${esc(copy)}">?</button><span class="automation-tip-content" role="tooltip">${esc(copy)}</span></span>`;
+}
+
 const resultCopy = {
   APPROVED: "已通过并应用标签", REJECTED: "已拒绝，未改变标签",
   ALREADY_APPROVED: "此前已通过，本次不重复累计", ALREADY_REJECTED: "此前已拒绝，本次不重复累计",
@@ -60,14 +64,14 @@ export function selectionConflict(items) {
 }
 
 export function ruleStatistics(summary) {
-  if (!summary) return '<p>统计当前不可用；不推算准确率或无建议数量。</p>';
+  if (!summary) return '<p>统计暂不可用</p>';
   const rate = (value) => value == null ? "暂无样本" : `${(value * 100).toFixed(1)}%`;
   const fields = [["累计已分析", summary.analyzed_count], ["失败", summary.failed_count],
     ["建议请求", summary.suggested_count], ["人工通过", summary.accepted_count], ["人工拒绝", summary.rejected_count],
     ["执行成功率", `${rate(summary.execution_success_rate)}（${summary.execution_success_count} / ${summary.analyzed_count}）`],
     ["采纳率", `${rate(summary.acceptance_rate)}（${summary.accepted_count} / ${summary.decision_count} 次人工决定）`]];
   return `<dl class="automation-definition">${fields.map(([label, value]) => `<div><dt>${label}</dt><dd>${esc(value)}</dd></div>`).join("")}</dl>
-    <p class="automation-detail-note">已分析包含失败、模型依据不足和清洗后未调用模型的条目。执行成功率 =（已分析 − 失败）/ 已分析，成功不代表产生建议；采纳率 = 人工通过 /（人工通过 + 人工拒绝）。自动取消不算拒绝；建议按请求数累计。这两项都不是模型准确率，不能据此反推无建议或待审数量。</p>`;
+    ${helpTip("统计口径", "执行成功率 =（已分析 − 失败）/ 已分析；采纳率 = 人工通过 /（人工通过 + 人工拒绝）。已分析含未调用模型的条目；两项均非模型准确率。")}`;
 }
 
 const phaseCopy = { SCAN: "检查候选", CALL: "请求模型", RETRY_WAIT: "等待重试", COMMIT: "原子提交", FINISH: "本轮结束" };
@@ -83,7 +87,7 @@ export function scheduleProgressMarkup(progress) {
 }
 
 export function runtimeMarkup(schedule) {
-  if (!schedule) return '<div class="automation-result error">调度状态未知，无法确认正在运行。请检查本地服务。</div>';
+  if (!schedule) return '<div class="automation-result error">调度状态未知，请检查服务连接。</div>';
   const tasks = schedule.tasks || [];
   const queue = tasks.filter((task) => task.queue_state === "QUEUED").sort((a, b) => a.queue_position - b.queue_position);
   const running = tasks.filter((task) => task.queue_state === "RUNNING");
@@ -95,10 +99,10 @@ export function runtimeMarkup(schedule) {
     ${scheduleProgressMarkup(task.last_progress)}${task.last_run_id ? `<small>诊断编号 <code>${esc(task.last_run_id)}</code></small>` : ""}</td><td>${esc(localTime(task.next_run_at))}</td></tr>`).join("");
   const failures = tasks.filter((task) => task.last_failure).map((task) => `<div class="automation-result error"><strong>${esc(task.task_key)} · 最近失败（不会被空扫描清除）</strong><p>${esc(task.last_failure.safe_message)}（${esc(task.last_failure.code)}）</p><small>${esc(localTime(task.last_failure.time))} · 诊断编号 <code>${esc(task.last_failure.run_id)}</code></small></div>`).join("");
   return `<p>调度器 ${esc(schedule.scheduler_state)} · Worker ${esc(schedule.worker_state)} · 等待 ${queue.length} · 运行 ${running.length}</p>
-    <p>共享 FIFO：${queue.length ? queue.map((task) => esc(task.task_key)).join(" → ") : "没有等待项"}。运行中的任务不计入等待数量。</p>
+    <p>等待队列：${queue.length ? queue.map((task) => esc(task.task_key)).join(" → ") : "无"} ${helpTip("排队顺序", "任务按入队顺序执行，运行中的任务不计入等待数量。")}</p>
     <div class="automation-table-wrap"><table class="automation-table"><thead><tr><th>任务</th><th>当前状态</th><th>最近结果</th><th>下次触发</th></tr></thead><tbody>${rows || '<tr><td colspan="4">尚无已注册任务</td></tr>'}</tbody></table></div>
     ${failures}${schedule.diagnostics_health === "DEGRADED" ? '<div class="automation-result error" role="alert">安全诊断存储异常或部分历史损坏；当前仅保证最近 100 条内存记录，请检查本地日志目录权限和磁盘。</div>' : ""}
-    <p class="automation-detail-note">真实进程快照：${esc(localTime(schedule.captured_at))} · 最近 Worker 活动 ${esc(localTime(schedule.worker_heartbeat_at))}。导入超时清理不是标签扫描；CRON 不负责导入，也不自动批准申请。重启后瞬态队列和最近结果不恢复；数据库游标、累计与申请保留。安全诊断最多 3×5 MiB，轮转后历史不完整，调度健康不代表模型分析成功。</p>`;
+    <p class="automation-detail-note">更新于 ${esc(localTime(schedule.captured_at))} ${helpTip("运行记录", "队列和最近结果来自当前进程；累计数据与申请保存在数据库。诊断日志按容量轮转。")}</p>`;
 }
 
 export function diagnosticsMarkup(page, { taskKey = "", severity = "ERROR", code = "" } = {}) {
@@ -108,9 +112,9 @@ export function diagnosticsMarkup(page, { taskKey = "", severity = "ERROR", code
     <form class="form-grid three" data-form="schedule-diagnostics"><label>任务<input name="task_key" maxlength="96" value="${esc(taskKey)}" placeholder="例如 tag-scan:3"></label>
       <label>级别<select name="severity">${[["ERROR", "仅错误"], ["WARNING", "仅警告"], ["INFO", "仅正常结果"], ["", "全部"]].map(([value, label]) => `<option value="${value}" ${value === severity ? "selected" : ""}>${label}</option>`).join("")}</select></label>
       <label>错误码<input name="code" maxlength="96" value="${esc(code)}" placeholder="可留空"></label><button type="submit" class="quiet">筛选诊断</button></form>
-    ${!page ? '<p class="error" role="alert">诊断历史读取失败，状态未知；不等于没有错误。</p>' : `<div class="automation-detail-list">${page.items.map((event) => `<div><strong>${esc(localTime(event.time))} · ${esc(event.task_key)} · ${esc(event.phase)}</strong><span>${esc(event.safe_message)}（${esc(event.code)}${event.detail_code ? ` / ${esc(event.detail_code)}` : ""}）</span><small>${event.ledger_id == null ? "" : `本地 Ledger #${esc(event.ledger_id)} · `}${event.attempt == null ? "" : `第 ${esc(event.attempt)} 次尝试 · `}诊断编号 <code>${esc(event.run_id)}</code></small><button type="button" class="quiet" data-action="copy-diagnostic" data-run-id="${esc(event.run_id)}">复制诊断编号</button></div>`).join("") || "<p>当前筛选没有保留的诊断记录。日志会轮转，不代表从未失败。</p>"}</div>`}
+    ${!page ? '<p class="error" role="alert">诊断记录读取失败，请刷新。</p>' : `<div class="automation-detail-list">${page.items.map((event) => `<div><strong>${esc(localTime(event.time))} · ${esc(event.task_key)} · ${esc(event.phase)}</strong><span>${esc(event.safe_message)}（${esc(event.code)}${event.detail_code ? ` / ${esc(event.detail_code)}` : ""}）</span><small>${event.ledger_id == null ? "" : `本地 Ledger #${esc(event.ledger_id)} · `}${event.attempt == null ? "" : `第 ${esc(event.attempt)} 次尝试 · `}诊断编号 <code>${esc(event.run_id)}</code></small><button type="button" class="quiet" data-action="copy-diagnostic" data-run-id="${esc(event.run_id)}">复制诊断编号</button></div>`).join("") || "<p>当前筛选无诊断记录。</p>"}</div>`}
     <div class="request-pager"><span>保留记录 ${esc(page?.total ?? "未知")} · 第 ${current}/${last} 页</span><div><button type="button" class="quiet" data-action="diagnostic-page" data-diagnostic-page="${current - 1}" ${current <= 1 ? "disabled" : ""}>上一页</button><button type="button" class="quiet" data-action="diagnostic-page" data-diagnostic-page="${current + 1}" ${current >= last ? "disabled" : ""}>下一页</button></div></div>
-    <p class="automation-detail-note">仅保存固定白名单诊断，不含密钥、账单正文、Prompt 或原始模型输出。上次进程中断时显示“结果未知”；请核对申请和游标，不会据此重跑或批准。</p></section>`;
+    </section>`;
 }
 
 // UI-phase examples, explicitly separated from live APIs and persisted counters.

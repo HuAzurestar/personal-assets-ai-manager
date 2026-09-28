@@ -67,11 +67,11 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
   const views = [{ id: 1, name: "分类", status: "ACTIVE" }];
   const idle = await context.testPanel(views);
   assert.match(idle, /服务未启用自动标签扫描/);
-  assert.match(idle, /等待不会产生新建议/);
+  assert.match(idle, /aria-label="扫描状态说明"/);
   assert.match(idle, /服务未开启扫描/);
   assert.match(idle, /配置已启用/);
   assert.match(idle, /PAAM_AUTOTAG_REAL_ANALYSIS=1/);
-  assert.match(idle, /无需重新导入/);
+  assert.doesNotMatch(idle, /data-preserve="schedule-help"/);
   assert.doesNotMatch(idle, /验收库混入/);
   assert.doesNotMatch(idle, /CRON 调度运行中/);
 
@@ -88,15 +88,13 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
   assert.match(active, /查看待分析账目/);
   assert.match(active, /编辑规则/);
   assert.match(active, /累计通过/);
-  assert.match(active, /历史累计，不代表当前生效数量/);
-  assert.match(active, /规则如何运行/);
-  assert.match(active, /待确认 → 已取消/);
-  assert.match(active, /已通过 → 已替换/);
+  assert.match(active, /aria-label="历史累计说明"/);
+  assert.doesNotMatch(active, /data-preserve="lifecycle"/);
 
   schedule.tag_scan_guard = "REAL_READY";
   const real = await context.testPanel(views);
   assert.match(real, /自动扫描已就绪 · 1 条规则/);
-  assert.match(real, /下一次触发/);
+  assert.match(real, /下次触发/);
   assert.match(real, /等待定时触发/);
   assert.doesNotMatch(real, /纯虚构验收库/);
 
@@ -106,7 +104,7 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
   }] });
   assert.match(detail, /业务判断说明/);
   assert.match(detail, /虚构商户/);
-  assert.match(detail, /历史模型请求正文与原始响应未被保存/);
+  assert.match(detail, /data-action="disclosure-preview"/);
   assert.match(context.testScheduleExplanation("ACCEPTANCE_DATABASE_REQUIRED"), /非虚构数据/);
 
   schedule = {
@@ -117,7 +115,7 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
   const blocked = await context.testPanel(views);
   assert.match(blocked, /当前库不允许自动标签扫描/);
   assert.match(blocked, /安全阻断/);
-  assert.match(blocked, /已注册任务会暂停且不再按 CRON 重试/);
+  assert.match(blocked, /扫描已暂停/);
   assert.doesNotMatch(blocked, /下一次触发/);
   const blockedDetail = context.testRuleDetail(rule, schedule, { items: [] });
   assert.match(blockedDetail, /安全阻断/);
@@ -168,13 +166,14 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
   }, rule);
   assert.match(requestDetail, /虚构咖啡店/);
   assert.match(requestDetail, /当前标签/);
-  assert.match(requestDetail, /历史模型输入正文和原始输出未留存/);
+  assert.match(requestDetail, /aria-label="建议依据"/);
+  assert.match(requestDetail, /原始响应未保存/);
 
   const settings = await context.testSettings();
-  assert.match(settings, /真实流水自动分析须由服务显式启用/);
+  assert.match(settings, /data-auto-notice/);
   assert.match(settings, /data-preserve="runtime"/);
   assert.match(settings, /测试真实连接/);
-  assert.match(settings, /连接测试需再次确认/);
+  assert.match(settings, /可能计费/);
   assert.equal((settings.match(/class="automation-section"/g) || []).length, 3);
   assert.equal((settings.match(/data-auto-notice/g) || []).length, 1);
   assert.doesNotMatch(settings, /interaction-demo|M2 交互演示|automation-hero/);
@@ -213,8 +212,8 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
   const related = { pending: { total: 2, items: [suggestion, { ...suggestion, id: 9, proposed_tag_name: "交通" }] }, approved: { total: 0, items: [] } };
   const decision = context.testRequestDetail(suggestion, ledger, rule, related);
   assert.match(decision, /其他待确认 1 条/);
-  assert.match(decision, /其他待确认建议会被取消/);
-  assert.match(decision, /原已通过建议会被标为已替换/);
+  assert.match(decision, /其他待确认建议.*取消/);
+  assert.match(decision, /原已通过建议.*替换/);
   assert.match(decision, /data-id="9"/);
   const staleDecision = context.testRequestDetail(suggestion, ledger, revised, related);
   assert.match(staleDecision, /data-operation="approve"[^>]*disabled/);
@@ -227,9 +226,9 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
   assert.match(decodeURIComponent(requestedUrls.at(-1)), /"key":"view_id","op":"=","val":1/);
   const preview = context.candidatePreviewMarkup({ scan_after_ledger_id: 42, inspected_count: 100, eligible_count: 21,
     reason_counts: { ELIGIBLE: 21, ALREADY_CLASSIFIED: 79 }, samples: [{ ledger_id: 43, amount: 2500, currency_code: "CNY", occurred_time: suggestion.created_time, counterparty_name: "合成早餐店", summary: "测试午餐" }] });
-  assert.match(preview, /账目 #42/);
-  assert.match(preview, /最多检查 100 条/);
-  assert.match(preview, /最多展示 20 条/);
+  assert.match(preview, /已扫描至 #42/);
+  assert.match(preview, /最多 100 条/);
+  assert.match(preview, /最多 20 条/);
   assert.match(preview, /满足本地筛选条件/);
   assert.match(preview, /合成早餐店/);
   assert.match(preview, /data-preview-ledger="43"/);

@@ -55,7 +55,7 @@ def run():
         capture("rules")
         before = body("/paam/tag/v1/auto_rule/1")
         page.locator("[data-action='rule-preview'][data-id='1']").click()
-        expect(page.locator("dialog")).to_contain_text("最多检查 100 条")
+        expect(page.locator("dialog")).to_contain_text("最多 100 条")
         expect(page.locator("dialog")).to_contain_text("虚构测试餐厅")
         expect(page.locator("dialog")).not_to_contain_text("ELIGIBLE")
         capture("candidate-preview")
@@ -128,10 +128,10 @@ def run():
         visit("workbench/tag-review?request_id=1", "[data-auto-request-detail]")
         expect(page.locator("[data-auto-request-detail]")).to_contain_text("仅供追溯")
         expect(page.locator("[data-operation='approve']")).to_have_count(0)
-        page.locator("[data-preserve='request-source'] summary").click()
+        source = page.locator("[data-auto-request-detail] section").filter(has=page.get_by_role("heading", name="来源规则", exact=True))
         expect(page.locator("[data-auto-request-detail]")).to_contain_text("非历史快照")
         page.wait_for_timeout(5500)
-        assert page.locator("[data-preserve='request-source']").evaluate("el => el.open"), "Polling must preserve expanded context"
+        expect(source).to_be_visible()
         capture("historical-request")
 
         # A failed impact read must not silently become zero or permit semantic save.

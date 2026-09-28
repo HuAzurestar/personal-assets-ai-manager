@@ -2,9 +2,9 @@ import { request, jsonRequest } from "../api/client.js?v=20260928.2";
 import { preserveView, patchMarkup } from "../util/view_state.js?v=20260928.2";
 import { $, $$, esc, money } from "../util/core.js";
 import { startVisiblePoll } from "../util/visible_poll.js?v=20260928.2";
-import { openDisclosureEditor, openDisclosurePreview } from "./disclosure.js?v=20260928.2";
-import { batchResults, batchResultMarkup, batchFailureMarkup, selectionConflict, ruleStatistics, runtimeMarkup, diagnosticsMarkup } from "./automation_feedback.js?v=20260927.3";
-import { executionResultNames, ruleExecution, lifecycleHelp, semanticRuleChange, ruleEditImpact, candidatePreviewMarkup, requestVersionCopy, scopeImpactMarkup } from "./automation_explain.js?v=20260927.3";
+import { openDisclosureEditor, openDisclosurePreview } from "./disclosure.js?v=20260928.3";
+import { helpTip, batchResults, batchResultMarkup, batchFailureMarkup, selectionConflict, ruleStatistics, runtimeMarkup, diagnosticsMarkup } from "./automation_feedback.js?v=20260928.3";
+import { executionResultNames, ruleExecution, semanticRuleChange, ruleEditImpact, candidatePreviewMarkup, requestVersionCopy, scopeImpactMarkup } from "./automation_explain.js?v=20260928.3";
 
 let setting = null;
 let rules = [];
@@ -43,7 +43,7 @@ function disclosureSummaryMarkup() {
   const bands = Object.entries(setting.disclosure?.amount_bands || {}).map(([currency, config]) =>
     `<div class="disclosure-row"><strong>${esc(currency)}</strong><span>${esc((config.boundaries || []).map((amount) => money({ amount, currency_code: currency })).join(" / "))}</span></div>`,
   ).join("");
-  return `<div><span>保存的时间策略（当前不外发日期）</span><strong>${esc(({ DAY: "精确到日", MONTH: "精确到月", NONE: "不发送时间" })[setting.disclosure?.date_granularity] || "未配置")}</strong></div><div><span>金额分档边界（已换算为日常金额，按绝对值分档）</span>${bands || "<strong>尚未配置</strong>"}</div>`;
+  return `<div><span>时间策略 ${helpTip("时间策略", "当前发送内容省略交易时间，此项仅保存配置。")}</span><strong>${esc(({ DAY: "精确到日", MONTH: "精确到月", NONE: "不发送时间" })[setting.disclosure?.date_granularity] || "未配置")}</strong></div><div><span>金额分档 ${helpTip("金额分档", "按金额绝对值分档，以下为换算后的日常金额。")}</span>${bands || "<strong>尚未配置</strong>"}</div>`;
 }
 
 export async function automationSettingsPage() {
@@ -53,14 +53,14 @@ export async function automationSettingsPage() {
   const diagnostics = await readScheduleDiagnostics().catch(() => null);
   return `<div class="automation-page automation-settings" data-auto-page="settings">
     <section class="automation-section" aria-labelledby="automation-model-title">
-      <div class="automation-section-head"><div><h3 id="automation-model-title">模型连接</h3><p>密钥保存在本机系统凭据存储中，不写入数据库、不回显。连接测试需再次确认，会真实调用模型、可能计费，不发送账本数据。</p></div><button type="button" class="primary" data-action="model-new">＋ 添加模型</button></div>
+      <div class="automation-section-head"><div><h3 id="automation-model-title">模型连接 ${helpTip("模型连接说明", "密钥保存在本机系统凭据存储。连接测试会调用模型，可能计费。")}</h3></div><button type="button" class="primary" data-action="model-new">＋ 添加模型</button></div>
       <div class="automation-grid" data-auto-models>${modelCards || '<p>尚未配置模型。添加连接并保存密钥后，规则才可选择模型。</p>'}</div>
     </section>
     <section class="automation-section" aria-labelledby="automation-disclosure-title">
-      <div class="automation-section-head"><div><h3 id="automation-disclosure-title">数据披露</h3><p>每条规则可选择金额区间、精确金额或不发送金额。当前外发消息省略交易时间，时间策略仅保存配置。</p></div><div class="automation-actions"><button type="button" class="quiet" data-action="disclosure-preview">查看发送示例</button><button type="button" data-action="disclosure-edit">编辑披露策略</button></div></div>
+      <div class="automation-section-head"><div><h3 id="automation-disclosure-title">数据披露 ${helpTip("数据披露说明", "每条规则可选择发送金额区间、精确金额或省略金额。")}</h3></div><div class="automation-actions"><button type="button" class="quiet" data-action="disclosure-preview">查看发送示例</button><button type="button" data-action="disclosure-edit">编辑披露策略</button></div></div>
       <div class="disclosure-card" data-auto-disclosure>${disclosureSummaryMarkup()}</div>
     </section>
-    <section class="automation-section"><h3>运行概况</h3><div data-auto-notice>${scheduleNotice()}</div><p class="automation-detail-note">真实流水自动分析须由服务显式启用，可能产生模型费用；模型只提出建议，人工通过后才会打标。</p>${freshnessMarkup}
+    <section class="automation-section"><h3>运行概况</h3><div data-auto-notice>${scheduleNotice()}</div>${freshnessMarkup}
       <nav class="automation-links"><a href="#details/auto-rule">管理规则 →</a><a href="#workbench/tag-review">查看待审建议 →</a></nav>
       <details class="automation-help" data-preserve="runtime"><summary>查看任务队列与安全诊断</summary><div data-auto-runtime>${runtimeMarkup(scheduleStatus)}</div><div data-auto-diagnostics>${diagnosticsMarkup(diagnostics)}</div></details></section>
   </div>`;
@@ -80,8 +80,8 @@ function ruleRow(rule) {
   return `<tr data-rule-row="${rule.id}">
     <td class="rule-identity"><strong><a href="#details/auto-rule?rule_id=${rule.id}">${esc(rule.name)}</a></strong><small class="rule-purpose">${esc(rule.method_config.prompt.trim().slice(0, 80))}${rule.method_config.prompt.trim().length > 80 ? "…" : ""}</small><small>#${rule.id} · 修订 ${rule.rule_revision} · 配置${rule.enabled ? "已启用" : "已停用"}</small></td>
     <td><strong>${esc(view?.name || `维度 #${rule.view_id}`)}</strong><small>${esc(model?.name || `模型 #${rule.method_config.model_id}`)}</small></td>
-    <td class="rule-schedule"><span class="automation-status ${execution.tone}"><i></i>${esc(execution.label)}</span><small>${esc(execution.reason)}</small><small>${esc(lastRun)}${scheduleTask?.last_error_code ? " · 详见规则详情" : ""}</small></td>
-    <td><div class="rule-counts" title="累计通过为历史人工通过次数，包含后来被替换的建议，不是当前生效数">${counts}</div><small>历史累计，不代表当前生效数量</small></td>
+    <td class="rule-schedule"><span class="automation-status ${execution.tone}"><i></i>${esc(execution.label)}</span>${helpTip("执行状态说明", execution.reason)}<small>${esc(lastRun)}${scheduleTask?.last_error_code ? " · 详见规则详情" : ""}</small></td>
+    <td><div class="rule-counts">${counts}</div></td>
     <td class="rule-operation"><div class="automation-actions"><button type="button" class="quiet" data-action="rule-detail" data-id="${rule.id}" title="查看当前配置、执行记录及产生的建议">规则详情</button><button type="button" class="quiet" data-action="rule-preview" data-id="${rule.id}" title="只读检查后续最多 100 条账目，不调用模型">查看待分析账目</button><button type="button" data-action="rule-edit" data-id="${rule.id}" title="修改配置；判断内容变更会取消旧的待确认建议">编辑规则</button></div></td>
   </tr>`;
 }
@@ -90,7 +90,6 @@ function scheduleNotice() {
   const tasks = (scheduleStatus?.tasks || []).filter((item) => item.task_key.startsWith("tag-scan:"));
   const disabled = scheduleStatus?.tag_scan_guard === "DISABLED";
   const blockedByData = scheduleStatus?.tag_scan_guard === "NON_SYNTHETIC_FACT";
-  const realAnalysis = scheduleStatus?.tag_scan_guard === "REAL_READY";
   const running = scheduleStatus?.scheduler_state === "RUNNING" && scheduleStatus?.worker_state === "HEALTHY";
   const nextRuns = tasks.map((item) => item.next_run_at).filter(Boolean).sort();
   const failed = tasks.filter((item) => ["FAILED", "PARTIAL_FAILURE"].includes(item.last_result)).length;
@@ -99,21 +98,15 @@ function scheduleNotice() {
     : blockedByData ? "当前库不允许自动标签扫描"
     : !tasks.length ? "没有已注册的自动标签任务"
     : running ? `自动扫描已就绪 · ${tasks.length} 条规则` : "自动扫描已停止";
-  const next = !scheduleStatus ? "请检查服务连接并刷新；不能据此判断规则已停用"
-    : disabled ? "保存规则不会开启扫描。确认模型、规则和调用费用后，由部署者设置 PAAM_AUTOTAG_REAL_ANALYSIS=1 并重启服务，保持 PAAM_AUTOTAG_SYNTHETIC_ACCEPTANCE=0；无需重新导入数据"
-    : blockedByData
-    ? "验收库含非虚构记录；安全门禁在模型调用前阻断扫描，已注册任务会暂停且不再按 CRON 重试。请改用独立的纯虚构验收库"
-    : !tasks.length
-    ? realAnalysis ? "真实流水分析已启用，但没有启用的规则；请配置模型和自动规则" : "等待不会产生新建议。默认模式不扫描账单；纯虚构验收库混入普通记录后也不会注册标签任务。规则已启用不等于已调度"
-    : nextRuns.length ? `下一次触发：${new Date(nextRuns[0]).toLocaleString("zh-CN", { timeZone: "Asia/Hong_Kong" })}` : "当前没有待触发的启用规则";
-  const failure = failed && !blockedByData ? `；${failed} 条规则上次执行失败，请打开规则详情查看具体原因` : "";
-  const mode = realAnalysis ? "真实流水自动分析已启用：新增 Ledger 将在后续 CRON 中检查；真实模型调用可能计费，只生成待审申请，批准或拒绝由人处理。" : "";
-  const summary = !scheduleStatus ? "暂时无法确认规则是否在运行，请检查连接。"
-    : disabled ? "等待不会产生新建议。规则启用不等于服务开启；无需重新导入数据。"
-    : blockedByData ? "安全保护已暂停扫描，请查看开启条件与排查说明。"
-    : !running ? "调度尚未就绪，请查看运行概况。"
-    : !tasks.length ? "请先配置并启用规则。" : `${tasks.filter((task) => task.queue_state === "RUNNING").length} 条正在分析，${tasks.filter((task) => task.queue_state === "QUEUED").length} 条排队。模型只生成建议，人工通过后才会打标。`;
-  return `<div class="automation-notice compact" role="status"><strong>${esc(title)}</strong><span>${esc(summary)}</span></div><details class="automation-help" data-preserve="schedule-help"><summary>开启条件与排查说明</summary><p>${esc(mode + next + failure)}。定时任务按先来先执行的顺序排队；本页不提供手动执行或重扫入口。</p></details>`;
+  const explanation = !scheduleStatus ? "请检查服务连接。"
+    : disabled ? "请由部署者开启自动分析：PAAM_AUTOTAG_REAL_ANALYSIS=1、PAAM_AUTOTAG_SYNTHETIC_ACCEPTANCE=0，重启服务后生效。模型调用可能计费。"
+    : blockedByData ? "验收模式仅支持纯虚构数据，请使用独立验收库。"
+    : !tasks.length ? "请检查模型和规则是否已启用。"
+    : !running ? "请查看运行概况中的调度器与执行器状态。"
+    : nextRuns.length ? `下次触发：${new Date(nextRuns[0]).toLocaleString("zh-CN", { timeZone: "Asia/Hong_Kong" })}` : "当前没有待触发时间。";
+  const activity = running && tasks.length && !disabled && !blockedByData
+    ? `${tasks.filter((task) => task.queue_state === "RUNNING").length} 条分析中 · ${tasks.filter((task) => task.queue_state === "QUEUED").length} 条排队` : "";
+  return `<div class="automation-notice compact" role="status"><strong>${esc(title)} ${helpTip("扫描状态说明", explanation)}</strong>${activity ? `<span>${activity}</span>` : ""}${failed && !blockedByData ? `<span>${failed} 条规则上次执行失败，请查看规则详情。</span>` : ""}</div>`;
 }
 
 export async function autoRulesPanel(tagViews) {
@@ -128,10 +121,9 @@ export async function autoRulesPanel(tagViews) {
   scheduleStatus = currentSchedule;
   const canCreate = views.some((item) => item.status === "ACTIVE") && setting.models.some((item) => item.enabled && item.key_configured);
   return `<section class="tag-manager automation-rules" aria-labelledby="auto-rule-title">
-    <div class="tag-manager-head"><div><h2 id="auto-rule-title">自动打标签规则</h2><p>规则定时分析账目并提出标签建议；人工通过后才会修改标签。</p></div><button type="button" class="primary" data-action="rule-new" ${canCreate ? "" : 'disabled title="需要启用中的标签维度和模型"'}>＋ 新建规则</button></div>
+    <div class="tag-manager-head"><div><h2 id="auto-rule-title">自动打标签规则</h2></div><button type="button" class="primary" data-action="rule-new" ${canCreate ? "" : 'disabled title="需要启用中的标签维度和模型"'}>＋ 新建规则</button></div>
     ${freshnessMarkup}<div data-auto-notice>${scheduleNotice()}</div>
-    ${lifecycleHelp()}<p class="automation-detail-note">规则详情：看配置与执行结果；查看待分析账目：只读本地筛选；编辑规则：修改配置与判断内容。</p>
-    <div class="automation-table-wrap"><table class="automation-table rule-table"><thead><tr><th>规则 / 用途</th><th>标签维度 / 模型</th><th>当前执行 / 上次结果</th><th>历史累计</th><th>操作</th></tr></thead><tbody data-auto-rule-rows>${rules.map(ruleRow).join("") || '<tr><td colspan="5" class="table-empty"><strong>尚未创建自动规则</strong><span>启用模型并准备标签维度后即可保存第一条规则。</span></td></tr>'}</tbody></table></div>
+    <div class="automation-table-wrap"><table class="automation-table rule-table"><thead><tr><th>规则 / 用途</th><th>标签维度 / 模型</th><th>当前执行 / 上次结果</th><th>历史累计 ${helpTip("历史累计说明", "累计通过包含后来被替换的建议。")}</th><th>操作</th></tr></thead><tbody data-auto-rule-rows>${rules.map(ruleRow).join("") || '<tr><td colspan="5" class="table-empty"><strong>尚未创建自动规则</strong><span>启用模型并准备标签维度后即可保存第一条规则。</span></td></tr>'}</tbody></table></div>
   </section>`;
 }
 
@@ -246,10 +238,8 @@ export async function tagReviewPage(params = new URLSearchParams()) {
   const ruleOptions = rulePage.items.map((item) => `<option value="${item.id}" ${String(item.id) === ruleId ? "selected" : ""}>${esc(item.name)}</option>`).join("");
   return `<div class="tag-review-page" data-auto-page="requests" data-request-query="${esc(query.toString())}">
     <section class="tag-manager automation-requests" aria-labelledby="tag-request-title">
-      <div class="tag-manager-head"><div><h2 id="tag-request-title">标签建议请求</h2><p>列表展示交易对方、摘要和金额；点击「查看依据」核对账目、现有标签与建议理由后再决定。</p></div><div class="request-batch-actions"><button type="button" class="primary" data-action="tag-request-batch" data-operation="approve" disabled>批量通过</button><button type="button" class="quiet" data-action="tag-request-batch" data-operation="reject" disabled>批量拒绝</button></div></div>
-      <div class="automation-notice compact" role="status" aria-live="polite"><strong>人工确认边界</strong><span>通过时会重新核对规则版本、Ledger、View、候选标签和当前人工标签；冲突不会强制覆盖。请求超时请刷新核对状态。</span></div>
+      <div class="tag-manager-head"><div><h2 id="tag-request-title">标签建议请求 ${helpTip("建议审查说明", "通过前会核对账目与规则版本；冲突时保留人工标签。")}</h2><p>通过后应用标签，拒绝则保留原标签。</p></div><div class="request-batch-actions"><button type="button" class="primary" data-action="tag-request-batch" data-operation="approve" disabled>批量通过</button><button type="button" class="quiet" data-action="tag-request-batch" data-operation="reject" disabled>批量拒绝</button></div></div>
       ${freshnessMarkup}<div data-batch-feedback>${batchFeedback}</div>
-      ${lifecycleHelp()}
       ${ledgerId ? `<p class="automation-detail-note">当前仅查看账目 #${esc(ledgerId)} 的建议。<button type="button" class="quiet" data-action="tag-request-clear-scope">查看全部账目</button></p>` : ""}
       <div class="review-filter-skeleton" aria-labelledby="tag-review-filter-title">
         <form class="form-grid three" data-form="tag-request-filter">
@@ -383,7 +373,6 @@ function ruleDialog(rule = null) {
     <label data-custom-cron>CRON（5 或 6 段）<input name="cron" value="${esc(value.cron)}" placeholder="*/5 * * * *"></label>
     <small data-cron-copy>执行时区：香港（UTC+8）。保存后可在规则列表查看下次执行时间。</small>
     <label class="check-row"><input name="enabled" type="checkbox" ${value.enabled ? "checked" : ""}> 启用规则配置</label>
-    <p class="automation-detail-note">启用配置后仍需服务开启扫描。模型只生成待人工确认的建议，不会直接修改标签。</p>
     ${rule ? '<div class="automation-notice compact"><strong>本次保存的影响</strong><span data-rule-edit-impact role="status" aria-live="polite"></span></div><p data-rule-pending-count>正在读取待确认建议数量…</p><button type="button" class="quiet" data-rule-impact-retry hidden>重新读取影响数量</button><label class="check-row" data-rule-impact-ack hidden><input name="acknowledged" type="checkbox">我了解旧的待确认建议将取消，重新扫描可能产生模型费用</label>' : ""}
     <div class="actions"><button type="button" class="quiet" data-close>取消</button><button type="submit" class="primary">保存并回读</button></div>
   </form>`);
@@ -594,7 +583,7 @@ function ruleDetailMarkup(rule, schedule, recent, summary = null) {
   return `<div class="automation-detail stack">
     <section><h3>规则配置</h3>${detailFields([
       ["规则", `${rule.name} · #${rule.id} · 修订 ${rule.rule_revision}`],
-      ["配置开关", rule.enabled ? "已启用（不代表正在分析）" : "已停用（已有建议仍可处理）"],
+      ["配置开关", rule.enabled ? "已启用" : "已停用"],
       ["标签维度", `${view?.name || `View #${rule.view_id}`} (#${rule.view_id})`],
       ["模型", `${model?.name || `Model #${rule.method_config.model_id}`} (#${rule.method_config.model_id})`],
       ["CRON", rule.cron || "未设置"], ["金额披露", amountModeNames[rule.amount_mode]],
@@ -603,12 +592,11 @@ function ruleDetailMarkup(rule, schedule, recent, summary = null) {
     <section><h3>调度与最近执行</h3>${detailFields([
       ["调度状态", scheduling], ["最近结果", latest],
       ["扫描游标", `Ledger #${rule.scan_after_ledger_id} · Epoch ${rule.scan_epoch}`],
-      ["累计", `分析 ${rule.analyzed_count} · 失败 ${rule.failed_count} · 建议 ${rule.suggested_count} · 通过 ${rule.accepted_count} · 拒绝 ${rule.rejected_count}`],
-    ])}${task ? `<details class="automation-help" data-preserve="rule-runtime"><summary>展开执行进度与技术信息</summary>${runtimeMarkup({ ...schedule, tasks: [task] })}</details>` : ""}<p class="automation-detail-note">进度属于当前进程，诊断为有限保留记录，不是完整模型请求历史。累计通过包含后来被替换的建议，不是当前生效数量。待分析账目预览不请求模型、不推进游标。</p></section>
+    ])}${task ? `<details class="automation-help" data-preserve="rule-runtime"><summary>执行进度与记录</summary>${runtimeMarkup({ ...schedule, tasks: [task] })}</details>` : ""}</section>
     <section><h3>最近建议 / 审查结果</h3>${recent.items.length ? `<div class="automation-detail-list">${recent.items.map((item) => `<div><button type="button" class="quiet" data-action="tag-request-detail" data-id="${item.id}">Request #${item.id} · ${esc(item.ledger_counterparty_name || item.ledger_summary || `Ledger #${item.ledger_id}`)}</button><span>${esc(item.proposed_tag_name)} · ${esc(requestStatusNames[item.status])} · ${esc(displayTime(item.created_time))}</span></div>`).join("")}</div>` : "<p>尚无建议请求；失败的调度也可能未生成请求。</p>"}</section>
     <button type="button" class="quiet" data-action="rule-requests" data-id="${rule.id}">查看这条规则的全部建议</button>
-    <details class="automation-help" data-preserve="rule-statistics"><summary>统计口径与采纳反馈</summary>${ruleStatistics(summary)}</details>
-    <section><h3>模型输入与输出</h3><p class="automation-detail-note">历史模型请求正文与原始响应未被保存，不能准确回放；当前只保留建议标签和清洗后的理由。待分析账目预览不会调用模型，不是模型审查结果。</p><button type="button" class="quiet" data-action="disclosure-preview" data-mode="${rule.amount_mode}">查看系统约束与虚构披露预览</button></section>
+    <section><h3>采纳统计</h3>${ruleStatistics(summary)}</section>
+    <section><button type="button" class="quiet" data-action="disclosure-preview" data-mode="${rule.amount_mode}">查看发送示例</button></section>
   </div>`;
 }
 
@@ -622,19 +610,19 @@ function requestDetailMarkup(item, ledger, rule, scope = null) {
   return `<div class="automation-detail stack">
     <section class="request-decision"><div class="automation-section-head"><div><h3>${esc(item.ledger_counterparty_name || facts[0]?.counterparty_name || "未记录交易对方")} · ${esc(money(ledger.ledger_entry))}</h3><p>${esc(ledger.ledger_entry.summary || item.ledger_summary || "无账目摘要")} · ${esc(displayTime(ledger.ledger_entry.occurred_time))}</p></div>${requestStatusPill(item.status)}</div>
       <div class="request-comparison"><div><small>当前标签 · ${esc(item.view_name)}</small><strong>${esc(currentLabel)}</strong></div><span aria-hidden="true">→</span><div><small>${item.status === 1 ? "本次建议" : "当时建议"}</small><strong>${esc(item.proposed_tag_name)}</strong></div></div>
-      <h3>建议理由（保存的摘要）</h3><p class="request-reason">${esc(item.reason_summary || "模型未提供可展示的理由")}</p>
+      <h3>建议理由 ${helpTip("建议依据", "保留的是理由摘要，历史模型输入与原始响应未保存。")}</h3><p class="request-reason">${esc(item.reason_summary || "模型未提供可展示的理由")}</p>
       <p class="automation-detail-note">${esc(requestVersionCopy(item, rule))}</p>
       <div class="request-decision-actions"><span>${item.status === 1 ? esc(blockedReason || "通过后才会修改标签；请核对下方影响范围") : "此建议已处理，不能再次通过或拒绝"}</span><div class="automation-actions">${requestActionsMarkup(item, blockedReason)}</div></div></section>
     <section><h3>同范围建议与操作影响</h3>${scopeImpactMarkup(item, scope)}</section>
-    <section><h3>被审查的账目</h3>${detailFields([
+    <section><h3>当前账目 ${helpTip("账目时间范围", "展示当前账目与交易事实，可能与生成建议时不同。")}</h3>${detailFields([
       ["账目", `#${item.ledger_id} · ${ledger.ledger_entry.active ? "当前有效" : "已失效"}`],
       ["方向与金额", `${ledger.ledger_entry.entry_direction === 2 ? "支出" : ledger.ledger_entry.entry_direction === 1 ? "收入" : "其他"} · ${money(ledger.ledger_entry)}`], ["账目时间", displayTime(ledger.ledger_entry.occurred_time)],
     ])}${facts.length ? `<div class="automation-detail-list">${facts.map((fact) => `<div><strong>${esc(fact.counterparty_name || "未记录交易对方")} · ${esc(money(fact))}</strong><span>${esc(fact.summary || "无交易摘要")} · ${esc(displayTime(fact.occurred_time))}</span></div>`).join("")}</div>` : "<p>未找到关联交易事实；无法仅凭本页核对该建议。</p>"}</section>
-    <details class="automation-help" data-preserve="request-source"><summary>来源规则、当前配置与历史依据边界</summary>${detailFields([
+    <section><h3>来源规则</h3>${detailFields([
       ["来源规则", `${item.rule_name} · #${item.rule_id} · 建议修订 ${item.rule_revision}`],
       ["生成时间", displayTime(item.created_time)], ["当前规则修订", rule.rule_revision],
       ["当前判断说明（非历史快照）", rule.method_config.prompt],
-    ])}<p class="automation-detail-note">此页展示当前账目与交易事实，可能不同于生成建议时的状态。历史模型输入正文和原始输出未留存，无法证明当时逐字传输了什么；建议理由仅是保存的清洗摘要。当前规则说明不能充当历史判断依据。通过时服务端会再次校验规则版本、账目及现有标签。</p></details>
+    ])}</section>
   </div>`;
 }
 
@@ -779,14 +767,14 @@ function startAutomationRefresh(root) {
       const feedback = $('[data-auto-freshness]', root);
       if (!feedback) return;
       const last = lastSuccess ? displayTime(lastSuccess) : "本页初次读取";
-      feedback.textContent = state === "UNKNOWN" ? `当前状态未知：业务接口连接失败或超时。下方是旧快照，不能证明正在分析；最后成功刷新：${last}。可见页会继续尝试只读刷新。`
+      feedback.textContent = state === "UNKNOWN" ? `连接中断，当前状态未知 · 上次更新：${last}`
         : state === "PAUSED" ? `已暂停刷新 · ${last}`
         : state === "CURRENT" ? `已更新 · ${last}`
         : "状态自动更新";
       if (state === "UNKNOWN") {
         root.dataset.autoStale = "true";
         const notice = $('[data-auto-notice]', root);
-        if (notice) notice.textContent = "状态未知：暂时无法连接服务，不能确认是否正在扫描。";
+        if (notice) notice.textContent = "连接中断，扫描状态未知。";
         $$('[data-action="tag-request-transition"]', root).forEach((button) => { button.disabled = true; });
       }
       updateRequestActions(root);

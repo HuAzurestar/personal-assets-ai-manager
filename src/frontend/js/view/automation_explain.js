@@ -1,4 +1,5 @@
 import { esc, money } from "../util/core.js";
+import { helpTip } from "./automation_feedback.js?v=20260928.3";
 
 export const executionResultNames = { COMPLETED: "完成", PARTIAL_FAILURE: "部分失败", FAILED: "失败", CANCELLED: "已取消", UNKNOWN: "结果未知" };
 
@@ -8,27 +9,17 @@ export function ruleExecution(rule, schedule, model, view) {
   if (!schedule) return state("状态未知", "暂时无法读取调度状态，请检查连接");
   if (view && view.status !== "ACTIVE") return state("维度已停用", "请先恢复目标标签维度");
   if (!model?.enabled || !model?.key_configured) return state("模型不可用", !model?.enabled ? "请启用所选模型" : "请在设置中配置模型密钥");
-  if (schedule.tag_scan_guard === "DISABLED") return state("服务未开启扫描", "规则配置已启用，但等待不会产生新建议");
+  if (schedule.tag_scan_guard === "DISABLED") return state("服务未开启扫描", "请由部署者开启自动分析");
   if (schedule.tag_scan_guard === "NON_SYNTHETIC_FACT") return state("安全阻断", "验收库含非虚构记录，扫描已暂停");
   const task = schedule.tasks?.find((item) => item.task_key === `tag-scan:${rule.id}`);
   if (!task) return state("尚未调度", "未注册扫描任务，请查看规则详情");
   if (task.queue_state === "PAUSED") return state("已暂停", "不会按定时计划触发，请查看诊断");
   if (task.queue_state === "BLOCKED") return state("执行受阻", "请查看规则详情中的失败原因");
   if (schedule.scheduler_state !== "RUNNING" || schedule.worker_state !== "HEALTHY") return state("调度不可用", "调度器或执行器未就绪，请查看运行概况");
-  if (task.queue_state === "RUNNING") return state("分析中", "正在检查账目；生成建议后仍需人工确认", "active");
+  if (task.queue_state === "RUNNING") return state("分析中", "正在检查账目", "active");
   if (task.queue_state === "QUEUED") return state("排队中", task.queue_position == null ? "等待前面的任务完成" : `排队第 ${task.queue_position} 位`, "pending");
   if (task.queue_state === "IDLE") return state("等待定时触发", task.next_run_at ? `下次：${new Date(task.next_run_at).toLocaleString("zh-CN", { timeZone: "Asia/Hong_Kong" })}` : "当前没有下次触发时间，请检查计划", "pending");
   return state("状态未知", "未识别的执行状态，请查看运行概况");
-}
-
-export function lifecycleHelp() {
-  return `<details class="automation-help" data-preserve="lifecycle"><summary>规则如何运行？建议的状态如何流转？</summary>
-    <p>规则启用 + 模型可用 + 服务开启扫描 → 等待定时触发 → 排队 → 分析 → 生成待确认建议。启用只是配置，不代表正在分析，也不会直接打标。</p>
-    <dl class="automation-definition"><div><dt>待确认 → 已通过</dt><dd>人工通过后，在这笔账目的目标维度打标；其他维度不变。</dd></div>
-    <div><dt>待确认 → 已拒绝</dt><dd>人工拒绝该建议；不修改当前标签。</dd></div>
-    <div><dt>待确认 → 已取消</dt><dd>例如规则判断内容或披露策略变更、同账目同维度的另一建议通过，或人工修改该维度标签。</dd></div>
-    <div><dt>已通过 → 已替换</dt><dd>例如同账目同维度采纳另一建议，或人工接管标签；表示旧建议不再生效，不是本次分析失败。</dd></div></dl>
-    <p>停用规则只停止新扫描，不取消已有待确认建议。以上终态不能再次通过或拒绝；服务端会在提交时重新校验。</p></details>`;
 }
 
 export function semanticRuleChange(original, draft) {
@@ -52,20 +43,20 @@ const previewReasonNames = {
 export function candidatePreviewMarkup(body) {
   const reasons = Object.entries(body.reason_counts).map(([name, count]) => `<span>${esc(previewReasonNames[name] || `其他原因（${name}）`)} <strong>${esc(count)}</strong></span>`).join("");
   const samples = body.samples.map((item) => `<li><button type="button" class="quiet" data-preview-ledger="${item.ledger_id}">${esc(item.counterparty_name || item.summary || "未记录交易对方")} · ${esc(money(item))}</button><span>${esc(item.summary || "无摘要")} · ${esc(new Date(item.occurred_time).toLocaleString("zh-CN", { timeZone: "Asia/Hong_Kong" }))} · 账目 #${item.ledger_id}</span></li>`).join("");
-  return `<strong>本地筛选预览 · 不调用模型</strong><p>从已扫描位置（账目 #${body.scan_after_ledger_id}）之后，最多检查 100 条；本次检查 ${body.inspected_count} 条，其中 ${body.eligible_count} 条满足筛选条件。下方最多展示 20 条样例，不代表全部账目。</p>
-    <p>不会发送账目给模型、产生建议或推进扫描进度。“满足条件”不代表服务正在运行，也不保证模型会给出建议。</p><div class="preview-reasons">${reasons || "此范围内没有账目"}</div>
+  return `<strong>待分析账目 ${helpTip("本地筛选预览", "从已扫描位置之后检查最多 100 条，展示最多 20 条样例；不调用模型。")}</strong><p>已扫描至 #${body.scan_after_ledger_id} · 本次检查 ${body.inspected_count} 条 · 符合条件 ${body.eligible_count} 条</p>
+    <div class="preview-reasons">${reasons || "此范围内没有账目"}</div>
     <ul class="candidate-samples">${samples || "<li>本次检查范围内没有可展示的待分析样例。</li>"}</ul>`;
 }
 
 export function requestVersionCopy(item, rule) {
-  if (rule.rule_revision === item.rule_revision) return "建议修订与当前规则一致；下方当前配置不是历史输入快照。";
+  if (rule.rule_revision === item.rule_revision) return `规则版本 ${item.rule_revision}`;
   return item.status === 1
     ? `建议来自修订 ${item.rule_revision}，当前规则为修订 ${rule.rule_revision}；版本已过期，不能通过，可拒绝或等待刷新核对。`
     : `建议来自修订 ${item.rule_revision}，当前规则为修订 ${rule.rule_revision}；此建议已处理，仅供追溯，不影响已记录的处理结果。`;
 }
 
 export function scopeImpactMarkup(item, scope) {
-  const effect = "通过后仅修改这笔账目的这个标签维度：同范围其他待确认建议会被取消，原已通过建议会被标为已替换；其他账目和维度不受影响。人工标签冲突不会强制覆盖。拒绝只处理当前建议，不修改标签。";
+  const effect = "通过后修改当前维度标签，同范围其他待确认建议将取消，原已通过建议将被替换。拒绝时保留原标签。";
   if (!scope) return `<p class="automation-detail-note">同范围建议暂时读取失败，影响数量未知；请刷新后核对。</p><p>${effect}</p>`;
   const pending = scope.pending.items.filter((other) => other.id !== item.id);
   const approved = scope.approved.items.filter((other) => other.id !== item.id);

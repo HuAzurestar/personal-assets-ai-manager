@@ -84,7 +84,7 @@ def run():
                 page.on("request", lambda req: commands.append(req.url) if req.method == "POST" and "batch_" in req.url else None)
                 page.goto(f"{base}/#settings/automation")
                 page.locator('[data-preserve="runtime"] > summary').click()
-                expect(page.locator("[data-auto-runtime]")).to_contain_text("共享 FIFO")
+                expect(page.locator("[data-auto-runtime]")).to_contain_text("等待队列")
                 expect(page.locator("[data-auto-runtime]")).to_contain_text("请求模型 · 已检查 2 / 3")
                 expect(page.locator("[data-auto-runtime]")).to_contain_text("导入预览超时清理（系统维护）")
                 diagnostics = page.locator("[data-auto-diagnostics]")
@@ -226,7 +226,10 @@ def run():
                 assert len(commands) == 6
 
                 page.goto(f"{base}/#details/auto-rule?rule_id=1")
-                expect(page.locator("[data-auto-rule-detail]")).to_contain_text("不是模型准确率")
+                stats_help = page.get_by_role("button", name="统计口径", exact=True)
+                stats_help.focus()
+                expect(stats_help.locator("..").get_by_role("tooltip")).to_be_visible()
+                expect(stats_help.locator("..").get_by_role("tooltip")).to_contain_text("非模型准确率")
                 page.route("**/paam/system/v1/schedule/status", lambda route: route.abort())
                 expect(page.locator("[data-auto-freshness]")).to_contain_text("当前状态未知", timeout=16000)
                 page.unroute("**/paam/system/v1/schedule/status")

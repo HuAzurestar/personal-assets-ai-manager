@@ -181,7 +181,7 @@ export function syncNavigation(page) {
   }
   const domainNote = $(".domain-note");
   if (domainNote) domainNote.innerHTML = active === "settings"
-    ? "<span>自动化边界</span><strong>配置 → 规则 → 审查后生效</strong><p>模型与规则保存在本地；模拟能力会明确标记，未接通的执行不会伪装成可用。</p>"
+    ? "<strong>自动化设置</strong>"
     : "<span>账目形成</span><strong>事实流水 → 审查 → 经济流水</strong><p>事实保留来源，审查负责解释，经济流水是最终阅读和统计结果。</p>";
   const kicker = { details: "DETAILS", overview: "LEDGER OVERVIEW", workbench: "WORKBENCH", settings: "SETTINGS" };
   $("#section-kicker").textContent = kicker[active];

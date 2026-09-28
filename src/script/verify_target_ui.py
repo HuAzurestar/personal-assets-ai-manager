@@ -439,7 +439,7 @@ def run() -> None:
                 rule_row.locator('[data-action="rule-preview"]').click()
                 preview_dialog = page.locator('dialog[open]').filter(has_text="查看待分析账目")
                 expect(preview_dialog.locator(".automation-result")).to_contain_text(
-                    "本地筛选预览 · 不调用模型"
+                    "待分析账目"
                 )
                 preview_dialog.locator("[data-close]").click()
                 rule_row.locator('[data-action="rule-edit"]').click()

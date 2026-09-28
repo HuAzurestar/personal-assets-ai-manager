@@ -1766,3 +1766,25 @@
   .automation-dialog .automation-form { min-width:0; }
   .automation-dialog .form-grid, .automation-dialog [data-boundary-list] { grid-template-columns:1fr; }
 }
+:is(.target-shell, .automation-dialog) .automation-tip { display:inline-flex; position:relative; vertical-align:middle; }
+:is(.target-shell, .automation-dialog) .automation-tip-trigger {
+  display:inline-flex; align-items:center; justify-content:center; min-width:20px; width:20px; height:20px;
+  padding:0; margin:0 4px; border:1px solid var(--line, #cbd5e1); border-radius:50%;
+  background:transparent; color:var(--muted, #64748b); font-size:12px; font-weight:500; cursor:help;
+}
+:is(.target-shell, .automation-dialog) .automation-tip-content {
+  display:none; position:absolute; z-index:40; top:100%; left:0; width:260px; max-width:70vw; box-sizing:border-box;
+  padding:10px 12px; border:1px solid var(--line, #cbd5e1); border-radius:8px;
+  background:var(--surface, #fff); color:var(--ink, #243044); box-shadow:0 4px 16px #0002;
+  font-size:12px; font-weight:400; line-height:1.6; white-space:normal; overflow-wrap:anywhere;
+}
+:is(.target-shell, .automation-dialog) .automation-tip:hover > .automation-tip-content,
+:is(.target-shell, .automation-dialog) .automation-tip:focus-within > .automation-tip-content { display:block; }
+@supports (anchor-scope: --automation-tip) {
+  :is(.target-shell, .automation-dialog) .automation-tip { anchor-scope:--automation-tip; }
+  :is(.target-shell, .automation-dialog) .automation-tip-trigger { anchor-name:--automation-tip; }
+  :is(.target-shell, .automation-dialog) .automation-tip-content {
+    position:fixed; position-anchor:--automation-tip; top:anchor(bottom); left:anchor(left);
+    position-try-fallbacks:flip-inline, flip-block, flip-inline flip-block;
+  }
+}

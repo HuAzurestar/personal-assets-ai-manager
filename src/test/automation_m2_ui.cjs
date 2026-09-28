@@ -23,7 +23,8 @@ const stats = context.ruleStatistics(counters);
 assert.match(stats, /9223372036854775807/);
 assert.doesNotMatch(stats, /9223372036854776000/);
 assert.match(stats, /75.0%（6 \/ 8 次人工决定）/);
-assert.match(stats, /不是模型准确率/);
+assert.match(stats, /aria-label="统计口径"/);
+assert.match(stats, /非模型准确率/);
 assert.match(context.ruleStatistics({ ...counters, execution_success_rate: null, acceptance_rate: null }), /暂无样本/);
 assert.equal(context.selectionConflict([{ ledger_id: 1, view_id: 1 }, { ledger_id: 1, view_id: 1 }]), true);
 assert.equal(context.selectionConflict([{ ledger_id: 1, view_id: 1 }, { ledger_id: 1, view_id: 2 }]), false);
@@ -56,7 +57,7 @@ const preview = context.previewDisclosureMarkup({ input_eligible: true,
   sample: { label: "fictional", amount: 2900, currency_code: "CNY", merchant: "<script>", summary: "safe" }, warnings: ["<img>"],
   messages: [{ role: "system", content: "<script>secret</script>" }, { role: "user", content: '{"amount_band":"[0,3000)"}' }] });
 assert.doesNotMatch(preview, /<script>|<img>/);
-assert.match(preview, /没有调用模型/);
+assert.match(preview, /不调用模型/);
 assert.match(context.runtimeMarkup(null), /状态未知/);
 const runtime = context.runtimeMarkup({ scheduler_state: "RUNNING", worker_state: "HEALTHY", tasks: [
   { task_key: "a", queue_state: "RUNNING" }, { task_key: "b", queue_state: "QUEUED", queue_position: 1 },
@@ -71,7 +72,8 @@ assert.match(persistedDiagnostics, /第 2\/2 页/);
 assert.match(persistedDiagnostics, /ITEM_MISMATCH/);
 assert.match(persistedDiagnostics, /data-diagnostic-page=/);
 assert.doesNotMatch(persistedDiagnostics, /<button[^>]*data-page=|<script>/);
-assert.match(context.diagnosticsMarkup(null), /读取失败，状态未知/);
+assert.match(context.diagnosticsMarkup(null), /读取失败/);
+assert.match(context.diagnosticsMarkup(null), /role="alert"/);
 
 function harness() {
   let counter = 0;

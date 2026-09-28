@@ -1,5 +1,6 @@
 import { jsonRequest } from "../api/client.js?v=20260928.2";
 import { $, esc, money } from "../util/core.js";
+import { helpTip } from "./automation_feedback.js?v=20260928.3";
 
 export function parseDisclosure(boundariesText, dateGranularity) {
   let bands;
@@ -149,10 +150,10 @@ export function previewDisclosureMarkup(body) {
   const input = body.messages.find((message) => message.role === "user");
   const system = body.messages.find((message) => message.role === "system");
   return `<div class="automation-result simulated"><strong>固定虚构样例 · ${body.input_eligible ? "可进入模型分析" : "清洗后不调用模型"}</strong>
-    <span>此预览没有调用模型，不代表历史请求，不会生成打标申请。</span>
+    ${helpTip("虚构预览说明", "使用已保存配置组装示例，不调用模型。")}
     <ul>${body.warnings.map((warning) => `<li>${esc(warning)}</li>`).join("")}</ul></div>
-    <details><summary>虚构原始样例（仅作对照，不是外发内容）</summary><p>${esc(body.sample.label)} · ${esc(money(body.sample))}</p><p>${esc(body.sample.merchant)} · ${esc(body.sample.summary)}</p></details>
-    <h3>实际组装的外发消息结构</h3>${input ? `<p>item 是本次生成的随机关联代号，不含 Ledger ID；候选别名仅在该消息上下文中有效。金额在 BAND / NONE 下不会混入文本。</p><h4>System 约束</h4><pre class="automation-code">${esc(system?.content || "")}</pre><h4>User 业务 JSON</h4><pre class="automation-code">${esc(input.content)}</pre>` : "<p>没有外发消息；不能仅靠金额强行分类。</p>"}`;
+    <section><h3>虚构样例</h3><p>${esc(body.sample.label)} · ${esc(money(body.sample))}</p><p>${esc(body.sample.merchant)} · ${esc(body.sample.summary)}</p></section>
+    <h3>发送内容 ${helpTip("发送内容说明", "item 为随机关联代号，候选标签使用临时别名。")}</h3>${input ? `<h4>系统指令</h4><pre class="automation-code">${esc(system?.content || "")}</pre><h4>业务数据</h4><pre class="automation-code">${esc(input.content)}</pre>` : "<p>缺少可分析的业务内容。</p>"}`;
 }
 
 export function openDisclosurePreview(openDialog, amountMode = 1) {
