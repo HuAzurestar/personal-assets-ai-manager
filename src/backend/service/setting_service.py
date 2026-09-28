@@ -178,7 +178,7 @@ class SettingService:
             connected=False,
             mode="SIMULATED",
             key_configured=configured,
-            message="M1-UI demo only; no provider request was sent",
+            message="仅检查本地连接配置，未向模型供应商发送请求",
         )
 
     def _require_model(self, model_id: int) -> AutomationModelWrite:

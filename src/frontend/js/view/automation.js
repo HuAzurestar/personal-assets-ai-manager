@@ -1,11 +1,11 @@
-import { request, jsonRequest } from "../api/client.js?v=20260928.2";
-import { preserveView, patchMarkup } from "../util/view_state.js?v=20260928.2";
-import { openInspection, registerInspection } from "../component/inspection.js?v=20260928.4";
+import { request, jsonRequest } from "../api/client.js";
+import { preserveView, patchMarkup } from "../util/view_state.js?v=20260928.6";
+import { openInspection, registerInspection } from "../component/inspection.js?v=20260928.6";
 import { $, $$, esc, money, date } from "../util/core.js";
-import { startVisiblePoll } from "../util/visible_poll.js?v=20260928.2";
-import { openDisclosureEditor, openDisclosurePreview } from "./disclosure.js?v=20260928.4";
-import { helpTip, batchResults, batchResultMarkup, batchFailureMarkup, selectionConflict, ruleStatistics, runtimeMarkup, diagnosticsMarkup } from "./automation_feedback.js?v=20260928.5";
-import { executionResultNames, ruleExecution, semanticRuleChange, ruleEditImpact, candidatePreviewMarkup, requestVersionCopy, scopeImpactMarkup } from "./automation_explain.js?v=20260928.5";
+import { startVisiblePoll } from "../util/visible_poll.js?v=20260928.6";
+import { openDisclosureEditor, openDisclosurePreview } from "./disclosure.js?v=20260928.6";
+import { helpTip, batchResults, batchResultMarkup, batchFailureMarkup, selectionConflict, ruleStatistics, runtimeMarkup, diagnosticsMarkup, executionResultNames } from "./automation_feedback.js?v=20260928.6";
+import { ruleExecution, semanticRuleChange, ruleEditImpact, candidatePreviewMarkup, requestVersionCopy, scopeImpactMarkup } from "./automation_explain.js?v=20260928.6";
 
 let setting = null;
 let rules = [];
@@ -368,7 +368,8 @@ function modelParameterSignature(params) {
 
 function numberOrNull(value, integer = false) {
   if (String(value).trim() === "") return null;
-  const parsed = integer ? Number.parseInt(value, 10) : Number(value);
+  const parsed = Number(value);
+  if (integer && !Number.isInteger(parsed)) throw new Error("此参数必须为整数，不能包含小数。");
   if (!Number.isFinite(parsed)) throw new Error("数值参数格式不正确");
   return parsed;
 }
@@ -654,11 +655,20 @@ function scheduleExplanation(code) {
     OUTPUT_SEMANTIC_INVALID: "输出未通过业务或隐私校验；本项没有生成申请。新诊断记录包含固定细分原因；旧记录不能补造字段。",
     PROVIDER_UNAVAILABLE: "模型供应商暂时不可用；本轮未完成。请检查供应商状态及连接，后续由 CRON 按策略处理。",
     REQUEST_TIMEOUT: "模型调用超时；本轮未完成。请检查超时配置或供应商响应。",
-    RATE_LIMITED: "模型供应商限流；请检查额度及调用频率。",
     RATE_LIMIT: "模型供应商限流；按 Retry-After 和本轮预算处理。",
     COMMIT_FAILED: "本条写入已回滚，游标与计数未提交；请查看诊断。",
     REGISTER_FAILED: "配置已保存但注册失败；请检查并重新保存规则。",
-    REGISTRATION_FAILED: "规则调度注册失败，不会触发；请检查 CRON 和时区配置。",
+    VIEW_INACTIVE: "目标标签维度已停用或归档；请恢复维度或停用此规则。",
+    RULE_NOT_FOUND: "规则已不存在；请刷新规则列表。",
+    RULE_DISABLED: "规则已停用，本轮未继续分析。",
+    SOFT_BUDGET_EXHAUSTED: "本轮执行时间预算已耗尽，仅完成部分扫描；后续由调度继续。",
+    OUTPUT_EMPTY: "模型未返回内容；请检查模型兼容性。",
+    OUTPUT_TRUNCATED: "模型输出被截断；请检查输出长度限制。",
+    OUTPUT_UNEXPECTED: "模型返回了不支持的输出；请检查模型兼容性。",
+    MODEL_REFUSED: "模型拒绝处理此次请求；本项未生成建议。",
+    COUNTER_EXHAUSTED: "规则计数已达上限，未提交本项；请检查规则状态。",
+    SYNTHETIC_FIXTURE_MISSING: "缺少虚构验收数据；请重新准备独立验收库。",
+    SYNTHETIC_FIXTURE_INVALID: "虚构验收数据不符合要求；请检查验收库。",
   };
   return code ? `${explanations[code] || "执行失败，请查看服务端日志。"}（${code}）` : "无错误码记录";
 }
@@ -823,7 +833,11 @@ function applyAutomationData(root, page, data) {
     const create = $('[data-action="rule-new"]', root);
     if (create) create.disabled = !views.some((item) => item.status === "ACTIVE") || !setting.models.some((item) => item.enabled && item.key_configured);
   }
-  if (data.summary) patchMarkup($('[data-auto-rule-detail]', root), ruleDetailMarkup(data.rule, data.schedule, data.recent, data.summary));
+  if (data.summary) {
+    patchMarkup($('[data-auto-rule-detail]', root), ruleDetailMarkup(data.rule, data.schedule, data.recent, data.summary));
+    const heading = root.closest('dialog')?.querySelector('#inspection-title');
+    if (heading) heading.textContent = data.rule.name;
+  }
   if (data.diagnostics && JSON.stringify(data.diagnostics.options) === JSON.stringify(diagnosticOptions(root))
     && data.diagnostics.pageIndex === Number($('[data-diagnostic-state]', root)?.dataset.page || 1)) {
     patchMarkup($('[data-auto-diagnostics]', root), diagnosticsMarkup(data.diagnostics.events, data.diagnostics.options));
@@ -850,6 +864,7 @@ export function startAutomationRefresh(root, { stale = false } = {}) {
   root.dataset.autoStale = String(stale);
   const route = location.hash;
   stopPolling = startVisiblePoll({
+    interval: () => root.dataset.autoStale === "true" ? 5000 : scheduleStatus?.tag_scan_guard === "DISABLED" ? 30000 : 5000,
     isAlive: () => page.isConnected && location.hash === route,
     canPoll: () => ![...document.querySelectorAll("dialog[open]")].some(dialog => !dialog.contains(root)) && root.dataset.commandPending !== "true"
       && !(root.contains(document.activeElement) && document.activeElement.matches("input:not([type='checkbox']), select, textarea")),
@@ -892,6 +907,7 @@ async function transitionRequests(root, button, rerender) {
   const selectionSummary = selected.map((item) => `<li><strong>#${item.id} · ${esc(item.ledger_counterparty_name || item.ledger_summary || `账目 #${item.ledger_id}`)}</strong><span>${esc(item.view_name)} → ${esc(item.proposed_tag_name)}</span></li>`).join("");
   const dialog = openDialog(approve ? "确认通过标签建议" : "确认拒绝标签建议", `<p>本次选择 ${ids.length} 项。</p><ul class="candidate-samples">${selectionSummary}</ul><p>${approve ? "通过后修改对应账目与维度的标签；同范围其他待确认建议会被取消，原已通过建议会被标为已替换。其他账目和维度不变。同一账目 + 维度只能选一项；服务端将重新核对版本、账目和人工标签，冲突不会强制覆盖。" : "只将这些申请标为已拒绝，不修改现有标签或其他建议。"}</p>${conflict ? '<p class="error">选择中有同范围冲突项，这些项不会通过；其他有效范围仍可处理。可取消后调整选择。</p>' : ""}<p>返回逐项结果；有效项会提交，失败项不改变标签。重复已处理项不重复计数；超时结果未知时请先刷新核对。</p><div class="actions"><button type="button" class="quiet" data-close>取消</button><button type="button" class="primary" data-confirm-batch>确认${approve ? "通过" : "拒绝"}</button></div>`);
   $('[data-confirm-batch]', dialog).addEventListener("click", async (event) => {
+    if (root.dataset.commandPending === "true" || root.dataset.autoStale === "true") { dialog.close(); return; }
     event.currentTarget.disabled = true;
     root.dataset.commandPending = "true";
     $$('[data-action="tag-request-transition"], [data-action="tag-request-batch"]', root).forEach((item) => { item.disabled = true; });

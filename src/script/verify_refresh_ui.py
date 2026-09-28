@@ -48,7 +48,7 @@ def run():
                 help_trigger.focus()
                 page.evaluate('window.originalRule = document.querySelector("[data-rule-row]")')
                 top = row.bounding_box()['y']
-                page.wait_for_timeout(11000)
+                expect(page.locator('[data-auto-freshness]')).to_contain_text('已更新', timeout=40000)
                 assert row.evaluate('(e) => e === window.originalRule')
                 expect(help_panel).to_be_visible()
                 expect(help_trigger).to_be_focused()
@@ -64,7 +64,7 @@ def run():
                 page.goto(base + f'/#details/auto-rule?rule_id={rule_id}')
                 stats = page.get_by_role('button', name='统计口径', exact=True)
                 stats.focus()
-                page.wait_for_timeout(5500)
+                expect(page.locator('.inspection-workspace [data-auto-freshness]')).to_contain_text('已更新', timeout=40000)
                 expect(stats).to_be_focused()
                 expect(stats.locator('..').get_by_role('tooltip')).to_be_visible()
 

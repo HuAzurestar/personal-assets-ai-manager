@@ -64,6 +64,15 @@ const runtime = context.runtimeMarkup({ scheduler_state: "RUNNING", worker_state
   { task_key: "a", queue_state: "RUNNING" }, { task_key: "b", queue_state: "QUEUED", queue_position: 1 },
 ] });
 assert.match(runtime, /等待 1 · 运行 1/);
+const savedDate = context.date;
+context.date = () => "按全局时区格式化的时间";
+const localizedRuntime = context.runtimeMarkup({ captured_at: "2026-09-28T22:41:23.652092+08:00", tasks: [
+  { task_key: "a", queue_state: "IDLE", last_result: "COMPLETED", next_run_at: "2026-09-28T22:41:23.652092+08:00" },
+] });
+assert.match(localizedRuntime, /完成/);
+assert.match(localizedRuntime, /按全局时区格式化的时间/);
+assert.doesNotMatch(localizedRuntime, /COMPLETED|652092/);
+context.date = savedDate;
 const persistedDiagnostics = context.diagnosticsMarkup({ page_index: 2, page_size: 10, total: 12, items: [{
   time: "2026-09-27T00:00:00Z", run_id: "a".repeat(32), task_key: "tag-scan:3", phase: "CALL",
   code: "OUTPUT_SEMANTIC_INVALID", detail_code: "ITEM_MISMATCH", ledger_id: 12, attempt: 1,
@@ -89,6 +98,14 @@ function harness() {
   };
 }
 (async () => {
+  const adaptive = harness();
+  let delay = 30000;
+  const stopAdaptive = context.startVisiblePoll({ ...adaptive, interval: () => delay,
+    load: async () => { delay = 5000; }, apply: () => {} });
+  assert.equal([...adaptive.queue.values()][0].at, 30000);
+  await adaptive.next();
+  assert.equal([...adaptive.queue.values()][0].at, 35000);
+  stopAdaptive();
   const h = harness();
   const states = [];
   const applied = [];

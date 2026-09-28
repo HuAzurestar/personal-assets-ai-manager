@@ -16,6 +16,11 @@ export const moduleMeta = {
     caption: "导入与审查",
     page: "import",
   },
+  settings: {
+    label: "设置",
+    caption: "连接与自动化",
+    page: "settings",
+  },
 };
 
 const secondaryMeta = {
@@ -130,7 +135,7 @@ export function shellMarkup() {
       <div class="topbar-actions">
         <label class="timezone-control">显示时区<select data-timezone aria-label="页面显示时区"><option value="Asia/Hong_Kong">香港</option><option value="Asia/Shanghai">上海</option><option value="Asia/Tokyo">东京</option><option value="Europe/London">伦敦</option><option value="America/New_York">纽约</option><option value="UTC">UTC</option></select></label>
         <a class="connection" data-connection-status data-state="checking" href="/api/health" target="_blank" rel="noopener" title="点击打开本地服务健康检查"><i></i><span data-live-label aria-live="polite">正在检查本地账本</span></a>
-        <button type="button" class="primary compact" data-page="settings">设置</button>
+        <button type="button" class="primary compact" data-page="import">导入账单</button>
       </div>
     </header>
     <div class="module-subbar">

@@ -1,7 +1,5 @@
 import { esc, money, date } from "../util/core.js";
-import { helpTip } from "./automation_feedback.js?v=20260928.5";
-
-export const executionResultNames = { COMPLETED: "完成", PARTIAL_FAILURE: "部分失败", FAILED: "失败", CANCELLED: "已取消", UNKNOWN: "结果未知" };
+import { helpTip, executionResultNames } from "./automation_feedback.js?v=20260928.6";
 
 export function ruleExecution(rule, schedule, model, view) {
   const state = (label, reason, tone = "inactive") => ({ label, reason, tone });

@@ -50,6 +50,9 @@ def run():
                 page.on("request", lambda r: writes.append(r.url) if r.method in {"PUT", "DELETE"} else None)
                 page.goto(base + "/#settings/automation")
                 expect(page.locator('[data-auto-page="settings"]')).to_be_visible()
+                expect(page.locator('[data-module="settings"]')).to_have_attribute("aria-pressed", "true")
+                expect(page.locator('.topbar-actions [data-page="import"]')).to_have_text("导入账单")
+                assert page.locator('[data-action="disclosure-preview"]').evaluate("el => parseFloat(getComputedStyle(el).borderTopWidth) > 0 && el.getBoundingClientRect().width < el.closest('section').clientWidth")
                 before = read(rules_url)["items"]
                 pending = read(requests_url)["items"]
                 page.locator('[data-action="model-edit"]').click()
@@ -153,6 +156,15 @@ def run():
                 form.locator('[name="prompt"]').fill("Classify fictional purchases")
                 form.locator('button[type="submit"]').click()
                 expect(page.locator('.inspection-workspace[open] [data-rule-id="102"]')).to_be_visible()
+                def renamed_rule(route):
+                    response = route.fetch()
+                    body = response.json()
+                    body["body"]["name"] = "Externally renamed rule"
+                    route.fulfill(response=response, json=body)
+
+                page.route("**/auto_rule/102", renamed_rule)
+                expect(page.locator("#inspection-title")).to_have_text("Externally renamed rule", timeout=40000)
+                page.unroute("**/auto_rule/102", renamed_rule)
                 page.keyboard.press("Escape")
                 expect(page.locator("[data-rule-row]").first).to_have_attribute("data-rule-row", "102")
                 page.goto(base + "/#workbench/tag-review")
@@ -161,6 +173,25 @@ def run():
                 expect(page.locator('[name="rule_id"]')).to_have_value("102")
                 page.locator('[name="view_id"]').select_option(str(late_id))
                 expect(page.locator('[name="view_id"]')).to_have_value(str(late_id))
+                page.goto(base + "/#workbench/tag-review?status=")
+                expect(page.locator('[data-tag-request-row]')).to_have_count(3)
+                for width in (390, 700, 1440):
+                    page.set_viewport_size({"width": width, "height": 900})
+                    expect(page.locator('[data-tag-request-row]').first).to_be_visible()
+                    assert page.locator('.request-table').evaluate("el => el.scrollWidth <= el.parentElement.clientWidth + 1")
+                    if width <= 700:
+                        assert page.locator('[data-tag-request-row]').first.evaluate("el => getComputedStyle(el).display") == "grid"
+                    assert page.locator('[data-action="tag-request-batch"]').first.evaluate("el => getComputedStyle(el).whiteSpace") == "nowrap"
+                # Models are a complete settings array, not a 100-row list API.
+                snapshot = read(uri)
+                original = [{k: v for k, v in item.items() if k != "key_configured"} for item in snapshot["models"]]
+                extra = [{**original[0], "id": n, "name": f"Fictional model {n}", "enabled": False} for n in range(2, 102)]
+                response = client.put(uri, json={"expected_updated_time": snapshot["updated_time"], "models": original + extra})
+                response.raise_for_status()
+                page.goto(base + "/#settings/automation")
+                expect(page.locator('[data-model-card]')).to_have_count(101)
+                page.locator('[data-model-card="101"] [data-action="model-edit"]').click()
+                expect(page.locator('[data-form="automation-model"] [name="name"]')).to_have_value("Fictional model 101")
                 assert not errors, errors
                 browser.close()
             print("PASS model no-op, confirmed impact, stale form, reconnect, timezone, rule pagination/search, complete selectors and new-rule navigation; provider calls=0")

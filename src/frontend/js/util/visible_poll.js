@@ -11,7 +11,7 @@ export function startVisiblePoll({ load, apply, onState, isAlive = () => true,
   const valid = (ticket) => !stopped && ticket === generation && !documentRef.hidden && isAlive();
   const schedule = () => {
     timers.clearTimeout(timer);
-    if (!stopped && !documentRef.hidden && isAlive()) timer = timers.setTimeout(tick, interval);
+    if (!stopped && !documentRef.hidden && isAlive()) timer = timers.setTimeout(tick, typeof interval === "function" ? interval() : interval);
   };
   const report = (state) => onState?.({ state, lastSuccess });
   const tick = async () => {

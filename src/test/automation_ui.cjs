@@ -66,6 +66,31 @@ vm.runInContext(fs.readFileSync(path.resolve(__dirname, "../frontend/js/view/aut
 vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.testSettings = automationSettingsPage; globalThis.testRuleDetail = ruleDetailMarkup; globalThis.testRequestDetail = requestDetailMarkup; globalThis.testScheduleExplanation = scheduleExplanation; globalThis.testRulePage = autoRulesPage; globalThis.testReviewPage = tagReviewPage; globalThis.testFilterParams = tagReviewFilterParams;`, context);
 
 (async () => {
+  // Two already-open confirmations must not submit overlapping commands.
+  const dialogs = [];
+  context.testOpenDialog = () => {
+    const dialog = { close() {}, addEventListener() {} };
+    dialogs.push(dialog);
+    return dialog;
+  };
+  context.$ = (_selector, dialog) => dialog?.addEventListener ? {
+    addEventListener: (_event, callback) => { dialog.confirm = callback; },
+  } : null;
+  vm.runInContext('openDialog = testOpenDialog', context);
+  let batchCalls = 0;
+  let rejectBatch;
+  context.jsonRequest = () => { batchCalls++; return new Promise((_resolve, reject) => { rejectBatch = reject; }); };
+  const root = { dataset: {} };
+  const transition = vm.runInContext('transitionRequests', context);
+  await transition(root, { dataset: { id: "1", operation: "approve" } }, async () => {});
+  await transition(root, { dataset: { id: "2", operation: "approve" } }, async () => {});
+  const firstBatch = dialogs[0].confirm({ currentTarget: {} });
+  await dialogs[1].confirm({ currentTarget: {} });
+  assert.equal(batchCalls, 1);
+  rejectBatch(new Error("offline"));
+  await firstBatch;
+  assert.equal(root.dataset.commandPending, "false");
+  context.$ = () => null;
   const views = [{ id: 1, name: "分类", status: "ACTIVE" }];
   const idle = await context.testPanel(views);
   assert.match(idle, /自动分析已关闭/);
@@ -106,6 +131,18 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
   assert.match(detail, /虚构商户/);
   assert.match(detail, /data-action="disclosure-preview"/);
   assert.match(context.testScheduleExplanation("ACCEPTANCE_DATABASE_REQUIRED"), /非虚构数据/);
+  const adapter = fs.readFileSync(path.resolve(__dirname, "../backend/service/llm_adapter.py"), "utf8");
+  const backendCodes = [...adapter.matchAll(/_error\(\s*"([A-Z_]+)"/g)].map(match => match[1]);
+  const scan = fs.readFileSync(path.resolve(__dirname, "../backend/service/auto_tag_scan_service.py"), "utf8");
+  backendCodes.push(...[...scan.matchAll(/, "((?:RULE_|VIEW_|MODEL_)[A-Z_]+|NO_ACTIVE_TARGETS)"\)/g)].map(match => match[1]));
+  backendCodes.push(...[...scan.matchAll(/return report\("([A-Z_]+)"\)/g)].map(match => match[1]).filter(code => !["NO_DATA", "PAGE_COMPLETE", "RETRY_DEFERRED", "RULE_TOKEN_CHANGED"].includes(code)));
+  for (const errorCode of new Set([...backendCodes, "RULE_NOT_FOUND", "RULE_DISABLED", "VIEW_INACTIVE", "SOFT_BUDGET_EXHAUSTED", "COUNTER_EXHAUSTED", "COMMIT_FAILED"])) {
+    assert.doesNotMatch(context.testScheduleExplanation(errorCode), /执行失败，请查看服务端日志/, errorCode);
+  }
+  assert.doesNotMatch(code, /RATE_LIMITED:|REGISTRATION_FAILED:/);
+  assert.equal(vm.runInContext('numberOrNull("3", true)', context), 3);
+  assert.equal(vm.runInContext('numberOrNull("", true)', context), null);
+  assert.throws(() => vm.runInContext('numberOrNull("3.9", true)', context), /整数/);
 
   schedule = {
     scheduler_state: "RUNNING", worker_state: "HEALTHY", tag_scan_guard: "NON_SYNTHETIC_FACT",
@@ -166,6 +203,12 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
   }, rule);
   assert.match(requestDetail, /虚构咖啡店/);
   assert.match(requestDetail, /当前标签/);
+  assert.doesNotMatch(requestDetail, /MANUAL|AUTO_RULE/);
+  for (const relative of ["view/automation.js", "view/disclosure.js", "view/ledger.js", "component/inspection.js"]) {
+    const source = fs.readFileSync(path.resolve(__dirname, "../frontend/js", relative), "utf8");
+    assert.match(source, /from "\.\.\/api\/client\.js"/);
+    assert.doesNotMatch(source, /client\.js\?/);
+  }
   assert.match(requestDetail, /aria-label="建议依据"/);
   assert.match(requestDetail, /原始响应未保存/);
 

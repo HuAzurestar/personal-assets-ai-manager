@@ -114,6 +114,8 @@ class AutoTagScheduleService:
                 privacy,
                 synthetic_only=not self._real_analysis_enabled,
             )
+            if report.stopped_reason == "SOFT_BUDGET_EXHAUSTED":
+                return JobOutcome("PARTIAL_FAILURE", report.stopped_reason)
             if report.failed_count:
                 return JobOutcome(
                     result=(
@@ -131,7 +133,7 @@ class AutoTagScheduleService:
                     ),
                 )
             if report.stopped_reason in {
-                "RULE_NOT_FOUND", "MODEL_DISABLED", "NO_ACTIVE_TARGETS",
+                "RULE_NOT_FOUND", "RULE_DISABLED", "MODEL_DISABLED", "NO_ACTIVE_TARGETS",
                 "CONFIG_ERROR", "AUTH_ERROR",
                 "VIEW_INACTIVE", "COMMIT_FAILED", "COUNTER_EXHAUSTED",
                 "SYNTHETIC_FIXTURE_MISSING", "SYNTHETIC_FIXTURE_INVALID",

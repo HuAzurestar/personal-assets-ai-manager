@@ -155,7 +155,7 @@ def test_model_configuration_secret_lifecycle_and_restart(setting_runtime, monke
             "connected": False,
             "mode": "SIMULATED",
             "key_configured": True,
-            "message": "M1-UI demo only; no provider request was sent",
+            "message": "仅检查本地连接配置，未向模型供应商发送请求",
         }
 
         ordinary = client.get("/paam/system/v1/setting/automation")
@@ -414,9 +414,32 @@ def test_keyring_adapter_uses_fixed_identity_and_never_falls_back(monkeypatch):
         raise NoKeyringError("no backend")
 
     monkeypatch.setattr("keyring.get_password", unavailable)
+    assert store.is_configured(7) is False
+    monkeypatch.setattr("keyring.set_password", unavailable)
     with pytest.raises(ProtectedSecretStoreError) as error:
-        store.is_configured(7)
+        store.set(7, "private")
     assert error.value.status_code == 503
+
+
+def test_headless_setting_get_preserves_models(setting_runtime, monkeypatch):
+    from keyring.errors import NoKeyringError
+
+    sessions, _, fake_store = setting_runtime
+    with _client(sessions, fake_store) as client:
+        assert client.put("/paam/system/v1/setting/automation", json={
+            "expected_updated_time": None, "models": [_model_payload()],
+        }).status_code == 200
+
+    def unavailable(*args):
+        raise NoKeyringError("no desktop keyring")
+
+    monkeypatch.setattr("keyring.get_password", unavailable)
+    with _client(sessions, KeyringProtectedSecretStore()) as client:
+        response = client.get("/paam/system/v1/setting/automation")
+        assert response.status_code == 200
+        model = response.json()["body"]["models"][0]
+        assert model["id"] == 1
+        assert model["key_configured"] is False
 
 
 def _seed_disclosure_rules(sessions):

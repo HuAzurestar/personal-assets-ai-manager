@@ -1,5 +1,7 @@
 import { esc, date } from "../util/core.js";
 
+export const executionResultNames = { COMPLETED: "完成", PARTIAL_FAILURE: "部分失败", FAILED: "失败", CANCELLED: "已取消", UNKNOWN: "结果未知" };
+
 export function helpTip(label, copy) {
   return `<span class="automation-tip"><button type="button" class="automation-tip-trigger" aria-label="${esc(label)}" aria-description="${esc(copy)}">?</button><span class="automation-tip-content" role="tooltip">${esc(copy)}</span></span>`;
 }
@@ -95,7 +97,7 @@ export function runtimeMarkup(schedule) {
     <td>${esc(task.queue_state)}${task.queue_position == null ? "" : ` · 排队第 ${esc(task.queue_position)} 位 · 已等待 ${Math.floor((task.wait_ms || 0) / 1000)} 秒<small>入队 ${esc(localTime(task.enqueued_at))}</small>`}
     ${task.queue_state === "RUNNING" ? `<small>开始 ${esc(localTime(task.started_at))} · 已耗时 ${Math.floor((task.elapsed_ms || 0) / 1000)} 秒</small>${scheduleProgressMarkup(task.progress)}` : ""}
     ${task.queue_state === "BLOCKED" ? `<small>已阻塞，连续 ${esc(task.blocked_attempts || 1)} 轮；${task.last_error_code === "REGISTER_FAILED" ? "请重新保存规则" : "后续 CRON 只尝试恢复，不推进未处理项"}</small>` : ""}</td>
-    <td>${esc(task.last_result || "尚未运行")}${task.last_error_code ? ` · ${esc(task.last_error_code)}` : ` · ${esc(outcomeCopy[task.last_outcome_code] || "")}`}
+    <td>${esc(task.last_result ? executionResultNames[task.last_result] || "结果未知" : "尚未运行")}${task.last_error_code ? ` · ${esc(task.last_error_code)}` : ` · ${esc(outcomeCopy[task.last_outcome_code] || "")}`}
     ${scheduleProgressMarkup(task.last_progress)}${task.last_run_id ? `<small>诊断编号 <code>${esc(task.last_run_id)}</code></small>` : ""}</td><td>${esc(localTime(task.next_run_at))}</td></tr>`).join("");
   const failures = tasks.filter((task) => task.last_failure).map((task) => `<div class="automation-result error"><strong>${esc(task.task_key)} · 最近失败（不会被空扫描清除）</strong><p>${esc(task.last_failure.safe_message)}（${esc(task.last_failure.code)}）</p><small>${esc(localTime(task.last_failure.time))} · 诊断编号 <code>${esc(task.last_failure.run_id)}</code></small></div>`).join("");
   return `<p>调度器 ${esc(schedule.scheduler_state)} · Worker ${esc(schedule.worker_state)} · 等待 ${queue.length} · 运行 ${running.length}</p>

@@ -7,7 +7,7 @@ credentials never need to cross the service boundary after they are written.
 from typing import Protocol
 
 import keyring
-from keyring.errors import KeyringError, PasswordDeleteError
+from keyring.errors import KeyringError, NoKeyringError, PasswordDeleteError
 
 from backend.error import ProtectedSecretStoreError
 
@@ -35,6 +35,10 @@ class KeyringProtectedSecretStore:
     def is_configured(self, model_id: int) -> bool:
         try:
             return keyring.get_password(SERVICE_NAME, self._username(model_id)) is not None
+        except NoKeyringError:
+            # A headless deployment can still inspect and edit model settings.
+            # Writes remain strict: never fall back to plaintext credentials.
+            return False
         except KeyringError as error:
             raise ProtectedSecretStoreError() from error
 

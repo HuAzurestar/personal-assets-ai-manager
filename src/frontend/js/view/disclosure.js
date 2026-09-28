@@ -1,6 +1,6 @@
-import { jsonRequest } from "../api/client.js?v=20260928.2";
+import { jsonRequest } from "../api/client.js";
 import { $, esc, money } from "../util/core.js";
-import { helpTip } from "./automation_feedback.js?v=20260928.3";
+import { helpTip } from "./automation_feedback.js?v=20260928.6";
 
 export function parseDisclosure(boundariesText, dateGranularity) {
   let bands;

@@ -287,7 +287,7 @@ class AutoTagRuleService:
             scan_after_ledger_id=int(rule["scan_after_ledger_id"]),
             page_limit=100,
             sample_limit=20,
-            message="Read-only local preview; no model request or checkpoint update occurred",
+            message="仅预览本地候选资格，未调用模型或更新扫描进度",
         )
 
     def _required(self, rule_id: int) -> dict[str, object]:
