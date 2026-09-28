@@ -1,13 +1,14 @@
-import { checkConnection, request, jsonRequest } from "../api/client.js?v=20260922.3";
+import { checkConnection, request, jsonRequest } from "../api/client.js?v=20260928.1";
+import { preserveView } from "../util/view_state.js?v=20260928.1";
 import { toast } from "../component/toast.js";
 import { table } from "../component/table.js";
-import { openInspection } from "../component/inspection.js?v=20260921.4";
+import { openInspection } from "../component/inspection.js?v=20260928.1";
 import {
   detailList, detailPager,
 } from "../component/detail.js?v=20260917.10";
 import {
   bindDateTimeRanges, dateTimeRangeControl,
-} from "../component/date-time-range.js?v=20260921.1";
+} from "../component/date-time-range.js?v=20260928.1";
 import { state } from "../state/ledger.js";
 import {
   $, $$, currencyPrecision, date, decimalAmount, esc, key, money,
@@ -23,7 +24,7 @@ import {
 } from "./account.js?v=20260917.10";
 import {
   automationSettingsPage, autoRulesPage, bindAutomation, tagReviewPage, stopAutomationPolling,
-} from "./automation.js?v=20260927.4";
+} from "./automation.js?v=20260928.1";
 
 const entryTypeValues = { TRANSACTION: 0, ACCOUNT_TRANSFER: 1, CLAIM: 2 };
 const entryTypeCodes = { 0: "TRANSACTION", 1: "ACCOUNT_TRANSFER", 2: "CLAIM" };
@@ -141,9 +142,43 @@ function readRoute() {
 }
 window.addEventListener("hashchange", readRoute);
 
-async function render() {
+let renderedRoute = null;
+let backgroundBusy = false;
+let foregroundBusy = 0;
+let pendingCommands = 0;
+let interactionVersion = 0;
+document.addEventListener('paam:mutation', (event) => {
+  pendingCommands = Math.max(0, pendingCommands + (event.detail.phase === 'start' ? 1 : -1));
+  ++interactionVersion;
+  ++state.renderVersion; // Invalidate page reads issued before this command.
+  $('#page-content')?.removeAttribute('aria-busy');
+});
+document.addEventListener('input', () => { ++interactionVersion; });
+document.addEventListener('change', () => { ++interactionVersion; });
+const livePages = new Set(['summary', 'ledger', 'economy', 'ledger-reviews', 'ledger-imports', 'ledger-tags', 'import-history']);
+function canRefreshPage() {
+  return !document.hidden && !pendingCommands && !foregroundBusy && !document.querySelector('dialog[open]')
+    && !document.activeElement?.matches('input, textarea, select, [contenteditable="true"]')
+    && !document.querySelector('[data-range-popover]:not([hidden])')
+    && !document.querySelector('[data-form="inline-tag"]:not([hidden])');
+}
+window.setInterval(async () => {
+  if (backgroundBusy || !livePages.has(state.page) || !canRefreshPage()) return;
+  backgroundBusy = true;
+  try {
+    const history = $('[data-form="history-filter"]');
+    if (state.page === 'import-history' && history) await refreshHistoryResults(history, Number(history.dataset.page || 1), true);
+    else await render({ background: true });
+  } finally { backgroundBusy = false; }
+}, 5000);
+
+async function render({ background = false } = {}) {
   stopAutomationPolling();
-  const renderVersion = ++state.renderVersion;
+  const renderVersion = background ? state.renderVersion : ++state.renderVersion;
+  if (!background) foregroundBusy++;
+  const interaction = interactionVersion;
+  const routeKey = location.hash;
+  const samePage = renderedRoute === routeKey;
   const page = state.page;
   const root = $("#page-content");
   const [title, help] = pageInfo[page];
@@ -151,11 +186,14 @@ async function render() {
   $("#help").textContent = help;
   $(".module-heading").hidden = true;
   $("#content").classList.add("compact-content");
-  syncNavigation(page);
-  const secondaryNavigation = $("#secondary-nav");
-  if (secondaryNavigation) bindPage(secondaryNavigation);
-  renderPageActions();
-  root.innerHTML = '<div class="busy">正在加载…</div>';
+  if (!samePage) {
+    syncNavigation(page);
+    const secondaryNavigation = $("#secondary-nav");
+    if (secondaryNavigation) bindPage(secondaryNavigation);
+    renderPageActions();
+  }
+  if (!samePage) root.innerHTML = '<div class="busy">正在加载…</div>';
+  root.setAttribute('aria-busy', 'true');
   try {
     const content = await ({
       economy: economicPage,
@@ -171,15 +209,32 @@ async function render() {
       "tag-review": () => tagReviewPage(state.params),
       settings: automationSettingsPage,
     })[page]();
-    if (renderVersion !== state.renderVersion || page !== state.page) return;
-    root.innerHTML = content;
-    bindPage(root);
+    if (renderVersion !== state.renderVersion || page !== state.page || routeKey !== location.hash) return;
+    if (background && (interaction !== interactionVersion || !canRefreshPage())) return;
+    const historyPage = $('[data-form="history-filter"]', root)?.dataset.page;
+    const apply = () => {
+      root.innerHTML = content;
+      bindPage(root);
+      const history = $('[data-form="history-filter"]', root);
+      if (samePage && history && historyPage) history.dataset.page = historyPage;
+    };
+    if (samePage) preserveView(root, apply); else apply();
+    renderedRoute = routeKey;
     if (page === "import") renderImportPlan();
     if (page === "reviews") await mountEconomicReviewEditor(root);
   } catch (error) {
     if (renderVersion !== state.renderVersion || page !== state.page) return;
-    root.innerHTML = `<section class="panel"><div class="error">${esc(error.message)}</div><div class="actions"><button data-action="reload">重新加载</button></div></section>`;
-    bindPage(root);
+    if (samePage) {
+      let errorSlot = root.querySelector('[data-refresh-error]');
+      if (!errorSlot) { errorSlot = document.createElement('p'); errorSlot.dataset.refreshError = ''; errorSlot.setAttribute('role', 'status'); root.append(errorSlot); }
+      errorSlot.textContent = `刷新失败，保留上次内容：${error.message}`;
+    } else {
+      root.innerHTML = `<section class="panel"><div class="error">${esc(error.message)}</div><div class="actions"><button data-action="reload">重新加载</button></div></section>`;
+      bindPage(root);
+    }
+  } finally {
+    if (!background) foregroundBusy--;
+    if (renderVersion === state.renderVersion) root.removeAttribute('aria-busy');
   }
 }
 
@@ -528,7 +583,7 @@ async function mountEconomicReviewEditor(root) {
     candidatePage = await request(`/paam/ledger/v1/review_candidate/list?${params}`);
     renderCandidatePage();
   };
-  const renderLedgers = () => {
+  const renderLedgers = () => preserveView(definitionRoot, () => {
     const choices = selectedFacts();
     definitionRoot.innerHTML = ledgers.map((item, index) => `<article class="review-ledger-row" data-ledger-key="${item.key}"><header><span>LEDGER ${String(index + 1).padStart(2, "0")}</span><strong>${esc(typeNames[item.type])}</strong></header><label>来源 Fact<select data-ledger-fact>${choices.map((fact) => `<option value="${fact.id}" ${fact.id === item.factId ? "selected" : ""}>#${fact.id} · ${esc(fact.counterparty_name || fact.summary || "未命名流水")}</option>`).join("")}</select></label><label>账本类型<select data-ledger-type>${["TRANSACTION", "ACCOUNT_TRANSFER", "CLAIM"].map((value) => `<option value="${value}" ${value === item.type ? "selected" : ""}>${esc(typeNames[value])}</option>`).join("")}</select></label><label>分配金额<input data-ledger-amount inputmode="decimal" value="${esc(item.amount)}" placeholder="0.00"></label><button type="button" class="quiet" data-remove-ledger>移除</button></article>`).join("") || '<div class="empty-state">请返回上一步选择待审查流水</div>';
     $$('[data-ledger-key]', definitionRoot).forEach((row) => {
@@ -538,7 +593,7 @@ async function mountEconomicReviewEditor(root) {
       $("[data-ledger-amount]", row).oninput = (event) => { item.amount = event.target.value; };
       $("[data-remove-ledger]", row).onclick = () => { ledgers.splice(ledgers.indexOf(item), 1); renderLedgers(); };
     });
-  };
+  });
   const reviewPlan = () => {
     if (!selected.size) throw new Error("请选择至少一条待审查流水");
     if (!ledgers.length) throw new Error("请至少配置一条 Ledger");
@@ -772,11 +827,17 @@ function historyResultsMarkup(result) {
 }
 
 async function importHistoryPage() {
+  const previous = $('[data-form="history-filter"]');
   const initialQuery = new URLSearchParams({
-    page_index: "1",
+    page_index: previous?.dataset.page || "1",
     page_size: "10",
     sorter: JSON.stringify([{ key: "created_time", direction: "desc" }]),
   });
+  if (previous) {
+    const expressions = ['source_type', 'status'].filter((name) => previous.elements[name].value !== '')
+      .map((name) => ({ key: name, op: '=', val: Number(previous.elements[name].value) }));
+    if (expressions.length) initialQuery.set('filter', JSON.stringify(expressions.length === 1 ? expressions[0] : { op: 'AND', expression: expressions }));
+  }
   const conflictFilter = encodeURIComponent(JSON.stringify({ key: "status", op: "=", val: "PENDING" }));
   const [result, summary, conflicts] = await Promise.all([
     request(`/paam/import/v1/import_file/list?${initialQuery}`),
@@ -790,7 +851,9 @@ async function importHistoryPage() {
   return `<div class="history-summary" data-history-summary>${historySummaryMarkup(summary, conflicts.total)}</div>${conflictPanel}<section class="panel history-panel"><div class="section-head"><div><h2>导入文件</h2><p class="import-section-help">来源和状态筛选只更新下方结果。</p></div><button class="primary" data-page="import">＋ 导入新数据</button></div><form class="toolbar history-toolbar" data-form="history-filter"><label>来源<select name="source_type"><option value="">全部来源</option>${sourceOptions}</select></label><label>状态<select name="status"><option value="">全部状态</option>${statusOptions}</select></label><span class="history-updating" data-history-updating aria-live="polite"></span></form><div data-history-results>${historyResultsMarkup(result)}</div></section>`;
 }
 
-async function refreshHistoryResults(form, page = 1) {
+async function refreshHistoryResults(form, page = 1, background = false) {
+  const interaction = interactionVersion;
+  form.dataset.page = String(page);
   clearTimeout(state.historyFilterTimer);
   state.historyRequestController?.abort();
   const controller = new AbortController();
@@ -821,11 +884,11 @@ async function refreshHistoryResults(form, page = 1) {
       request("/paam/import/v1/import_file/summary", { signal: controller.signal }),
     ]);
     if (requestVersion !== state.historyRequestVersion || state.page !== "import-history") return;
-    if (summaryRoot) summaryRoot.innerHTML = historySummaryMarkup(summary);
-    if (resultsRoot) {
-      resultsRoot.innerHTML = historyResultsMarkup(result);
-      bindPage(resultsRoot);
-    }
+    if (!form.isConnected || (background && (interaction !== interactionVersion || !canRefreshPage()))) return;
+    preserveView($('#page-content'), () => {
+      if (summaryRoot) summaryRoot.innerHTML = historySummaryMarkup(summary);
+      if (resultsRoot) { resultsRoot.innerHTML = historyResultsMarkup(result); bindPage(resultsRoot); }
+    });
   } catch (error) {
     if (error.name !== "AbortError") toast(error.message, true);
   } finally {
@@ -969,6 +1032,11 @@ function openPreviewDrawer(documentIndex) {
   });
 }
 function renderImportPlan() {
+  const root = $('#import-preview');
+  if (root) preserveView(root, renderImportPlanContent);
+}
+
+function renderImportPlanContent() {
   const plan = state.importPlan;
   const root = $("#import-preview");
   if (!plan || !root) return;
@@ -1050,7 +1118,7 @@ async function tagsPage() {
       return `<span class="tag-pill${isSystem ? " system" : ""}${isTagActive ? "" : " archived"}" title="系统名称：${esc(tag.system_name)}">${isSystem ? '<span class="tag-pill-lock" aria-hidden="true">◆</span>' : ""}<span>${esc(tag.name)}</span>${isSystem ? `<code>${esc(tag.system_name)}</code>` : ""}${action}</span>`;
     }).join("");
     const creator = isActive ? `<div class="tag-inline-creator"><button class="tag-inline-launch" type="button" data-action="new-tag-inline" data-id="${view.id}" aria-controls="tag-create-${view.id}" aria-expanded="false"><span aria-hidden="true">＋</span> 新标签</button><form id="tag-create-${view.id}" class="tag-inline-form" data-form="inline-tag" data-view="${view.id}" hidden><label class="sr-only" for="tag-name-${view.id}">显示名称</label><input id="tag-name-${view.id}" name="name" maxlength="120" placeholder="显示名称" autocomplete="off" required><span class="tag-inline-divider" aria-hidden="true"></span><label class="sr-only" for="tag-system-${view.id}">系统名称</label><input id="tag-system-${view.id}" name="system_name" maxlength="64" pattern="[a-z][a-z0-9_]{0,63}" placeholder="自动生成系统名称" autocomplete="off" required><button class="tag-inline-submit" type="submit" aria-label="保存标签" title="保存">✓</button><button class="tag-inline-cancel" type="button" data-action="cancel-tag" aria-label="取消添加标签" title="取消">×</button></form></div>` : "";
-    return `<article class="tag-view-card${isActive ? "" : " archived"}" aria-labelledby="tag-view-${view.id}"><header class="tag-view-head"><div class="tag-view-meta"><div class="tag-view-title"><h3 id="tag-view-${view.id}">${esc(view.name)}</h3><span class="tag-view-status ${isActive ? "active" : "archived"}"><span aria-hidden="true">●</span>${esc(statusNames[view.status] || view.status)}</span></div><code>${esc(view.system_name)}</code></div><div class="tag-view-actions">${isActive ? `<button type="button" data-action="new-tag" data-id="${view.id}" aria-controls="tag-create-${view.id}" aria-expanded="false">＋ 添加标签</button>` : ""}<button class="quiet" type="button" data-action="view-status" data-id="${view.id}" data-status="${isActive ? "ARCHIVED" : "ACTIVE"}">${isActive ? "归档维度" : "恢复维度"}</button></div></header><div class="tag-pill-list">${tagsMarkup}${creator}</div></article>`;
+    return `<article data-view-card="${view.id}" class="tag-view-card${isActive ? "" : " archived"}" aria-labelledby="tag-view-${view.id}"><header class="tag-view-head"><div class="tag-view-meta"><div class="tag-view-title"><h3 id="tag-view-${view.id}">${esc(view.name)}</h3><span class="tag-view-status ${isActive ? "active" : "archived"}"><span aria-hidden="true">●</span>${esc(statusNames[view.status] || view.status)}</span></div><code>${esc(view.system_name)}</code></div><div class="tag-view-actions">${isActive ? `<button type="button" data-action="new-tag" data-id="${view.id}" aria-controls="tag-create-${view.id}" aria-expanded="false">＋ 添加标签</button>` : ""}<button class="quiet" type="button" data-action="view-status" data-id="${view.id}" data-status="${isActive ? "ARCHIVED" : "ACTIVE"}">${isActive ? "归档维度" : "恢复维度"}</button></div></header><div class="tag-pill-list">${tagsMarkup}${creator}</div></article>`;
   }).join("");
   return `<section class="tag-manager" aria-labelledby="tag-manager-title"><div class="tag-manager-head"><div><h2 id="tag-manager-title">标签维度</h2><p>${views.length ? `共 ${viewPage.total} 个维度，${activeCount} 个启用中${atViewLimit ? "；已达 100 个上限" : ""}` : "用维度组织同一类标签"}</p></div><button class="primary" data-action="new-view" ${atViewLimit ? 'disabled title="标签维度上限为 100"' : ""}>${atViewLimit ? "已达维度上限" : "＋ 新建维度"}</button></div><div class="tag-view-list">${cards || '<div class="panel empty-state">尚未创建标签维度</div>'}</div></section>`;
 }

@@ -1,4 +1,5 @@
-import { request } from "../api/client.js";
+import { request } from "../api/client.js?v=20260928.1";
+import { preserveView } from "../util/view_state.js?v=20260928.1";
 import { esc, money, date as when, typeNames, statusNames } from "../util/core.js";
 
 const names = { fact: "事实流水", ledger: "账本流水", review: "审查记录", file: "导入文件" };
@@ -309,34 +310,40 @@ export async function openInspection(kind, id, bindActions) {
   }
   async function navigate(nextKind, nextId, record = true, fresh = false) {
     const ticket = ++version;
+    const sameRecord = selected?.kind === nextKind && selected?.id === nextId;
     if (record && selected) stack.push({ ...selected, scroll: body.scrollTop });
     selected = { kind: nextKind, id: nextId };
-    dialog.querySelector("[data-kind-label]").textContent = names[nextKind];
-    dialog.querySelector("#inspection-title").textContent = "正在加载…";
-    dialog.querySelector("[data-inspect-subtitle]").textContent = "";
-    dialog.querySelector("[data-inspect-hero]").textContent = "";
-    dialog.querySelector("[data-inspect-actions]").innerHTML = "";
-    dialog.querySelector("[data-inspect-back]").disabled = !stack.length;
-    updateSelection();
-    body.innerHTML = '<p role="status">正在加载详情…</p>';
+    if (!sameRecord) {
+      dialog.querySelector("[data-kind-label]").textContent = names[nextKind];
+      dialog.querySelector("#inspection-title").textContent = "正在加载…";
+      dialog.querySelector("[data-inspect-subtitle]").textContent = "";
+      dialog.querySelector("[data-inspect-hero]").textContent = "";
+      dialog.querySelector("[data-inspect-actions]").innerHTML = "";
+      dialog.querySelector("[data-inspect-back]").disabled = !stack.length;
+      updateSelection();
+      body.innerHTML = '<p role="status">正在加载详情…</p>';
+    }
     try {
       const data = await get(nextKind, nextId, fresh);
       if (ticket !== version || !dialog.isConnected) return;
       const view = describe(nextKind, data);
-      dialog.querySelector("#inspection-title").textContent = view.title;
-      dialog.querySelector("[data-inspect-subtitle]").textContent = view.subtitle;
-      dialog.querySelector("[data-inspect-hero]").textContent = view.hero;
-      const actions = dialog.querySelector("[data-inspect-actions]");
-      actions.innerHTML = view.actions;
-      bindActions(actions);
-      body.innerHTML = view.body;
-      view.presentation.mount(body);
-      if (view.kind === "file") mountFileRows(body, data.rows, bindActions);
-      body.scrollTop = 0;
-      dialog.dataset.renderVersion = String(ticket);
-      dialog.querySelector(".inspection-heading").focus({ preventScroll: true });
+      const apply = () => {
+        dialog.querySelector("#inspection-title").textContent = view.title;
+        dialog.querySelector("[data-inspect-subtitle]").textContent = view.subtitle;
+        dialog.querySelector("[data-inspect-hero]").textContent = view.hero;
+        const actions = dialog.querySelector("[data-inspect-actions]");
+        actions.innerHTML = view.actions;
+        bindActions(actions);
+        body.innerHTML = view.body;
+        view.presentation.mount(body);
+        if (view.kind === "file") mountFileRows(body, data.rows, bindActions);
+        dialog.dataset.renderVersion = String(ticket);
+      };
+      if (sameRecord) preserveView(dialog, apply);
+      else { apply(); body.scrollTop = 0; dialog.querySelector(".inspection-heading").focus({ preventScroll: true }); }
     } catch (error) {
       if (ticket !== version || !dialog.isConnected) return;
+      if (sameRecord) { dialog.querySelector('[data-inspect-subtitle]').textContent = `刷新失败，保留上次内容：${error.message}`; return; }
       dialog.querySelector("#inspection-title").textContent = "详情暂时无法加载";
       body.innerHTML = `<p role="alert">${esc(error.message)}</p><button data-inspect-retry>重试</button>`;
     }

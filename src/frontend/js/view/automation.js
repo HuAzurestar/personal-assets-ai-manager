@@ -1,7 +1,8 @@
-import { request, jsonRequest } from "../api/client.js?v=20260927.1";
+import { request, jsonRequest } from "../api/client.js?v=20260928.1";
+import { preserveView, patchMarkup } from "../util/view_state.js?v=20260928.1";
 import { $, $$, esc, money } from "../util/core.js";
-import { startVisiblePoll } from "../util/visible_poll.js?v=20260927.1";
-import { openDisclosureEditor, openDisclosurePreview } from "./disclosure.js?v=20260927.4";
+import { startVisiblePoll } from "../util/visible_poll.js?v=20260928.1";
+import { openDisclosureEditor, openDisclosurePreview } from "./disclosure.js?v=20260928.1";
 import { batchResults, batchResultMarkup, batchFailureMarkup, selectionConflict, ruleStatistics, runtimeMarkup, diagnosticsMarkup, interactionScenarios, interactionMarkup } from "./automation_feedback.js?v=20260927.1";
 
 let setting = null;
@@ -50,11 +51,11 @@ export async function automationSettingsPage() {
     </section>
     <section class="automation-section" aria-labelledby="automation-model-title">
       <div class="automation-section-head"><h3 id="automation-model-title">模型连接</h3></div>
-      <div class="automation-grid">${modelCards || '<p>尚未配置模型，请先添加模型。</p>'}</div>
+      <div class="automation-grid" data-auto-models>${modelCards || '<p>尚未配置模型，请先添加模型。</p>'}</div>
     </section>
     <section class="automation-section"><h3>自动打标</h3><div data-auto-notice>${scheduleNotice()}</div><nav class="automation-links"><a href="#details/auto-rule">管理规则 →</a><a href="#workbench/tag-review">查看待审建议 →</a></nav></section>
     <section class="automation-section" aria-labelledby="automation-disclosure-title">
-      <div class="automation-section-head"><div><h3 id="automation-disclosure-title">金额发送方式</h3><p>${currencies.length ? `${esc(currencies.join("、"))} 已配置区间` : "尚未配置区间"}；每条规则可选择区间、精确金额或不发送。</p></div><div class="automation-actions"><button type="button" class="quiet" data-action="disclosure-preview">预览</button><button type="button" data-action="disclosure-edit">编辑区间</button></div></div>
+      <div class="automation-section-head"><div><h3 id="automation-disclosure-title">金额发送方式</h3><p data-auto-amount-summary>${currencies.length ? `${esc(currencies.join("、"))} 已配置区间` : "尚未配置区间"}；每条规则可选择区间、精确金额或不发送。</p></div><div class="automation-actions"><button type="button" class="quiet" data-action="disclosure-preview">预览</button><button type="button" data-action="disclosure-edit">编辑区间</button></div></div>
     </section>
     ${freshnessMarkup}<details class="automation-diagnostics"><summary>运行详情与诊断</summary><div data-auto-runtime>${runtimeMarkup(scheduleStatus)}</div><div data-auto-diagnostics>${diagnosticsMarkup(diagnostics)}</div></details>
   </div>`;
@@ -612,7 +613,7 @@ async function refreshDiagnostics(root, pageIndex = 1) {
   const options = diagnosticOptions(root);
   try {
     const events = await readScheduleDiagnostics(options, pageIndex);
-    if (target.isConnected) target.innerHTML = diagnosticsMarkup(events, options);
+    if (target.isConnected) preserveView(root, () => patchMarkup(target, diagnosticsMarkup(events, options)));
   } finally { root.dataset.commandPending = "false"; }
 }
 
@@ -620,8 +621,8 @@ async function loadAutomationSnapshot(page, signal) {
   const read = (url) => request(url, { signal, cache: "no-store" });
   const kind = page.dataset.autoPage;
   if (kind === "settings") {
-    const [schedule, diagnostics] = await Promise.all([read("/paam/system/v1/schedule/status"), diagnosticSnapshot(page, signal)]);
-    return { schedule, diagnostics };
+    const [schedule, diagnostics, currentSetting] = await Promise.all([read("/paam/system/v1/schedule/status"), diagnosticSnapshot(page, signal), read('/paam/system/v1/setting/automation')]);
+    return { schedule, diagnostics, currentSetting };
   }
   if (kind === "requests") return { requests: await read(`/paam/tag/v1/assignment_request/list?${page.dataset.requestQuery}`) };
   if (kind === "request") {
@@ -641,6 +642,11 @@ async function loadAutomationSnapshot(page, signal) {
 }
 
 function applyAutomationSnapshot(root, page, data) {
+  preserveView(root, () => applyAutomationData(root, page, data));
+}
+
+function applyAutomationData(root, page, data) {
+  const settingChanged = data.currentSetting && JSON.stringify(data.currentSetting) !== JSON.stringify(setting);
   const focused = root.contains(document.activeElement) ? document.activeElement : null;
   const focusMatch = focused?.hasAttribute("data-tag-request-select") ? (node) => node.value === focused.value
     : focused?.dataset.action ? (node) => node.dataset.action === focused.dataset.action && node.dataset.id === focused.dataset.id : null;
@@ -649,36 +655,41 @@ function applyAutomationSnapshot(root, page, data) {
   if (data.viewPage) views = data.viewPage.items;
   root.dataset.autoStale = "false";
   if (page.dataset.autoPage === "settings") {
-    $('[data-auto-runtime]', root).innerHTML = runtimeMarkup(data.schedule);
+    if (settingChanged) {
+      patchMarkup($('[data-auto-models]', root), setting.models.map(modelSummary).join('') || '<p>尚未配置模型，请先添加模型。</p>');
+      const currencies = Object.keys(setting.disclosure?.amount_bands || {});
+      $('[data-auto-amount-summary]', root).textContent = `${currencies.length ? `${currencies.join('、')} 已配置区间` : '尚未配置区间'}；每条规则可选择区间、精确金额或不发送。`;
+    }
+    patchMarkup($('[data-auto-runtime]', root), runtimeMarkup(data.schedule));
     // Preserve the user's expanded setup instructions across polling.
     const notice = $('[data-auto-notice]', root);
     const opened = notice.querySelector('details')?.open;
-    notice.innerHTML = scheduleNotice();
+    patchMarkup(notice, scheduleNotice());
     if (opened && notice.querySelector('details')) notice.querySelector('details').open = true;
   }
   if (data.rulePage) {
     rules = data.rulePage.items;
-    $('[data-auto-notice]', root).innerHTML = scheduleNotice();
-    $('[data-auto-rule-rows]', root).innerHTML = rules.map(ruleRow).join("") || '<tr><td colspan="5">尚无规则</td></tr>';
+    patchMarkup($('[data-auto-notice]', root), scheduleNotice());
+    patchMarkup($('[data-auto-rule-rows]', root), rules.map(ruleRow).join("") || '<tr><td colspan="5">尚无规则</td></tr>');
     const create = $('[data-action="rule-new"]', root);
     if (create) create.disabled = !views.some((item) => item.status === "ACTIVE") || !setting.models.some((item) => item.enabled && item.key_configured);
   }
-  if (data.summary) $('[data-auto-rule-detail]', root).innerHTML = ruleDetailMarkup(data.rule, data.schedule, data.recent, data.summary);
+  if (data.summary) patchMarkup($('[data-auto-rule-detail]', root), ruleDetailMarkup(data.rule, data.schedule, data.recent, data.summary));
   if (data.diagnostics && JSON.stringify(data.diagnostics.options) === JSON.stringify(diagnosticOptions(root))
     && data.diagnostics.pageIndex === Number($('[data-diagnostic-state]', root)?.dataset.page || 1)) {
-    $('[data-auto-diagnostics]', root).innerHTML = diagnosticsMarkup(data.diagnostics.events, data.diagnostics.options);
+    patchMarkup($('[data-auto-diagnostics]', root), diagnosticsMarkup(data.diagnostics.events, data.diagnostics.options));
   }
   if (data.requests) {
     const selected = new Set($$('[data-tag-request-select]:checked', root).map((item) => item.value));
     requestItems = data.requests.items;
-    $('[data-auto-request-rows]', root).innerHTML = requestRowsMarkup(requestItems);
-    $('[data-auto-request-pager]', root).innerHTML = requestPagerMarkup(data.requests);
+    patchMarkup($('[data-auto-request-rows]', root), requestRowsMarkup(requestItems));
+    patchMarkup($('[data-auto-request-pager]', root), requestPagerMarkup(data.requests));
     $$('[data-tag-request-select]:not(:disabled)', root).forEach((item) => { item.checked = selected.has(item.value); });
     updateRequestActions(root);
   }
   if (data.item) {
     requestItems = [data.item];
-    $('[data-auto-request-detail]', root).innerHTML = `${requestDetailMarkup(data.item, data.ledger, data.rule)}<div class="automation-actions">${requestActionsMarkup(data.item)}</div>`;
+    patchMarkup($('[data-auto-request-detail]', root), `${requestDetailMarkup(data.item, data.ledger, data.rule)}<div class="automation-actions">${requestActionsMarkup(data.item)}</div>`);
   }
   if (focusMatch && !focused.isConnected) $$('[data-tag-request-select], [data-action]', root).find(focusMatch)?.focus({ preventScroll: true });
 }
@@ -717,7 +728,7 @@ function startAutomationRefresh(root) {
 function showBatchFeedback(root, markup) {
   batchFeedback = markup;
   const slot = $('[data-batch-feedback]', root);
-  if (slot) { slot.innerHTML = markup; slot.scrollIntoView({ block: "nearest" }); }
+  if (slot) preserveView(root, () => patchMarkup(slot, markup));
 }
 
 async function transitionRequests(root, button, rerender) {

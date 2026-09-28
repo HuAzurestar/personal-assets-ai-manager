@@ -16,6 +16,14 @@ function setConnectionState(state) {
 }
 
 export async function request(url, options = {}, includeEnvelope = false) {
+  const mutating = !['GET', 'HEAD'].includes((options.method || 'GET').toUpperCase());
+  const announce = (phase) => document.dispatchEvent(new CustomEvent('paam:mutation', { detail: { phase } }));
+  if (mutating) announce('start');
+  try { return await readResponse(url, options, includeEnvelope); }
+  finally { if (mutating) announce('end'); }
+}
+
+async function readResponse(url, options, includeEnvelope) {
   const response = await fetch(url, options).catch((error) => {
     if (error.name === "AbortError") throw error;
     setConnectionState("disconnected");

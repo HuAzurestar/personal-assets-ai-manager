@@ -7,6 +7,7 @@ export function startVisiblePoll({ load, apply, onState, isAlive = () => true,
   let controller;
   let generation = 0;
   let lastSuccess = null;
+  let commands = 0;
   const valid = (ticket) => !stopped && ticket === generation && !documentRef.hidden && isAlive();
   const schedule = () => {
     timers.clearTimeout(timer);
@@ -15,7 +16,7 @@ export function startVisiblePoll({ load, apply, onState, isAlive = () => true,
   const report = (state) => onState?.({ state, lastSuccess });
   const tick = async () => {
     if (stopped || documentRef.hidden || !isAlive()) return;
-    if (busy || !canPoll()) { schedule(); return; }
+    if (busy || commands || !canPoll()) { schedule(); return; }
     busy = true;
     const ticket = ++generation;
     controller = new AbortController();
@@ -43,6 +44,13 @@ export function startVisiblePoll({ load, apply, onState, isAlive = () => true,
     else { report("REFRESHING"); void tick(); }
   };
   documentRef.addEventListener("visibilitychange", visibility);
+  const mutation = (event) => {
+    commands = Math.max(0, commands + (event.detail.phase === 'start' ? 1 : -1));
+    ++generation;
+    controller?.abort();
+    schedule();
+  };
+  documentRef.addEventListener('paam:mutation', mutation);
   report(documentRef.hidden ? "PAUSED" : "REFRESHING");
   schedule();
   return () => {
@@ -51,5 +59,6 @@ export function startVisiblePoll({ load, apply, onState, isAlive = () => true,
     controller?.abort();
     timers.clearTimeout(timer);
     documentRef.removeEventListener("visibilitychange", visibility);
+    documentRef.removeEventListener('paam:mutation', mutation);
   };
 }
