@@ -1767,17 +1767,21 @@
   .automation-dialog .form-grid, .automation-dialog [data-boundary-list] { grid-template-columns:1fr; }
 }
 :is(.target-shell, .automation-dialog) .automation-tip { display:inline-flex; position:relative; vertical-align:middle; }
-:is(.target-shell, .automation-dialog) .automation-tip-trigger {
-  display:inline-flex; align-items:center; justify-content:center; min-width:20px; width:20px; height:20px;
+:is(.target-shell, .automation-dialog) .automation-tip .automation-tip-trigger {
+  display:inline-flex; align-items:center; justify-content:center; flex:0 0 20px; min-width:20px; width:20px; min-height:20px; height:20px; max-height:20px; box-sizing:border-box; line-height:1;
   padding:0; margin:0 4px; border:1px solid var(--line, #cbd5e1); border-radius:50%;
   background:transparent; color:var(--muted, #64748b); font-size:12px; font-weight:500; cursor:help;
 }
 :is(.target-shell, .automation-dialog) .automation-tip-content {
   display:none; position:absolute; z-index:40; top:100%; left:0; width:260px; max-width:70vw; box-sizing:border-box;
   padding:10px 12px; border:1px solid var(--line, #cbd5e1); border-radius:8px;
-  background:var(--surface, #fff); color:var(--ink, #243044); box-shadow:0 4px 16px #0002;
+  background:var(--surface); color:var(--text); box-shadow:0 4px 16px #0002;
   font-size:12px; font-weight:400; line-height:1.6; white-space:normal; overflow-wrap:anywhere;
 }
+.automation-dialog .disclosure-add-currency { display:flex; align-items:end; gap:12px; }
+.automation-dialog .disclosure-add-currency label { display:grid; flex:1; gap:6px; }
+.automation-dialog [data-currency-row] { border:1px solid var(--line); border-radius:10px; padding:16px; }
+.inspection-workspace .automation-detail { display:grid; gap:16px; }
 :is(.target-shell, .automation-dialog) .automation-tip:hover > .automation-tip-content,
 :is(.target-shell, .automation-dialog) .automation-tip:focus-within > .automation-tip-content { display:block; }
 @supports (anchor-scope: --automation-tip) {

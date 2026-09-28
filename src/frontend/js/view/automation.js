@@ -1,10 +1,11 @@
 import { request, jsonRequest } from "../api/client.js?v=20260928.2";
 import { preserveView, patchMarkup } from "../util/view_state.js?v=20260928.2";
+import { openInspection, registerInspection } from "../component/inspection.js?v=20260928.4";
 import { $, $$, esc, money } from "../util/core.js";
 import { startVisiblePoll } from "../util/visible_poll.js?v=20260928.2";
-import { openDisclosureEditor, openDisclosurePreview } from "./disclosure.js?v=20260928.3";
+import { openDisclosureEditor, openDisclosurePreview } from "./disclosure.js?v=20260928.4";
 import { helpTip, batchResults, batchResultMarkup, batchFailureMarkup, selectionConflict, ruleStatistics, runtimeMarkup, diagnosticsMarkup } from "./automation_feedback.js?v=20260928.3";
-import { executionResultNames, ruleExecution, semanticRuleChange, ruleEditImpact, candidatePreviewMarkup, requestVersionCopy, scopeImpactMarkup } from "./automation_explain.js?v=20260928.3";
+import { executionResultNames, ruleExecution, semanticRuleChange, ruleEditImpact, candidatePreviewMarkup, requestVersionCopy, scopeImpactMarkup } from "./automation_explain.js?v=20260928.4";
 
 let setting = null;
 let rules = [];
@@ -62,7 +63,7 @@ export async function automationSettingsPage() {
     </section>
     <section class="automation-section"><h3>运行概况</h3><div data-auto-notice>${scheduleNotice()}</div>${freshnessMarkup}
       <nav class="automation-links"><a href="#details/auto-rule">管理规则 →</a><a href="#workbench/tag-review">查看待审建议 →</a></nav>
-      <details class="automation-help" data-preserve="runtime"><summary>查看任务队列与安全诊断</summary><div data-auto-runtime>${runtimeMarkup(scheduleStatus)}</div><div data-auto-diagnostics>${diagnosticsMarkup(diagnostics)}</div></details></section>
+      <section class="automation-runtime"><h3>任务队列</h3><div data-auto-runtime>${runtimeMarkup(scheduleStatus)}</div><div data-auto-diagnostics>${diagnosticsMarkup(diagnostics)}</div></section></section>
   </div>`;
 }
 
@@ -78,9 +79,9 @@ function ruleRow(rule) {
   const lastRun = scheduleTask?.last_result
     ? `上次执行：${executionResultNames[scheduleTask.last_result] || "结果未知"}` : "尚无执行结果";
   return `<tr data-rule-row="${rule.id}">
-    <td class="rule-identity"><strong><a href="#details/auto-rule?rule_id=${rule.id}">${esc(rule.name)}</a></strong><small class="rule-purpose">${esc(rule.method_config.prompt.trim().slice(0, 80))}${rule.method_config.prompt.trim().length > 80 ? "…" : ""}</small><small>#${rule.id} · 修订 ${rule.rule_revision} · 配置${rule.enabled ? "已启用" : "已停用"}</small></td>
+    <td class="rule-identity"><strong><a class="detail-primary" data-action="rule-detail" data-id="${rule.id}" href="#details/auto-rule?rule_id=${rule.id}">${esc(rule.name)}</a></strong><small class="rule-purpose">${esc(rule.method_config.prompt.trim().slice(0, 80))}${rule.method_config.prompt.trim().length > 80 ? "…" : ""}</small><small>#${rule.id} · 修订 ${rule.rule_revision} · 配置${rule.enabled ? "已启用" : "已停用"}</small></td>
     <td><strong>${esc(view?.name || `维度 #${rule.view_id}`)}</strong><small>${esc(model?.name || `模型 #${rule.method_config.model_id}`)}</small></td>
-    <td class="rule-schedule"><span class="automation-status ${execution.tone}"><i></i>${esc(execution.label)}</span>${helpTip("执行状态说明", execution.reason)}<small>${esc(lastRun)}${scheduleTask?.last_error_code ? " · 详见规则详情" : ""}</small></td>
+    <td class="rule-schedule"><span class="automation-status ${execution.tone}"><i></i>${esc(execution.label)}</span>${execution.reason ? helpTip("执行状态说明", execution.reason) : ""}<small>${esc(lastRun)}${scheduleTask?.last_error_code ? " · 详见规则详情" : ""}</small></td>
     <td><div class="rule-counts">${counts}</div></td>
     <td class="rule-operation"><div class="automation-actions"><button type="button" class="quiet" data-action="rule-detail" data-id="${rule.id}" title="查看当前配置、执行记录及产生的建议">规则详情</button><button type="button" class="quiet" data-action="rule-preview" data-id="${rule.id}" title="只读检查后续最多 100 条账目，不调用模型">查看待分析账目</button><button type="button" data-action="rule-edit" data-id="${rule.id}" title="修改配置；判断内容变更会取消旧的待确认建议">编辑规则</button></div></td>
   </tr>`;
@@ -94,19 +95,19 @@ function scheduleNotice() {
   const nextRuns = tasks.map((item) => item.next_run_at).filter(Boolean).sort();
   const failed = tasks.filter((item) => ["FAILED", "PARTIAL_FAILURE"].includes(item.last_result)).length;
   const title = !scheduleStatus ? "暂时无法读取调度状态"
-    : disabled ? "服务未启用自动标签扫描"
+    : disabled ? "自动分析已关闭"
     : blockedByData ? "当前库不允许自动标签扫描"
     : !tasks.length ? "没有已注册的自动标签任务"
     : running ? `自动扫描已就绪 · ${tasks.length} 条规则` : "自动扫描已停止";
   const explanation = !scheduleStatus ? "请检查服务连接。"
-    : disabled ? "请由部署者开启自动分析：PAAM_AUTOTAG_REAL_ANALYSIS=1、PAAM_AUTOTAG_SYNTHETIC_ACCEPTANCE=0，重启服务后生效。模型调用可能计费。"
+    : disabled ? ""
     : blockedByData ? "验收模式仅支持纯虚构数据，请使用独立验收库。"
     : !tasks.length ? "请检查模型和规则是否已启用。"
     : !running ? "请查看运行概况中的调度器与执行器状态。"
     : nextRuns.length ? `下次触发：${new Date(nextRuns[0]).toLocaleString("zh-CN", { timeZone: "Asia/Hong_Kong" })}` : "当前没有待触发时间。";
   const activity = running && tasks.length && !disabled && !blockedByData
     ? `${tasks.filter((task) => task.queue_state === "RUNNING").length} 条分析中 · ${tasks.filter((task) => task.queue_state === "QUEUED").length} 条排队` : "";
-  return `<div class="automation-notice compact" role="status"><strong>${esc(title)} ${helpTip("扫描状态说明", explanation)}</strong>${activity ? `<span>${activity}</span>` : ""}${failed && !blockedByData ? `<span>${failed} 条规则上次执行失败，请查看规则详情。</span>` : ""}</div>`;
+  return `<div class="automation-notice compact" role="status"><strong>${esc(title)} ${explanation ? helpTip("扫描状态说明", explanation) : ""}</strong>${activity ? `<span>${activity}</span>` : ""}${failed && !blockedByData ? `<span>${failed} 条规则上次执行失败，请查看规则详情。</span>` : ""}</div>`;
 }
 
 export async function autoRulesPanel(tagViews) {
@@ -127,9 +128,9 @@ export async function autoRulesPanel(tagViews) {
   </section>`;
 }
 
-export async function autoRulesPage(params = new URLSearchParams()) {
+export async function autoRulesPage(params = new URLSearchParams(), { inspection = false } = {}) {
   const ruleId = Number(params.get("rule_id"));
-  if (Number.isSafeInteger(ruleId) && ruleId > 0) {
+  if (inspection && Number.isSafeInteger(ruleId) && ruleId > 0) {
     const query = new URLSearchParams({
       page_index: "1", page_size: "5",
       filter: JSON.stringify({ key: "rule_id", op: "=", val: ruleId }),
@@ -147,10 +148,28 @@ export async function autoRulesPage(params = new URLSearchParams()) {
     setting = currentSetting;
     const diagnosticOptions = { taskKey: `tag-scan:${ruleId}` };
     const diagnostics = await readScheduleDiagnostics(diagnosticOptions).catch(() => null);
-    return `<div class="auto-rules-page automation-detail-page" data-auto-page="rule" data-rule-id="${ruleId}" data-recent-query="${esc(query.toString())}"><button type="button" class="quiet" data-action="rule-detail-back">← 返回规则列表</button><h2>规则 #${ruleId} · ${esc(rule.name)}</h2>${freshnessMarkup}<div data-auto-rule-detail>${ruleDetailMarkup(rule, schedule, recent, summary)}</div><div data-auto-diagnostics>${diagnosticsMarkup(diagnostics, diagnosticOptions)}</div></div>`;
+    return { title: rule.name, body: `<div class="auto-rules-page automation-detail-page" data-auto-page="rule" data-rule-id="${ruleId}" data-recent-query="${esc(query.toString())}">${freshnessMarkup}<div data-auto-rule-detail>${ruleDetailMarkup(rule, schedule, recent, summary)}</div><div data-auto-diagnostics>${diagnosticsMarkup(diagnostics, diagnosticOptions)}</div></div>` };
   }
   const viewPage = await request("/paam/tag/v1/view/list?page_index=1&page_size=100");
-  return `<div class="auto-rules-page" data-auto-page="rules">${await autoRulesPanel(viewPage.items)}</div>`;
+  return `<div class="auto-rules-page" data-auto-page="rules" ${Number.isSafeInteger(ruleId) && ruleId > 0 ? `data-open-rule="${ruleId}"` : ""}>${await autoRulesPanel(viewPage.items)}</div>`;
+}
+
+registerInspection("rule", {
+  name: "自动规则", action: "rule-detail",
+  load: (id) => autoRulesPage(new URLSearchParams({ rule_id: String(id) }), { inspection: true }),
+  describe: (data) => ({ ...data, kind: "rule", subtitle: "", hero: "", actions: "",
+    presentation: { mount: (body) => bindAutomation(body, inspectionCallbacks.rerender, inspectionCallbacks.notify, inspectionCallbacks.navigate) } }),
+});
+let inspectionCallbacks = {};
+
+async function openRuleInspection(id, root, rerender, notify, navigate) {
+  inspectionCallbacks = { rerender, notify, navigate };
+  await openInspection("rule", id, () => {});
+  const dialog = document.querySelector('.inspection-workspace[open]');
+  if (!dialog || dialog.dataset.automationBound) return;
+  dialog.classList.add('automation-dialog');
+  dialog.dataset.automationBound = "true";
+  dialog.addEventListener('close', () => { if (root.isConnected) startAutomationRefresh(root); }, { once: true });
 }
 
 const requestStatusNames = {
@@ -578,10 +597,10 @@ function ruleDetailMarkup(rule, schedule, recent, summary = null) {
   const model = setting?.models.find((item) => item.id === rule.method_config.model_id);
   const task = schedule?.tasks?.find((item) => item.task_key === `tag-scan:${rule.id}`);
   const execution = ruleExecution(rule, schedule, model, view);
-  const scheduling = `${execution.label}；${execution.reason}`;
+  const scheduling = execution.reason ? `${execution.label}；${execution.reason}` : execution.label;
   const latest = !task ? "无调度执行记录" : !task.last_result ? "尚无执行结果" : `${executionResultNames[task.last_result] || "结果未知"}；${task.last_error_code ? scheduleExplanation(task.last_error_code) : "无错误码"}`;
   return `<div class="automation-detail stack">
-    <section><h3>规则配置</h3>${detailFields([
+    <section class="inspection-card"><h3>规则配置</h3>${detailFields([
       ["规则", `${rule.name} · #${rule.id} · 修订 ${rule.rule_revision}`],
       ["配置开关", rule.enabled ? "已启用" : "已停用"],
       ["标签维度", `${view?.name || `View #${rule.view_id}`} (#${rule.view_id})`],
@@ -589,13 +608,13 @@ function ruleDetailMarkup(rule, schedule, recent, summary = null) {
       ["CRON", rule.cron || "未设置"], ["金额披露", amountModeNames[rule.amount_mode]],
       ["业务判断说明", rule.method_config.prompt], ["最后修改", displayTime(rule.updated_time)],
     ])}</section>
-    <section><h3>调度与最近执行</h3>${detailFields([
+    <section class="inspection-card"><h3>调度与最近执行</h3>${detailFields([
       ["调度状态", scheduling], ["最近结果", latest],
       ["扫描游标", `Ledger #${rule.scan_after_ledger_id} · Epoch ${rule.scan_epoch}`],
-    ])}${task ? `<details class="automation-help" data-preserve="rule-runtime"><summary>执行进度与记录</summary>${runtimeMarkup({ ...schedule, tasks: [task] })}</details>` : ""}</section>
+    ])}${task ? runtimeMarkup({ ...schedule, tasks: [task] }) : ""}</section>
     <section><h3>最近建议 / 审查结果</h3>${recent.items.length ? `<div class="automation-detail-list">${recent.items.map((item) => `<div><button type="button" class="quiet" data-action="tag-request-detail" data-id="${item.id}">Request #${item.id} · ${esc(item.ledger_counterparty_name || item.ledger_summary || `Ledger #${item.ledger_id}`)}</button><span>${esc(item.proposed_tag_name)} · ${esc(requestStatusNames[item.status])} · ${esc(displayTime(item.created_time))}</span></div>`).join("")}</div>` : "<p>尚无建议请求；失败的调度也可能未生成请求。</p>"}</section>
     <button type="button" class="quiet" data-action="rule-requests" data-id="${rule.id}">查看这条规则的全部建议</button>
-    <section><h3>采纳统计</h3>${ruleStatistics(summary)}</section>
+    <section class="inspection-card"><h3>采纳统计</h3>${ruleStatistics(summary)}</section>
     <section><button type="button" class="quiet" data-action="disclosure-preview" data-mode="${rule.amount_mode}">查看发送示例</button></section>
   </div>`;
 }
@@ -759,7 +778,7 @@ function startAutomationRefresh(root) {
   const route = location.hash;
   stopPolling = startVisiblePoll({
     isAlive: () => page.isConnected && location.hash === route,
-    canPoll: () => !document.querySelector("dialog[open]") && root.dataset.commandPending !== "true"
+    canPoll: () => ![...document.querySelectorAll("dialog[open]")].some(dialog => !dialog.contains(root)) && root.dataset.commandPending !== "true"
       && !(root.contains(document.activeElement) && document.activeElement.matches("input:not([type='checkbox']), select, textarea")),
     load: (signal) => loadAutomationSnapshot(page, signal),
     apply: (data) => applyAutomationSnapshot(root, page, data),
@@ -819,6 +838,12 @@ async function transitionRequests(root, button, rerender) {
 
 export function bindAutomation(root, rerender, notify, navigate) {
   startAutomationRefresh(root);
+  const deepLink = $('[data-open-rule]', root);
+  if (deepLink) {
+    const id = Number(deepLink.dataset.openRule);
+    delete deepLink.dataset.openRule;
+    openRuleInspection(id, root, rerender, notify, navigate).catch(error => notify(error.message, true));
+  }
   if (boundRoots.has(root)) return;
   boundRoots.add(root);
   root.addEventListener("submit", async (event) => {
@@ -860,7 +885,7 @@ export function bindAutomation(root, rerender, notify, navigate) {
       if (action === "rule-new") ruleDialog();
       if (action === "rule-edit") ruleDialog(rules.find((item) => item.id === id));
       if (action === "rule-preview") await previewRule(button);
-      if (action === "rule-detail") navigate?.("auto-rules", new URLSearchParams({ rule_id: String(id) }));
+      if (action === "rule-detail") { event.preventDefault(); await openRuleInspection(id, root, rerender, notify, navigate); }
       if (action === "rule-detail-back") navigate?.("auto-rules");
       if (action === "rule-requests") { batchFeedback = ""; navigate?.("tag-review", new URLSearchParams({ rule_id: String(id), status: "" })); }
       if (action === "tag-request-detail") { event.preventDefault(); batchFeedback = ""; params.set("request_id", String(id)); navigate?.("tag-review", params); }

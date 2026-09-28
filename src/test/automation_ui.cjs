@@ -55,6 +55,7 @@ const context = {
   esc: (value) => String(value ?? ""),
   money: ({ amount, currency_code }) => `${currency_code} ${amount}`,
   URLSearchParams,
+  registerInspection: () => {},
 };
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(path.resolve(__dirname, "../frontend/js/view/automation_explain.js"), "utf8")
@@ -66,11 +67,9 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
 (async () => {
   const views = [{ id: 1, name: "分类", status: "ACTIVE" }];
   const idle = await context.testPanel(views);
-  assert.match(idle, /服务未启用自动标签扫描/);
-  assert.match(idle, /aria-label="扫描状态说明"/);
-  assert.match(idle, /服务未开启扫描/);
+  assert.match(idle, /自动分析已关闭/);
+  assert.doesNotMatch(idle, /部署者|PAAM_AUTOTAG/);
   assert.match(idle, /配置已启用/);
-  assert.match(idle, /PAAM_AUTOTAG_REAL_ANALYSIS=1/);
   assert.doesNotMatch(idle, /data-preserve="schedule-help"/);
   assert.doesNotMatch(idle, /验收库混入/);
   assert.doesNotMatch(idle, /CRON 调度运行中/);
@@ -128,8 +127,8 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
     tag_scan_guard: "SYNTHETIC_READY", tasks: [] };
 
   const rulePage = await context.testRulePage(new URLSearchParams({ rule_id: "1" }));
-  assert.match(rulePage, /返回规则列表/);
-  assert.match(rulePage, /业务判断说明/);
+  assert.match(rulePage, /data-open-rule="1"/);
+  assert.match(rulePage, /data-auto-rule-rows/);
   const reviewPage = await context.testReviewPage(new URLSearchParams({ request_id: "8" }));
   assert.match(reviewPage, /返回建议列表/);
   assert.match(reviewPage, /虚构咖啡店/);
@@ -171,7 +170,8 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
 
   const settings = await context.testSettings();
   assert.match(settings, /data-auto-notice/);
-  assert.match(settings, /data-preserve="runtime"/);
+  assert.match(settings, /data-auto-diagnostics/);
+  assert.doesNotMatch(settings, /<details/);
   assert.match(settings, /测试真实连接/);
   assert.match(settings, /可能计费/);
   assert.equal((settings.match(/class="automation-section"/g) || []).length, 3);

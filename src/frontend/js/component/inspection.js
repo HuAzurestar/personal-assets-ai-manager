@@ -11,6 +11,13 @@ const rowStates = { 0: "状态未知", 1: "已关联事实", 2: "已跳过", 3: 
 const formats = { 1: "CSV", 2: "XLS", 3: "XLSX", 4: "PDF" };
 const endpoints = { fact: "/paam/ledger/v1/transaction_fact/", ledger: "/paam/ledger/v1/flow/", review: "/paam/ledger/v1/review/", file: "/paam/import/v1/import_file/" };
 const actionKinds = { "fact-detail": "fact", "economic-detail": "ledger", "economic-review-detail": "review", "import-file-detail": "file" };
+const adapters = new Map();
+
+export function registerInspection(kind, adapter) {
+  adapters.set(kind, adapter);
+  names[kind] = adapter.name;
+  actionKinds[adapter.action] = kind;
+}
 
 export function readableAccount(value) {
   if (!value || value === "UNKNOWN" || /^[a-f\d]{32,}$/i.test(value)) return "账户名称未识别";
@@ -159,6 +166,7 @@ async function mountFileRows(root, initial, bindActions) {
 }
 
 function describe(kind, data) {
+  if (adapters.has(kind)) return adapters.get(kind).describe(data);
   const p = new Presentation();
   let item, title, subtitle, hero = "", body = "", actions = "";
   if (kind === "fact") {
@@ -210,6 +218,7 @@ function describe(kind, data) {
 }
 
 async function load(kind, id) {
+  if (adapters.has(kind)) return adapters.get(kind).load(id);
   if (kind !== "file") return request(`${endpoints[kind]}${id}`);
   const [detail, rows] = await Promise.all([
     request(`${endpoints.file}${id}`),

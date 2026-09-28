@@ -34,13 +34,13 @@ def run():
                 time.sleep(.1)
             with sync_playwright() as p:
                 browser = p.chromium.launch(channel='msedge' if os.name == 'nt' else None, headless=True)
-                page = browser.new_page(viewport={'width':390, 'height':844})
+                page = browser.new_page(viewport={'width':1440, 'height':900})
                 errors = []
                 page.on('pageerror', lambda error: errors.append(str(error)))
                 page.goto(base + '/#details/auto-rule')
                 row = page.locator('[data-rule-row]').first
                 expect(row).to_be_visible()
-                help_trigger = page.get_by_role('button', name='扫描状态说明', exact=True)
+                help_trigger = page.get_by_role('button', name='历史累计说明', exact=True)
                 help_panel = help_trigger.locator('..').get_by_role('tooltip')
                 expect(help_panel).to_be_hidden()
                 help_trigger.hover()

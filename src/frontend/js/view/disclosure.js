@@ -47,7 +47,7 @@ export function openDisclosureEditor(setting, openDialog, saved) {
   const dialog = openDialog("编辑金额披露", `<form class="stack automation-form" data-disclosure-form>
     <div class="form-error-slot" role="alert" aria-live="assertive"></div>
     <p>按元或对应货币主单位填写各档起点。第一档从 0 开始，最后一档无上限。</p>
-    <div data-band-editor></div><button type="button" data-add-currency>添加币种</button>
+    <div data-band-editor></div><div class="disclosure-add-currency"><label>新增币种<select data-new-currency></select></label><button type="button" data-add-currency>添加币种</button></div>
     <label class="check-row"><input type="checkbox" name="advanced">高级 JSON 编辑</label>
     <label data-band-json hidden>金额边界（最小货币单位）<textarea name="boundaries" rows="6" spellcheck="false">${esc(JSON.stringify(boundaries, null, 2))}</textarea></label>
     <p data-band-preview aria-live="polite"></p>
@@ -64,7 +64,16 @@ export function openDisclosureEditor(setting, openDialog, saved) {
   const codes = [...new Set([...Object.keys(names), ...Object.keys(boundaries)])];
   function render(bands) {
     const options = [...new Set([...codes, ...Object.keys(bands)])];
-    editor.innerHTML = Object.entries(bands).map(([code, values]) => `<fieldset data-currency-row><legend>${esc(code)} 区间</legend><label>币种<select data-band-currency>${options.map(c => `<option value="${c}" ${c === code ? "selected" : ""}>${esc(names[c] || `${names[c.split('_')[0]]} · ${currencyScale(c)} 位小数`)}</option>`).join("")}</select></label><div data-boundary-list>${values.map(value => boundaryInput(boundaryDecimal(value,code))).join("")}</div><button type="button" data-add-boundary>增加起点</button><button type="button" data-remove-currency>移除币种</button></fieldset>`).join("");
+    editor.innerHTML = Object.entries(bands).map(([code, values]) => `<fieldset data-currency-row><legend>${esc(code)} 区间 · ${esc(names[code] || names[code.split('_')[0]])}</legend><input type="hidden" data-band-currency value="${esc(code)}"><div data-boundary-list>${values.map(value => boundaryInput(boundaryDecimal(value,code))).join("")}</div><button type="button" data-add-boundary>增加起点</button><button type="button" data-remove-currency>移除币种</button></fieldset>`).join("");
+    syncCurrencies(options);
+  }
+  function syncCurrencies(options = codes) {
+    const used = [...editor.querySelectorAll('[data-band-currency]')].map(input => input.value);
+    const select = $('[data-new-currency]', form);
+    const selected = select.value;
+    select.innerHTML = options.filter(code => !used.includes(code)).map(code => `<option value="${esc(code)}">${esc(code)} · ${esc(names[code] || names[code.split('_')[0]])}</option>`).join('');
+    if ([...select.options].some(option => option.value === selected)) select.value = selected;
+    $('[data-add-currency]', form).disabled = !select.options.length;
   }
   function boundaryInput(value) {
     return `<div class="boundary-input"><label>区间起点<input data-boundary inputmode="decimal" maxlength="32" value="${esc(value)}"></label><button type="button" data-remove-boundary aria-label="移除此起点">移除</button></div>`;
@@ -100,7 +109,7 @@ export function openDisclosureEditor(setting, openDialog, saved) {
         advanced.checked = false;
       }
       editor.hidden = advanced.checked;
-      $('[data-add-currency]', form).hidden = advanced.checked;
+      $('.disclosure-add-currency', form).hidden = advanced.checked;
       $('[data-band-json]', form).hidden = !advanced.checked;
       $('.form-error-slot', form).textContent = '';
       preview();
@@ -109,11 +118,10 @@ export function openDisclosureEditor(setting, openDialog, saved) {
   form.addEventListener('click', event => {
     const row = event.target.closest('[data-currency-row]');
     if (event.target.matches('[data-remove-boundary]')) event.target.closest('.boundary-input').remove();
-    if (event.target.matches('[data-remove-currency]')) row.remove();
+    if (event.target.matches('[data-remove-currency]')) { row.remove(); syncCurrencies(); }
     if (event.target.matches('[data-add-boundary]')) $('[data-boundary-list]', row).insertAdjacentHTML('beforeend', boundaryInput(''));
     if (event.target.matches('[data-add-currency]')) {
-      const used = [...editor.querySelectorAll('[data-band-currency]')].map(x => x.value);
-      const code = codes.find(c => !used.includes(c));
+      const code = $('[data-new-currency]', form).value;
       if (!code) return;
       // Read current input property values before rebuilding the rows.
       const bands = (() => { try { return readBands(); } catch (error) { $('.form-error-slot', form).textContent = error.message; return null; } })();

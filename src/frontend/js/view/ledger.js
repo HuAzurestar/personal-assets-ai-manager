@@ -2,7 +2,7 @@ import { checkConnection, request, jsonRequest } from "../api/client.js?v=202609
 import { preserveView } from "../util/view_state.js?v=20260928.2";
 import { toast } from "../component/toast.js";
 import { table } from "../component/table.js";
-import { openInspection } from "../component/inspection.js?v=20260928.2";
+import { openInspection } from "../component/inspection.js?v=20260928.4";
 import {
   detailList, detailPager,
 } from "../component/detail.js?v=20260917.10";
@@ -24,7 +24,7 @@ import {
 } from "./account.js?v=20260917.10";
 import {
   automationSettingsPage, autoRulesPage, bindAutomation, tagReviewPage, stopAutomationPolling,
-} from "./automation.js?v=20260928.3";
+} from "./automation.js?v=20260928.4";
 
 const entryTypeValues = { TRANSACTION: 0, ACCOUNT_TRANSFER: 1, CLAIM: 2 };
 const entryTypeCodes = { 0: "TRANSACTION", 1: "ACCOUNT_TRANSFER", 2: "CLAIM" };

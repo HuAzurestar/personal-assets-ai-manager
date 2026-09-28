@@ -50,7 +50,7 @@ def run():
             return response.json()["body"]
 
         visit("details/auto-rule", "[data-auto-rule-rows]")
-        expect(page.locator("[data-rule-row='1']")).to_contain_text("服务未开启扫描")
+        expect(page.locator("[data-rule-row='1']")).to_contain_text("自动分析已关闭")
         expect(page.locator("[data-rule-row='3'] .automation-status")).to_have_text("已停用")
         capture("rules")
         before = body("/paam/tag/v1/auto_rule/1")

@@ -9,7 +9,7 @@ export function ruleExecution(rule, schedule, model, view) {
   if (!schedule) return state("状态未知", "暂时无法读取调度状态，请检查连接");
   if (view && view.status !== "ACTIVE") return state("维度已停用", "请先恢复目标标签维度");
   if (!model?.enabled || !model?.key_configured) return state("模型不可用", !model?.enabled ? "请启用所选模型" : "请在设置中配置模型密钥");
-  if (schedule.tag_scan_guard === "DISABLED") return state("服务未开启扫描", "请由部署者开启自动分析");
+  if (schedule.tag_scan_guard === "DISABLED") return state("自动分析已关闭", "");
   if (schedule.tag_scan_guard === "NON_SYNTHETIC_FACT") return state("安全阻断", "验收库含非虚构记录，扫描已暂停");
   const task = schedule.tasks?.find((item) => item.task_key === `tag-scan:${rule.id}`);
   if (!task) return state("尚未调度", "未注册扫描任务，请查看规则详情");
