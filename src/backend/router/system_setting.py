@@ -14,11 +14,15 @@ from backend.schema.setting import (
     AutomationSettingResponse,
     AutomationSettingUpdateRequest,
     ModelConnectionTestResponse,
+    ModelConnectionCheckRequest,
+    ModelConnectionCheckResponse,
     ModelSecretStateResponse,
     ModelSecretUpdateRequest,
 )
 from backend.service.disclosure_preview_service import DisclosurePreviewService
 from backend.service.setting_service import SettingService
+from backend.service.model_connection_service import ModelConnectionService
+from backend.service.configured_llm_analyzer import provider_secret_reader
 
 
 router = APIRouter(
@@ -121,4 +125,24 @@ def test_model_connection(
         status=200,
         message="ok",
         body=_service(db, secret_store).test_model_connection(model_id),
+    )
+
+
+def get_connection_secret_reader():
+    return provider_secret_reader
+
+
+@router.post("/model/{model_id}/connection_check", response_model=ModelConnectionCheckResponse)
+def check_model_connection(
+    model_id: int,
+    payload: ModelConnectionCheckRequest,
+    db: Session = Depends(get_db),
+    secret_store: ProtectedSecretStore = Depends(get_protected_secret_store),
+    secret_reader=Depends(get_connection_secret_reader),
+):
+    return ModelConnectionCheckResponse(
+        status=200, message="ok",
+        body=ModelConnectionService(db, secret_store, secret_reader).check(
+            model_id, payload.expected_updated_time,
+        ),
     )

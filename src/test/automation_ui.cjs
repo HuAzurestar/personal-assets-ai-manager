@@ -71,7 +71,7 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
   assert.match(idle, /服务未开启扫描/);
   assert.match(idle, /配置已启用/);
   assert.match(idle, /PAAM_AUTOTAG_REAL_ANALYSIS=1/);
-  assert.match(idle, /无需重新导入数据/);
+  assert.match(idle, /无需重新导入/);
   assert.doesNotMatch(idle, /验收库混入/);
   assert.doesNotMatch(idle, /CRON 调度运行中/);
 
@@ -80,10 +80,11 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
     tasks: [{ task_key: "tag-scan:1", queue_state: "IDLE", next_run_at: "2026-09-23T14:00:00+08:00", last_result: "COMPLETED" }],
   };
   const active = await context.testPanel(views);
-  assert.match(active, /CRON 调度运行中 · 1 条规则已注册/);
+  assert.match(active, /自动扫描已就绪 · 1 条规则/);
   assert.match(active, /上次执行：完成/);
   assert.doesNotMatch(active, /已保存·未调度/);
   assert.match(active, /规则详情/);
+  assert.match(active, /href="#details\/auto-rule\?rule_id=1"/);
   assert.match(active, /查看待分析账目/);
   assert.match(active, /编辑规则/);
   assert.match(active, /累计通过/);
@@ -94,10 +95,9 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
 
   schedule.tag_scan_guard = "REAL_READY";
   const real = await context.testPanel(views);
-  assert.match(real, /真实流水自动分析已启用/);
-  assert.match(real, /新增 Ledger 将在后续 CRON 中检查/);
-  assert.match(real, /批准或拒绝由人处理/);
-  assert.match(real, /CRON 调度运行中 · 1 条规则已注册/);
+  assert.match(real, /自动扫描已就绪 · 1 条规则/);
+  assert.match(real, /下一次触发/);
+  assert.match(real, /等待定时触发/);
   assert.doesNotMatch(real, /纯虚构验收库/);
 
   const detail = context.testRuleDetail(rule, schedule, { items: [{
@@ -143,7 +143,8 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
   assert.equal(allParams.get("page"), "1");
   const allPage = await context.testReviewPage(allParams);
   assert.match(allPage, /全部状态/);
-  assert.match(allPage, /data-request-page=/);
+  assert.doesNotMatch(allPage, /data-request-page=/);
+  assert.match(context.requestPagerMarkup({total:21,page_size:20,page_index:1}), /data-request-page="2"/);
   assert.doesNotMatch(allPage, /<button[^>]*data-page=/); // Reserved for global navigation.
   assert.doesNotMatch(requestedUrls.at(-1), /filter=/);
   const pendingParams = context.testFilterParams([["status", "1"]]);
@@ -172,7 +173,10 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
   const settings = await context.testSettings();
   assert.match(settings, /真实流水自动分析须由服务显式启用/);
   assert.match(settings, /data-preserve="runtime"/);
-  assert.match(settings, /data-preserve="model-2"/);
+  assert.match(settings, /测试真实连接/);
+  assert.match(settings, /连接测试需再次确认/);
+  assert.equal((settings.match(/class="automation-section"/g) || []).length, 3);
+  assert.equal((settings.match(/data-auto-notice/g) || []).length, 1);
   assert.doesNotMatch(settings, /interaction-demo|M2 交互演示|automation-hero/);
 
   // Current execution is distinct from the configuration switch and last outcome.

@@ -390,6 +390,7 @@
 .target-shell .tag-manager-head { display:flex; align-items:center; justify-content:space-between; gap:18px; margin-bottom:18px; }
 .target-shell .tag-manager-head h2 { margin-bottom:5px; }
 .target-shell .tag-manager-head p { margin:0; color:var(--muted); font-size:13px; }
+.target-shell [hidden], .automation-dialog [hidden] { display:none !important; }
 .target-shell .automation-page,
 .target-shell .automation-rules { display:grid; gap:22px; }
 .target-shell .automation-rules { margin-top:34px; padding-top:30px; border-top:1px solid var(--line); }
@@ -429,6 +430,40 @@
 .target-shell .automation-help summary { cursor:pointer; color:var(--text); padding:8px 0; }
 .target-shell .automation-help[open] > summary { margin-bottom:8px; }
 .target-shell .automation-help .automation-definition { margin:12px 0; }
+.target-shell .automation-page { gap:16px; }
+.target-shell .automation-page h3 { margin:0; }
+.target-shell .automation-page .automation-hero { padding:0; border:0; background:none; align-items:center; }
+.target-shell .automation-page .automation-hero h2 { font-size:24px; margin:0; }
+.target-shell .automation-page .automation-grid { display:grid; grid-template-columns:1fr; gap:8px; }
+.target-shell .automation-page .automation-card { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px 16px; padding:12px 0; border:0; border-bottom:1px solid var(--line); border-radius:0; box-shadow:none; background:none; }
+.target-shell .automation-page .automation-card > header { margin:0; align-items:center; }
+.target-shell .automation-page .automation-actions { margin:0; align-items:center; }
+.target-shell .automation-page .automation-result { grid-column:1/-1; }
+.target-shell .automation-page .automation-notice { padding:8px 12px; }
+.target-shell .automation-page .automation-freshness { margin:0; padding:0; border:0; }
+.target-shell .automation-links { display:flex; flex-wrap:wrap; gap:20px; }
+.target-shell .automation-diagnostics > summary, .target-shell .scan-help > summary { cursor:pointer; color:var(--muted); padding:8px 0; }
+.automation-dialog .model-advanced > summary { cursor:pointer; padding:8px 0; }
+.automation-dialog .model-advanced label { display:grid; gap:6px; margin-top:10px; }
+.automation-dialog textarea { width:100%; box-sizing:border-box; border:1px solid var(--line); border-radius:8px; padding:10px; color:var(--text); background:var(--surface); font:inherit; }
+@media (max-width: 800px) {
+  .target-shell .automation-page .automation-card { grid-template-columns:1fr; }
+  .target-shell .automation-page .automation-actions { justify-content:flex-start; }
+  .target-shell .automation-section-head { align-items:flex-start; flex-direction:column; }
+  .target-shell .automation-table-wrap:has(.rule-table), .target-shell .automation-table-wrap:has([data-auto-request-rows]) { overflow:visible; border:0; background:none; }
+  .target-shell .rule-table, .target-shell .automation-table:has([data-auto-request-rows]) { display:block; width:100%; min-width:0; }
+  .target-shell .rule-table thead, .target-shell .automation-table:has([data-auto-request-rows]) thead { display:none; }
+  .target-shell .rule-table tbody, .target-shell [data-auto-request-rows] { display:grid; gap:12px; }
+  .target-shell .rule-table tr, .target-shell [data-auto-request-rows] tr { display:grid; min-width:0; padding:12px; border:1px solid var(--line); border-radius:8px; }
+  .target-shell .rule-table td, .target-shell [data-auto-request-rows] td { display:block; padding:5px 0; border:0; min-width:0; overflow-wrap:anywhere; }
+  .target-shell .automation-table td > small { max-width:none; }
+  .target-shell .automation-table .automation-actions { flex-wrap:wrap; }
+  .target-shell .rule-table .rule-counts { min-width:0; }
+  .target-shell .rule-operation { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; }
+  .automation-dialog { width:calc(100vw - 24px); max-width:calc(100vw - 24px); padding:16px; box-sizing:border-box; }
+  .automation-dialog .automation-form { min-width:0; }
+  .automation-dialog .form-grid { grid-template-columns:1fr; }
+}
 .target-shell .automation-status { display:inline-flex; align-items:center; gap:6px; flex:0 0 auto; padding:4px 8px; border-radius:999px; background:var(--subtle); color:var(--muted); font-size:11px; font-weight:700; }
 .target-shell .automation-status i { width:7px; height:7px; border-radius:50%; background:currentColor; }
 .target-shell .automation-status.active { background:color-mix(in srgb,#3ea774 13%,var(--surface)); color:#25815a; }
@@ -471,6 +506,8 @@
 .target-shell .rule-table [data-action="rule-detail"] { order:1; }
 .target-shell .rule-table [data-action="rule-edit"] { order:2; }
 .target-shell .rule-table [data-action="rule-preview"] { order:3; grid-column:1 / -1; }
+.target-shell .rule-operation .automation-actions { flex-wrap:wrap; }
+.target-shell .rule-operation button { flex-shrink:0; white-space:nowrap; }
 .target-shell .table-empty { height:210px; text-align:center; vertical-align:middle !important; }
 .target-shell .table-empty strong,
 .target-shell .table-empty span { display:block; }
@@ -543,6 +580,7 @@
 .target-shell [data-auto-stale="true"] [data-auto-runtime] { opacity:.6; }
 .automation-dialog .form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
 .automation-dialog .form-grid.three { grid-template-columns:repeat(3,minmax(0,1fr)); }
+.automation-dialog .form-grid > label { align-content:start; }
 .automation-dialog textarea { resize:vertical; }
 .automation-dialog .check-row { display:flex; align-items:center; gap:9px; }
 .automation-dialog .check-row input { width:auto; }
@@ -1715,4 +1753,16 @@
   .secondary-nav button { flex-basis:136px; min-height:62px; padding:9px 12px; }
   .domain-note strong { font-size:10px; }
   .ledger-list-surface .ledger-filter-main { grid-template-columns:1fr; }
+}
+
+/* Compact automation controls follow the shared form/table defaults. */
+.automation-dialog .boundary-input { display:flex; gap:8px; align-items:end; margin:6px 0; }
+.automation-dialog .boundary-input label { flex:1; min-width:0; }
+.automation-dialog [data-currency-row] { border:0; border-top:1px solid var(--line); padding:10px 0; min-width:0; }
+.automation-dialog [data-boundary-list] { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:4px 16px; }
+.automation-dialog { max-height:calc(100dvh - 24px); overflow:auto; }
+@media(max-width:800px) {
+  .target-shell .automation-table.rule-table { width:100%; min-width:0; }
+  .automation-dialog .automation-form { min-width:0; }
+  .automation-dialog .form-grid, .automation-dialog [data-boundary-list] { grid-template-columns:1fr; }
 }

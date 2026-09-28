@@ -17,13 +17,13 @@ import {
 } from "../util/core.js";
 import {
   canonicalHash, parseHash, shellMarkup, syncNavigation,
-} from "../navigation.js?v=20260921.3";
+} from "../navigation.js?v=20260927.3";
 import {
   accountsMarkup, cursorFromParam, monthBounds,
 } from "./account.js?v=20260917.10";
 import {
   automationSettingsPage, autoRulesPage, bindAutomation, tagReviewPage, stopAutomationPolling,
-} from "./automation.js?v=20260927.3";
+} from "./automation.js?v=20260928.1";
 
 const entryTypeValues = { TRANSACTION: 0, ACCOUNT_TRANSFER: 1, CLAIM: 2 };
 const entryTypeCodes = { 0: "TRANSACTION", 1: "ACCOUNT_TRANSFER", 2: "CLAIM" };

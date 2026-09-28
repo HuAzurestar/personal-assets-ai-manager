@@ -1,5 +1,6 @@
 """Browser regression for serve_pirc24_usability_fixture.py ONLY; contains writes."""
 import argparse
+import re
 import time
 from pathlib import Path
 from urllib.parse import urlparse
@@ -67,6 +68,17 @@ def run():
 
         page.locator("[data-action='rule-edit'][data-id='1']").click()
         expect(page.locator("[data-rule-pending-count]")).to_contain_text("3 条")
+        # Template selection is a semantic edit even though it sets the textarea programmatically.
+        form = page.locator("[data-form='automation-rule']")
+        form.locator("[name='prompt_template']").select_option("purpose")
+        expect(form.locator("[name='prompt']")).to_have_value(re.compile("仅判断消费用途"))
+        expect(form.locator("[data-rule-edit-impact]")).to_contain_text("当前 3 条待确认建议将被取消")
+        expect(form.locator("[data-rule-impact-ack]")).to_be_visible()
+        form.locator("[name='acknowledged']").check()
+        form.locator("[name='prompt_template']").select_option("channel")
+        expect(form.locator("[name='prompt']")).to_have_value(re.compile("仅判断购买渠道"))
+        expect(form.locator("[name='acknowledged']")).not_to_be_checked()
+        form.locator("[name='prompt']").fill(before["method_config"]["prompt"])
         page.locator("dialog [name='name']").fill("按消费内容分类（已改名，虚构测试）")
         expect(page.locator("[data-rule-impact-ack]")).to_be_hidden()
         expect(page.locator("[data-rule-edit-impact]")).to_contain_text("不取消已有建议")
@@ -83,6 +95,7 @@ def run():
         expect(page.locator("[data-tag-request-row]")).to_have_count(2)
         expect(page.locator("[data-action='tag-request-clear-scope']")).to_be_visible()
         page.locator("[data-action='tag-request-detail'][data-id='1']").click()
+        assert "ledger_id=1" in page.url and "view_id=1" in page.url, "Detail links must preserve the comparison scope"
         page.locator("[data-operation='approve']").click()
         expect(page.locator("dialog")).to_contain_text("其他待确认建议会被取消")
         page.locator("[data-confirm-batch]").click()

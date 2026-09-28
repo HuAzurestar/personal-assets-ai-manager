@@ -485,7 +485,7 @@ def _response_format(
     }
 
 
-def _direct_litellm_completion(**request):
+def _direct_litellm_completion(*, _lock_timeout=-1, **request):
     """Keep cached provider clients' transport alive for the process lifetime."""
 
     os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "true")
@@ -493,7 +493,9 @@ def _direct_litellm_completion(**request):
     import litellm
 
     global _LITELLM_HTTP_CLIENT
-    with _LITELLM_LOCK:
+    if not _LITELLM_LOCK.acquire(timeout=_lock_timeout):
+        raise TimeoutError("Provider transport is busy")
+    try:
         _disable_provider_logging(litellm)
         if _LITELLM_HTTP_CLIENT is None:
             _LITELLM_HTTP_CLIENT = httpx.Client(trust_env=False)
@@ -505,6 +507,8 @@ def _direct_litellm_completion(**request):
             })
         finally:
             litellm.client_session = previous
+    finally:
+        _LITELLM_LOCK.release()
 
 
 def _disable_provider_logging(litellm) -> None:

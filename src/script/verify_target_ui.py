@@ -146,8 +146,9 @@ def run() -> None:
 
                 page.locator('[data-timezone]').select_option("UTC")
                 page.locator('.topbar-actions [data-page="settings"]').click()
-                expect(page.locator(".automation-hero")).to_be_visible()
-                expect(page.locator(".automation-grid .empty-state")).to_contain_text(
+                expect(page.locator(".automation-settings")).to_be_visible()
+                expect(page.locator(".automation-settings > section")).to_have_count(3)
+                expect(page.locator(".automation-grid")).to_contain_text(
                     "尚未配置模型"
                 )
                 page.locator('[data-action="model-new"]').first.click()
@@ -157,6 +158,7 @@ def run() -> None:
                 model_form.locator('[name="api_base"]').fill(
                     "https://api.example.test/v1"
                 )
+                model_form.locator('.model-advanced > summary').click()
                 model_form.locator('[name="temperature"]').fill("0")
                 model_form.locator('[name="max_tokens"]').fill("512")
                 model_form.locator('[name="extras"]').fill(
@@ -167,11 +169,10 @@ def run() -> None:
                 model_form.locator('button[type="submit"]').click()
                 model_card = page.locator('[data-model-card="1"]')
                 expect(model_card).to_contain_text("浏览器验收模型")
-                expect(model_card).to_contain_text("已安全配置")
+                expect(model_card).to_contain_text("已启用")
                 model_card.locator('[data-action="model-test"]').click()
-                expect(model_card.locator('[data-model-result="1"]')).to_contain_text(
-                    "SIMULATED · 未连接供应商"
-                )
+                expect(page.locator('dialog[open]')).to_contain_text("不包含账目")
+                page.locator('dialog[open] [data-close]').first.click()
                 if evidence_dir:
                     page.screenshot(
                         path=evidence_dir / "automation-settings.png",
@@ -189,7 +190,7 @@ def run() -> None:
                     "浏览器验收模型"
                 )
                 expect(page.locator('[data-model-card="1"]')).to_contain_text(
-                    "已安全配置"
+                    "已启用"
                 )
 
                 page.locator('[data-module="workbench"]').click()
@@ -425,24 +426,27 @@ def run() -> None:
                 rule_form.locator('[name="name"]').fill("浏览器验收规则")
                 rule_form.locator('[name="view_id"]').select_option(str(active_view["id"]))
                 rule_form.locator('[name="prompt"]').fill("根据商户和摘要分类")
-                rule_form.locator('[name="cron"]').fill("*/5 * * * *")
+                rule_form.locator('[name="frequency"]').select_option("five")
                 rule_form.locator('[name="enabled"]').check()
                 rule_form.locator('button[type="submit"]').click()
                 rule_row = page.locator("[data-rule-row]").filter(
                     has_text="浏览器验收规则"
                 )
                 expect(rule_row).to_be_visible()
-                expect(rule_row).to_contain_text("Ledger #0")
+                assert page.request.get(
+                    f"{base_url}/paam/tag/v1/auto_rule/1"
+                ).json()["body"]["cron"] == "*/5 * * * *"
                 rule_row.locator('[data-action="rule-preview"]').click()
-                preview_dialog = page.locator('dialog[open]').filter(has_text="候选资格预览")
+                preview_dialog = page.locator('dialog[open]').filter(has_text="查看待分析账目")
                 expect(preview_dialog.locator(".automation-result")).to_contain_text(
-                    "SIMULATED_LOCAL · 只读预览"
+                    "本地筛选预览 · 不调用模型"
                 )
                 preview_dialog.locator("[data-close]").click()
                 rule_row.locator('[data-action="rule-edit"]').click()
                 rule_edit_form = page.locator(
                     'dialog[open] [data-form="automation-rule"]'
                 )
+                rule_edit_form.locator('[name="frequency"]').select_option("custom")
                 rule_edit_form.locator('[name="cron"]').fill("* * * *")
                 rule_edit_form.locator('button[type="submit"]').click()
                 expect(rule_edit_form.locator(".form-error-slot .error")).to_be_visible()
@@ -483,7 +487,8 @@ def run() -> None:
                     has_text="浏览器验收规则"
                 )
                 disabled_rule_status = disabled_rule_row.locator(".automation-status")
-                expect(disabled_rule_status).to_have_text("模型已停用")
+                expect(disabled_rule_status).to_have_text("模型不可用")
+                expect(disabled_rule_row).to_contain_text("请启用所选模型")
                 expect(disabled_rule_status).not_to_have_text("已启用")
                 page.goto(f"{base_url}/#workbench/tag-review")
                 expect(page.locator(".tag-review-page")).to_be_visible()
