@@ -1,5 +1,5 @@
-import { request } from "../api/client.js?v=20260928.1";
-import { preserveView } from "../util/view_state.js?v=20260928.1";
+import { request } from "../api/client.js?v=20260928.2";
+import { preserveView } from "../util/view_state.js?v=20260928.2";
 import { esc, money, date as when, typeNames, statusNames } from "../util/core.js";
 
 const names = { fact: "事实流水", ledger: "账本流水", review: "审查记录", file: "导入文件" };

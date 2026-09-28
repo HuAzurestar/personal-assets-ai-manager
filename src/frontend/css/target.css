@@ -415,10 +415,21 @@
 .target-shell .automation-section-head { display:flex; align-items:center; justify-content:space-between; gap:18px; }
 .target-shell .automation-section-head h3 { margin:0 0 4px; font-size:18px; }
 .target-shell .automation-section-head p { margin:0; color:var(--muted); font-size:12px; }
-.target-shell .automation-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr)); gap:16px; }
-.target-shell .automation-card { padding:19px; border:1px solid var(--line); border-radius:var(--radius); background:var(--surface); box-shadow:0 10px 25px #00000008; }
+.target-shell .automation-grid { display:grid; gap:0; }
+.target-shell .automation-card { padding:18px 0; border-bottom:1px solid var(--line); }
+.target-shell .automation-card:last-child { border-bottom:0; padding-bottom:0; }
 .target-shell .automation-card > header { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; margin-bottom:15px; }
 .target-shell .automation-card h3 { margin:4px 0 0; font-size:17px; overflow-wrap:anywhere; }
+.target-shell .automation-card header p { margin:6px 0 0; color:var(--muted); font-size:12px; overflow-wrap:anywhere; }
+.target-shell .automation-settings { gap:28px; }
+.target-shell .automation-settings > .automation-section { padding-bottom:28px; border-bottom:1px solid var(--line); }
+.target-shell .automation-settings > .automation-section:last-child { border-bottom:0; }
+.target-shell .automation-settings .automation-actions { margin-top:0; justify-content:flex-start; }
+.target-shell .automation-settings .automation-card > .automation-actions { margin-top:14px; }
+.target-shell .automation-help { min-width:0; color:var(--muted); font-size:13px; line-height:1.6; }
+.target-shell .automation-help summary { cursor:pointer; color:var(--text); padding:8px 0; }
+.target-shell .automation-help[open] > summary { margin-bottom:8px; }
+.target-shell .automation-help .automation-definition { margin:12px 0; }
 .target-shell .automation-page { gap:16px; }
 .target-shell .automation-page h3 { margin:0; }
 .target-shell .automation-page .automation-hero { padding:0; border:0; background:none; align-items:center; }
@@ -456,6 +467,7 @@
 .target-shell .automation-status { display:inline-flex; align-items:center; gap:6px; flex:0 0 auto; padding:4px 8px; border-radius:999px; background:var(--subtle); color:var(--muted); font-size:11px; font-weight:700; }
 .target-shell .automation-status i { width:7px; height:7px; border-radius:50%; background:currentColor; }
 .target-shell .automation-status.active { background:color-mix(in srgb,#3ea774 13%,var(--surface)); color:#25815a; }
+.target-shell .automation-status.pending { background:color-mix(in srgb,#c99937 15%,var(--surface)); color:color-mix(in srgb,#c99937 80%,var(--text)); }
 .target-shell .automation-definition { display:grid; gap:8px; margin:0; }
 .target-shell .automation-definition div { display:grid; grid-template-columns:82px minmax(0,1fr); gap:10px; }
 .target-shell .automation-definition dt { color:var(--muted); font-size:12px; }
@@ -464,8 +476,8 @@
 .target-shell .automation-card-note span { color:var(--muted); }
 .target-shell .automation-actions { display:flex; justify-content:flex-end; flex-wrap:wrap; gap:8px; margin-top:16px; }
 .target-shell .danger-text { color:var(--danger); }
-.target-shell .disclosure-card { display:grid; grid-template-columns:minmax(170px,.5fr) minmax(260px,1fr); gap:1px; overflow:hidden; border:1px solid var(--line); border-radius:var(--radius); background:var(--line); }
-.target-shell .disclosure-card > div { padding:18px; background:var(--surface); }
+.target-shell .disclosure-card { display:grid; grid-template-columns:minmax(170px,.5fr) minmax(260px,1fr); gap:24px; }
+.target-shell .disclosure-card > div { padding:8px 0; }
 .target-shell .disclosure-card > div > span { display:block; margin-bottom:8px; color:var(--muted); font-size:12px; }
 .target-shell .disclosure-row { display:flex; align-items:center; gap:14px; }
 .target-shell .disclosure-row strong { min-width:42px; }
@@ -483,12 +495,17 @@
 .target-shell .rule-schedule { min-width:150px; }
 .target-shell .rule-schedule code { overflow-wrap:anywhere; }
 .target-shell .rule-operation { min-width:150px; }
-.target-shell .rule-counts { display:grid; grid-template-columns:repeat(5,1fr); gap:6px; margin-top:12px; }
-.target-shell .rule-counts div { padding:8px 4px; border:1px solid var(--line); border-radius:7px; text-align:center; }
-.target-shell .rule-counts span { display:block; color:var(--muted); font-size:10px; }
-.target-shell .rule-counts strong { display:block; margin-top:3px; font-size:14px; }
-.target-shell .automation-table .rule-counts { min-width:240px; margin-top:0; }
+.target-shell .rule-counts { display:flex; flex-wrap:wrap; gap:6px 14px; max-width:230px; line-height:1.8; }
+.target-shell .rule-counts span { color:var(--muted); white-space:nowrap; }
+.target-shell .rule-counts strong { color:var(--text); }
+.target-shell .automation-table .rule-counts { min-width:175px; }
+.target-shell .rule-identity .rule-purpose { max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .target-shell .automation-table .automation-actions { justify-content:flex-start; margin-top:10px; flex-wrap:nowrap; }
+.target-shell .rule-table .automation-actions { display:grid; grid-template-columns:1fr 1fr; margin-top:0; gap:6px; }
+.target-shell .rule-table .automation-actions button { text-align:left; }
+.target-shell .rule-table [data-action="rule-detail"] { order:1; }
+.target-shell .rule-table [data-action="rule-edit"] { order:2; }
+.target-shell .rule-table [data-action="rule-preview"] { order:3; grid-column:1 / -1; }
 .target-shell .rule-operation .automation-actions { flex-wrap:wrap; }
 .target-shell .rule-operation button { flex-shrink:0; white-space:nowrap; }
 .target-shell .table-empty { height:210px; text-align:center; vertical-align:middle !important; }
@@ -524,14 +541,37 @@
 .target-shell .automation-detail { display:grid; gap:18px; max-width:1000px; }
 .target-shell .automation-detail section { display:grid; gap:10px; }
 .target-shell .automation-detail h3 { margin:8px 0 0; font-size:15px; }
-.target-shell .automation-detail .automation-definition { padding:14px; border:1px solid var(--line); border-radius:8px; background:var(--surface); }
+.target-shell .automation-detail .automation-definition { padding:12px 0; border-top:1px solid var(--line); }
 .target-shell .automation-detail .automation-definition div { grid-template-columns:100px minmax(0,1fr); }
 .target-shell .automation-detail .automation-definition dd { white-space:pre-wrap; font-size:13px; }
 .target-shell .automation-detail-note { margin:0; color:var(--muted); font-size:12px; line-height:1.55; }
 .target-shell .automation-detail-list { display:grid; gap:8px; }
-.target-shell .automation-detail-list > div { display:grid; gap:4px; padding:10px 12px; border:1px solid var(--line); border-radius:8px; background:var(--surface); }
+.target-shell .automation-detail-list > div { display:grid; gap:4px; padding:10px 0; border-bottom:1px solid var(--line); }
 .target-shell .automation-detail-list span { color:var(--muted); font-size:12px; overflow-wrap:anywhere; }
 .target-shell .automation-detail-list button { justify-self:start; text-align:left; }
+.target-shell .request-decision { padding:18px 0; border-block:1px solid var(--line); }
+.target-shell .request-comparison { display:flex; align-items:center; gap:20px; padding:16px 0; }
+.target-shell .request-comparison > div { display:grid; gap:6px; flex:1; }
+.target-shell .request-comparison small { color:var(--muted); }
+.target-shell .request-comparison strong { font-size:18px; overflow-wrap:anywhere; }
+.target-shell .request-reason { margin:0; line-height:1.7; white-space:pre-wrap; overflow-wrap:anywhere; }
+.target-shell .request-decision-actions { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; }
+.target-shell .request-decision-actions > span { color:var(--muted); font-size:12px; }
+.target-shell .request-decision-actions .automation-actions { margin:0; }
+.candidate-samples { list-style:none; padding:0; margin:12px 0; }
+.candidate-samples > li { display:grid; gap:5px; padding:10px 0; border-bottom:1px solid var(--line); overflow-wrap:anywhere; }
+.candidate-samples > li > span { color:var(--muted); font-size:12px; }
+.candidate-samples button { justify-self:start; text-align:left; }
+.automation-dialog .automation-result { padding:0; border:0; background:none; }
+.automation-dialog .preview-reasons { display:flex; flex-wrap:wrap; gap:10px 18px; color:var(--muted); }
+.automation-dialog .automation-definition { display:grid; gap:10px; }
+.automation-dialog .automation-definition div { display:grid; grid-template-columns:100px minmax(0,1fr); gap:12px; }
+.automation-dialog .automation-definition dt { color:var(--muted); }
+.automation-dialog .automation-definition dd { margin:0; overflow-wrap:anywhere; }
+.automation-dialog .automation-notice { display:grid; gap:8px; padding:12px 0; border-block:1px solid var(--line); line-height:1.65; }
+.automation-dialog .automation-form textarea { padding:12px; border:1px solid var(--line); border-radius:6px; background:var(--surface); color:var(--text); font:inherit; }
+.target-shell [data-form="schedule-diagnostics"] { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)) auto; gap:12px; align-items:end; margin-bottom:16px; }
+.target-shell [data-form="schedule-diagnostics"] label { display:grid; gap:6px; }
 .automation-code { white-space:pre-wrap; overflow-wrap:anywhere; max-height:360px; overflow:auto; padding:14px; border:1px solid var(--line); border-radius:8px; background:var(--subtle); }
 .target-shell .automation-freshness { padding:10px 14px; border-left:3px solid var(--accent); color:var(--muted); font-size:12px; }
 .target-shell [data-auto-stale="true"] .automation-freshness { border-color:var(--danger); color:var(--danger); }
@@ -547,6 +587,9 @@
 .automation-dialog .form-error-slot:empty { display:none; }
 @media (max-width:700px) {
   .target-shell .automation-hero { align-items:stretch; flex-direction:column; }
+  .target-shell .automation-section-head { align-items:stretch; flex-direction:column; }
+  .target-shell .request-comparison { gap:12px; }
+  .target-shell [data-form="schedule-diagnostics"] { grid-template-columns:1fr; }
   .target-shell .disclosure-card { grid-template-columns:1fr; }
   .target-shell .review-filter-skeleton .form-grid { grid-template-columns:1fr; }
   .automation-dialog .form-grid,

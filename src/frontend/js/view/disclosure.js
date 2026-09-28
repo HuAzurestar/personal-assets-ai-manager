@@ -1,4 +1,4 @@
-import { jsonRequest } from "../api/client.js?v=20260928.1";
+import { jsonRequest } from "../api/client.js?v=20260928.2";
 import { $, esc, money } from "../util/core.js";
 
 export function parseDisclosure(boundariesText, dateGranularity) {

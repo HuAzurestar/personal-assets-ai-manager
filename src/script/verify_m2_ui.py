@@ -83,7 +83,7 @@ def run():
                 page.on("request", lambda req: external.append(req.url) if not req.url.startswith(base) else None)
                 page.on("request", lambda req: commands.append(req.url) if req.method == "POST" and "batch_" in req.url else None)
                 page.goto(f"{base}/#settings/automation")
-                page.locator('.automation-diagnostics > summary').click()
+                page.locator('[data-preserve="runtime"] > summary').click()
                 expect(page.locator("[data-auto-runtime]")).to_contain_text("共享 FIFO")
                 expect(page.locator("[data-auto-runtime]")).to_contain_text("请求模型 · 已检查 2 / 3")
                 expect(page.locator("[data-auto-runtime]")).to_contain_text("导入预览超时清理（系统维护）")

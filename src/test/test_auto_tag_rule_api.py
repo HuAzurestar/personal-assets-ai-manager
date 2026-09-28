@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select, update
+from sqlalchemy import create_engine, event, select, update
 from sqlalchemy.orm import sessionmaker
 
 from backend.core.target_database import init_target_db
@@ -20,6 +20,7 @@ from backend.entity import (
     TAG_REQUEST_STATUS_CANCELLED,
     TAG_REQUEST_STATUS_PENDING,
     TagAssignmentRequest,
+    TransactionFact,
 )
 from backend.mapper.setting_mapper import SettingMapper
 from backend.mapper.tag_assignment_request_mapper import TagAssignmentRequestMapper
@@ -391,6 +392,68 @@ def test_effective_tag_dictionary_change_invalidates_related_rules(
         assert status == TAG_REQUEST_STATUS_CANCELLED
 
 
+@pytest.mark.parametrize("ledger_count", [1, 25, 105])
+def test_candidate_preview_business_samples_are_bounded_and_batched(auto_rule_runtime, ledger_count):
+    sessions, engine, view_id = auto_rule_runtime
+    now = datetime(2026, 9, 22, 7, tzinfo=timezone.utc)
+    with _client(sessions) as client:
+        rule = client.post("/paam/tag/v1/auto_rule", json=_rule_payload(view_id)).json()["body"]
+        with sessions() as db:
+            unclassified = next(tag.id for tag in TargetTagMapper(db).view(view_id).tags if tag.system_name == "unclassified")
+            facts = [TransactionFact(
+                fact_key=f"preview-only-{index}", occurred_time=now, cash_direction=2,
+                amount=2500 + index, currency_code="CNY", account_code="private-account-marker",
+                counterparty_account_ref="private-reference-marker", counterparty_name=f"合成商户 {index}",
+                summary=f"合成午餐 {index}", created_time=now, updated_time=now,
+            ) for index in range(ledger_count)]
+            ledgers = [LedgerEntry(
+                entry_type=0, entry_direction=2, amount=fact.amount, currency_code="CNY",
+                account_code="private-account-marker", counterparty_account_ref="private-reference-marker",
+                occurred_time=now, created_time=now, updated_time=now,
+            ) for fact in facts]
+            review = ReviewCase(behavior_type=0, status=0, title="synthetic preview", created_time=now, updated_time=now)
+            db.add_all([review, *facts, *ledgers])
+            db.flush()
+            db.add_all([ReviewAllocation(
+                review_case_id=review.id, transaction_fact_id=fact.id, ledger_entry_id=ledger.id,
+                amount=ledger.amount, currency_code="CNY", created_time=now, updated_time=now,
+            ) for fact, ledger in zip(facts, ledgers)])
+            db.add_all([LedgerEntryTag(ledger_id=ledger.id, tag_id=unclassified, created_time=now, updated_time=now) for ledger in ledgers])
+            cursor = ledgers[1].id if ledger_count == 105 else 0
+            db.execute(update(AutoTagRule).where(AutoTagRule.id == rule["id"]).values(scan_after_ledger_id=cursor))
+            db.commit()
+
+        selects = []
+
+        def count_selects(_conn, _cursor, statement, _params, _context, _many):
+            if statement.lstrip().upper().startswith("SELECT"):
+                selects.append(statement)
+
+        event.listen(engine, "before_cursor_execute", count_selects)
+        try:
+            response = client.post(f"/paam/tag/v1/auto_rule/{rule['id']}/candidate_preview")
+        finally:
+            event.remove(engine, "before_cursor_execute", count_selects)
+        assert response.status_code == 200, response.text
+        body = response.json()["body"]
+        assert body["scan_after_ledger_id"] == cursor
+        assert body["inspected_count"] == min(100, ledger_count)
+        assert body["eligible_count"] == min(100, ledger_count)
+        assert len(body["samples"]) == min(20, ledger_count)
+        assert body["samples"][0]["amount"] == 2500 + (2 if cursor else 0)
+        assert body["samples"][0]["counterparty_name"] == f"合成商户 {2 if cursor else 0}"
+        assert body["samples"][0]["summary"] == f"合成午餐 {2 if cursor else 0}"
+        assert "private-account-marker" not in response.text
+        assert "private-reference-marker" not in response.text
+        assert "preview-only-" not in response.text
+        # One bounded summary query regardless of candidate count; no per-row reads.
+        assert len([sql for sql in selects if "transaction_fact.summary" in sql]) == 1
+        assert len(selects) <= 12
+        with sessions() as db:
+            assert db.scalar(select(AutoTagRule.scan_after_ledger_id).where(AutoTagRule.id == rule["id"])) == cursor
+            assert db.scalar(select(TagAssignmentRequest.id)) is None
+
+
 def test_candidate_preview_is_read_only_and_explicitly_simulated(
     auto_rule_runtime,
     monkeypatch,
@@ -507,7 +570,15 @@ def test_candidate_preview_is_read_only_and_explicitly_simulated(
             "MISSING_VIEW_TAG": 1,
             "ELIGIBLE": 1,
         }
-        assert body["samples"] == [{"ledger_id": eligible_id, "reason": "ELIGIBLE"}]
+        assert len(body["samples"]) == 1
+        sample = body["samples"][0]
+        assert sample == {
+            "ledger_id": eligible_id, "reason": "ELIGIBLE",
+            "amount": 104, "currency_code": "CNY",
+            "occurred_time": sample["occurred_time"],
+            "counterparty_name": None, "summary": None,
+        }
+        assert datetime.fromisoformat(sample["occurred_time"].replace("Z", "+00:00")).replace(tzinfo=timezone.utc) == now
 
         unchanged = client.get(
             f"/paam/tag/v1/auto_rule/{rule['id']}"

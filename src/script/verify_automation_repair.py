@@ -118,7 +118,9 @@ def run():
                 form.locator('[name="daily_time"]').fill('09:30')
                 form.locator('button[type="submit"]').click()
                 expect(page.locator('dialog[open]')).to_have_count(0)
-                expect(page.locator('[data-rule-row]').first).to_contain_text('30 9 * * *')
+                rule_id = page.locator('[data-rule-row]').first.get_attribute('data-rule-row')
+                saved_rule = page.request.get(base + f'/paam/tag/v1/auto_rule/{rule_id}').json()['body']
+                assert saved_rule['cron'] == '30 9 * * *'
                 page.locator('[data-action="rule-edit"]').first.click()
                 expect(page.locator('[name="frequency"]')).to_have_value('day')
                 expect(page.locator('[name="daily_time"]')).to_have_value('09:30')

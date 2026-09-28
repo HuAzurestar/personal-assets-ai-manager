@@ -167,7 +167,6 @@ def run():
                         ).to_be_visible()
                         capture("rules")
                         dialog("rule-edit", "rule-edit")
-                        page.locator('.rule-operation summary').first.click()
                         dialog("rule-preview", "rule-preview")
                         page.goto(base + "/#details/auto-rule?rule_id=1")
                         expect(page.locator("[data-auto-rule-detail]")).to_be_visible()

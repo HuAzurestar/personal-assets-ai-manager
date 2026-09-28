@@ -40,20 +40,26 @@ def run():
                 page.goto(base + '/#details/auto-rule')
                 row = page.locator('[data-rule-row]').first
                 expect(row).to_be_visible()
-                row.locator('.rule-statistics summary').click()
-                row.locator('.rule-operation summary').click()
+                help_panel = page.locator('details[data-preserve="schedule-help"]')
+                help_panel.locator('summary').click()
                 page.evaluate('window.originalRule = document.querySelector("[data-rule-row]")')
                 top = row.bounding_box()['y']
                 page.wait_for_timeout(11000)
                 assert row.evaluate('(e) => e === window.originalRule')
-                assert row.locator('details[open]').count() == 2
+                assert help_panel.evaluate('(e) => e.open')
                 assert abs(row.bounding_box()['y'] - top) <= 2
                 row.locator('[data-action="rule-edit"]').click()
                 page.locator('[data-form="automation-rule"] [name="name"]').fill('Refresh regression')
                 page.locator('[data-form="automation-rule"] button[type="submit"]').click()
                 expect(page.locator('dialog[open]')).to_have_count(0)
                 expect(row).to_contain_text('Refresh regression')
-                assert row.locator('details[open]').count() == 2
+                assert help_panel.evaluate('(e) => e.open')
+                rule_id = row.get_attribute('data-rule-row')
+                page.goto(base + f'/#details/auto-rule?rule_id={rule_id}')
+                stats = page.locator('details[data-preserve="rule-statistics"]')
+                stats.locator('summary').click()
+                page.wait_for_timeout(5500)
+                assert stats.evaluate('(e) => e.open')
 
                 # Non-automation pages use the same policy for periodic and command
                 # refreshes, without jumping to the top or interrupting inline drafts.

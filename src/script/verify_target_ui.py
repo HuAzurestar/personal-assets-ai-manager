@@ -146,7 +146,8 @@ def run() -> None:
 
                 page.locator('[data-timezone]').select_option("UTC")
                 page.locator('.topbar-actions [data-page="settings"]').click()
-                expect(page.locator(".automation-hero")).to_be_visible()
+                expect(page.locator(".automation-settings")).to_be_visible()
+                expect(page.locator(".automation-settings > section")).to_have_count(3)
                 expect(page.locator(".automation-grid")).to_contain_text(
                     "尚未配置模型"
                 )
@@ -432,12 +433,13 @@ def run() -> None:
                     has_text="浏览器验收规则"
                 )
                 expect(rule_row).to_be_visible()
-                expect(rule_row).to_contain_text("*/5 * * * *")
-                rule_row.locator('.rule-operation summary').click()
+                assert page.request.get(
+                    f"{base_url}/paam/tag/v1/auto_rule/1"
+                ).json()["body"]["cron"] == "*/5 * * * *"
                 rule_row.locator('[data-action="rule-preview"]').click()
-                preview_dialog = page.locator('dialog[open]').filter(has_text="候选资格预览")
+                preview_dialog = page.locator('dialog[open]').filter(has_text="查看待分析账目")
                 expect(preview_dialog.locator(".automation-result")).to_contain_text(
-                    "SIMULATED_LOCAL · 只读预览"
+                    "本地筛选预览 · 不调用模型"
                 )
                 preview_dialog.locator("[data-close]").click()
                 rule_row.locator('[data-action="rule-edit"]').click()
@@ -485,7 +487,8 @@ def run() -> None:
                     has_text="浏览器验收规则"
                 )
                 disabled_rule_status = disabled_rule_row.locator(".automation-status")
-                expect(disabled_rule_status).to_have_text("模型已停用")
+                expect(disabled_rule_status).to_have_text("模型不可用")
+                expect(disabled_rule_row).to_contain_text("请启用所选模型")
                 expect(disabled_rule_status).not_to_have_text("已启用")
                 page.goto(f"{base_url}/#workbench/tag-review")
                 expect(page.locator(".tag-review-page")).to_be_visible()

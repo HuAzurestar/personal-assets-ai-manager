@@ -1,5 +1,5 @@
 import { $, $$, esc, selectedCalendarDate } from "../util/core.js";
-import { preserveView } from "../util/view_state.js?v=20260928.1";
+import { preserveView } from "../util/view_state.js?v=20260928.2";
 
 let openedControl = null;
 let outsideHandler = null;
