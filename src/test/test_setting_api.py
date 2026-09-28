@@ -449,6 +449,44 @@ def _seed_disclosure_rules(sessions):
         db.commit()
 
 
+@pytest.mark.parametrize("change", ["roundtrip", "rename", "disable", "secret", "default_timeout"])
+def test_sparse_model_roundtrip_preserves_pending_and_scan_progress(setting_runtime, change):
+    sessions, _, store = setting_runtime
+    uri = "/paam/system/v1/setting/automation"
+    model = _model_payload()
+    for field in ("temperature", "max_tokens", "timeout", "extra_body"):
+        model["litellm_params"].pop(field)
+    store.set(1, "fictional-key")
+    model["enabled"] = True
+    with _client(sessions, store) as client:
+        original = client.put(uri, json={"expected_updated_time": None, "models": [model]}).json()["body"]
+        _seed_disclosure_rules(sessions)
+        draft = client.get(uri).json()["body"]["models"][0]
+        draft.pop("key_configured")
+        if change == "rename":
+            draft["name"] = "Only a display name"
+        elif change == "disable":
+            draft["enabled"] = False
+        elif change == "secret":
+            assert client.put(uri + "/model/1/secret", json={"secret": "replacement-fixture"}).status_code == 200
+        elif change == "default_timeout":
+            draft["litellm_params"]["timeout"] = 60
+        saved = client.put(uri, json={"expected_updated_time": original["updated_time"], "models": [draft]})
+        assert saved.status_code == 200, saved.text
+        with sessions() as db:
+            assert [(r.rule_revision, r.scan_epoch, r.scan_after_ledger_id) for r in db.scalars(select(AutoTagRule))] == [(1, 1, 20)] * 3
+            assert list(db.scalars(select(TagAssignmentRequest.status).order_by(TagAssignmentRequest.id))) == [1, 1, 1, 2]
+        # The returned token remains usable; effective parameter changes still invalidate.
+        draft["litellm_params"]["temperature"] = 0
+        changed = client.put(uri, json={"expected_updated_time": saved.json()["body"]["updated_time"], "models": [draft]})
+        assert changed.status_code == 200
+        with sessions() as db:
+            assert [(r.rule_revision, r.scan_after_ledger_id) for r in db.scalars(select(AutoTagRule))] == [(2, 0)] * 3
+            assert list(db.scalars(select(TagAssignmentRequest.status).order_by(TagAssignmentRequest.id))) == [4, 4, 4, 2]
+        stale = client.put(uri, json={"expected_updated_time": original["updated_time"], "models": [model]})
+        assert stale.status_code == 409
+
+
 def test_disclosure_partial_update_scoped_invalidation_and_restart(setting_runtime):
     sessions, engine, store = setting_runtime
     uri = "/paam/system/v1/setting/automation"

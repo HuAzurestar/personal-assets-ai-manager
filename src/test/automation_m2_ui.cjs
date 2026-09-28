@@ -6,6 +6,7 @@ const vm = require("node:vm");
 const context = { AbortController, URLSearchParams, console,
   esc: (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char])),
   money: (value) => `${value.currency_code} ${value.amount}`,
+  date: (value) => String(value || "—"),
 };
 vm.createContext(context);
 for (const file of ["util/visible_poll.js", "view/disclosure.js", "view/automation_feedback.js"]) {

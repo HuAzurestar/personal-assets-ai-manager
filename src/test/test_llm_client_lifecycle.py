@@ -12,7 +12,25 @@ from backend.service import llm_adapter
 
 
 @pytest.fixture
-def offline_client(monkeypatch):
+def offline_client(monkeypatch, tmp_path):
+    import requests
+    import tiktoken
+
+    # Tokenization accuracy is not under test here. A local byte vocabulary
+    # keeps real SDK transport tests independent of downloaded tokenizer caches.
+    encoding = tiktoken.Encoding(
+        name="paam-offline-byte", pat_str=r"(?s).",
+        mergeable_ranks={bytes([index]): index for index in range(256)},
+        special_tokens={},
+    )
+    monkeypatch.setenv("TIKTOKEN_CACHE_DIR", str(tmp_path / "empty-tokenizer-cache"))
+    monkeypatch.setattr(tiktoken, "get_encoding", lambda *_args, **_kwargs: encoding)
+    monkeypatch.setattr(tiktoken, "encoding_for_model", lambda *_args, **_kwargs: encoding)
+
+    def reject_network(*_args, **_kwargs):
+        raise AssertionError("SDK transport tests must not download external resources")
+
+    monkeypatch.setattr(requests.sessions.Session, "request", reject_network)
     monkeypatch.setenv("LITELLM_LOCAL_MODEL_COST_MAP", "true")
     monkeypatch.setenv("HTTPS_PROXY", "http://must-not-be-used.invalid:1")
     monkeypatch.setattr(llm_adapter, "_LITELLM_HTTP_CLIENT", None)

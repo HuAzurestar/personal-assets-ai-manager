@@ -214,11 +214,11 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
             assert "/paam/tag/v1/assignment_request" in automation_script.text
             assert "/paam/system/v1/schedule/status" in automation_script.text
             assert "没有已注册的自动标签任务" in automation_script.text
-            assert "等待不会产生新建议" in automation_script.text
+            assert 'data-auto-notice' in automation_script.text
             explanation_script = client.get("/static/js/view/automation_explain.js")
             assert explanation_script.status_code == 200
             assert "尚未调度" in explanation_script.text
-            assert "启用只是配置，不代表正在分析" in explanation_script.text
+            assert 'schedule.tag_scan_guard === "DISABLED"' in explanation_script.text
             assert "保存后按 CRON 执行" not in automation_script.text
             assert "启用后立即注册" not in automation_script.text
             assert "尚未启动调度" not in automation_script.text

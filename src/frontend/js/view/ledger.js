@@ -23,8 +23,8 @@ import {
   accountsMarkup, cursorFromParam, monthBounds,
 } from "./account.js?v=20260917.10";
 import {
-  automationSettingsPage, autoRulesPage, bindAutomation, tagReviewPage, stopAutomationPolling,
-} from "./automation.js?v=20260928.4";
+  automationSettingsPage, autoRulesPage, bindAutomation, tagReviewPage, stopAutomationPolling, startAutomationRefresh,
+} from "./automation.js?v=20260928.5";
 
 const entryTypeValues = { TRANSACTION: 0, ACCOUNT_TRANSFER: 1, CLAIM: 2 };
 const entryTypeCodes = { 0: "TRANSACTION", 1: "ACCOUNT_TRANSFER", 2: "CLAIM" };
@@ -223,11 +223,12 @@ async function render({ background = false } = {}) {
     if (page === "import") renderImportPlan();
     if (page === "reviews") await mountEconomicReviewEditor(root);
   } catch (error) {
-    if (renderVersion !== state.renderVersion || page !== state.page) return;
+    if (renderVersion !== state.renderVersion || page !== state.page || routeKey !== location.hash) return;
     if (samePage) {
       let errorSlot = root.querySelector('[data-refresh-error]');
       if (!errorSlot) { errorSlot = document.createElement('p'); errorSlot.dataset.refreshError = ''; errorSlot.setAttribute('role', 'status'); root.append(errorSlot); }
       errorSlot.textContent = `刷新失败，保留上次内容：${error.message}`;
+      startAutomationRefresh(root, { stale: true });
     } else {
       root.innerHTML = `<section class="panel"><div class="error">${esc(error.message)}</div><div class="actions"><button data-action="reload">重新加载</button></div></section>`;
       bindPage(root);
@@ -1512,6 +1513,10 @@ function bindPage(root) {
 
 window.addEventListener("paam:automation-saved", async (event) => {
   toast(event.detail?.message || "自动化配置已保存");
+  if (event.detail?.createdRuleId) {
+    route("auto-rules", new URLSearchParams({ sort: "desc", rule_id: String(event.detail.createdRuleId) }));
+    return;
+  }
   await render();
 });
 

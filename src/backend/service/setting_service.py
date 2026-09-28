@@ -324,8 +324,12 @@ class SettingService:
 
     @staticmethod
     def _parameter_signature(model: AutomationModelWrite) -> str:
+        # Compare what the adapter sends, not whether a default was explicitly
+        # present in storage. GET -> PUT adds nullable defaults to sparse models.
+        params = model.litellm_params.model_dump(mode="json", exclude_none=True)
+        params["timeout"] = model.litellm_params.timeout or 60.0
         return json.dumps(
-            model.litellm_params.model_dump(mode="json", exclude_unset=True),
+            params,
             ensure_ascii=False,
             separators=(",", ":"),
             sort_keys=True,

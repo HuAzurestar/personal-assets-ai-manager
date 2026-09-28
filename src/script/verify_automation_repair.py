@@ -41,9 +41,11 @@ def run():
                 page.goto(base + '/#settings/automation')
                 root = page.locator('[data-auto-page="settings"]')
                 expect(root).to_be_visible()
-                assert root.bounding_box()['height'] <= 700
-                assert root.locator('button:visible').count() <= 6
-                assert root.locator('[data-auto-runtime]').is_hidden()
+                # Diagnostics are intentionally reachable on the settings page.
+                # Validate containment and access, not an obsolete fixed height.
+                assert root.bounding_box()['width'] <= 1440
+                expect(root.locator('[data-auto-runtime]')).to_be_visible()
+                expect(root.locator('[data-auto-diagnostics]')).to_be_visible()
 
                 def current():
                     return page.request.get(base + '/paam/system/v1/setting/automation').json()['body']
@@ -132,7 +134,10 @@ def run():
                     for route, selector in [('settings/automation','settings'),('details/auto-rule','rules'),('workbench/tag-review','requests')]:
                         page.goto(base + '/#' + route)
                         page.locator(f'[data-auto-page="{selector}"]').wait_for()
-                        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), (width,route)
+                        overflow = page.evaluate('''() => [...document.querySelectorAll('[data-auto-page] *')].filter(el => {
+                          const r = el.getBoundingClientRect(); return r.width && r.right > innerWidth + 1;
+                        }).slice(0, 8).map(el => ({tag:el.tagName, cls:el.className, width:el.getBoundingClientRect().width}))''')
+                        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), (width,route,overflow)
                         if selector == 'requests':
                             expect(page.locator('[data-tag-request-select-all]')).to_be_visible()
                         for button in page.locator('[data-auto-page] button:visible').all():

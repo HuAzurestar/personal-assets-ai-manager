@@ -1,11 +1,11 @@
 import { request, jsonRequest } from "../api/client.js?v=20260928.2";
 import { preserveView, patchMarkup } from "../util/view_state.js?v=20260928.2";
 import { openInspection, registerInspection } from "../component/inspection.js?v=20260928.4";
-import { $, $$, esc, money } from "../util/core.js";
+import { $, $$, esc, money, date } from "../util/core.js";
 import { startVisiblePoll } from "../util/visible_poll.js?v=20260928.2";
 import { openDisclosureEditor, openDisclosurePreview } from "./disclosure.js?v=20260928.4";
-import { helpTip, batchResults, batchResultMarkup, batchFailureMarkup, selectionConflict, ruleStatistics, runtimeMarkup, diagnosticsMarkup } from "./automation_feedback.js?v=20260928.3";
-import { executionResultNames, ruleExecution, semanticRuleChange, ruleEditImpact, candidatePreviewMarkup, requestVersionCopy, scopeImpactMarkup } from "./automation_explain.js?v=20260928.4";
+import { helpTip, batchResults, batchResultMarkup, batchFailureMarkup, selectionConflict, ruleStatistics, runtimeMarkup, diagnosticsMarkup } from "./automation_feedback.js?v=20260928.5";
+import { executionResultNames, ruleExecution, semanticRuleChange, ruleEditImpact, candidatePreviewMarkup, requestVersionCopy, scopeImpactMarkup } from "./automation_explain.js?v=20260928.5";
 
 let setting = null;
 let rules = [];
@@ -16,9 +16,35 @@ let requestItems = [];
 let batchFeedback = "";
 const boundRoots = new WeakSet();
 const ruleListUrl = "/paam/tag/v1/auto_rule/list?page_index=1&page_size=100&sorter=%5B%7B%22key%22%3A%22id%22%2C%22direction%22%3A%22asc%22%7D%5D";
+const viewListUrl = "/paam/tag/v1/view/list?sorter=%5B%7B%22key%22%3A%22id%22%2C%22direction%22%3A%22asc%22%7D%5D";
 const freshnessMarkup = '<p class="automation-freshness" data-auto-freshness role="status" aria-live="polite">状态自动更新</p>';
 
 export function stopAutomationPolling() { stopPolling(); stopPolling = () => {}; }
+
+// Option lists use bounded API pages too; never silently truncate at 100.
+async function readListOptions(url, signal) {
+  const [path, search] = url.split("?");
+  const query = new URLSearchParams(search);
+  query.set("page_size", "100");
+  const items = [];
+  let page = 1;
+  let result;
+  do {
+    query.set("page_index", String(page++));
+    result = await request(`${path}?${query}`, { signal, cache: "no-store" });
+    items.push(...result.items);
+  } while (result.items.length && items.length < result.total);
+  return { ...result, items };
+}
+
+function ruleListQuery(params = new URLSearchParams()) {
+  const rawPage = Number(params.get("page") || 1);
+  const query = new URLSearchParams({ page_index: String(Number.isSafeInteger(rawPage) && rawPage > 0 ? rawPage : 1), page_size: "20",
+    sorter: JSON.stringify([{ key: "id", direction: params.get("sort") === "desc" ? "desc" : "asc" }]) });
+  if (params.get("q")?.trim()) query.set("query", JSON.stringify([{ key: "name", word: params.get("q").trim().slice(0, 200) }]));
+  if (["true", "false"].includes(params.get("enabled"))) query.set("filter", JSON.stringify({ key: "enabled", op: "=", val: params.get("enabled") === "true" }));
+  return query;
+}
 
 const amountModeNames = { 1: "仅发送金额区间", 2: "发送精确金额", 3: "不发送金额" };
 
@@ -100,20 +126,20 @@ function scheduleNotice() {
     : !tasks.length ? "没有已注册的自动标签任务"
     : running ? `自动扫描已就绪 · ${tasks.length} 条规则` : "自动扫描已停止";
   const explanation = !scheduleStatus ? "请检查服务连接。"
-    : disabled ? ""
+    : disabled ? "需在服务配置中开启自动分析并重启服务；仅启用模型或规则不会开始扫描。开启后可能产生模型费用。"
     : blockedByData ? "验收模式仅支持纯虚构数据，请使用独立验收库。"
     : !tasks.length ? "请检查模型和规则是否已启用。"
     : !running ? "请查看运行概况中的调度器与执行器状态。"
-    : nextRuns.length ? `下次触发：${new Date(nextRuns[0]).toLocaleString("zh-CN", { timeZone: "Asia/Hong_Kong" })}` : "当前没有待触发时间。";
+    : nextRuns.length ? `下次触发：${date(nextRuns[0])}` : "当前没有待触发时间。";
   const activity = running && tasks.length && !disabled && !blockedByData
     ? `${tasks.filter((task) => task.queue_state === "RUNNING").length} 条分析中 · ${tasks.filter((task) => task.queue_state === "QUEUED").length} 条排队` : "";
   return `<div class="automation-notice compact" role="status"><strong>${esc(title)} ${explanation ? helpTip("扫描状态说明", explanation) : ""}</strong>${activity ? `<span>${activity}</span>` : ""}${failed && !blockedByData ? `<span>${failed} 条规则上次执行失败，请查看规则详情。</span>` : ""}</div>`;
 }
 
-export async function autoRulesPanel(tagViews) {
+export async function autoRulesPanel(tagViews, params = new URLSearchParams()) {
   views = tagViews;
   const [rulePage, currentSetting, currentSchedule] = await Promise.all([
-    request(ruleListUrl),
+    request(`/paam/tag/v1/auto_rule/list?${ruleListQuery(params)}`),
     request("/paam/system/v1/setting/automation"),
     request("/paam/system/v1/schedule/status").catch(() => null),
   ]);
@@ -124,7 +150,9 @@ export async function autoRulesPanel(tagViews) {
   return `<section class="tag-manager automation-rules" aria-labelledby="auto-rule-title">
     <div class="tag-manager-head"><div><h2 id="auto-rule-title">自动打标签规则</h2></div><button type="button" class="primary" data-action="rule-new" ${canCreate ? "" : 'disabled title="需要启用中的标签维度和模型"'}>＋ 新建规则</button></div>
     ${freshnessMarkup}<div data-auto-notice>${scheduleNotice()}</div>
+    <form class="form-grid three" data-form="auto-rule-filter"><label>搜索规则<input name="q" type="search" maxlength="200" value="${esc(params.get("q") || "")}" placeholder="输入规则名称"></label><label>配置状态<select name="enabled"><option value="">全部状态</option><option value="true" ${params.get("enabled") === "true" ? "selected" : ""}>已启用</option><option value="false" ${params.get("enabled") === "false" ? "selected" : ""}>已停用</option></select></label><button type="submit" class="quiet">筛选规则</button></form>
     <div class="automation-table-wrap"><table class="automation-table rule-table"><thead><tr><th>规则 / 用途</th><th>标签维度 / 模型</th><th>当前执行 / 上次结果</th><th>历史累计 ${helpTip("历史累计说明", "累计通过包含后来被替换的建议。")}</th><th>操作</th></tr></thead><tbody data-auto-rule-rows>${rules.map(ruleRow).join("") || '<tr><td colspan="5" class="table-empty"><strong>尚未创建自动规则</strong><span>启用模型并准备标签维度后即可保存第一条规则。</span></td></tr>'}</tbody></table></div>
+    <div data-auto-rule-pager>${requestPagerMarkup(rulePage, "auto-rule-page")}</div>
   </section>`;
 }
 
@@ -138,7 +166,7 @@ export async function autoRulesPage(params = new URLSearchParams(), { inspection
     });
     const [rule, viewPage, currentSetting, schedule, recent, summary] = await Promise.all([
       request(`/paam/tag/v1/auto_rule/${ruleId}`),
-      request("/paam/tag/v1/view/list?page_index=1&page_size=100"),
+      readListOptions(viewListUrl),
       request("/paam/system/v1/setting/automation"),
       request("/paam/system/v1/schedule/status"),
       request(`/paam/tag/v1/assignment_request/list?${query}`),
@@ -150,8 +178,8 @@ export async function autoRulesPage(params = new URLSearchParams(), { inspection
     const diagnostics = await readScheduleDiagnostics(diagnosticOptions).catch(() => null);
     return { title: rule.name, body: `<div class="auto-rules-page automation-detail-page" data-auto-page="rule" data-rule-id="${ruleId}" data-recent-query="${esc(query.toString())}">${freshnessMarkup}<div data-auto-rule-detail>${ruleDetailMarkup(rule, schedule, recent, summary)}</div><div data-auto-diagnostics>${diagnosticsMarkup(diagnostics, diagnosticOptions)}</div></div>` };
   }
-  const viewPage = await request("/paam/tag/v1/view/list?page_index=1&page_size=100");
-  return `<div class="auto-rules-page" data-auto-page="rules" ${Number.isSafeInteger(ruleId) && ruleId > 0 ? `data-open-rule="${ruleId}"` : ""}>${await autoRulesPanel(viewPage.items)}</div>`;
+  const viewPage = await readListOptions(viewListUrl);
+  return `<div class="auto-rules-page" data-auto-page="rules" data-rule-query="${esc(ruleListQuery(params).toString())}" ${Number.isSafeInteger(ruleId) && ruleId > 0 ? `data-open-rule="${ruleId}"` : ""}>${await autoRulesPanel(viewPage.items, params)}</div>`;
 }
 
 registerInspection("rule", {
@@ -211,11 +239,11 @@ async function readRequestScope(item, signal) {
   return { pending, approved };
 }
 
-function requestPagerMarkup(result) {
+function requestPagerMarkup(result, action = "tag-request-page") {
   const lastPage = Math.max(1, Math.ceil(result.total / result.page_size));
   const page = result.page_index;
   if (lastPage === 1 && page === 1) return `<p class="request-pager">共 ${result.total} 条</p>`;
-  return `<div class="request-pager"><span>共 ${result.total} 条 · 第 ${page}/${lastPage} 页</span><div><button type="button" class="quiet" data-action="tag-request-page" data-request-page="${page - 1}" ${page <= 1 ? "disabled" : ""}>上一页</button><button type="button" class="quiet" data-action="tag-request-page" data-request-page="${page + 1}" ${page >= lastPage ? "disabled" : ""}>下一页</button></div></div>`;
+  return `<div class="request-pager"><span>共 ${result.total} 条 · 第 ${page}/${lastPage} 页</span><div><button type="button" class="quiet" data-action="${action}" data-request-page="${page - 1}" ${page <= 1 ? "disabled" : ""}>上一页</button><button type="button" class="quiet" data-action="${action}" data-request-page="${page + 1}" ${page >= lastPage ? "disabled" : ""}>下一页</button></div></div>`;
 }
 
 export async function tagReviewPage(params = new URLSearchParams()) {
@@ -248,8 +276,8 @@ export async function tagReviewPage(params = new URLSearchParams()) {
   });
   if (filter) query.set("filter", JSON.stringify(filter));
   const [viewPage, rulePage] = await Promise.all([
-    request("/paam/tag/v1/view/list?page_index=1&page_size=100"),
-    request("/paam/tag/v1/auto_rule/list?page_index=1&page_size=100&sorter=%5B%7B%22key%22%3A%22id%22%2C%22direction%22%3A%22asc%22%7D%5D"),
+    readListOptions(viewListUrl),
+    readListOptions(ruleListUrl),
   ]);
   const result = await request(`/paam/tag/v1/assignment_request/list?${query}`);
   requestItems = result.items;
@@ -307,9 +335,35 @@ function modelDialog(model = null) {
     </details><label>API Key<input name="secret" type="password" autocomplete="new-password" placeholder="${value.key_configured ? "留空则保持现有密钥" : "密钥仅保存到系统凭据库"}"></label>
     ${value.key_configured ? '<label class="check-row"><input name="delete_secret" type="checkbox">保存时清除密钥并停用模型</label>' : ""}
     <label class="check-row"><input name="enabled" type="checkbox" ${value.enabled ? "checked" : ""}> 启用此模型</label>
+    <div data-model-impact hidden><p data-model-impact-copy role="status"></p><label class="check-row"><input type="checkbox" name="acknowledged">我了解旧的待审建议将取消，重新扫描可能产生模型费用</label></div>
     <div class="actions"><button type="button" class="quiet" data-close>取消</button><button type="submit" class="primary">保存</button></div>
   </form>`);
-  $("[data-form='automation-model']", dialog).addEventListener("submit", submitModel);
+  const form = $("[data-form='automation-model']", dialog);
+  form.settingSnapshot = structuredClone(setting);
+  form.addEventListener("input", (event) => {
+    if (event.target.name === "acknowledged") return;
+    form.impactSignature = null;
+    $('[name="acknowledged"]', form).checked = false;
+    $('[name="acknowledged"]', form).required = false;
+    $('[data-model-impact]', form).hidden = true;
+    $('button[type="submit"]', form).textContent = "保存";
+  });
+  form.addEventListener("submit", submitModel);
+}
+
+function modelParameters(data) {
+  const extra = data.get("extras") ? JSON.parse(data.get("extras")) : {};
+  if (!extra || Array.isArray(extra) || typeof extra !== "object") throw new Error("其他供应商参数必须是 JSON 对象");
+  return { ...extra, model: String(data.get("model")), api_base: String(data.get("api_base")),
+    temperature: numberOrNull(data.get("temperature")), max_tokens: numberOrNull(data.get("max_tokens"), true), timeout: numberOrNull(data.get("timeout")) };
+}
+
+function modelParameterSignature(params) {
+  const sorted = (value) => Array.isArray(value) ? value.map(sorted)
+    : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().map(key => [key, sorted(value[key])])) : value;
+  const effective = Object.fromEntries(Object.entries(params).filter(([, value]) => value != null));
+  effective.timeout = params.timeout ?? 60;
+  return JSON.stringify(sorted(effective));
 }
 
 function numberOrNull(value, integer = false) {
@@ -340,41 +394,58 @@ async function submitModel(event) {
   try {
     const data = new FormData(form);
     const id = Number(form.dataset.id);
-    const existing = setting.models.find((item) => item.id === id);
-    const extra = data.get("extras") ? JSON.parse(data.get("extras")) : {};
-    if (!extra || Array.isArray(extra) || typeof extra !== "object") throw new Error("其他供应商参数必须是 JSON 对象");
-    const litellmParams = {
-      ...extra,
-      model: String(data.get("model")), api_base: String(data.get("api_base")),
-      temperature: numberOrNull(data.get("temperature")),
-      max_tokens: numberOrNull(data.get("max_tokens"), true),
-      timeout: numberOrNull(data.get("timeout")),
-    };
+    const snapshot = form.settingSnapshot;
+    const existing = snapshot.models.find((item) => item.id === id);
+    let litellmParams = modelParameters(data);
+    const signature = modelParameterSignature(litellmParams);
+    const changed = existing && signature !== modelParameterSignature(existing.litellm_params);
+    if (changed) {
+      if (form.impactSignature !== signature) {
+        const [allRules, pending] = await Promise.all([
+          readListOptions(ruleListUrl),
+          readListOptions(`/paam/tag/v1/assignment_request/list?${assignmentQuery({ status: 1 }, 100)}`),
+        ]);
+        if (!form.isConnected) return;
+        if (signature !== modelParameterSignature(modelParameters(new FormData(form)))) throw new Error("参数已改变，请重新查看保存影响");
+        const affected = allRules.items.filter(rule => rule.method_config.model_id === id);
+        const ids = new Set(affected.map(rule => rule.id));
+        const count = pending.items.filter(item => ids.has(item.rule_id)).length;
+        $('[data-model-impact-copy]', form).textContent = `将更新 ${affected.length} 条规则的判断版本、重置扫描进度，取消当前 ${count} 条待审建议。规则：${affected.map(rule => rule.name).join("、") || "无"}。数量为读取时快照；保存时以实际影响为准。已通过标签保留。`;
+        $('[data-model-impact]', form).hidden = false;
+        $('[name="acknowledged"]', form).required = true;
+        button.textContent = "确认影响并保存";
+        form.impactSignature = signature;
+      }
+      if (!data.has("acknowledged")) throw new Error("请核对模型参数变更影响，并勾选确认后保存");
+    } else if (existing) {
+      litellmParams = structuredClone(existing.litellm_params);
+    }
     const desired = { id, name: String(data.get("name")), enabled: data.has("enabled"), litellm_params: litellmParams };
     const secret = String(data.get("secret") || "");
     if (data.has("delete_secret") && secret) throw new Error("清除密钥与填写新密钥不能同时选择");
     if (data.has("delete_secret")) desired.enabled = false;
     if (!existing && desired.enabled && !secret.trim()) throw new Error("新模型启用前必须填写 API Key");
-    let models = setting.models.filter((item) => item.id !== id).map(({ key_configured: _key, ...item }) => item);
+    let models = snapshot.models.filter((item) => item.id !== id).map(({ key_configured: _key, ...item }) => item);
     models.push(secret ? { ...desired, enabled: false } : desired);
     let saved;
-    saved = await saveModels(models, setting.updated_time);
+    saved = await saveModels(models, snapshot.updated_time);
     // Validate and version-check configuration before changing any credential.
     setting = saved;
+    form.settingSnapshot = structuredClone(saved);
     configurationSaved = true;
     if (existing && data.has("delete_secret")) await jsonRequest(`/paam/system/v1/setting/automation/model/${id}/secret`, "DELETE");
     if (secret) await jsonRequest(`/paam/system/v1/setting/automation/model/${id}/secret`, "PUT", { secret });
     if (secret && desired.enabled) {
       models = saved.models.map(({ key_configured: _key, ...item }) => item.id === id ? desired : item);
       saved = await saveModels(models, saved.updated_time);
+      form.settingSnapshot = structuredClone(saved);
     }
     setting = await request('/paam/system/v1/setting/automation');
     form.closest("dialog").close();
     window.dispatchEvent(new CustomEvent("paam:automation-saved", { detail: { message: "模型配置已保存" } }));
   } catch (error) {
-    button.disabled = false;
     showFormError(form, configurationSaved ? { message: `配置已保存，但后续步骤未完成：${error.message}。请核对密钥和启用状态。` } : error);
-  }
+  } finally { button.disabled = false; }
 }
 
 function ruleDialog(rule = null) {
@@ -497,7 +568,7 @@ async function submitRule(event) {
     const saved = await jsonRequest(existing ? `/paam/tag/v1/auto_rule/${id}` : "/paam/tag/v1/auto_rule", existing ? "PUT" : "POST", payload, true);
     form.closest("dialog").close();
     const warning = saved.warnings?.some((item) => item.code === "REGISTER_FAILED");
-    window.dispatchEvent(new CustomEvent("paam:automation-saved", { detail: { message: warning ? "规则已保存，但调度注册失败；请查看诊断" : scheduleStatus?.tag_scan_guard === "DISABLED" ? "规则已保存；服务尚未开启扫描" : "规则已保存，请查看实际调度状态" } }));
+    window.dispatchEvent(new CustomEvent("paam:automation-saved", { detail: { createdRuleId: existing ? null : saved.body.id, message: warning ? "规则已保存，但调度注册失败；请查看诊断" : scheduleStatus?.tag_scan_guard === "DISABLED" ? "规则已保存；服务尚未开启扫描" : "规则已保存，请查看实际调度状态" } }));
   } catch (error) {
     button.disabled = false;
     showFormError(form, error);
@@ -566,7 +637,7 @@ function detailFields(fields) {
 }
 
 function displayTime(value) {
-  return value ? new Date(value).toLocaleString("zh-CN", { timeZone: "Asia/Hong_Kong" }) : "—";
+  return value ? date(value) : "—";
 }
 
 function scheduleExplanation(code) {
@@ -712,9 +783,9 @@ async function loadAutomationSnapshot(page, signal) {
     return { item, ledger, rule, scope };
   }
   const [schedule, currentSetting, viewPage] = await Promise.all([
-    read("/paam/system/v1/schedule/status"), read("/paam/system/v1/setting/automation"), read("/paam/tag/v1/view/list?page_index=1&page_size=100"),
+    read("/paam/system/v1/schedule/status"), read("/paam/system/v1/setting/automation"), readListOptions(viewListUrl, signal),
   ]);
-  if (kind === "rules") return { schedule, currentSetting, viewPage, rulePage: await read(ruleListUrl) };
+  if (kind === "rules") return { schedule, currentSetting, viewPage, rulePage: await read(`/paam/tag/v1/auto_rule/list?${page.dataset.ruleQuery}`) };
   const [rule, summary, recent] = await Promise.all([
     read(`/paam/tag/v1/auto_rule/${page.dataset.ruleId}`), read(`/paam/tag/v1/auto_rule/${page.dataset.ruleId}/summary`),
     read(`/paam/tag/v1/assignment_request/list?${page.dataset.recentQuery}`),
@@ -735,6 +806,7 @@ function applyAutomationData(root, page, data) {
   if (data.currentSetting) setting = data.currentSetting;
   if (data.viewPage) views = data.viewPage.items;
   root.dataset.autoStale = "false";
+  root.querySelector('[data-refresh-error]')?.remove();
   if (page.dataset.autoPage === "settings") {
     if (settingChanged) {
       patchMarkup($('[data-auto-models]', root), setting.models.map(modelSummary).join('') || '<p>尚未配置模型。添加连接并保存密钥后，规则才可选择模型。</p>');
@@ -747,6 +819,7 @@ function applyAutomationData(root, page, data) {
     rules = data.rulePage.items;
     patchMarkup($('[data-auto-notice]', root), scheduleNotice());
     patchMarkup($('[data-auto-rule-rows]', root), rules.map(ruleRow).join("") || '<tr><td colspan="5">尚无规则</td></tr>');
+    patchMarkup($('[data-auto-rule-pager]', root), requestPagerMarkup(data.rulePage, "auto-rule-page"));
     const create = $('[data-action="rule-new"]', root);
     if (create) create.disabled = !views.some((item) => item.status === "ACTIVE") || !setting.models.some((item) => item.enabled && item.key_configured);
   }
@@ -770,11 +843,11 @@ function applyAutomationData(root, page, data) {
   if (focusMatch && !focused.isConnected) $$('[data-tag-request-select], [data-action]', root).find(focusMatch)?.focus({ preventScroll: true });
 }
 
-function startAutomationRefresh(root) {
+export function startAutomationRefresh(root, { stale = false } = {}) {
   const page = $('[data-auto-page]', root);
   if (!page) return;
   stopAutomationPolling();
-  root.dataset.autoStale = "false";
+  root.dataset.autoStale = String(stale);
   const route = location.hash;
   stopPolling = startVisiblePoll({
     isAlive: () => page.isConnected && location.hash === route,
@@ -786,11 +859,12 @@ function startAutomationRefresh(root) {
       const feedback = $('[data-auto-freshness]', root);
       if (!feedback) return;
       const last = lastSuccess ? displayTime(lastSuccess) : "本页初次读取";
-      feedback.textContent = state === "UNKNOWN" ? `连接中断，当前状态未知 · 上次更新：${last}`
+      const unknown = state === "UNKNOWN" || (state === "REFRESHING" && root.dataset.autoStale === "true");
+      feedback.textContent = unknown ? `连接中断，当前状态未知 · 上次更新：${last}`
         : state === "PAUSED" ? `已暂停刷新 · ${last}`
         : state === "CURRENT" ? `已更新 · ${last}`
         : "状态自动更新";
-      if (state === "UNKNOWN") {
+      if (unknown) {
         root.dataset.autoStale = "true";
         const notice = $('[data-auto-notice]', root);
         if (notice) notice.textContent = "连接中断，扫描状态未知。";
@@ -847,6 +921,13 @@ export function bindAutomation(root, rerender, notify, navigate) {
   if (boundRoots.has(root)) return;
   boundRoots.add(root);
   root.addEventListener("submit", async (event) => {
+    if (event.target.matches('[data-form="auto-rule-filter"]')) {
+      event.preventDefault();
+      const params = new URLSearchParams(new FormData(event.target));
+      params.set("page", "1");
+      navigate?.("auto-rules", params);
+      return;
+    }
     if (!event.target.matches('[data-form="schedule-diagnostics"]')) return;
     event.preventDefault();
     try { await refreshDiagnostics(root); } catch (error) { notify(error.message, true); }
@@ -883,6 +964,7 @@ export function bindAutomation(root, rerender, notify, navigate) {
       });
       if (action === "disclosure-preview") openDisclosurePreview(openDialog, Number(button.dataset.mode || 1));
       if (action === "rule-new") ruleDialog();
+      if (action === "auto-rule-page") { params.delete("rule_id"); params.set("page", button.dataset.requestPage); navigate?.("auto-rules", params); }
       if (action === "rule-edit") ruleDialog(rules.find((item) => item.id === id));
       if (action === "rule-preview") await previewRule(button);
       if (action === "rule-detail") { event.preventDefault(); await openRuleInspection(id, root, rerender, notify, navigate); }

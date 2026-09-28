@@ -54,6 +54,7 @@ const context = {
   $$: () => [],
   esc: (value) => String(value ?? ""),
   money: ({ amount, currency_code }) => `${currency_code} ${amount}`,
+  date: (value) => String(value || "—"),
   URLSearchParams,
   registerInspection: () => {},
 };

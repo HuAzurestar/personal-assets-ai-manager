@@ -412,6 +412,15 @@
 .target-shell .automation-notice.compact { padding:11px 14px; }
 .target-shell .automation-section { display:grid; gap:14px; min-width:0; }
 .target-shell [data-auto-runtime] { min-width:0; }
+.target-shell .automation-runtime { min-width:0; }
+.target-shell :is([data-form="auto-rule-filter"], [data-form="schedule-diagnostics"]) {
+  display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; align-items:end;
+}
+.target-shell :is([data-form="auto-rule-filter"], [data-form="schedule-diagnostics"]) label { display:grid; gap:6px; min-width:0; }
+.target-shell :is([data-form="auto-rule-filter"], [data-form="schedule-diagnostics"]) :is(input,select) { width:100%; min-width:0; }
+@media (max-width:800px) {
+  .target-shell :is([data-form="auto-rule-filter"], [data-form="schedule-diagnostics"]) { grid-template-columns:1fr; }
+}
 .target-shell .automation-section-head { display:flex; align-items:center; justify-content:space-between; gap:18px; }
 .target-shell .automation-section-head h3 { margin:0 0 4px; font-size:18px; }
 .target-shell .automation-section-head p { margin:0; color:var(--muted); font-size:12px; }

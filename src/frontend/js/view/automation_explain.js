@@ -1,5 +1,5 @@
-import { esc, money } from "../util/core.js";
-import { helpTip } from "./automation_feedback.js?v=20260928.3";
+import { esc, money, date } from "../util/core.js";
+import { helpTip } from "./automation_feedback.js?v=20260928.5";
 
 export const executionResultNames = { COMPLETED: "完成", PARTIAL_FAILURE: "部分失败", FAILED: "失败", CANCELLED: "已取消", UNKNOWN: "结果未知" };
 
@@ -18,7 +18,7 @@ export function ruleExecution(rule, schedule, model, view) {
   if (schedule.scheduler_state !== "RUNNING" || schedule.worker_state !== "HEALTHY") return state("调度不可用", "调度器或执行器未就绪，请查看运行概况");
   if (task.queue_state === "RUNNING") return state("分析中", "正在检查账目", "active");
   if (task.queue_state === "QUEUED") return state("排队中", task.queue_position == null ? "等待前面的任务完成" : `排队第 ${task.queue_position} 位`, "pending");
-  if (task.queue_state === "IDLE") return state("等待定时触发", task.next_run_at ? `下次：${new Date(task.next_run_at).toLocaleString("zh-CN", { timeZone: "Asia/Hong_Kong" })}` : "当前没有下次触发时间，请检查计划", "pending");
+  if (task.queue_state === "IDLE") return state("等待定时触发", task.next_run_at ? `下次：${date(task.next_run_at)}（当前显示时区）` : "当前没有下次触发时间，请检查计划", "pending");
   return state("状态未知", "未识别的执行状态，请查看运行概况");
 }
 
@@ -42,7 +42,7 @@ const previewReasonNames = {
 
 export function candidatePreviewMarkup(body) {
   const reasons = Object.entries(body.reason_counts).map(([name, count]) => `<span>${esc(previewReasonNames[name] || `其他原因（${name}）`)} <strong>${esc(count)}</strong></span>`).join("");
-  const samples = body.samples.map((item) => `<li><button type="button" class="quiet" data-preview-ledger="${item.ledger_id}">${esc(item.counterparty_name || item.summary || "未记录交易对方")} · ${esc(money(item))}</button><span>${esc(item.summary || "无摘要")} · ${esc(new Date(item.occurred_time).toLocaleString("zh-CN", { timeZone: "Asia/Hong_Kong" }))} · 账目 #${item.ledger_id}</span></li>`).join("");
+  const samples = body.samples.map((item) => `<li><button type="button" class="quiet" data-preview-ledger="${item.ledger_id}">${esc(item.counterparty_name || item.summary || "未记录交易对方")} · ${esc(money(item))}</button><span>${esc(item.summary || "无摘要")} · ${esc(date(item.occurred_time))} · 账目 #${item.ledger_id}</span></li>`).join("");
   return `<strong>待分析账目 ${helpTip("本地筛选预览", "从已扫描位置之后检查最多 100 条，展示最多 20 条样例；不调用模型。")}</strong><p>已扫描至 #${body.scan_after_ledger_id} · 本次检查 ${body.inspected_count} 条 · 符合条件 ${body.eligible_count} 条</p>
     <div class="preview-reasons">${reasons || "此范围内没有账目"}</div>
     <ul class="candidate-samples">${samples || "<li>本次检查范围内没有可展示的待分析样例。</li>"}</ul>`;

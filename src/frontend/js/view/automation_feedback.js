@@ -1,4 +1,4 @@
-import { esc } from "../util/core.js";
+import { esc, date } from "../util/core.js";
 
 export function helpTip(label, copy) {
   return `<span class="automation-tip"><button type="button" class="automation-tip-trigger" aria-label="${esc(label)}" aria-description="${esc(copy)}">?</button><span class="automation-tip-content" role="tooltip">${esc(copy)}</span></span>`;
@@ -78,7 +78,7 @@ const phaseCopy = { SCAN: "检查候选", CALL: "请求模型", RETRY_WAIT: "等
 const outcomeCopy = { NO_DATA: "无待分析数据", NO_CALL: "清洗后未调用模型", INSUFFICIENT: "模型依据不足",
   SUGGESTION: "已生成待审申请", SKIPPED: "不满足分析条件", RETRY_DEFERRED: "本项留到后续 CRON",
   SOFT_BUDGET_EXHAUSTED: "本轮预算结束", RUN_COMPLETED: "正常完成" };
-const localTime = (value) => value ? new Date(value).toLocaleString("zh-CN", { timeZone: "Asia/Hong_Kong" }) : "—";
+const localTime = (value) => value ? date(value) : "—";
 
 export function scheduleProgressMarkup(progress) {
   if (!progress) return "";
