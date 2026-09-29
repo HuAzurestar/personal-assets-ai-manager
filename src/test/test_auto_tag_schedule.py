@@ -12,6 +12,7 @@ from backend.core.target_database import init_target_db
 from backend.entity import AutoTagRule, TransactionFact
 from backend.error import LlmAdapterError
 from backend.mapper.auto_tag_rule_mapper import AutoTagRuleMapper
+from backend.mapper.setting_mapper import SettingMapper
 from backend.mapper.auto_tag_scan_mapper import (
     ScanCommitResult,
     ScanPage,
@@ -82,6 +83,42 @@ def test_default_mode_never_registers_tag_scans(tmp_path):
         assert ScheduleStatusService(
             scheduler, sessions, synthetic_acceptance_enabled=False,
         ).get().tag_scan_guard == "DISABLED"
+    finally:
+        engine.dispose()
+
+
+def test_global_scan_setting_synchronizes_jobs_and_survives_restart(tmp_path):
+    engine, sessions, rule_id = _runtime(tmp_path)
+    scheduler = JobScheduler()
+    service = AutoTagScheduleService(
+        sessions, scheduler, FakeSecretStore(), real_analysis_enabled=True,
+    )
+    try:
+        service.register_persisted()
+        assert [task.task_key for task in scheduler.snapshot().tasks] == [f"tag-scan:{rule_id}"]
+        with sessions() as db:
+            mapper = SettingMapper(db)
+            mapper.begin_write()
+            mapper.save({"schema_version": 1, "automation": {"scan_enabled": False}}, NOW)
+            mapper.commit()
+        service.sync_enabled()
+        assert scheduler.snapshot().tasks == ()
+        assert ScheduleStatusService(
+            scheduler, sessions, synthetic_acceptance_enabled=False,
+            real_analysis_enabled=True,
+        ).get().tag_scan_guard == "DISABLED"
+        restarted = AutoTagScheduleService(
+            sessions, JobScheduler(), FakeSecretStore(), real_analysis_enabled=True,
+        )
+        restarted.register_persisted()
+        assert restarted._scheduler.snapshot().tasks == ()
+        with sessions() as db:
+            mapper = SettingMapper(db)
+            mapper.begin_write()
+            mapper.save({"schema_version": 1, "automation": {"scan_enabled": True}}, NOW)
+            mapper.commit()
+        service.sync_enabled()
+        assert [task.task_key for task in scheduler.snapshot().tasks] == [f"tag-scan:{rule_id}"]
     finally:
         engine.dispose()
 

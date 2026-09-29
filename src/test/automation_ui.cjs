@@ -17,6 +17,7 @@ const rule = {
   method_config: { model_id: 2, prompt: "只判断虚构早餐" },
 };
 const setting = {
+  scan_enabled: true, scan_available: true,
   models: [{
     id: 2, name: "虚构模型", enabled: true, key_configured: true,
     litellm_params: { model: "openai/Qwen/Qwen3.5-4B", api_base: "test://fixture" },
@@ -67,7 +68,7 @@ vm.runInContext(fs.readFileSync(path.resolve(__dirname, "../frontend/js/view/aut
   .replace(/^import .*;\r?\n/gm, "").replace(/^export /gm, ""), context);
 vm.runInContext(fs.readFileSync(path.resolve(__dirname, "../frontend/js/view/automation_feedback.js"), "utf8")
   .replace(/^import .*;\r?\n/gm, "").replace(/^export /gm, ""), context);
-vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.testSettings = automationSettingsPage; globalThis.testRuleDetail = ruleDetailMarkup; globalThis.testRequestDetail = requestDetailMarkup; globalThis.testScheduleExplanation = scheduleExplanation; globalThis.testRulePage = autoRulesPage; globalThis.testReviewPage = tagReviewPage; globalThis.testFilterParams = tagReviewFilterParams;`, context);
+vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.testSettings = automationSettingsPage; globalThis.testScanControl = scanControlMarkup; globalThis.testRuleDetail = ruleDetailMarkup; globalThis.testRequestDetail = requestDetailMarkup; globalThis.testScheduleExplanation = scheduleExplanation; globalThis.testRulePage = autoRulesPage; globalThis.testReviewPage = tagReviewPage; globalThis.testFilterParams = tagReviewFilterParams;`, context);
 
 (async () => {
   // Two already-open confirmations must not submit overlapping commands.
@@ -97,6 +98,12 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
   context.$ = () => null;
   const views = [{ id: 1, name: "分类", status: "ACTIVE" }];
   const idle = await context.testPanel(views);
+  assert.match(context.testScanControl(), /data-action="scan-toggle"/);
+  assert.match(context.testScanControl(), /自动分析：已开启/);
+  setting.scan_available = false;
+  assert.match(context.testScanControl(), /自动分析：部署层已关闭/);
+  assert.match(context.testScanControl(), /data-action="scan-toggle" disabled/);
+  setting.scan_available = true;
   assert.match(idle, /自动分析已关闭/);
   assert.doesNotMatch(idle, /部署者|PAAM_AUTOTAG/);
   assert.match(idle, /配置已启用/);
@@ -222,7 +229,7 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
   assert.doesNotMatch(settings, /<details/);
   assert.match(settings, /测试真实连接/);
   assert.match(settings, /可能计费/);
-  assert.equal((settings.match(/class="automation-section"/g) || []).length, 3);
+  assert.equal((settings.match(/class="automation-section"/g) || []).length, 4);
   assert.equal((settings.match(/data-auto-notice/g) || []).length, 1);
   assert.doesNotMatch(settings, /interaction-demo|M2 交互演示|automation-hero/);
 

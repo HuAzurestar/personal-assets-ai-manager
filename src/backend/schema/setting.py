@@ -177,6 +177,7 @@ class AutomationSettingUpdateRequest(BaseModel):
     expected_updated_time: datetime | None
     models: list[AutomationModelWrite] | None = None
     disclosure: AutomationDisclosure | None = None
+    scan_enabled: bool | None = Field(default=None, strict=True)
 
     @field_validator("expected_updated_time")
     @classmethod
@@ -190,8 +191,8 @@ class AutomationSettingUpdateRequest(BaseModel):
 
     @model_validator(mode="after")
     def reject_duplicate_model_ids(self) -> "AutomationSettingUpdateRequest":
-        if self.models is None and self.disclosure is None:
-            raise ValueError("provide models or disclosure to update")
+        if self.models is None and self.disclosure is None and self.scan_enabled is None:
+            raise ValueError("provide models, disclosure, or scan_enabled to update")
         sections = self.model_fields_set - {"expected_updated_time"}
         if any(getattr(self, field) is None for field in sections):
             raise ValueError("omit unchanged sections instead of sending null")
@@ -204,6 +205,8 @@ class AutomationSettingUpdateRequest(BaseModel):
 class AutomationSettingRead(BaseModel):
     models: list[AutomationModelRead]
     disclosure: AutomationDisclosure
+    scan_enabled: bool
+    scan_available: bool
     updated_time: datetime | None
 
 

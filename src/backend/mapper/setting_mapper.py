@@ -29,6 +29,8 @@ def decode_setting_value(value_json: str) -> dict[str, object]:
     if isinstance(automation, dict):
         models = automation.get("models", [])
         disclosure = automation.get("disclosure", {})
+        if not isinstance(automation.get("scan_enabled", True), bool):
+            raise ValueError("setting automation scan_enabled must be a boolean")
         if not isinstance(models, list):
             raise ValueError("setting automation models must be a JSON array")
         if not isinstance(disclosure, dict):
@@ -79,6 +81,13 @@ class SettingMapper:
         result = dict(row)
         result["value"] = decode_setting_value(result.pop("value_json"))
         return result
+
+    def scan_enabled(self) -> bool:
+        setting = self.get()
+        if setting is None:
+            return True
+        automation = setting["value"].get("automation", {})
+        return automation.get("scan_enabled", True)
 
     def save(self, value: dict[str, object], now: datetime) -> None:
         value_json = encode_setting_value(value)

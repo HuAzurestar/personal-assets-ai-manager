@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -10,6 +11,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from backend.core import ProtectedSecretStore
+from backend.core.config import AUTOTAG_REAL_ANALYSIS, AUTOTAG_SYNTHETIC_ACCEPTANCE
 from backend.entity.base import utc_now
 from backend.error import SettingError
 from backend.mapper.auto_tag_rule_mapper import AutoTagRuleMapper
@@ -24,6 +26,7 @@ from backend.schema.setting import (
     ModelConnectionTestRead,
     ModelSecretStateRead,
 )
+from backend.schema.response import ResponseWarning
 
 
 DEFAULT_DISCLOSURE: dict[str, Any] = {
@@ -37,11 +40,14 @@ DEFAULT_DISCLOSURE: dict[str, Any] = {
 class SettingService:
     """Persist model profiles separately from their protected credentials."""
 
-    def __init__(self, db: Session, secret_store: ProtectedSecretStore):
+    def __init__(self, db: Session, secret_store: ProtectedSecretStore,
+                 on_scan_setting_changed: Callable[[], bool | None] | None = None):
         self.mapper = SettingMapper(db)
         self.rule_mapper = AutoTagRuleMapper(db)
         self.request_mapper = TagAssignmentRequestMapper(db)
         self.secret_store = secret_store
+        self.on_scan_setting_changed = on_scan_setting_changed
+        self.warnings: list[ResponseWarning] = []
 
     def get_automation(self) -> AutomationSettingRead:
         setting = self._load_setting()
@@ -106,6 +112,9 @@ class SettingService:
             current_disclosure = AutomationDisclosure.model_validate(
                 automation.get("disclosure", {}),
             )
+            current_scan_enabled = automation.get("scan_enabled", True)
+            if payload.scan_enabled is not None:
+                automation["scan_enabled"] = payload.scan_enabled
             next_disclosure = payload.disclosure or current_disclosure
             if payload.disclosure is not None:
                 automation["disclosure"] = next_disclosure.model_dump(mode="json")
@@ -130,6 +139,17 @@ class SettingService:
             )
             self.mapper.save(next_value, next_time)
             self.mapper.commit()
+            if payload.scan_enabled is not None and payload.scan_enabled != current_scan_enabled:
+                if self.on_scan_setting_changed is not None:
+                    try:
+                        synchronized = self.on_scan_setting_changed()
+                    except Exception:
+                        synchronized = False
+                    if synchronized is False:
+                        self.warnings.append(ResponseWarning(
+                            code="SCAN_SYNC_FAILED",
+                            message="自动分析设置已保存，但调度同步失败；请检查诊断或重启服务。",
+                        ))
             return self._automation_read(
                 next_value,
                 next_time,
@@ -293,6 +313,8 @@ class SettingService:
         return AutomationSettingRead(
             models=models,
             disclosure=AutomationDisclosure.model_validate(disclosure),
+            scan_enabled=automation.get("scan_enabled", True),
+            scan_available=AUTOTAG_REAL_ANALYSIS or AUTOTAG_SYNTHETIC_ACCEPTANCE,
             updated_time=updated_time,
         )
 

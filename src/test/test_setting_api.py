@@ -97,6 +97,8 @@ def test_model_configuration_secret_lifecycle_and_restart(setting_runtime, monke
         assert initial.status_code == 200
         assert initial.json()["body"] == {
             "models": [],
+            "scan_enabled": True,
+            "scan_available": True,
             "disclosure": {
                 "date_granularity": "DAY",
                 "amount_bands": {
@@ -187,6 +189,55 @@ def test_model_configuration_secret_lifecycle_and_restart(setting_runtime, monke
     assert recovered.status_code == 200
     assert recovered.json()["body"]["models"][0]["id"] == 1
     assert recovered.json()["body"]["models"][0]["key_configured"] is False
+
+
+def test_scan_setting_persists_and_notifies_scheduler(setting_runtime):
+    sessions, _, store = setting_runtime
+    calls = []
+    with _client(sessions, store) as client:
+        client.app.state.auto_tag_schedule = type(
+            "ScheduleSpy", (), {"sync_enabled": lambda self: calls.append("sync")},
+        )()
+        uri = "/paam/system/v1/setting/automation"
+        disabled = client.put(uri, json={
+            "expected_updated_time": None, "scan_enabled": False,
+        })
+        assert disabled.status_code == 200, disabled.text
+        assert disabled.json()["body"]["scan_enabled"] is False
+        assert calls == ["sync"]
+        stale = client.put(uri, json={
+            "expected_updated_time": None, "scan_enabled": True,
+        })
+        assert stale.status_code == 409
+        assert calls == ["sync"]
+        enabled = client.put(uri, json={
+            "expected_updated_time": disabled.json()["body"]["updated_time"],
+            "scan_enabled": True,
+        })
+        assert enabled.status_code == 200, enabled.text
+        assert calls == ["sync", "sync"]
+        invalid = client.put(uri, json={
+            "expected_updated_time": enabled.json()["body"]["updated_time"],
+            "scan_enabled": "true",
+        })
+        assert invalid.status_code == 422
+    with _client(sessions, store) as restarted:
+        assert restarted.get(uri).json()["body"]["scan_enabled"] is True
+
+
+def test_scan_setting_reports_sync_failure_after_durable_save(setting_runtime):
+    sessions, _, store = setting_runtime
+    with _client(sessions, store) as client:
+        client.app.state.auto_tag_schedule = type(
+            "ScheduleSpy", (), {"sync_enabled": lambda self: False},
+        )()
+        uri = "/paam/system/v1/setting/automation"
+        response = client.put(uri, json={
+            "expected_updated_time": None, "scan_enabled": False,
+        })
+        assert response.status_code == 200
+        assert response.json()["warnings"][0]["code"] == "SCAN_SYNC_FAILED"
+        assert client.get(uri).json()["body"]["scan_enabled"] is False
 
 
 def test_encrypted_store_api_secret_survives_recreated_service(setting_runtime, tmp_path):

@@ -42,17 +42,29 @@ class AutoTagScheduleService:
         analyzer = ConfiguredLlmAnalyzer(sessions, secret_store)
         self._scan = AutoTagScanService(sessions, analyzer)
 
-    def register_persisted(self) -> None:
+    def register_persisted(self) -> bool:
         if not (self._synthetic_acceptance_enabled or self._real_analysis_enabled):
-            return
+            return True
         with self._sessions() as db:
+            if not SettingMapper(db).scan_enabled():
+                return True
             if not self._real_analysis_enabled and not (
                 AutoTagScanMapper(db).is_synthetic_acceptance_database()
             ):
-                return
+                return True
             schedules = AutoTagRuleMapper(db).enabled_schedules()
-        for rule_id, expression in schedules:
-            self._register(rule_id, expression)
+        results = [self._register(rule_id, expression) for rule_id, expression in schedules]
+        return all(results)
+
+    def sync_enabled(self) -> bool:
+        """Apply a committed global setting without restarting the process."""
+        for task in self._scheduler.snapshot().tasks:
+            if task.task_key.startswith("tag-scan:"):
+                try:
+                    self._scheduler.remove(task.task_key)
+                except KeyError:
+                    pass
+        return self.register_persisted()
 
     def sync_rule(self, rule_id: int) -> bool | None:
         if not (self._synthetic_acceptance_enabled or self._real_analysis_enabled):
@@ -62,6 +74,12 @@ class AutoTagScheduleService:
                 pass
             return
         with self._sessions() as db:
+            if not SettingMapper(db).scan_enabled():
+                try:
+                    self._scheduler.remove(self.task_key(rule_id))
+                except KeyError:
+                    pass
+                return
             if not self._real_analysis_enabled and not (
                 AutoTagScanMapper(db).is_synthetic_acceptance_database()
             ):
@@ -93,6 +111,8 @@ class AutoTagScheduleService:
     def _callback(self, rule_id: int):
         async def run(context: JobRunContext) -> JobOutcome:
             with self._sessions() as db:
+                if not SettingMapper(db).scan_enabled():
+                    return JobOutcome("CANCELLED")
                 if not self._real_analysis_enabled and not (
                     AutoTagScanMapper(db).is_synthetic_acceptance_database()
                 ):

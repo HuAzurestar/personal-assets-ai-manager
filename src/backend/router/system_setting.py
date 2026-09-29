@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
 from backend.core import ProtectedSecretStore
@@ -54,13 +54,21 @@ def get_automation_setting(
 @router.put("", response_model=AutomationSettingResponse)
 def update_automation_setting(
     payload: AutomationSettingUpdateRequest,
+    request: Request,
     db: Session = Depends(get_db),
     secret_store: ProtectedSecretStore = Depends(get_protected_secret_store),
 ):
+    schedule = getattr(request.app.state, "auto_tag_schedule", None)
+    service = SettingService(
+        db, secret_store,
+        on_scan_setting_changed=getattr(schedule, "sync_enabled", None),
+    )
+    body = service.update_automation(payload)
     return AutomationSettingResponse(
         status=200,
         message="ok",
-        body=_service(db, secret_store).update_automation(payload),
+        body=body,
+        warnings=service.warnings,
     )
 
 

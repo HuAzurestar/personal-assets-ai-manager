@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from backend.core.job_scheduler import JobScheduler
 from backend.mapper.auto_tag_rule_mapper import AutoTagRuleMapper
 from backend.mapper.auto_tag_scan_mapper import AutoTagScanMapper
+from backend.mapper.setting_mapper import SettingMapper
 from backend.schema.schedule import ScheduleStatusRead, ScheduleTaskRead
 from backend.schema.list_query import iter_filter_fields
 from backend.schema.response import ListBody
@@ -29,7 +30,11 @@ class ScheduleStatusService:
 
     def get(self) -> ScheduleStatusRead:
         snapshot = self._scheduler.snapshot()
-        if self._real_analysis_enabled:
+        with self._sessions() as db:
+            scan_enabled = SettingMapper(db).scan_enabled()
+        if not scan_enabled:
+            guard = "DISABLED"
+        elif self._real_analysis_enabled:
             guard = "REAL_READY"
         elif not self._synthetic_acceptance_enabled:
             guard = "DISABLED"

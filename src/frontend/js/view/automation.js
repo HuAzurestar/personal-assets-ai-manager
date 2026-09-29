@@ -75,6 +75,17 @@ function disclosureSummaryMarkup() {
   return `<div><span>时间策略 ${helpTip("时间策略", "当前发送内容省略交易时间，此项仅保存配置。")}</span><strong>${esc(({ DAY: "精确到日", MONTH: "精确到月", NONE: "不发送时间" })[setting.disclosure?.date_granularity] || "未配置")}</strong></div><div><span>金额分档 ${helpTip("金额分档", "按金额绝对值分档，以下为换算后的日常金额。")}</span>${bands || "<strong>尚未配置</strong>"}</div>`;
 }
 
+function scanControlMarkup() {
+  const enabled = setting.scan_enabled;
+  const available = setting.scan_available;
+  const label = !available ? "部署层已关闭" : enabled ? "已开启" : "已关闭";
+  const detail = !available
+    ? "部署环境禁止自动分析；需要管理员调整启动配置并重建容器。"
+    : enabled ? "启用的规则会按计划自动分析，可能产生模型费用。"
+      : "规则和模型配置会保留，但不会自动分析。";
+  return `<div class="automation-notice compact"><strong>自动分析：${label}</strong><span>${detail}</span><button type="button" data-action="scan-toggle" ${available ? "" : "disabled"}>${!available ? "请调整部署配置" : enabled ? "关闭自动分析" : "开启自动分析"}</button></div>`;
+}
+
 export async function automationSettingsPage() {
   setting = await request("/paam/system/v1/setting/automation");
   const modelCards = setting.models.map(modelSummary).join("");
@@ -89,6 +100,7 @@ export async function automationSettingsPage() {
       <div class="automation-section-head"><div><h3 id="automation-disclosure-title">数据披露 ${helpTip("数据披露说明", "每条规则可选择发送金额区间、精确金额或省略金额。")}</h3></div><div class="automation-actions"><button type="button" class="quiet" data-action="disclosure-preview">查看发送示例</button><button type="button" data-action="disclosure-edit">编辑披露策略</button></div></div>
       <div class="disclosure-card" data-auto-disclosure>${disclosureSummaryMarkup()}</div>
     </section>
+    <section class="automation-section"><h3>自动分析开关</h3><div data-auto-scan-control>${scanControlMarkup()}</div></section>
     <section class="automation-section"><h3>运行概况</h3><div data-auto-notice>${scheduleNotice()}</div>${freshnessMarkup}
       <nav class="automation-links"><a href="#details/auto-rule">管理规则 →</a><a href="#workbench/tag-review">查看待审建议 →</a></nav>
       <section class="automation-runtime"><h3>任务队列</h3><div data-auto-runtime>${runtimeMarkup(scheduleStatus)}</div><div data-auto-diagnostics>${diagnosticsMarkup(diagnostics)}</div></section></section>
@@ -848,6 +860,7 @@ function applyAutomationData(root, page, data) {
     if (settingChanged) {
       patchMarkup($('[data-auto-models]', root), setting.models.map(modelSummary).join('') || '<p>尚未配置模型。添加连接并保存密钥后，规则才可选择模型。</p>');
       patchMarkup($('[data-auto-disclosure]', root), disclosureSummaryMarkup());
+      patchMarkup($('[data-auto-scan-control]', root), scanControlMarkup());
     }
     patchMarkup($('[data-auto-runtime]', root), runtimeMarkup(data.schedule));
     patchMarkup($('[data-auto-notice]', root), scheduleNotice());
@@ -995,6 +1008,23 @@ export function bindAutomation(root, rerender, notify, navigate) {
       if (action === "model-new") modelDialog();
       if (action === "model-edit") modelDialog(setting.models.find((item) => item.id === id));
       if (action === "model-test") await testModel(button);
+      if (action === "scan-toggle") {
+        const next = !setting.scan_enabled;
+        const prompt = next
+          ? "开启后，已启用的规则会按计划调用模型，可能产生费用。确认开启自动分析？"
+          : "关闭后，已排队的自动分析会停止，规则和进度仍会保留。确认关闭？";
+        if (!window.confirm(prompt)) return;
+        button.disabled = true;
+        const saved = await jsonRequest("/paam/system/v1/setting/automation", "PUT", {
+          expected_updated_time: setting.updated_time, scan_enabled: next,
+        }, true);
+        setting = saved.body;
+        scheduleStatus = await request("/paam/system/v1/schedule/status");
+        patchMarkup($('[data-auto-scan-control]', root), scanControlMarkup());
+        patchMarkup($('[data-auto-notice]', root), scheduleNotice());
+        const syncFailed = saved.warnings?.some((item) => item.code === "SCAN_SYNC_FAILED");
+        notify(syncFailed ? "设置已保存，但调度同步失败；请检查诊断或重启服务" : next ? "自动分析已开启并保存" : "自动分析已关闭并保存", Boolean(syncFailed));
+      }
       if (action === "disclosure-edit") openDisclosureEditor(setting, openDialog, (saved) => {
         setting = saved;
         window.dispatchEvent(new CustomEvent("paam:automation-saved", { detail: { message: "披露策略已保存并回读；受影响规则的待审申请已失效" } }));
