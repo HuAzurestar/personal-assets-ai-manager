@@ -228,9 +228,12 @@ class JobScheduler:
         paused: bool = False,
     ) -> None:
         normalized = validate_cron_expression(expression)
+        trigger = cron_trigger(normalized)
+        if trigger.get_next_fire_time(None, self._now()) is None:
+            raise ValueError("cron expression has no next run")
         self._register(
             task_key,
-            cron_trigger(normalized),
+            trigger,
             callback,
             paused=paused,
         )

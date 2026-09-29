@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
+from backend.core.job_scheduler import JobScheduler
 from backend.entity import MAX_COUNTER_VALUE
 from backend.entity.base import utc_now
 from backend.error import AutoTagRuleError
@@ -70,6 +71,7 @@ class AutoTagRuleService:
         )
 
     def create(self, payload: AutoTagRuleCreateRequest) -> AutoTagRuleRead:
+        self._require_runnable_cron(payload.cron)
         try:
             self.mapper.begin_write()
             self._validate_references(
@@ -117,6 +119,7 @@ class AutoTagRuleService:
                 payload.expected_updated_time,
                 current["updated_time"],
             )
+            self._require_runnable_cron(payload.cron)
             self._validate_references(
                 view_id=int(current["view_id"]),
                 model_id=payload.method_config.model_id,
@@ -191,6 +194,19 @@ class AutoTagRuleService:
         except Exception:
             self.mapper.rollback()
             raise
+
+    @staticmethod
+    def _require_runnable_cron(expression: str) -> None:
+        if not expression:
+            return
+        try:
+            JobScheduler.preview_cron(expression)
+        except ValueError as error:
+            raise AutoTagRuleError(
+                422,
+                "cron expression has no future execution time",
+                code="AUTO_TAG_RULE_CRON_NO_RUN",
+            ) from error
 
     def _after_saved(self, rule_id: int) -> None:
         if self._on_saved is None:

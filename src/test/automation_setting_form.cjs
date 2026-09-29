@@ -14,7 +14,7 @@ for (const [code, value, expected] of [['CNY','30.01',3001], ['CNY_4','0.3000',3
 }
 assert.equal(context.decimalBoundary('90000000000.00','CNY'),9000000000000);
 for (const [value,code] of [['1.001','CNY'], ['1.1','JPY'], ['-1','CNY'], ['1e2','CNY'], ['90000000000.01','CNY']]) assert.throws(() => context.decimalBoundary(value,code));
-for (const cron of ['*/5 * * * *','0 * * * *','0 9 * * *','59 23 * * *','*/1 * * * * *','0 20 * * mon-fri','']) {
+for (const cron of ['*/5 * * * *','0 * * * *','0 9 * * *','59 23 * * *','*/1 * * * * *','0 20 * * mon-fri','0 9 * * 1-5','']) {
   const preset = context.cronPreset(cron);
   assert.equal(context.frequencyCron(preset.frequency,preset.time,cron),cron);
 }
@@ -28,6 +28,10 @@ context.$ = () => slot;
 context.esc = (value) => value;
 vm.runInContext('showFormError({}, { code: "SETTING_VERSION_CONFLICT", message: "raw backend text" })', context);
 assert.match(slot.innerHTML, /设置已被其他操作更新/);
+vm.runInContext('showFormError({}, { code: "VALIDATION_ERROR", message: "raw backend text", details: [{loc:["body","cron"]}] })', context);
+assert.match(slot.innerHTML, /星期可用 0\/7=周日/);
+vm.runInContext('showFormError({}, { code: "AUTO_TAG_RULE_CRON_NO_RUN", message: "raw backend text" })', context);
+assert.match(slot.innerHTML, /没有下一次执行时间/);
 assert.doesNotMatch(slot.innerHTML, /raw backend text/);
 vm.runInContext('showFormError({}, { code: "MODEL_KEY_REQUIRED", details: { model_ids: [1, 3] }, message: "raw backend text" })', context);
 assert.match(slot.innerHTML, /模型 #1、#3 没有服务端密钥/);

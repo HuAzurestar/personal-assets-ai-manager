@@ -399,6 +399,11 @@ function numberOrNull(value, integer = false) {
 function showFormError(form, error) {
   const slot = $(".form-error-slot", form);
   let message = error.message;
+  if (error.code === "VALIDATION_ERROR" && error.details?.some((item) => item.loc?.includes("cron"))) {
+    message = "CRON 格式无效。请填写 5 段（分 时 日 月 周）或 6 段（秒 分 时 日 月 周）；星期可用 0/7=周日、1-6=周一至周六，或 mon-sun。";
+  } else if (error.code === "AUTO_TAG_RULE_CRON_NO_RUN") {
+    message = "这个 CRON 没有下一次执行时间；请检查日期、月份和星期是否互相冲突。";
+  }
   if (error.code === "AUTO_TAG_RULE_VERSION_CONFLICT") {
     message = "规则或其统计已被其他操作更新，本次未保存。请保留草稿，关闭编辑器并刷新后重新核对；不会自动覆盖其他修改。";
   } else if (error.code === "SETTING_VERSION_CONFLICT") {
@@ -501,7 +506,7 @@ function ruleDialog(rule = null) {
     <div class="form-grid"><label>执行频率<select name="frequency">${[["five", "每 5 分钟"], ["hour", "每小时"], ["day", "每天"], ["custom", "自定义 CRON"]].map(([id,label]) => `<option value="${id}" ${cronPreset(value.cron).frequency === id ? "selected" : ""}>${label}</option>`).join("")}</select></label><label>金额发送方式<select name="amount_mode">${Object.entries(amountModeNames).map(([id, label]) => `<option value="${id}" ${Number(id) === value.amount_mode ? "selected" : ""}>${label}</option>`).join("")}</select></label></div>
     <label data-daily-time>每天的时间<input name="daily_time" type="time" value="${cronPreset(value.cron).time}"></label>
     <label data-custom-cron>CRON（5 或 6 段）<input name="cron" value="${esc(value.cron)}" placeholder="*/5 * * * *"></label>
-    <small data-cron-copy>执行时区：香港（UTC+8）。保存后可在规则列表查看下次执行时间。</small>
+    <small data-cron-copy>5 段：分 时 日 月 周；6 段在最前面加秒。星期可用 0/7=周日、1=周一至 6=周六，或 mon-sun；支持 *、范围、列表、步长。例如 0 9 * * 1-5 表示工作日 09:00。时区：香港（UTC+8）。日和星期都指定时必须同时满足。</small>
     <label class="check-row"><input name="enabled" type="checkbox" ${value.enabled ? "checked" : ""}> 启用规则配置</label>
     ${rule ? '<div class="automation-notice compact"><strong>本次保存的影响</strong><span data-rule-edit-impact role="status" aria-live="polite"></span></div><p data-rule-pending-count>正在读取待确认建议数量…</p><button type="button" class="quiet" data-rule-impact-retry hidden>重新读取影响数量</button><label class="check-row" data-rule-impact-ack hidden><input name="acknowledged" type="checkbox">我了解旧的待确认建议将取消，重新扫描可能产生模型费用</label>' : ""}
     <div class="actions"><button type="button" class="quiet" data-close>取消</button><button type="submit" class="primary">保存并回读</button></div>

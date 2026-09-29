@@ -305,8 +305,16 @@ def test_cron_preview_uses_hong_kong_timezone_and_rejects_invalid_input():
     next_run = JobScheduler.preview_cron("0 20 * * *", now=now)
     assert next_run.utcoffset() == timedelta(hours=8)
     assert (next_run.hour, next_run.minute) == (20, 0)
+    monday = JobScheduler.preview_cron("0 9 * * 1", now=now)
+    assert monday.weekday() == 0 and monday.hour == 9
     with pytest.raises(ValueError):
-        JobScheduler.preview_cron("* * * * 1", now=now)
+        JobScheduler.preview_cron("* * * * 8", now=now)
+    with pytest.raises(ValueError, match="no next run"):
+        JobScheduler.preview_cron("0 9 31 2 *", now=now)
+    with pytest.raises(ValueError, match="no next run"):
+        JobScheduler().register_cron(
+            "tag-scan:impossible", expression="0 9 31 2 *", callback=lambda _: None,
+        )
     with pytest.raises(ValueError):
         JobScheduler.preview_cron("* * * * *", now=now.replace(tzinfo=None))
 

@@ -193,6 +193,7 @@ def test_rule_crud_list_summary_and_restart(auto_rule_runtime):
         assert first["scan_epoch"] == 1
         assert first["analyzed_count"] == "0"
 
+
         second = client.post(
             "/paam/tag/v1/auto_rule",
             json=_rule_payload(view_id, name="Second rule", cron="0 */10 * * * *"),
@@ -227,6 +228,27 @@ def test_rule_crud_list_summary_and_restart(auto_rule_runtime):
     assert recovered.json()["body"]["method_config"]["prompt"] == (
         "Classify by merchant"
     )
+
+
+def test_numeric_weekday_rule_is_saved_with_unambiguous_schedule(auto_rule_runtime):
+    sessions, _, view_id = auto_rule_runtime
+    with _client(sessions) as client:
+        created = client.post(
+            "/paam/tag/v1/auto_rule",
+            json=_rule_payload(view_id, cron="0 9 * * 1-5"),
+        )
+        assert created.status_code == 200, created.text
+        rule = created.json()["body"]
+        assert rule["cron"] == "0 9 * * mon,tue,wed,thu,fri"
+        assert client.get(f"/paam/tag/v1/auto_rule/{rule['id']}").json()["body"]["cron"] == rule["cron"]
+
+        impossible = client.put(
+            f"/paam/tag/v1/auto_rule/{rule['id']}",
+            json=_update_payload(rule, cron="0 9 31 2 *"),
+        )
+        assert impossible.status_code == 422
+        assert impossible.json()["body"]["code"] == "AUTO_TAG_RULE_CRON_NO_RUN"
+        assert client.get(f"/paam/tag/v1/auto_rule/{rule['id']}").json()["body"]["cron"] == rule["cron"]
 
 
 def test_semantic_update_resets_checkpoint_and_cancels_old_pending(
@@ -305,7 +327,8 @@ def test_semantic_update_resets_checkpoint_and_cancels_old_pending(
 @pytest.mark.parametrize(
     ("changes", "expected_code"),
     [
-        ({"cron": "* * * * 1"}, "VALIDATION_ERROR"),
+        ({"cron": "* * * * 8"}, "VALIDATION_ERROR"),
+        ({"cron": "0 9 31 2 *"}, "AUTO_TAG_RULE_CRON_NO_RUN"),
         ({"cron": "* * * * * * *"}, "VALIDATION_ERROR"),
         ({"cron": ""}, "VALIDATION_ERROR"),
         ({"model_id": 99}, "AUTO_TAG_RULE_MODEL_INVALID"),
