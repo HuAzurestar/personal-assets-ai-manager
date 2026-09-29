@@ -43,6 +43,8 @@ no API key is written to SQLite or the image. The key file must not be in the
 data volume, source tree, image, environment variable, or logs. Compose's
 file-backed secret is a read-only bind mount, not an encrypted host-side vault:
 protect its source file with host filesystem permissions.
+Encryption protects the stored volume and backups, not a container that is
+already compromised and can read both mounts while it runs.
 
 Back up the **data volume and key file separately**. Restore both together to
 recover credentials. Losing or replacing the key makes the encrypted file
@@ -52,6 +54,8 @@ startup. A native-OS keyring deployment remains unchanged. Existing Docker
 models whose keys never saved must be given their API keys again after this
 backend is configured; stale enabled models without keys must be repaired or
 disabled before another model can be saved.
+If a Docker deployment already has a working keyring, keep `keyring` mode until
+its credentials are deliberately migrated; switching backends does not copy keys.
 
 Verify with a disposable volume and fictional key: save an enabled model,
 confirm `key_configured=true`, recreate the container with the same data volume
