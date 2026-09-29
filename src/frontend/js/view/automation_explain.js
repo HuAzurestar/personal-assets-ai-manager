@@ -1,5 +1,5 @@
 import { esc, money, date } from "../util/core.js";
-import { helpTip, executionResultNames } from "./automation_feedback.js?v=20260928.6";
+import { helpTip } from "./automation_feedback.js?v=20260928.6";
 
 export function ruleExecution(rule, schedule, model, view) {
   const state = (label, reason, tone = "inactive") => ({ label, reason, tone });

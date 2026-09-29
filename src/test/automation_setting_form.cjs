@@ -19,4 +19,14 @@ for (const cron of ['*/5 * * * *','0 * * * *','0 9 * * *','59 23 * * *','*/1 * *
   assert.equal(context.frequencyCron(preset.frequency,preset.time,cron),cron);
 }
 assert.throws(() => context.frequencyCron('day','25:00',''));
+assert.throws(() => vm.runInContext('numberOrNull("abc", true)', context), /数值参数格式不正确/);
+assert.throws(() => vm.runInContext('numberOrNull("3.9", true)', context), /整数/);
+context.invalidModelData = { get: (key) => key === 'extras' ? '{bad-json' : '' };
+assert.throws(() => vm.runInContext('modelParameters(invalidModelData)', context), /有效的 JSON 对象/);
+const slot = { innerHTML: '' };
+context.$ = () => slot;
+context.esc = (value) => value;
+vm.runInContext('showFormError({}, { code: "SETTING_VERSION_CONFLICT", message: "raw backend text" })', context);
+assert.match(slot.innerHTML, /设置已被其他操作更新/);
+assert.doesNotMatch(slot.innerHTML, /raw backend text/);
 console.log('PASS exact currency units, precision rejection, legacy/custom CRON roundtrip');

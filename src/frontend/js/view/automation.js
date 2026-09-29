@@ -29,12 +29,14 @@ async function readListOptions(url, signal) {
   const items = [];
   let page = 1;
   let result;
+  let targetTotal;
   do {
     query.set("page_index", String(page++));
     result = await request(`${path}?${query}`, { signal, cache: "no-store" });
+    if (targetTotal === undefined) targetTotal = result.total;
     items.push(...result.items);
-  } while (result.items.length && items.length < result.total);
-  return { ...result, items };
+  } while (result.items.length && items.length < targetTotal);
+  return { ...result, total: targetTotal, items };
 }
 
 function ruleListQuery(params = new URLSearchParams()) {
@@ -352,7 +354,15 @@ function modelDialog(model = null) {
 }
 
 function modelParameters(data) {
-  const extra = data.get("extras") ? JSON.parse(data.get("extras")) : {};
+  let extra = {};
+  if (data.get("extras")) {
+    try {
+      extra = JSON.parse(data.get("extras"));
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      throw new Error("其他供应商参数必须是有效的 JSON 对象");
+    }
+  }
   if (!extra || Array.isArray(extra) || typeof extra !== "object") throw new Error("其他供应商参数必须是 JSON 对象");
   return { ...extra, model: String(data.get("model")), api_base: String(data.get("api_base")),
     temperature: numberOrNull(data.get("temperature")), max_tokens: numberOrNull(data.get("max_tokens"), true), timeout: numberOrNull(data.get("timeout")) };
@@ -369,16 +379,19 @@ function modelParameterSignature(params) {
 function numberOrNull(value, integer = false) {
   if (String(value).trim() === "") return null;
   const parsed = Number(value);
-  if (integer && !Number.isInteger(parsed)) throw new Error("此参数必须为整数，不能包含小数。");
   if (!Number.isFinite(parsed)) throw new Error("数值参数格式不正确");
+  if (integer && !Number.isInteger(parsed)) throw new Error("此参数必须为整数，不能包含小数。");
   return parsed;
 }
 
 function showFormError(form, error) {
   const slot = $(".form-error-slot", form);
-  const message = error.code === "AUTO_TAG_RULE_VERSION_CONFLICT"
-    ? "规则或其统计已被其他操作更新，本次未保存。请保留草稿，关闭编辑器并刷新后重新核对；不会自动覆盖其他修改。"
-    : error.message;
+  let message = error.message;
+  if (error.code === "AUTO_TAG_RULE_VERSION_CONFLICT") {
+    message = "规则或其统计已被其他操作更新，本次未保存。请保留草稿，关闭编辑器并刷新后重新核对；不会自动覆盖其他修改。";
+  } else if (error.code === "SETTING_VERSION_CONFLICT") {
+    message = "设置已被其他操作更新，本次未保存。请保留草稿，关闭编辑器并刷新后重新核对。";
+  }
   if (slot) slot.innerHTML = `<div class="error" role="alert">${esc(message)}</div>`;
 }
 
@@ -968,12 +981,6 @@ export function bindAutomation(root, rerender, notify, navigate) {
       if (action === "model-new") modelDialog();
       if (action === "model-edit") modelDialog(setting.models.find((item) => item.id === id));
       if (action === "model-test") await testModel(button);
-      if (action === "model-secret-delete") {
-        if (!window.confirm("清除该模型的本地 API Key？启用状态可能因此不可用。")) return;
-        button.disabled = true;
-        await request(`/paam/system/v1/setting/automation/model/${id}/secret`, { method: "DELETE" });
-        notify("密钥已从系统凭据存储清除"); await rerender();
-      }
       if (action === "disclosure-edit") openDisclosureEditor(setting, openDialog, (saved) => {
         setting = saved;
         window.dispatchEvent(new CustomEvent("paam:automation-saved", { detail: { message: "披露策略已保存并回读；受影响规则的待审申请已失效" } }));
@@ -984,7 +991,6 @@ export function bindAutomation(root, rerender, notify, navigate) {
       if (action === "rule-edit") ruleDialog(rules.find((item) => item.id === id));
       if (action === "rule-preview") await previewRule(button);
       if (action === "rule-detail") { event.preventDefault(); await openRuleInspection(id, root, rerender, notify, navigate); }
-      if (action === "rule-detail-back") navigate?.("auto-rules");
       if (action === "rule-requests") { batchFeedback = ""; navigate?.("tag-review", new URLSearchParams({ rule_id: String(id), status: "" })); }
       if (action === "tag-request-detail") { event.preventDefault(); batchFeedback = ""; params.set("request_id", String(id)); navigate?.("tag-review", params); }
       if (action === "tag-request-detail-back") { params.delete("request_id"); navigate?.("tag-review", params); }

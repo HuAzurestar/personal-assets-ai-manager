@@ -41,14 +41,18 @@ const ledger = {
     currency_code: "CNY", occurred_time: "2026-09-23T08:00:00+08:00" }],
 };
 const context = {
-  request: async (url) => (requestedUrls.push(url), url.includes("auto_rule/list") ? { items: [rule] }
-    : url.includes("auto_rule/1/summary") ? { ...rule, execution_success_count: "1", execution_success_rate: 1, decision_count: "0", acceptance_rate: null }
-    : url.includes("auto_rule/1") ? rule
-    : url.includes("assignment_request/list") ? { items: [suggestion], total: 1, page_index: 1, page_size: 20 }
-    : url.includes("assignment_request/8") ? suggestion
-    : url.includes("flow/12") ? ledger
-    : url.includes("view/list") ? { items: [{ id: 1, name: "分类", status: "ACTIVE" }] }
-    : url.includes("schedule/status") ? schedule : setting),
+  request: async (url) => {
+    requestedUrls.push(url);
+    if (url.includes("auto_rule/list")) return { items: [rule] };
+    if (url.includes("auto_rule/1/summary")) return { ...rule, execution_success_count: "1", execution_success_rate: 1, decision_count: "0", acceptance_rate: null };
+    if (url.includes("auto_rule/1")) return rule;
+    if (url.includes("assignment_request/list")) return { items: [suggestion], total: 1, page_index: 1, page_size: 20 };
+    if (url.includes("assignment_request/8")) return suggestion;
+    if (url.includes("flow/12")) return ledger;
+    if (url.includes("view/list")) return { items: [{ id: 1, name: "分类", status: "ACTIVE" }] };
+    if (url.includes("schedule/status")) return schedule;
+    return setting;
+  },
   jsonRequest: async () => {},
   $: () => null,
   $$: () => [],
@@ -277,6 +281,11 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
   assert.match(preview, /合成早餐店/);
   assert.match(preview, /data-preview-ledger="43"/);
   assert.doesNotMatch(preview, /SIMULATED_LOCAL|ELIGIBLE/);
+  let optionPages = 0;
+  context.request = async () => ({ items: [{ id: ++optionPages }], total: optionPages === 1 ? 2 : 1000 });
+  const options = await vm.runInContext('readListOptions("/test", undefined)', context);
+  assert.equal(optionPages, 2);
+  assert.equal(options.items.length, 2);
   console.log("RESULT=PASS DEFAULT_NOT_SCHEDULED=1 SYNTHETIC_REGISTERED=1 RULE_DETAIL=1 REQUEST_DETAIL=1");
 })().catch((error) => {
   console.error(error);

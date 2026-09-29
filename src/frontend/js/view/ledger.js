@@ -230,6 +230,7 @@ async function render({ background = false } = {}) {
       errorSlot.textContent = `刷新失败，保留上次内容：${error.message}`;
       startAutomationRefresh(root, { stale: true });
     } else {
+      renderedRoute = null;
       root.innerHTML = `<section class="panel"><div class="error">${esc(error.message)}</div><div class="actions"><button data-action="reload">重新加载</button></div></section>`;
       bindPage(root);
     }

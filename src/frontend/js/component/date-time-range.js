@@ -65,7 +65,7 @@ function options(count, selected) {
 }
 
 function render(control, message = "") {
-  preserveView(control, () => renderContent(control, message), { restoreValues: false });
+  preserveView(control, () => renderContent(control, message), { restoreValues: false, restoreScroll: false });
 }
 
 function renderContent(control, message = "") {

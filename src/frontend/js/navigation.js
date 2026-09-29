@@ -161,9 +161,10 @@ function revealSelectedNavigation(navigation) {
   else if (button.right > container.right) navigation.scrollLeft += button.right - container.right;
 }
 
-const navigationResizeObserver = new ResizeObserver((entries) => {
-  for (const entry of entries) revealSelectedNavigation(entry.target);
-});
+const navigationResizeObserver = typeof ResizeObserver === "function"
+  ? new ResizeObserver((entries) => {
+    for (const entry of entries) revealSelectedNavigation(entry.target);
+  }) : null;
 
 export function syncNavigation(page) {
   const active = pageModule(page);
@@ -181,7 +182,7 @@ export function syncNavigation(page) {
       <button type="button" data-page="${id}" class="${id === selectedPage ? "active" : ""}" aria-pressed="${id === selectedPage}">
         <strong>${esc(label)}</strong><small>${esc(caption)}</small>
       </button>`).join("");
-    navigationResizeObserver.observe(secondaryNavigation);
+    navigationResizeObserver?.observe(secondaryNavigation);
     revealSelectedNavigation(secondaryNavigation);
   }
   const domainNote = $(".domain-note");

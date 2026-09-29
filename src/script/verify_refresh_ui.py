@@ -67,6 +67,13 @@ def run():
                 expect(page.locator('.inspection-workspace [data-auto-freshness]')).to_contain_text('已更新', timeout=40000)
                 expect(stats).to_be_focused()
                 expect(stats.locator('..').get_by_role('tooltip')).to_be_visible()
+                page.evaluate('''async (id) => {
+                  const {openInspection} = await import('/static/js/component/inspection.js?v=20260928.6');
+                  await openInspection('rule', id, () => {});
+                  await openInspection('rule', 999999999, () => {});
+                }''', int(rule_id))
+                page.locator('.inspection-workspace [data-inspect-back]').click()
+                expect(page.locator('.inspection-workspace [data-inspect-back]')).to_be_disabled()
 
                 # Non-automation pages use the same policy for periodic and command
                 # refreshes, without jumping to the top or interrupting inline drafts.
@@ -111,6 +118,47 @@ def run():
                 expect(field).to_have_value('unfinished draft')
                 page.unroute('**/paam/tag/v1/view/list?*')
 
+                # A failed cross-page read must not leave the previous route
+                # marker behind and suppress navigation when returning to it.
+                page.goto(base + '/#details/auto-rule')
+                expect(page.locator('[data-rule-row]').first).to_be_visible()
+
+                def fail_views(route):
+                    route.fulfill(status=503, json={'message': 'Synthetic view read failure'})
+
+                page.route('**/paam/tag/v1/view/list?*', fail_views)
+                page.evaluate("location.hash = '#details/tag'")
+                expect(page.locator('#page-content .error')).to_be_visible()
+                expect(page.locator('#secondary-nav [data-page="ledger-tags"]')).to_have_attribute('aria-pressed', 'true')
+                page.unroute('**/paam/tag/v1/view/list?*', fail_views)
+                page.evaluate("location.hash = '#details/auto-rule'")
+                expect(page.locator('[data-rule-row]').first).to_be_visible()
+                expect(page.locator('#secondary-nav [data-page="auto-rules"]')).to_have_attribute('aria-pressed', 'true')
+
+                # Responsive overrides must win after the desktop base rules.
+                def css_state(width):
+                    page.set_viewport_size({'width': width, 'height': 900})
+                    return page.evaluate('''() => {
+                      const fixture = document.createElement('div');
+                      fixture.className = 'target-shell';
+                      fixture.innerHTML = '<form data-form="schedule-diagnostics"><label>A</label><label>B</label></form><table class="automation-table rule-table"><tbody><tr><td><small>Detail</small><div class="rule-counts">Count</div><div class="automation-actions">Actions</div></td></tr></tbody></table>';
+                      document.body.append(fixture);
+                      const form = fixture.querySelector('form');
+                      const result = {
+                        columns: getComputedStyle(form).gridTemplateColumns.split(' ').length,
+                        small: getComputedStyle(fixture.querySelector('small')).maxWidth,
+                        actions: getComputedStyle(fixture.querySelector('.automation-actions')).flexWrap,
+                        counts: getComputedStyle(fixture.querySelector('.rule-counts')).minWidth,
+                      };
+                      fixture.remove();
+                      return result;
+                    }''')
+
+                narrow = css_state(768)
+                wide = css_state(1024)
+                assert narrow['columns'] == 1 and narrow['small'] == 'none' and narrow['actions'] == 'wrap' and narrow['counts'] == '0px', narrow
+                assert wide['columns'] == 4 and wide['small'] == '280px' and wide['actions'] == 'nowrap' and wide['counts'] == '175px', wide
+
                 # Shared state preservation: insertion above the viewport, caret,
                 # nested scrolling, stable identity, removal focus and disabled state.
                 page.goto(base + '/api/health')
@@ -139,7 +187,16 @@ def run():
                   scroller.scrollTop = 150; root.querySelector('input').checked = true;
                   preserveView(root, () => {root.innerHTML = root.innerHTML.replace('type="checkbox"', 'disabled type="checkbox"');});
                   const nested = root.firstElementChild.scrollTop === 150 && !root.querySelector('input').checked;
-                  return {stable,caret,anchor,fallback,nested};
+                  const originalVisibility = Element.prototype.checkVisibility;
+                  let legacyVisibility = false;
+                  try {
+                    Element.prototype.checkVisibility = undefined;
+                    preserveView(root, () => {});
+                    legacyVisibility = true;
+                  } finally {
+                    Element.prototype.checkVisibility = originalVisibility;
+                  }
+                  return {stable,caret,anchor,fallback,nested,legacyVisibility};
                 }''')
                 assert all(result.values()), result
                 assert not errors, errors

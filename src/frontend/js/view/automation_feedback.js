@@ -120,16 +120,6 @@ export function diagnosticsMarkup(page, { taskKey = "", severity = "ERROR", code
 }
 
 // UI-phase examples, explicitly separated from live APIs and persisted counters.
-export const interactionScenarios = {
-  PARTIAL: "批量部分成功 / 已处理 / 过期冲突",
-  MANUAL: "同值人工修改：保护人工来源",
-  QUEUE: "排队 / 运行 / 安全诊断",
-  EMPTY: "无新增数据 / 无建议 / 未调用 / 失败",
-  ZERO: "统计零分母",
-  LARGE: "统计超 JS 安全整数",
-  OFFLINE: "离线 / 未知 / 注册失败",
-};
-
 export function interactionMarkup(scenario) {
   const intro = '<div class="automation-notice compact"><strong>虚构交互演示 · M2-UI</strong><span>以下全部为固定样例，不读取或修改真实账本，不发送批准请求，不是当前运行结果。M2-CORE 的实际结果请看运行状态及安全诊断。</span></div>';
   if (scenario === "PARTIAL" || scenario === "MANUAL") {

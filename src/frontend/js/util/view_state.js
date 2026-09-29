@@ -1,7 +1,9 @@
 // Presentation state only. Never retains server versions, records or scan cursors.
 const rows = '[data-rule-row], [data-tag-request-row], [data-fact-row], [data-economic-row], [data-review-row], [data-view-card], [data-model-card], .batch-card';
 const focusable = 'button, a[href], input, select, textarea, summary, [tabindex="0"]';
-const visible = (el) => el.checkVisibility({ checkVisibilityCSS: true });
+const visible = (el) => typeof el.checkVisibility === 'function'
+  ? el.checkVisibility({ checkVisibilityCSS: true })
+  : el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
 
 function nodeKey(el) {
   if (el.nodeType !== 1) return '';
@@ -39,7 +41,7 @@ function find(root, parts) {
     .filter((el) => el.tagName === part.tag && nodeKey(el) === part.key)[part.index], root);
 }
 
-export function preserveView(root, update, { restoreValues = true } = {}) {
+export function preserveView(root, update, { restoreValues = true, restoreScroll = true } = {}) {
   const active = document.activeElement;
   const ownedFocus = root.contains(active);
   const activePath = path(root, active);
@@ -74,7 +76,7 @@ export function preserveView(root, update, { restoreValues = true } = {}) {
     if (target) target.focus({ preventScroll: true });
     else { root.tabIndex = -1; root.focus({ preventScroll: true }); }
   }
-  for (const [key, top, left] of scrolls) { const el = find(root, key); if (el) { el.scrollTop = top; el.scrollLeft = left; } }
+  for (const [key, top, left] of restoreScroll ? scrolls : []) { const el = find(root, key); if (el) { el.scrollTop = top; el.scrollLeft = left; } }
   const anchor = anchors.map(([key, top]) => [find(root, key), top]).find(([el]) => el && visible(el));
   window.scrollTo({ left: x, top: anchor ? window.scrollY + anchor[0].getBoundingClientRect().top - anchor[1] : y, behavior: 'instant' });
   return result;

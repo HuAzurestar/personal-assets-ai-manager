@@ -465,9 +465,6 @@
   .target-shell .rule-table tbody, .target-shell [data-auto-request-rows] { display:grid; gap:12px; }
   .target-shell .rule-table tr, .target-shell [data-auto-request-rows] tr { display:grid; min-width:0; padding:12px; border:1px solid var(--line); border-radius:8px; }
   .target-shell .rule-table td, .target-shell [data-auto-request-rows] td { display:block; padding:5px 0; border:0; min-width:0; overflow-wrap:anywhere; }
-  .target-shell .automation-table td > small { max-width:none; }
-  .target-shell .automation-table .automation-actions { flex-wrap:wrap; }
-  .target-shell .rule-table .rule-counts { min-width:0; }
   .target-shell .rule-operation { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; }
   .automation-dialog { width:calc(100vw - 24px); max-width:calc(100vw - 24px); padding:16px; box-sizing:border-box; }
   .automation-dialog .automation-form { min-width:0; }
@@ -1777,7 +1774,6 @@
 /* Compact automation controls follow the shared form/table defaults. */
 .automation-dialog .boundary-input { display:flex; gap:8px; align-items:end; margin:6px 0; }
 .automation-dialog .boundary-input label { flex:1; min-width:0; }
-.automation-dialog [data-currency-row] { border:0; border-top:1px solid var(--line); padding:10px 0; min-width:0; }
 .automation-dialog [data-boundary-list] { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:4px 16px; }
 .automation-dialog { max-height:calc(100dvh - 24px); overflow:auto; }
 @media(max-width:800px) {
@@ -1799,7 +1795,7 @@
 }
 .automation-dialog .disclosure-add-currency { display:flex; align-items:end; gap:12px; }
 .automation-dialog .disclosure-add-currency label { display:grid; flex:1; gap:6px; }
-.automation-dialog [data-currency-row] { border:1px solid var(--line); border-radius:10px; padding:16px; }
+.automation-dialog [data-currency-row] { border:1px solid var(--line); border-radius:10px; padding:16px; min-width:0; }
 .inspection-workspace .automation-detail { display:grid; gap:16px; }
 :is(.target-shell, .automation-dialog) .automation-tip:hover > .automation-tip-content,
 :is(.target-shell, .automation-dialog) .automation-tip:focus-within > .automation-tip-content { display:block; }
@@ -1810,4 +1806,10 @@
     position:fixed; position-anchor:--automation-tip; top:anchor(bottom); left:anchor(left);
     position-try-fallbacks:flip-inline, flip-block, flip-inline flip-block;
   }
+}
+@media(max-width:800px) {
+  .target-shell [data-form="schedule-diagnostics"] { grid-template-columns:1fr; }
+  .target-shell .automation-table td > small { max-width:none; }
+  .target-shell .automation-table .automation-actions { flex-wrap:wrap; }
+  .target-shell .rule-table .rule-counts { min-width:0; }
 }

@@ -320,7 +320,7 @@ export async function openInspection(kind, id, bindActions) {
   async function navigate(nextKind, nextId, record = true, fresh = false) {
     const ticket = ++version;
     const sameRecord = selected?.kind === nextKind && selected?.id === nextId;
-    if (record && selected) stack.push({ ...selected, scroll: body.scrollTop });
+    if (record && selected && !sameRecord) stack.push({ ...selected, scroll: body.scrollTop });
     selected = { kind: nextKind, id: nextId };
     if (!sameRecord) {
       dialog.querySelector("[data-kind-label]").textContent = names[nextKind];
