@@ -94,6 +94,10 @@ def test_corrupted_history_is_visible_and_does_not_hide_valid_records(tmp_path, 
     assert len(restored.events()) == 1
     assert restored.health == "DEGRADED"
 
+    (tmp_path / "schedule.jsonl").write_bytes(b"")
+    assert restored.events() == []
+    assert restored.health == "HEALTHY"
+
 
 def test_restart_marks_unfinished_unknown_once_and_does_not_replay(tmp_path):
     first = ScheduleDiagnostics(tmp_path)

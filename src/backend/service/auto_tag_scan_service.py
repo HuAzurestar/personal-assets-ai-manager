@@ -211,20 +211,10 @@ class AutoTagScanService:
             failure = None
             detail = None
             try:
-                analysis = LlmAnalysisResult.model_validate(await self._analyze_with_policy(
+                raw_analysis = await self._analyze_with_policy(
                     payload, rule_id=rule_id, model_id=page.model_id, context=context,
                     ledger_id=ledger_id, rule_revision=token.rule_revision,
-                ))
-                if analysis.item != payload.item:
-                    raise LlmAdapterError("Item mismatch", code="OUTPUT_SEMANTIC_INVALID",
-                                          details={"reason_code": "ITEM_MISMATCH"})
-                if (analysis.kind == "SUGGESTED") != bool(analysis.suggestions):
-                    raise LlmAdapterError("Decision mismatch", code="OUTPUT_SEMANTIC_INVALID",
-                                          details={"reason_code": "DECISION_MISMATCH"})
-                kind = "SUGGESTED" if analysis.kind == "SUGGESTED" else "NO_SUGGESTION"
-                suggestions = tuple(analysis.suggestions)
-                if suggestion_validator is not None:
-                    suggestion_validator(suggestions, page.amount_mode)
+                )
             except _RetryDeferred:
                 emit("RETRY_DEFERRED", ledger_id, phase="RETRY_WAIT")
                 return report("RETRY_DEFERRED")
@@ -235,13 +225,29 @@ class AutoTagScanService:
                 kind = "ITEM_FAILURE"
                 failure = error.code
                 detail = error.details.get("reason_code")
-            except (ValidationError, ValueError, TypeError):
-                kind = "ITEM_FAILURE"
-                failure = "OUTPUT_SEMANTIC_INVALID"
-                detail = "UNSAFE_REASON"
-            except Exception:
-                kind = "ITEM_FAILURE"
-                failure = "ITEM_FAILURE"
+            else:
+                # Only malformed output is an item failure. Unexpected analyzer
+                # exceptions must retain the current durable checkpoint.
+                try:
+                    analysis = LlmAnalysisResult.model_validate(raw_analysis)
+                    if analysis.item != payload.item:
+                        raise LlmAdapterError("Item mismatch", code="OUTPUT_SEMANTIC_INVALID",
+                                              details={"reason_code": "ITEM_MISMATCH"})
+                    if (analysis.kind == "SUGGESTED") != bool(analysis.suggestions):
+                        raise LlmAdapterError("Decision mismatch", code="OUTPUT_SEMANTIC_INVALID",
+                                              details={"reason_code": "DECISION_MISMATCH"})
+                    kind = "SUGGESTED" if analysis.kind == "SUGGESTED" else "NO_SUGGESTION"
+                    suggestions = tuple(analysis.suggestions)
+                    if suggestion_validator is not None:
+                        suggestion_validator(suggestions, page.amount_mode)
+                except LlmAdapterError as error:
+                    kind = "ITEM_FAILURE"
+                    failure = error.code
+                    detail = error.details.get("reason_code")
+                except (ValidationError, ValueError, TypeError):
+                    kind = "ITEM_FAILURE"
+                    failure = "OUTPUT_SEMANTIC_INVALID"
+                    detail = "UNSAFE_REASON"
 
             # A paused/replaced registration must not commit an in-flight response.
             # Budget expiry alone is soft and does allow this item's atomic commit.

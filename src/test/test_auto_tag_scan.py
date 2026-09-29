@@ -464,6 +464,30 @@ def test_rule_level_auth_error_does_not_advance_or_count(scan_runtime):
         assert db.scalar(select(func.count(TagAssignmentRequest.id))) == 0
 
 
+@pytest.mark.parametrize("failure_type", [RuntimeError, ValueError, TypeError])
+def test_unexpected_analysis_error_does_not_advance_checkpoint(scan_runtime, failure_type):
+    sessions, _, view_id, tag_ids = scan_runtime
+    ledger_ids = [_seed_ledger(sessions, tag_ids["unclassified"]) for _ in range(2)]
+    rule_id = _seed_rule(sessions, view_id)
+    failure = failure_type("unexpected analyzer bug")
+    analyzer = FakeAnalyzer(lambda *_: failure)
+
+    with pytest.raises(failure_type) as caught:
+        _run(AutoTagScanService(sessions, analyzer).run_synthetic(
+            rule_id,
+            {ledger_id: _fixture(ledger_id) for ledger_id in ledger_ids},
+            _context(),
+        ))
+
+    assert caught.value is failure
+    assert len(analyzer.calls) == 1
+    with sessions() as db:
+        rule = db.get(AutoTagRule, rule_id)
+        assert rule.scan_after_ledger_id == 0
+        assert rule.analyzed_count == rule.failed_count == 0
+        assert db.scalar(select(func.count(TagAssignmentRequest.id))) == 0
+
+
 def test_missing_active_targets_blocks_rule_without_advancing(scan_runtime):
     sessions, _, view_id, tag_ids = scan_runtime
     ledger_id = _seed_ledger(sessions, tag_ids["unclassified"])

@@ -208,6 +208,7 @@ class ScheduleDiagnostics:
         if self._directory is None:
             return []
         events = []
+        self._invalid_history = False
         try:
             for path in reversed(self._paths()):
                 if not path.exists():

@@ -62,9 +62,9 @@ class ConfiguredLlmAnalyzer:
                 "Scheduled analysis requires a protected Ledger payload",
                 code="CONFIG_ERROR",
             )
-        profile = self._profile(model_id)
+        profile = await asyncio.to_thread(self._profile, model_id)
         try:
-            secret = self._secret_store.get_for_provider(model_id)
+            secret = await asyncio.to_thread(self._secret_store.get_for_provider, model_id)
         except ProtectedSecretStoreError:
             raise LlmAdapterError(
                 "The configured credential store is unavailable", code="CONFIG_ERROR",
