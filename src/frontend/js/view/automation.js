@@ -331,19 +331,35 @@ function openDialog(title, body) {
 }
 
 function extrasFor(model) {
-  const { model: _model, api_base: _base, temperature: _temperature, max_tokens: _tokens, timeout: _timeout, ...extra } = model?.litellm_params || {};
+  const { model: _model, api_base: _base, proxy_url: _proxy, temperature: _temperature, max_tokens: _tokens, timeout: _timeout, ...extra } = model?.litellm_params || {};
   return Object.keys(extra).length ? JSON.stringify(extra, null, 2) : "";
+}
+
+const providerPresets = {
+  custom: { label: "自定义（OpenAI Chat Completions 兼容）", base: "", example: "openai/vendor/model" },
+  siliconflow: { label: "硅基流动", base: "https://api.siliconflow.cn/v1", example: "openai/Qwen/Qwen3.5-4B" },
+  deepseek: { label: "DeepSeek 官方", base: "https://api.deepseek.com", example: "openai/deepseek-flash" },
+  opencode_console: { label: "OpenCode Console（按量计费，非 Go）", base: "https://opencode.ai/inference/openai/v1", example: "openai/glm-5.1" },
+};
+
+function modelProvider(model) {
+  if (model?.provider && model.provider !== "custom") return model.provider;
+  return Object.keys(providerPresets).find((id) => id !== "custom" && providerPresets[id].base === model?.litellm_params?.api_base) || "custom";
 }
 
 function modelDialog(model = null) {
   const nextId = Math.max(0, ...(setting?.models || []).map((item) => item.id)) + 1;
   const value = model || { id: nextId, name: "", enabled: false, key_configured: false, litellm_params: {} };
   const params = value.litellm_params;
+  const provider = modelProvider(value);
   const dialog = openDialog(model ? `编辑模型 #${model.id}` : "添加模型", `<form data-form="automation-model" data-id="${value.id}" class="stack automation-form">
     <div class="form-error-slot" aria-live="assertive"></div>
     <label>显示名称<input name="name" required maxlength="120" value="${esc(value.name)}" placeholder="例如：我的 Qwen"></label>
-    <label>LiteLLM 模型名<input name="model" required maxlength="512" value="${esc(params.model || "")}" placeholder="openai/Qwen/Qwen3-8B"></label>
+    <label>供应商<select name="provider">${Object.entries(providerPresets).map(([id, preset]) => `<option value="${id}" ${provider === id ? "selected" : ""}>${preset.label}</option>`).join("")}</select><small>分类会向所选供应商发送经隐私处理的账目内容；OpenCode 部分免费模型可能记录输入或用于改进模型，使用前请核对隐私条款。</small></label>
+    <label>LiteLLM 模型名<input name="model" list="model-catalog-${value.id}" required maxlength="512" value="${esc(params.model || "")}" placeholder="${providerPresets[provider].example}"><datalist id="model-catalog-${value.id}"></datalist><small>选择列表中的模型会自动补上 LiteLLM 的 openai/ 前缀；也可手动输入。</small></label>
+    <div><button type="button" class="quiet" data-model-catalog>获取模型列表</button><small data-model-catalog-status role="status">只读取供应商模型清单，不调用推理；先填写 API Key，或使用已保存的密钥。</small></div>
     <label>HTTPS API 地址<input name="api_base" type="url" required maxlength="2048" pattern="https://.*" value="${esc(params.api_base || "")}" placeholder="https://api.example.test/v1"></label>
+    <label>HTTP(S) 代理（可选）<input name="proxy_url" type="url" maxlength="2048" value="${esc(params.proxy_url || "")}" placeholder="http://host.docker.internal:7890"><small>Docker 内不能用 127.0.0.1 访问宿主机代理；可用 host.docker.internal。留空使用部署级 PAAM_LLM_PROXY。</small></label>
     <details class="model-advanced"><summary>高级参数</summary><div class="form-grid three"><label>温度<input name="temperature" type="number" step="any" value="${params.temperature ?? ""}" placeholder="供应商默认"></label><label>最大输出长度<input name="max_tokens" type="number" min="1" step="1" value="${params.max_tokens ?? ""}" placeholder="供应商默认"></label><label>超时（秒）<input name="timeout" type="number" min="0.001" step="any" value="${params.timeout ?? ""}" placeholder="供应商默认"></label></div>
     <label>其他供应商参数（JSON 对象）<textarea name="extras" rows="5" placeholder='{"extra_body":{"enable_thinking":false}}'>${esc(extrasFor(value))}</textarea><small>保留 0 / false；禁止在这里写 api_key、password 或 secret。</small></label>
     </details><label>API Key<input name="secret" type="password" autocomplete="new-password" placeholder="${value.key_configured ? "留空则保持现有密钥" : "密钥仅保存到系统凭据库"}"><small>服务端状态：${value.key_configured ? "已配置密钥" : "未配置密钥"}。浏览器自动填充不代表服务端已保存。</small></label>
@@ -354,6 +370,20 @@ function modelDialog(model = null) {
   </form>`);
   const form = $("[data-form='automation-model']", dialog);
   form.settingSnapshot = structuredClone(setting);
+  $('[name="provider"]', form).addEventListener("change", () => {
+    const selected = $('[name="provider"]', form).value;
+    const preset = providerPresets[selected];
+    if (preset.base) $('[name="api_base"]', form).value = preset.base;
+    $('[name="model"]', form).placeholder = preset.example;
+    $('[name="model"]', form).value = "";
+    $(`[data-model-catalog-status]`, form).textContent = "供应商已切换；请获取模型列表或填写模型名。";
+    $(`#model-catalog-${value.id}`, form).replaceChildren();
+  });
+  $('[name="api_base"]', form).addEventListener("input", () => {
+    const selected = $('[name="provider"]', form);
+    if (selected.value !== "custom" && $('[name="api_base"]', form).value !== providerPresets[selected.value].base) selected.value = "custom";
+  });
+  $('[data-model-catalog]', form).addEventListener("click", () => { void loadModelCatalog(form); });
   form.addEventListener("input", (event) => {
     if (event.target.name === "acknowledged") return;
     form.impactSignature = null;
@@ -363,6 +393,36 @@ function modelDialog(model = null) {
     $('button[type="submit"]', form).textContent = "保存";
   });
   form.addEventListener("submit", submitModel);
+}
+
+async function loadModelCatalog(form) {
+  const button = $('[data-model-catalog]', form);
+  const status = $('[data-model-catalog-status]', form);
+  const provider = $('[name="provider"]', form).value;
+  const apiBase = $('[name="api_base"]', form).value.trim();
+  const proxyUrl = $('[name="proxy_url"]', form).value.trim();
+  const secret = $('[name="secret"]', form).value;
+  const id = Number(form.dataset.id);
+  const existing = form.settingSnapshot.models.some((item) => item.id === id);
+  button.disabled = true;
+  status.textContent = "正在获取模型列表…";
+  try {
+    const result = await jsonRequest("/paam/system/v1/setting/automation/model/catalog", "POST", {
+      provider, api_base: apiBase, proxy_url: proxyUrl || null,
+      ...(secret ? { secret } : existing ? { model_id: id } : {}),
+    });
+    if (!form.isConnected) return;
+    const list = $(`#model-catalog-${id}`, form);
+    list.replaceChildren(...result.items.map((item) => {
+      const option = document.createElement("option");
+      option.value = `openai/${item.id}`;
+      option.label = item.name;
+      return option;
+    }));
+    status.textContent = `已获取 ${result.total} 个${result.chat_only ? "对话" : ""}模型。请在模型名输入框搜索并选择；列表不证明模型调用一定成功。`;
+  } catch (error) {
+    if (form.isConnected) status.textContent = error.message || "获取模型列表失败";
+  } finally { button.disabled = false; }
 }
 
 function modelParameters(data) {
@@ -377,6 +437,7 @@ function modelParameters(data) {
   }
   if (!extra || Array.isArray(extra) || typeof extra !== "object") throw new Error("其他供应商参数必须是 JSON 对象");
   return { ...extra, model: String(data.get("model")), api_base: String(data.get("api_base")),
+    proxy_url: String(data.get("proxy_url") || "").trim() || null,
     temperature: numberOrNull(data.get("temperature")), max_tokens: numberOrNull(data.get("max_tokens"), true), timeout: numberOrNull(data.get("timeout")) };
 }
 
@@ -384,6 +445,7 @@ function modelParameterSignature(params) {
   const sorted = (value) => Array.isArray(value) ? value.map(sorted)
     : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().map(key => [key, sorted(value[key])])) : value;
   const effective = Object.fromEntries(Object.entries(params).filter(([, value]) => value != null));
+  delete effective.proxy_url;
   effective.timeout = params.timeout ?? 60;
   return JSON.stringify(sorted(effective));
 }
@@ -460,10 +522,8 @@ async function submitModel(event) {
         form.impactSignature = signature;
       }
       if (!data.has("acknowledged")) throw new Error("请核对模型参数变更影响，并勾选确认后保存");
-    } else if (existing) {
-      litellmParams = structuredClone(existing.litellm_params);
     }
-    const desired = { id, name: String(data.get("name")), enabled: data.has("enabled"), litellm_params: litellmParams };
+    const desired = { id, provider: String(data.get("provider")), name: String(data.get("name")), enabled: data.has("enabled"), litellm_params: litellmParams };
     if (data.has("delete_secret")) desired.enabled = false;
     let models = snapshot.models.filter((item) => item.id !== id).map(({ key_configured: _key, ...item }) => item);
     models.push(secret ? { ...desired, enabled: false } : desired);

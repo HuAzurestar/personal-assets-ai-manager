@@ -23,6 +23,10 @@ assert.throws(() => vm.runInContext('numberOrNull("abc", true)', context), /数�
 assert.throws(() => vm.runInContext('numberOrNull("3.9", true)', context), /整数/);
 context.invalidModelData = { get: (key) => key === 'extras' ? '{bad-json' : '' };
 assert.throws(() => vm.runInContext('modelParameters(invalidModelData)', context), /有效的 JSON 对象/);
+assert.equal(vm.runInContext('providerPresets.deepseek.base', context), 'https://api.deepseek.com');
+assert.equal(vm.runInContext('providerPresets.opencode_console.base', context), 'https://opencode.ai/inference/openai/v1');
+assert.equal(vm.runInContext('modelParameterSignature({model:"openai/example",api_base:"https://example.test/v1",proxy_url:"http://a.test:7890"}) === modelParameterSignature({model:"openai/example",api_base:"https://example.test/v1",proxy_url:"http://b.test:7890"})', context), true);
+assert.equal(vm.runInContext('modelParameterSignature({model:"openai/one",api_base:"https://example.test/v1"}) === modelParameterSignature({model:"openai/two",api_base:"https://example.test/v1"})', context), false);
 const slot = { innerHTML: '' };
 context.$ = () => slot;
 context.esc = (value) => value;

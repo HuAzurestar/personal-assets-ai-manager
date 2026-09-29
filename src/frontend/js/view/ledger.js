@@ -24,7 +24,7 @@ import {
 } from "./account.js?v=20260917.10";
 import {
   automationSettingsPage, autoRulesPage, bindAutomation, tagReviewPage, stopAutomationPolling, startAutomationRefresh,
-} from "./automation.js?v=20260928.6";
+} from "./automation.js?v=20260929.1";
 
 const entryTypeValues = { TRANSACTION: 0, ACCOUNT_TRANSFER: 1, CLAIM: 2 };
 const entryTypeCodes = { 0: "TRANSACTION", 1: "ACCOUNT_TRANSFER", 2: "CLAIM" };
