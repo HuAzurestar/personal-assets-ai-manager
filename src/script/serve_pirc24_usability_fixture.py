@@ -29,7 +29,7 @@ async def forbid_provider(*_args, **_kwargs):
 ConfiguredLlmAnalyzer.analyze = forbid_provider
 keyring.get_password = lambda _service, _username: "fixture-placeholder-not-a-real-key"
 fixture = request_api.__wrapped__(Path(temporary.name))
-client, sessions, category_id, mood_id, tag_ids = next(fixture)
+_, sessions, category_id, _, tag_ids = next(fixture)
 target_database.SessionLocal = sessions
 with sessions() as db:
     target_database.engine = db.get_bind()

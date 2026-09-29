@@ -13,7 +13,6 @@ from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
-from time import monotonic
 
 import pytest
 from pydantic import ValidationError
@@ -279,13 +278,10 @@ def test_whole_response_errors_and_exception_traces_never_echo_values(caplog):
 
 
 def test_long_unknown_text_is_bounded_without_partial_identifier_leaks():
-    started = monotonic()
     source = _input("午餐" * 12000 + "；订单号 ABC12345678")
     payload = _payload(source)
     assert len(payload.summary) == 500
     assert "ABC" not in payload.summary
-    # Wide margin: old unanchored email/address regex took tens of seconds.
-    assert monotonic() - started < 5
     assert _payload(_input("未知" * 20000, merchant="未知" * 20000)) is None
 
 

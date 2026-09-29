@@ -14,19 +14,31 @@ def run():
     parser.add_argument("--base", default="http://127.0.0.1:18824")
     parser.add_argument("--screenshots", type=Path)
     args = parser.parse_args()
-    assert urlparse(args.base).hostname in {"127.0.0.1", "localhost"}, "Only a loopback fixture is permitted"
+    base_url = urlparse(args.base)
+    if not (
+        base_url.scheme == "http"
+        and base_url.hostname in {"127.0.0.1", "localhost"}
+        and base_url.username is None
+        and base_url.password is None
+        and base_url.path in {"", "/"}
+        and not base_url.query
+        and not base_url.fragment
+    ):
+        raise ValueError("Only a local HTTP fixture URL without credentials or path is permitted")
     deadline = time.monotonic() + 30
     while True:
         try:
             response = httpx.get(args.base + "/__usability_fixture__", timeout=2)
-            assert response.status_code == 200, "Refusing writes: fixture marker missing"
+            if response.status_code != 200:
+                raise RuntimeError("Refusing writes: fixture marker missing")
             marker = response.json()
             break
         except httpx.HTTPError:
             if time.monotonic() >= deadline:
                 raise
             time.sleep(0.2)
-    assert marker == {"fixture": "pirc24-usability-disposable", "real_analysis": False}, "Refusing writes outside the disposable fixture"
+    if marker != {"fixture": "pirc24-usability-disposable", "real_analysis": False}:
+        raise RuntimeError("Refusing writes outside the disposable fixture")
     if args.screenshots:
         args.screenshots.mkdir(parents=True, exist_ok=True)
 
@@ -164,11 +176,9 @@ def run():
         page.locator("[data-page='settings']").first.click()
         expect(page.locator("[data-auto-page='settings']")).to_be_visible()
         expect(page.locator("[data-auto-page='settings'] > section")).to_have_count(3)
-        expect(page.locator("[data-auto-runtime]")).to_be_hidden()
+        expect(page.locator("[data-auto-runtime]")).to_be_visible()
         expect(page.locator("[data-action='interaction-demo']")).to_have_count(0)
         capture("settings")
-        page.locator("[data-preserve='runtime'] > summary").click()
-        expect(page.locator("[data-auto-runtime]")).to_be_visible()
         page.wait_for_timeout(5500)
         expect(page.locator("[data-auto-runtime]")).to_be_visible()
 

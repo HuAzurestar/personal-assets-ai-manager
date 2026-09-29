@@ -32,6 +32,8 @@ def run():
                 except httpx.HTTPError:
                     pass
                 time.sleep(.1)
+            else:
+                raise RuntimeError("PR 9 browser fixture did not become healthy")
 
             def read(path):
                 response = client.get(path)

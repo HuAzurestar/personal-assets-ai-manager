@@ -95,6 +95,8 @@ def run():
                 except httpx.HTTPError:
                     pass
                 time.sleep(0.1)
+            else:
+                raise RuntimeError("Disposable DPI fixture did not become healthy")
             with sync_playwright() as pw:
                 browser = pw.chromium.launch(channel="msedge", headless=True)
                 version = browser.version
