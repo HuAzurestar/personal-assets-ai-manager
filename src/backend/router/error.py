@@ -55,8 +55,10 @@ def _redact_validation_errors(errors: list[dict[str, Any]]) -> list[dict[str, An
     result: list[dict[str, Any]] = []
     for raw_error in errors:
         error = _redact_sensitive_values(dict(raw_error))
-        if any(_is_sensitive_field(part) for part in raw_error.get("loc", ())):
-            error["input"] = "[REDACTED]"
+        # An unknown field can contain a credential even when its name gives no
+        # clue (for example, an extra "access_token" field). The input value is
+        # not needed to locate or explain a validation failure.
+        error.pop("input", None)
         result.append(error)
     return result
 

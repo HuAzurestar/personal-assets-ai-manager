@@ -313,6 +313,20 @@ def test_unsafe_provider_parameters_are_rejected_and_redacted(
     assert "sk-must-not-leak" not in response.text
 
 
+@pytest.mark.parametrize("extra_field", ["access_token", "private_key", "unrecognized_field"])
+def test_validation_response_never_echoes_extra_field_value(setting_runtime, extra_field):
+    sessions, _, store = setting_runtime
+    with _client(sessions, store) as client:
+        response = client.put(
+            "/paam/system/v1/setting/automation/model/1/secret",
+            json={"secret": "valid-secret", extra_field: "sk-demo-sentinel"},
+        )
+    assert response.status_code == 422
+    assert response.json()["body"]["code"] == "VALIDATION_ERROR"
+    assert "sk-demo-sentinel" not in response.text
+    assert "valid-secret" not in response.text
+
+
 def test_duplicate_ids_and_insecure_api_base_are_rejected(setting_runtime):
     sessions, _, store = setting_runtime
     with _client(sessions, store) as client:
