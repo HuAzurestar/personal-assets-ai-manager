@@ -150,10 +150,26 @@ def test_database_failure_rolls_back_tags_requests_and_counters(request_api, mon
     response = client.post("/paam/tag/v1/assignment_request/batch_approve", json={"request_ids": ids})
     assert response.status_code == 409
     assert response.json()["body"]["code"] == "TAG_REQUEST_WRITE_CONFLICT"
+    assert "storage unavailable" not in response.text
     with sessions() as db:
         assert db.get(AutoTagRule, rule).accepted_count == 0
         assert set(db.scalars(select(TagAssignmentRequest.status))) == {1}
     assert all(_assignment(client, ledger)["tag_state"]["category"] == "unclassified" for ledger in ledgers)
+
+
+def test_database_failure_preserves_internal_cause(request_api, monkeypatch):
+    _, sessions, _, _, _ = request_api
+    failure = OperationalError("fixture", {}, RuntimeError("storage unavailable"))
+
+    def fail(_self):
+        raise failure
+
+    monkeypatch.setattr(TagAssignmentRequestMapper, "begin_write", fail)
+    with sessions() as db, pytest.raises(TargetTagError) as caught:
+        TagAssignmentRequestService(db).approve([1])
+
+    assert caught.value.code == "TAG_REQUEST_WRITE_CONFLICT"
+    assert caught.value.__cause__ is failure
 
 
 def test_counter_overflow_rejects_only_affected_rule(request_api):

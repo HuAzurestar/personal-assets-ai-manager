@@ -89,6 +89,7 @@ def test_confirmation_version_and_credential_gate(probe, monkeypatch):
     monkeypatch.setattr(connection, '_direct_litellm_completion', lambda **kw: pytest.fail('must not call provider'))
     assert check(client, setting, confirmed=False).status_code == 422
     assert check(client, setting, expected_updated_time='2020-01-01T00:00:00Z').status_code == 409
+    assert check(client, setting, expected_updated_time='2020-01-01T00:00:00').status_code == 422
     store.delete(1)
     assert check(client, setting).json()['body']['code'] == 'MODEL_SECRET_REQUIRED'
 

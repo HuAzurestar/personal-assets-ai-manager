@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import CheckConstraint, Integer, Text
+from sqlalchemy import CheckConstraint, Index, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.core.target_database import TargetBase
@@ -39,6 +39,9 @@ class TagAssignmentRequest(TargetTable, TargetBase):
             "length(reason_summary) <= 200",
             name="ck_tag_assignment_request_reason_summary",
         ),
+        Index("ix_tag_assignment_request_scope_status", "ledger_id", "view_id", "status"),
+        Index("ix_tag_assignment_request_rule_status", "rule_id", "status"),
+        Index("ix_tag_assignment_request_created_time_id", "created_time", "id"),
     )
 
     rule_id: Mapped[int] = mapped_column(Integer, nullable=False)

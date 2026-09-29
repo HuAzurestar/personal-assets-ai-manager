@@ -6,7 +6,12 @@ from datetime import timedelta
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
-from backend.entity import MAX_COUNTER_VALUE, TAG_REQUEST_STATUS_PENDING
+from backend.entity import (
+    MAX_COUNTER_VALUE,
+    TAG_REQUEST_STATUS_ENABLED,
+    TAG_REQUEST_STATUS_PENDING,
+    TAG_REQUEST_STATUS_REJECTED,
+)
 from backend.entity.base import utc_now
 from backend.error import TargetTagError
 from backend.mapper.tag_assignment_request_mapper import TagAssignmentRequestMapper
@@ -85,7 +90,7 @@ class TagAssignmentRequestService:
                 status = int(row["status"]) if row is not None else None
                 if row is None:
                     code = "NOT_FOUND"
-                elif status == (2 if accepted else 3):
+                elif status == (TAG_REQUEST_STATUS_ENABLED if accepted else TAG_REQUEST_STATUS_REJECTED):
                     code = "ALREADY_APPROVED" if accepted else "ALREADY_REJECTED"
                 elif status != TAG_REQUEST_STATUS_PENDING:
                     code = "REQUEST_STATE_CONFLICT"
@@ -129,7 +134,7 @@ class TagAssignmentRequestService:
             for row in eligible:
                 if int(row["rule_id"]) in exhausted:
                     results[int(row["id"])] = TagAssignmentItemResult(
-                        request_id=int(row["id"]), result="COUNTER_EXHAUSTED", status=1,
+                        request_id=int(row["id"]), result="COUNTER_EXHAUSTED", status=TAG_REQUEST_STATUS_PENDING,
                     )
                 else:
                     valid.append(row)
@@ -149,18 +154,18 @@ class TagAssignmentRequestService:
                 for row in valid:
                     results[int(row["id"])] = TagAssignmentItemResult(
                         request_id=int(row["id"]), result="APPROVED" if accepted else "REJECTED",
-                        status=2 if accepted else 3,
+                        status=TAG_REQUEST_STATUS_ENABLED if accepted else TAG_REQUEST_STATUS_REJECTED,
                     )
             self.mapper.commit()
             return TagAssignmentBatchRead(
                 operation="APPROVE" if accepted else "REJECT",
                 items=[results[request_id] for request_id in request_ids],
             )
-        except (IntegrityError, OperationalError):
+        except (IntegrityError, OperationalError) as error:
             self.mapper.rollback()
             raise TargetTagError(
                 409, "标签建议写入冲突，请刷新核对后重试", code="TAG_REQUEST_WRITE_CONFLICT",
-            ) from None
+            ) from error
         except Exception:
             self.mapper.rollback()
             raise

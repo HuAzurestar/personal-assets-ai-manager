@@ -250,6 +250,13 @@ class ModelConnectionCheckRequest(BaseModel):
     confirmed: Literal[True]
     expected_updated_time: datetime
 
+    @field_validator("expected_updated_time")
+    @classmethod
+    def validate_expected_updated_time(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("expected_updated_time requires a timezone")
+        return value
+
 
 class ModelConnectionCheckRead(BaseModel):
     model_id: int

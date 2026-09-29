@@ -228,6 +228,16 @@ def _scan(sessions, rule_id: int, ledger_id: int, tag_id: int, name: str):
     ).run_synthetic(rule_id, {ledger_id: fixture}, context))
 
 
+def test_duplicate_request_filters_use_combination_error(request_api):
+    client, *_ = request_api
+    duplicate = client.get(
+        "/paam/tag/v1/assignment_request/list",
+        params={"filter": '{"op":"AND","expression":[{"key":"status","op":"=","val":1},{"key":"status","op":"=","val":2}]}'},
+    )
+    assert duplicate.status_code == 422
+    assert duplicate.json()["body"]["code"] == "LIST_COMBINATION_NOT_SUPPORTED"
+
+
 def test_synthetic_request_requires_approval_and_reads_back_source(request_api):
     client, sessions, category_id, _, tag_ids = request_api
     ledger_id = _ledger(

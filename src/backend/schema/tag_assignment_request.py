@@ -140,13 +140,18 @@ def _validate_filter_values(request: TagAssignmentRequestListRequest) -> None:
         if not valid_integer or value < 1 or expression.key == "status" and value not in {1, 2, 3, 4, 5}:
             invalid.append(expression.key)
     duplicates = sorted(key for key, count in counts.items() if count > 1)
-    if invalid or duplicates:
+    if invalid:
         raise ListQueryError(
             "Invalid tag assignment request filter",
             code="LIST_FILTER_VALUE_INVALID",
             details={
                 "component": "filter",
                 "invalid_fields": sorted(set(invalid)),
-                "duplicate_fields": duplicates,
             },
+        )
+    if duplicates:
+        raise ListQueryError(
+            "Duplicate tag assignment request filter fields",
+            code="LIST_COMBINATION_NOT_SUPPORTED",
+            details={"component": "filter", "duplicate_fields": duplicates},
         )
