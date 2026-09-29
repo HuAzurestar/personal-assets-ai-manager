@@ -6,12 +6,10 @@ import asyncio
 from collections.abc import Callable
 from typing import Protocol
 
-import keyring
-from keyring.errors import KeyringError
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from backend.core.protected_secret_store import SERVICE_NAME
+from backend.core import protected_secret_store
 from backend.error import LlmAdapterError, ProtectedSecretStoreError
 from backend.mapper.setting_mapper import SettingMapper
 from backend.schema.llm_analysis import (
@@ -27,15 +25,7 @@ class ProviderSecretReader(Protocol):
     def get_for_provider(self, model_id: int) -> str | None: ...
 
 
-class KeyringProviderSecretReader:
-    def get_for_provider(self, model_id: int) -> str | None:
-        try:
-            return keyring.get_password(SERVICE_NAME, f"model/{model_id}")
-        except KeyringError as error:
-            raise ProtectedSecretStoreError() from error
-
-
-provider_secret_reader = KeyringProviderSecretReader()
+provider_secret_reader = protected_secret_store
 
 
 class ConfiguredLlmAnalyzer:

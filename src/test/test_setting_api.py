@@ -5,6 +5,7 @@ import socket
 from datetime import datetime, timezone
 
 import pytest
+from cryptography.fernet import Fernet
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select, update
@@ -12,6 +13,7 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.core.target_database import init_target_db
 from backend.core.protected_secret_store import KeyringProtectedSecretStore
+from backend.core.encrypted_credential_store import EncryptedFileProtectedSecretStore
 from backend.error import ProtectedSecretStoreError
 from backend.entity import (
     AutoTagRule,
@@ -185,6 +187,38 @@ def test_model_configuration_secret_lifecycle_and_restart(setting_runtime, monke
     assert recovered.status_code == 200
     assert recovered.json()["body"]["models"][0]["id"] == 1
     assert recovered.json()["body"]["models"][0]["key_configured"] is False
+
+
+def test_encrypted_store_api_secret_survives_recreated_service(setting_runtime, tmp_path):
+    sessions, _, _ = setting_runtime
+    key_path = tmp_path / "credential-key"
+    key_path.write_bytes(Fernet.generate_key())
+    data_path = tmp_path / "data" / "model-credentials.fernet"
+    store = EncryptedFileProtectedSecretStore(data_path, key_path)
+    with _client(sessions, store) as client:
+        created = client.put("/paam/system/v1/setting/automation", json={
+            "expected_updated_time": None, "models": [_model_payload()],
+        })
+        assert created.status_code == 200
+        saved = client.put("/paam/system/v1/setting/automation/model/1/secret", json={
+            "secret": "sk-synthetic-only",
+        })
+        assert saved.status_code == 200
+        enabled = client.put("/paam/system/v1/setting/automation", json={
+            "expected_updated_time": created.json()["body"]["updated_time"],
+            "models": [{**_model_payload(), "enabled": True}],
+        })
+        assert enabled.status_code == 200
+
+    recreated = EncryptedFileProtectedSecretStore(data_path, key_path)
+    with _client(sessions, recreated) as client:
+        response = client.get("/paam/system/v1/setting/automation")
+        assert response.status_code == 200
+        model = response.json()["body"]["models"][0]
+        assert model["enabled"] is True
+        assert model["key_configured"] is True
+        assert "sk-synthetic-only" not in response.text
+    assert recreated.get_for_provider(1) == "sk-synthetic-only"
 
 
 def test_parameter_change_invalidates_rules_and_uses_exact_lock_token(
