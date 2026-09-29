@@ -19,6 +19,7 @@ from backend.schema.llm_analysis import (
 )
 from backend.schema.setting import AutomationModelWrite
 from backend.service.llm_adapter import LiteLlmAdapter
+from backend.service.llm_prompt_audit_service import LlmPromptAuditService, PromptAuditContext
 
 
 class ProviderSecretReader(Protocol):
@@ -38,6 +39,7 @@ class ConfiguredLlmAnalyzer:
         self._sessions = sessions
         self._secret_store = secret_store
         self._adapter = adapter or LiteLlmAdapter()
+        self._audit = LlmPromptAuditService(sessions)
 
     async def analyze(
         self,
@@ -45,8 +47,10 @@ class ConfiguredLlmAnalyzer:
         *,
         rule_id: int,
         model_id: int,
+        audit_context: PromptAuditContext,
     ) -> LlmAnalysisResult:
-        del rule_id
+        if audit_context.rule_id != rule_id or audit_context.model_id != model_id:
+            raise LlmAdapterError("Prompt audit context mismatch", code="CONFIG_ERROR")
         if not isinstance(payload, ProtectedLlmAnalysisInput):
             raise LlmAdapterError(
                 "Scheduled analysis requires a protected Ledger payload",
@@ -69,6 +73,8 @@ class ConfiguredLlmAnalyzer:
             payload,
             profile,
             api_key=secret,
+            audit=self._audit,
+            audit_context=audit_context,
         )
 
     def _profile(self, model_id: int) -> AutomationModelWrite:

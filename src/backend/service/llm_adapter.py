@@ -27,6 +27,7 @@ from backend.schema.llm_analysis import (
 )
 from backend.schema.setting import AutomationModelWrite, LiteLLMParams
 from backend.service.llm_privacy_service import LlmPrivacyService, require_protected_payload
+from backend.service.llm_prompt_audit_service import LlmPromptAuditService, PromptAuditContext
 
 MAX_RESPONSE_BYTES = 32 * 1024
 MAX_JSON_DEPTH = 12
@@ -93,12 +94,17 @@ class LiteLlmAdapter:
         *,
         api_key: str,
         response_mode: ResponseMode = "json_object",
+        audit: LlmPromptAuditService | None = None,
+        audit_context: PromptAuditContext | None = None,
     ) -> LlmAnalysisResult:
         try:
             require_protected_payload(payload)
         except ValueError:
             raise _error("CONFIG_ERROR", "The protected input boundary rejected this request") from None
-        return self._analyze(payload, profile, api_key=api_key, response_mode=response_mode)
+        return self._analyze(
+            payload, profile, api_key=api_key, response_mode=response_mode,
+            audit=audit, audit_context=audit_context,
+        )
 
     def _analyze(
         self,
@@ -107,6 +113,8 @@ class LiteLlmAdapter:
         *,
         api_key: str,
         response_mode: ResponseMode,
+        audit: LlmPromptAuditService | None = None,
+        audit_context: PromptAuditContext | None = None,
     ) -> LlmAnalysisResult:
         if not profile.enabled:
             raise _error("CONFIG_ERROR", "The configured model is disabled")
@@ -116,15 +124,51 @@ class LiteLlmAdapter:
         completion = self._completion or _direct_litellm_completion
 
         request = build_litellm_request(payload, profile, response_mode=response_mode)
+        if (audit is None) != (audit_context is None):
+            raise _error("CONFIG_ERROR", "The prompt audit context is incomplete")
+        audit_id = (
+            audit.start(audit_context, model_name=profile.litellm_params.model, request=request)
+            if audit is not None and audit_context is not None else None
+        )
         try:
             response = completion(**request, api_key=api_key)
-        except LlmAdapterError:
+        except LlmAdapterError as error:
+            if audit_id is not None:
+                audit.finish(audit_id, status="ERROR", error_code=error.code)
             raise
         except Exception as error:
             # SDK exceptions can contain keys, request bodies and provider text.
             # No raw exception chain is retained in the display/logging boundary.
-            raise _provider_exception(error) from None
-        return parse_provider_response(response, payload)
+            safe_error = _provider_exception(error)
+            if audit_id is not None:
+                audit.finish(audit_id, status="ERROR", error_code=safe_error.code)
+            raise safe_error from None
+        response_text = _provider_content(response)
+        try:
+            result = parse_provider_response(response, payload)
+        except LlmAdapterError as error:
+            if audit_id is not None:
+                audit.finish(
+                    audit_id, status="REJECTED", response_text=response_text,
+                    error_code=error.code,
+                )
+            raise
+        if audit_id is not None:
+            audit.finish(
+                audit_id,
+                status="SUGGESTED" if result.kind == "SUGGESTED" else "INSUFFICIENT",
+                response_text=response_text,
+            )
+        return result
+
+
+def _provider_content(response: object) -> str:
+    """Capture message content only, never SDK headers or exception objects."""
+    choices = _field(response, "choices")
+    if not isinstance(choices, (list, tuple)) or not choices:
+        return ""
+    content = _field(_field(choices[0], "message"), "content")
+    return content if isinstance(content, str) else ""
 
 
 def build_litellm_request(

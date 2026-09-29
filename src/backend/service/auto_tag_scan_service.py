@@ -27,11 +27,13 @@ from backend.schema.llm_analysis import (
     SyntheticLlmAnalysisInput,
 )
 from backend.service.llm_privacy_service import LlmPrivacyService
+from backend.service.llm_prompt_audit_service import PromptAuditContext
 
 
 class TagAnalyzer(Protocol):
     async def analyze(
         self, payload: LlmAnalysisInput, *, rule_id: int, model_id: int,
+        audit_context: PromptAuditContext,
     ) -> LlmAnalysisResult: ...
 
 
@@ -219,7 +221,7 @@ class AutoTagScanService:
                 emit("RETRY_DEFERRED", ledger_id, phase="RETRY_WAIT")
                 return report("RETRY_DEFERRED")
             except LlmAdapterError as error:
-                if error.code in {"AUTH_ERROR", "CONFIG_ERROR"}:
+                if error.code in {"AUTH_ERROR", "CONFIG_ERROR", "AUDIT_STORAGE_ERROR"}:
                     emit(error.code, ledger_id, phase="CALL")
                     return report(error.code)
                 kind = "ITEM_FAILURE"
@@ -285,16 +287,23 @@ class AutoTagScanService:
 
     async def _analyze_with_policy(
         self, payload: LlmAnalysisInput, *, rule_id: int, model_id: int, context: JobRunContext,
-        ledger_id: int | None = None, rule_revision: int | None = None,
+        ledger_id: int, rule_revision: int,
     ) -> LlmAnalysisResult:
         for attempt in range(1, 4):
             if not context.may_start_work():
                 raise _RetryDeferred()
             context.progress(phase="CALL", attempt=attempt)
             try:
-                return await self._analyzer.analyze(payload, rule_id=rule_id, model_id=model_id)
+                return await self._analyzer.analyze(
+                    payload, rule_id=rule_id, model_id=model_id,
+                    audit_context=PromptAuditContext(
+                        run_id=context.run_id, rule_id=rule_id,
+                        rule_revision=rule_revision, ledger_id=ledger_id,
+                        model_id=model_id, attempt=attempt,
+                    ),
+                )
             except LlmAdapterError as error:
-                if (error.code in {"AUTH_ERROR", "CONFIG_ERROR"}
+                if (error.code in {"AUTH_ERROR", "CONFIG_ERROR", "AUDIT_STORAGE_ERROR"}
                         or error.details.get("retryable") is not True or attempt == 3):
                     raise
                 raw_delay = error.details.get("retry_after_seconds")

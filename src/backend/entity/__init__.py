@@ -36,6 +36,7 @@ from backend.entity.review_case import ReviewCase
 from backend.entity.review_allocation import ReviewAllocation
 from backend.entity.review_revision import ReviewRevision
 from backend.entity.ledger_entry import LedgerEntry
+from backend.entity.llm_prompt_audit import LlmPromptAudit
 from backend.entity.tag_view import TargetTagView
 from backend.entity.tag import TargetTag
 from backend.entity.ledger_entry_tag import LedgerEntryTag

@@ -30,6 +30,7 @@ MESSAGES = {
     "INPUT_INVALID": "输入未通过本地校验，未发送给模型。",
     "AMOUNT_BAND_UNCONFIGURED": "该币种未配置分档，本条不披露金额。",
     "CONFIG_ERROR": "模型配置不可用；本条游标未推进，请检查模型设置。",
+    "AUDIT_STORAGE_ERROR": "模型输入或返回未能写入审计库；本条游标未推进，已停止调用模型。",
     "AUTH_ERROR": "供应商拒绝凭据；本条游标未推进，请检查密钥。",
     "MODEL_DISABLED": "模型已停用；请检查模型设置。",
     "NO_ACTIVE_TARGETS": "没有可用候选标签；请检查当前标签维度。",

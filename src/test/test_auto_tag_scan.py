@@ -90,7 +90,8 @@ class FakeAnalyzer:
         self.behavior = behavior
         self.calls = []
 
-    async def analyze(self, payload, *, rule_id, model_id):
+    async def analyze(self, payload, *, rule_id, model_id, audit_context):
+        del audit_context
         self.calls.append((rule_id, model_id, payload))
         value = self.behavior(rule_id, payload)
         if isinstance(value, Exception):
@@ -103,8 +104,8 @@ class SequenceAnalyzer:
         self.values = iter(values)
         self.calls = 0
 
-    async def analyze(self, payload, *, rule_id, model_id):
-        del rule_id, model_id
+    async def analyze(self, payload, *, rule_id, model_id, audit_context):
+        del rule_id, model_id, audit_context
         self.calls += 1
         value = next(self.values)
         if isinstance(value, Exception):

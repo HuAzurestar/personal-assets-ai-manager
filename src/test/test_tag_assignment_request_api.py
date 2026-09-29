@@ -187,8 +187,8 @@ class SuggestionAnalyzer:
         self.tag_id = tag_id
         self.tag_name = tag_name
 
-    async def analyze(self, payload, *, rule_id, model_id):
-        del rule_id, model_id
+    async def analyze(self, payload, *, rule_id, model_id, audit_context):
+        del rule_id, model_id, audit_context
         return LlmAnalysisResult(
             kind="SUGGESTED",
             item=payload.item,

@@ -146,7 +146,7 @@ class AutoTagScheduleService:
                     error_code=(
                         report.stopped_reason
                         if report.stopped_reason in {
-                            "CONFIG_ERROR", "AUTH_ERROR", "COMMIT_FAILED", "COUNTER_EXHAUSTED",
+                            "CONFIG_ERROR", "AUTH_ERROR", "AUDIT_STORAGE_ERROR", "COMMIT_FAILED", "COUNTER_EXHAUSTED",
                             "VIEW_INACTIVE", "NO_ACTIVE_TARGETS", "MODEL_DISABLED",
                         }
                         else report.last_error_code or "ITEM_FAILURE"
@@ -154,7 +154,7 @@ class AutoTagScheduleService:
                 )
             if report.stopped_reason in {
                 "RULE_NOT_FOUND", "RULE_DISABLED", "MODEL_DISABLED", "NO_ACTIVE_TARGETS",
-                "CONFIG_ERROR", "AUTH_ERROR",
+                "CONFIG_ERROR", "AUTH_ERROR", "AUDIT_STORAGE_ERROR",
                 "VIEW_INACTIVE", "COMMIT_FAILED", "COUNTER_EXHAUSTED",
                 "SYNTHETIC_FIXTURE_MISSING", "SYNTHETIC_FIXTURE_INVALID",
             }:

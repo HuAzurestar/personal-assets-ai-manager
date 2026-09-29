@@ -331,8 +331,8 @@ def test_protected_scan_stops_after_first_provider_wide_failure():
     class FailingAnalyzer:
         calls = 0
 
-        async def analyze(self, payload, *, rule_id, model_id):
-            del payload, rule_id, model_id
+        async def analyze(self, payload, *, rule_id, model_id, audit_context):
+            del payload, rule_id, model_id, audit_context
             self.calls += 1
             raise LlmAdapterError(
                 "provider unavailable",

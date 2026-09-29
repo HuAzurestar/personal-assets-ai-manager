@@ -27,6 +27,7 @@ from backend.mapper.target_economic_mapper import TargetEconomicMapper
 SQL_DIR = Path(__file__).parents[1] / "asset" / "sql"
 EXPECTED_TABLES = {
     "auto_tag_rule",
+    "llm_prompt_audit",
     "ledger_entry",
     "ledger_entry_tag",
     "review_allocation",
@@ -43,6 +44,7 @@ EXPECTED_TABLES = {
 
 LEGACY_CHECK_FREE_TABLES = EXPECTED_TABLES - {
     "auto_tag_rule",
+    "llm_prompt_audit",
     "setting",
     "tag_assignment_request",
 }
