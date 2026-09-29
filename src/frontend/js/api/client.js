@@ -44,6 +44,7 @@ async function readResponse(url, options, includeEnvelope) {
       : detail || `请求失败（${response.status}）`;
     const error = new Error(text);
     error.code = payload?.body?.code;
+    error.details = payload?.body?.details;
     error.status = response.status;
     throw error;
   }

@@ -334,7 +334,7 @@ function modelDialog(model = null) {
     <label>HTTPS API 地址<input name="api_base" type="url" required maxlength="2048" pattern="https://.*" value="${esc(params.api_base || "")}" placeholder="https://api.example.test/v1"></label>
     <details class="model-advanced"><summary>高级参数</summary><div class="form-grid three"><label>温度<input name="temperature" type="number" step="any" value="${params.temperature ?? ""}" placeholder="供应商默认"></label><label>最大输出长度<input name="max_tokens" type="number" min="1" step="1" value="${params.max_tokens ?? ""}" placeholder="供应商默认"></label><label>超时（秒）<input name="timeout" type="number" min="0.001" step="any" value="${params.timeout ?? ""}" placeholder="供应商默认"></label></div>
     <label>其他供应商参数（JSON 对象）<textarea name="extras" rows="5" placeholder='{"extra_body":{"enable_thinking":false}}'>${esc(extrasFor(value))}</textarea><small>保留 0 / false；禁止在这里写 api_key、password 或 secret。</small></label>
-    </details><label>API Key<input name="secret" type="password" autocomplete="new-password" placeholder="${value.key_configured ? "留空则保持现有密钥" : "密钥仅保存到系统凭据库"}"></label>
+    </details><label>API Key<input name="secret" type="password" autocomplete="new-password" placeholder="${value.key_configured ? "留空则保持现有密钥" : "密钥仅保存到系统凭据库"}"><small>服务端状态：${value.key_configured ? "已配置密钥" : "未配置密钥"}。浏览器自动填充不代表服务端已保存。</small></label>
     ${value.key_configured ? '<label class="check-row"><input name="delete_secret" type="checkbox">保存时清除密钥并停用模型</label>' : ""}
     <label class="check-row"><input name="enabled" type="checkbox" ${value.enabled ? "checked" : ""}> 启用此模型</label>
     <div data-model-impact hidden><p data-model-impact-copy role="status"></p><label class="check-row"><input type="checkbox" name="acknowledged">我了解旧的待审建议将取消，重新扫描可能产生模型费用</label></div>
@@ -391,6 +391,11 @@ function showFormError(form, error) {
     message = "规则或其统计已被其他操作更新，本次未保存。请保留草稿，关闭编辑器并刷新后重新核对；不会自动覆盖其他修改。";
   } else if (error.code === "SETTING_VERSION_CONFLICT") {
     message = "设置已被其他操作更新，本次未保存。请保留草稿，关闭编辑器并刷新后重新核对。";
+  } else if (error.code === "MODEL_KEY_REQUIRED") {
+    const ids = error.details?.model_ids || [];
+    message = `已启用的模型${ids.length ? ` #${ids.join("、#")}` : ""} 没有服务端密钥。请先补配密钥，或停用这些模型后重试。`;
+  } else if (error.code === "PROTECTED_SECRET_STORE_ERROR") {
+    message = "当前运行环境没有可用的受保护凭据库，API Key 无法保存。请配置凭据库后重试。";
   }
   if (slot) slot.innerHTML = `<div class="error" role="alert">${esc(message)}</div>`;
 }
@@ -410,6 +415,13 @@ async function submitModel(event) {
     const id = Number(form.dataset.id);
     const snapshot = form.settingSnapshot;
     const existing = snapshot.models.find((item) => item.id === id);
+    const secret = String(data.get("secret") || "");
+    if (data.has("delete_secret") && secret) throw new Error("清除密钥与填写新密钥不能同时选择");
+    const otherMissingIds = snapshot.models.filter((item) => item.id !== id && item.enabled && !item.key_configured).map((item) => item.id);
+    if (otherMissingIds.length) throw new Error(`已启用的模型 #${otherMissingIds.join("、#")} 没有服务端密钥。请先补配密钥，或停用这些模型后重试。`);
+    if (data.has("enabled") && !data.has("delete_secret") && !secret.trim() && !existing?.key_configured) {
+      throw new Error(`模型 #${id} 未配置服务端密钥，启用前必须填写 API Key`);
+    }
     let litellmParams = modelParameters(data);
     const signature = modelParameterSignature(litellmParams);
     const changed = existing && signature !== modelParameterSignature(existing.litellm_params);
@@ -435,10 +447,7 @@ async function submitModel(event) {
       litellmParams = structuredClone(existing.litellm_params);
     }
     const desired = { id, name: String(data.get("name")), enabled: data.has("enabled"), litellm_params: litellmParams };
-    const secret = String(data.get("secret") || "");
-    if (data.has("delete_secret") && secret) throw new Error("清除密钥与填写新密钥不能同时选择");
     if (data.has("delete_secret")) desired.enabled = false;
-    if (!existing && desired.enabled && !secret.trim()) throw new Error("新模型启用前必须填写 API Key");
     let models = snapshot.models.filter((item) => item.id !== id).map(({ key_configured: _key, ...item }) => item);
     models.push(secret ? { ...desired, enabled: false } : desired);
     let saved;
@@ -458,7 +467,12 @@ async function submitModel(event) {
     form.closest("dialog").close();
     window.dispatchEvent(new CustomEvent("paam:automation-saved", { detail: { message: "模型配置已保存" } }));
   } catch (error) {
-    showFormError(form, configurationSaved ? { message: `配置已保存，但后续步骤未完成：${error.message}。请核对密钥和启用状态。` } : error);
+    if (configurationSaved) {
+      const message = error.code === "PROTECTED_SECRET_STORE_ERROR"
+        ? "配置已保存，但当前运行环境没有可用的受保护凭据库，API Key 未保存，模型未启用。请配置凭据库后重试。"
+        : `配置已保存，但后续步骤未完成：${error.message}。请核对密钥和启用状态。`;
+      showFormError(form, { message });
+    } else showFormError(form, error);
   } finally { button.disabled = false; }
 }
 
