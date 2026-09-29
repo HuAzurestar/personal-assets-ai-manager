@@ -16,6 +16,7 @@ APP_SLUG = "personal-assets-ai-manager"
 APP_DISPLAY_NAME = "个人账本与资产管家"
 DATA_DIR = Path(os.getenv("PAAM_DATA_DIR", BASE_DIR / "data"))
 DATABASE_URL = os.getenv("PAAM_DATABASE_URL", f"sqlite:///{DATA_DIR / f'{APP_SLUG}.db'}")
+SQL_WEB_ENABLED = os.getenv("PAAM_SQL_WEB_ENABLED", "0") == "1"
 AUTOTAG_SYNTHETIC_ACCEPTANCE = (
     os.getenv("PAAM_AUTOTAG_SYNTHETIC_ACCEPTANCE") == "1"
     and "PAAM_DATABASE_URL" in os.environ

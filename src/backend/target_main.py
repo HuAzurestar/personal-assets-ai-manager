@@ -1,4 +1,4 @@
-"""PAAM API application backed by exactly the 13 target tables."""
+"""PAAM API application backed by the target SQLite schema."""
 
 from contextlib import asynccontextmanager
 
@@ -12,6 +12,7 @@ from backend.core.config import (
     AUTOTAG_SYNTHETIC_ACCEPTANCE,
     IMPORT_PREVIEW_SWEEP_INTERVAL_SECONDS,
     RESOURCE_DIR,
+    SQL_WEB_ENABLED,
 )
 from backend.core.job_scheduler import JobRunContext, job_scheduler
 from backend.router.auto_tag_rule import router as auto_tag_rule_router
@@ -40,6 +41,10 @@ from backend.service.configured_llm_analyzer import provider_secret_reader
 from backend.service.target_economic_service import TargetEconomicService
 from backend.service.target_intake_service import TargetIntakeService
 
+if SQL_WEB_ENABLED:
+    from a2wsgi import WSGIMiddleware
+    from backend.core.sql_web import initialize_sql_web, sql_web_app
+
 
 async def _sweep_timed_out_import_previews(_: JobRunContext) -> None:
     with target_database.SessionLocal() as db:
@@ -49,6 +54,8 @@ async def _sweep_timed_out_import_previews(_: JobRunContext) -> None:
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     target_database.init_target_db()
+    if SQL_WEB_ENABLED:
+        initialize_sql_web()
     with target_database.SessionLocal() as db:
         TargetIntakeService(db).fail_orphaned_pending_files()
         TargetEconomicService(db).backfill_defaults()
@@ -83,6 +90,8 @@ app = FastAPI(
 register_error_handlers(app)
 app.mount("/static", StaticFiles(directory=RESOURCE_DIR / "frontend"), name="static")
 app.mount("/asset", StaticFiles(directory=RESOURCE_DIR / "asset"), name="asset")
+if SQL_WEB_ENABLED:
+    app.mount("/sql", WSGIMiddleware(sql_web_app), name="sql")
 app.include_router(import_router)
 app.include_router(auto_tag_rule_router)
 app.include_router(import_conflict_router)

@@ -3,7 +3,15 @@
 Automatic-tag calls have no separate prompt HTTP endpoint. `LiteLlmAdapter._analyze()`
 builds the LiteLLM request, writes one `llm_prompt_audit` row, calls the provider,
 then updates that row with the provider's message content and validation outcome.
-Each retry is a separate row. This table has no application read API or UI.
+Each retry is a separate row. This table has no purpose-built business API or UI.
+
+The local PR preview Docker image mounts the existing `sqlite-web` browser at
+`http://127.0.0.1:18779/sql/` on the same application port. It is enabled by
+`PAAM_SQL_WEB_ENABLED=1` in `src/report/Dockerfile.pirc9`; other deployment
+methods leave it disabled unless they explicitly set that variable. The mount
+opens only the configured SQLite file in SQLite read-only mode. Bind the Docker
+port to `127.0.0.1`, never a public interface: the browser has no authentication
+and can display or download the full financial database.
 
 The table is created in the existing PAAM SQLite database at normal startup.
 The database location comes from `PAAM_DATABASE_URL`; by default it is
