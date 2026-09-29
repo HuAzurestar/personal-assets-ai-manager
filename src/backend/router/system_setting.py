@@ -16,12 +16,15 @@ from backend.schema.setting import (
     ModelConnectionTestResponse,
     ModelConnectionCheckRequest,
     ModelConnectionCheckResponse,
+    ModelCatalogRequest,
+    ModelCatalogResponse,
     ModelSecretStateResponse,
     ModelSecretUpdateRequest,
 )
 from backend.service.disclosure_preview_service import DisclosurePreviewService
 from backend.service.setting_service import SettingService
 from backend.service.model_connection_service import ModelConnectionService
+from backend.service.model_catalog_service import ModelCatalogService
 from backend.service.configured_llm_analyzer import provider_secret_reader
 
 
@@ -101,6 +104,18 @@ def update_model_secret(
             model_id,
             payload.secret,
         ),
+    )
+
+
+@router.post("/model/catalog", response_model=ModelCatalogResponse)
+def list_provider_models(
+    payload: ModelCatalogRequest,
+    db: Session = Depends(get_db),
+):
+    return ModelCatalogResponse(
+        status=200,
+        message="ok",
+        body=ModelCatalogService(db, provider_secret_reader).list(payload),
     )
 
 

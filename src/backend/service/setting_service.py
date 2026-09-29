@@ -349,6 +349,8 @@ class SettingService:
         # Compare what the adapter sends, not whether a default was explicitly
         # present in storage. GET -> PUT adds nullable defaults to sparse models.
         params = model.litellm_params.model_dump(mode="json", exclude_none=True)
+        # A transport route change must not invalidate already classified data.
+        params.pop("proxy_url", None)
         params["timeout"] = model.litellm_params.timeout or 60.0
         return json.dumps(
             params,

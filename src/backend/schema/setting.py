@@ -69,7 +69,7 @@ def _validate_provider_value(value: Any, *, path: tuple[str, ...] = ()) -> None:
         return
     if isinstance(value, float) and not math.isfinite(value):
         raise ValueError("provider parameters must contain finite numbers")
-    if isinstance(value, str) and path not in {("model",), ("api_base",)}:
+    if isinstance(value, str) and path not in {("model",), ("api_base",), ("proxy_url",)}:
         if not path or value not in _TEXT_PARAMETER_ENUMS.get(path[-1], set()):
             raise ValueError("unrecognized provider text parameter cannot be sent safely")
     if value is None or isinstance(value, (str, int, float, bool)):
@@ -84,6 +84,7 @@ class LiteLLMParams(BaseModel):
 
     model: str = Field(min_length=1, max_length=512)
     api_base: str = Field(min_length=1, max_length=2048)
+    proxy_url: str | None = Field(default=None, max_length=2048)
     temperature: float | None = Field(default=None, strict=True)
     max_tokens: int | None = Field(default=None, strict=True, ge=1)
     timeout: float | None = Field(default=None, strict=True, gt=0)
@@ -118,11 +119,30 @@ class LiteLLMParams(BaseModel):
             raise ValueError("api_base must be an HTTPS URL without credentials or fragment")
         return value
 
+    @field_validator("proxy_url")
+    @classmethod
+    def validate_proxy_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path not in {"", "/"}
+            or parsed.query or parsed.fragment
+            or re.search(r"[\s%]", value)
+        ):
+            raise ValueError("proxy_url must be an HTTP(S) proxy URL without credentials")
+        return value.rstrip("/")
+
 
 class AutomationModelWrite(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: int = Field(strict=True, ge=1)
+    provider: Literal["custom", "siliconflow", "deepseek", "opencode_console"] = "custom"
     name: str = Field(min_length=1, max_length=120)
     enabled: bool = Field(strict=True)
     litellm_params: LiteLLMParams
@@ -234,6 +254,41 @@ class ModelSecretStateRead(BaseModel):
 
 class ModelSecretStateResponse(SuccessResponse[ModelSecretStateRead]):
     body: ModelSecretStateRead
+
+
+class ModelCatalogRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: Literal["custom", "siliconflow", "deepseek", "opencode_console"]
+    api_base: str = Field(min_length=1, max_length=2048)
+    proxy_url: str | None = Field(default=None, max_length=2048)
+    model_id: int | None = Field(default=None, strict=True, ge=1)
+    secret: str | None = Field(default=None, max_length=8192)
+
+    @field_validator("api_base")
+    @classmethod
+    def validate_api_base(cls, value: str) -> str:
+        return LiteLLMParams.validate_api_base(value)
+
+    @field_validator("proxy_url")
+    @classmethod
+    def validate_proxy_url(cls, value: str | None) -> str | None:
+        return LiteLLMParams.validate_proxy_url(value)
+
+
+class ModelCatalogItem(BaseModel):
+    id: str
+    name: str
+
+
+class ModelCatalogRead(BaseModel):
+    items: list[ModelCatalogItem]
+    total: int
+    chat_only: bool
+
+
+class ModelCatalogResponse(SuccessResponse[ModelCatalogRead]):
+    body: ModelCatalogRead
 
 
 class ModelConnectionTestRead(BaseModel):

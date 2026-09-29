@@ -54,7 +54,8 @@ def test_probe_is_one_bounded_call_without_writes_or_bill_reads(probe, monkeypat
     assert len(calls) == 1
     request = calls[0]
     assert request['messages'] == [{'role': 'user', 'content': 'Reply with OK.'}]
-    assert request['max_tokens'] == 32 and request['timeout'] == 15
+    assert request['max_tokens'] == 32 and request['timeout'] == 60
+    assert request['proxy_url'] is None
     assert request['num_retries'] == request['max_retries'] == 0
     assert request['caching'] is False and request['stream'] is False
     assert 'provider_zero' not in request

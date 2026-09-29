@@ -25,7 +25,7 @@ from backend.schema.llm_analysis import (
     ProtectedLlmAnalysisInput,
     SyntheticLlmAnalysisInput,
 )
-from backend.schema.setting import AutomationModelWrite
+from backend.schema.setting import AutomationModelWrite, LiteLLMParams
 from backend.service.llm_privacy_service import LlmPrivacyService, require_protected_payload
 
 MAX_RESPONSE_BYTES = 32 * 1024
@@ -34,6 +34,7 @@ ResponseMode = Literal["json_object", "json_schema"]
 Completion = Callable[..., object]
 _LITELLM_LOCK = RLock()
 _LITELLM_HTTP_CLIENT: httpx.Client | None = None
+_PROXY_HTTP_CLIENTS: dict[str, httpx.Client] = {}
 
 
 class _DuplicateJsonKey(ValueError):
@@ -493,14 +494,26 @@ def _direct_litellm_completion(*, _lock_timeout=-1, **request):
     import litellm
 
     global _LITELLM_HTTP_CLIENT
+    proxy_url = request.pop("proxy_url", None) or os.getenv("PAAM_LLM_PROXY") or None
+    if proxy_url is not None:
+        try:
+            proxy_url = LiteLLMParams.validate_proxy_url(proxy_url)
+        except (TypeError, ValueError):
+            raise _error("CONFIG_ERROR", "The configured proxy URL is invalid") from None
     if not _LITELLM_LOCK.acquire(timeout=_lock_timeout):
         raise TimeoutError("Provider transport is busy")
     try:
         _disable_provider_logging(litellm)
-        if _LITELLM_HTTP_CLIENT is None:
-            _LITELLM_HTTP_CLIENT = httpx.Client(trust_env=False)
+        if proxy_url:
+            if proxy_url not in _PROXY_HTTP_CLIENTS:
+                _PROXY_HTTP_CLIENTS[proxy_url] = httpx.Client(proxy=proxy_url, trust_env=False)
+            client = _PROXY_HTTP_CLIENTS[proxy_url]
+        else:
+            if _LITELLM_HTTP_CLIENT is None:
+                _LITELLM_HTTP_CLIENT = httpx.Client(trust_env=False)
+            client = _LITELLM_HTTP_CLIENT
         previous = litellm.client_session
-        litellm.client_session = _LITELLM_HTTP_CLIENT
+        litellm.client_session = client
         try:
             return litellm.completion(**{
                 **request, "no-log": True, "num_retries": 0, "max_retries": 0,
@@ -535,6 +548,8 @@ def _close_litellm_http_client() -> None:
     with _LITELLM_LOCK:
         if _LITELLM_HTTP_CLIENT is not None:
             _LITELLM_HTTP_CLIENT.close()
+        for client in _PROXY_HTTP_CLIENTS.values():
+            client.close()
 
 
 atexit.register(_close_litellm_http_client)

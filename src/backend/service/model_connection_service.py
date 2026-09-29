@@ -2,7 +2,7 @@
 from datetime import datetime, timezone
 from threading import Lock
 
-from backend.error import SettingError
+from backend.error import LlmAdapterError, SettingError
 from backend.schema.setting import ModelConnectionCheckRead
 from backend.service.llm_adapter import _direct_litellm_completion, _field, _provider_exception
 from backend.service.setting_service import SettingService
@@ -44,10 +44,12 @@ class ModelConnectionService:
             params = model.litellm_params
             request = {
                 "model": params.model, "api_base": params.api_base, "api_key": secret,
-                "messages": [dict(m) for m in MESSAGES], "timeout": 15,
+                "messages": [dict(m) for m in MESSAGES],
+                "timeout": min(60.0, params.timeout or 30.0),
                 "max_tokens": 32, "stream": False, "num_retries": 0, "max_retries": 0,
                 "caching": False,
                 "_lock_timeout": 0,
+                "proxy_url": params.proxy_url,
             }
             # Never forward arbitrary extensions capable of overriding probe limits.
             if isinstance((params.extra_body or {}).get("enable_thinking"), bool):
@@ -59,6 +61,9 @@ class ModelConnectionService:
                 content = _field(_field(choices[0], "message"), "content") if choices else None
                 if isinstance(content, str) and content.strip():
                     connected, code, message = True, "CONNECTED", "已收到真实模型响应。此检查不代表分类准确率。"
+            except LlmAdapterError as error:
+                code = error.code
+                message = ERROR_MESSAGES.get(code, ERROR_MESSAGES["PROVIDER_UNAVAILABLE"])
             except Exception as error:
                 code = _provider_exception(error).code
                 message = ERROR_MESSAGES.get(code, ERROR_MESSAGES["PROVIDER_UNAVAILABLE"])

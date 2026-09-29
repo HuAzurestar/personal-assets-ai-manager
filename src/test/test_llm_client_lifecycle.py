@@ -34,6 +34,7 @@ def offline_client(monkeypatch, tmp_path):
     monkeypatch.setenv("LITELLM_LOCAL_MODEL_COST_MAP", "true")
     monkeypatch.setenv("HTTPS_PROXY", "http://must-not-be-used.invalid:1")
     monkeypatch.setattr(llm_adapter, "_LITELLM_HTTP_CLIENT", None)
+    monkeypatch.setattr(llm_adapter, "_PROXY_HTTP_CLIENTS", {})
     state = {"clients": [], "requests": [], "statuses": [], "trust_env": []}
     original_client = httpx.Client
 
@@ -113,6 +114,38 @@ def test_process_exit_closes_transport_idempotently(offline_client):
     llm_adapter._close_litellm_http_client()
     llm_adapter._close_litellm_http_client()
     assert client.is_closed
+
+
+def test_explicit_proxy_is_selected_and_reused(offline_client, monkeypatch):
+    import litellm
+
+    selected = []
+
+    def complete(**_kwargs):
+        selected.append(litellm.client_session)
+        return "ok"
+
+    monkeypatch.setattr(litellm, "completion", complete)
+    request = _request("explicit-proxy")
+    request["proxy_url"] = "http://proxy.test:7890"
+    assert llm_adapter._direct_litellm_completion(**request) == "ok"
+    assert llm_adapter._direct_litellm_completion(**request) == "ok"
+    assert selected[0] is selected[1]
+    assert len(offline_client["clients"]) == 1
+    assert offline_client["trust_env"] == [False]
+    assert llm_adapter._PROXY_HTTP_CLIENTS["http://proxy.test:7890"] is selected[0]
+    llm_adapter._close_litellm_http_client()
+    assert selected[0].is_closed
+
+
+def test_deployment_proxy_fallback(offline_client, monkeypatch):
+    import litellm
+
+    selected = []
+    monkeypatch.setenv("PAAM_LLM_PROXY", "http://deployment-proxy.test:7890")
+    monkeypatch.setattr(litellm, "completion", lambda **_kwargs: selected.append(litellm.client_session))
+    llm_adapter._direct_litellm_completion(**_request("deployment-proxy"))
+    assert selected[0] is llm_adapter._PROXY_HTTP_CLIENTS["http://deployment-proxy.test:7890"]
 
 
 def test_provider_session_swap_is_serialized_and_restored(offline_client, monkeypatch):

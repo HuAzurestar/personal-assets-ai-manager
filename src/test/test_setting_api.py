@@ -342,12 +342,25 @@ def test_parameter_change_invalidates_rules_and_uses_exact_lock_token(
             assert rule is not None
             assert rule.rule_revision == 2
 
+        proxy_model = _model_payload(temperature=0.25, name="Renamed")
+        proxy_model["litellm_params"]["proxy_url"] = "http://proxy.test:7890"
+        routed = client.put(
+            "/paam/system/v1/setting/automation",
+            json={"expected_updated_time": third_token, "models": [proxy_model]},
+        )
+        assert routed.status_code == 200
+        proxy_token = routed.json()["body"]["updated_time"]
+        assert routed.json()["body"]["models"][0]["litellm_params"]["proxy_url"] == "http://proxy.test:7890"
+        with sessions() as db:
+            assert db.scalar(select(AutoTagRule)).rule_revision == 2
+
         typed_change_model = _model_payload(temperature=0.25, name="Renamed")
         typed_change_model["litellm_params"]["provider_zero"] = False
+        typed_change_model["litellm_params"]["proxy_url"] = "http://proxy.test:7890"
         typed_change = client.put(
             "/paam/system/v1/setting/automation",
             json={
-                "expected_updated_time": third_token,
+                "expected_updated_time": proxy_token,
                 "models": [typed_change_model],
             },
         )
