@@ -25,3 +25,23 @@ PAAM commit already does and what its implementation still needs.
 - No `.csv`, `.xlsx`, `.xls`, `.zip`, `.sqlite` or `.db` sample was found under the checked-out MPA/PAAM workspaces. The tests construct synthetic input. A target bank's authorized redacted statement and a redacted old-data migration fixture remain unverified.
 - PIRC-24 being merged removes the old “consumer not installed” assumption. The PIRC-35 tag protocol still needs same-candidate integration tests for Review changes, rollback and scanner invalidation.
 - This branch's draft PR is the review and merge object. Implementation starts only after PIRC-35 `DEV-01` and `GATE-01` have their recorded completion evidence.
+
+## PIRC-24 adapter details
+
+The installed `auto_tag_rule` and `tag_assignment_request` columns match the
+consumer shapes described by PIRC-35 `SOL-006`. The request table already has
+`(ledger_id, view_id, status)` and `(rule_id, status)` indexes. The installed
+service retires pending/enabled requests for affected Ledger IDs; the rule
+mapper rewinds the cursor and increments `scan_epoch`. The scheduler also obeys
+a global `scan_enabled` setting, so a present rule is not proof that scanning
+is running. Current approval validates the rule revision, active Ledger/View,
+target dictionary and manual assignment conflict. It has no PIRC-35
+`DUPLICATE` category to exclude yet. The new Review publisher must call these
+consumers in its own transaction and verify both publication/approval orders.
+
+One read-only aggregate of the currently running local database found 255
+Facts, Reviews, allocations, Ledgers and import rows, with no broken links,
+duplicate Ledger allocations or active coverage mismatch. Its one import file
+uses source type `102` (WeChat); it supplies no bank format example. The live
+database is not a redacted migration fixture and must not be used as a mutable
+test database.
