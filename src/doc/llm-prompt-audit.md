@@ -7,7 +7,7 @@ Each retry is a separate row. This table has no purpose-built business API or UI
 
 The local PR preview Docker image mounts the existing `sqlite-web` browser at
 `http://127.0.0.1:18779/sql/` on the same application port. It is enabled by
-`PAAM_SQL_WEB_ENABLED=1` in `src/report/Dockerfile.pirc9`; other deployment
+`PAAM_SQL_WEB_ENABLED=1` in `src/script/Dockerfile.preview`; other deployment
 methods leave it disabled unless they explicitly set that variable. The mount
 opens only the configured SQLite file in SQLite read-only mode. Bind the Docker
 port to `127.0.0.1`, never a public interface: the browser has no authentication

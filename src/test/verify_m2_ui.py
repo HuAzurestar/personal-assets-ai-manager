@@ -1,4 +1,4 @@
-"""Exercise the M2 UI against disposable persisted fixtures in a real browser."""
+"""Extended M2 browser acceptance against disposable persisted fixtures."""
 
 from __future__ import annotations
 

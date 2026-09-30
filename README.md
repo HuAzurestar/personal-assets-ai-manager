@@ -21,6 +21,7 @@ powershell -ExecutionPolicy Bypass -File src/script/setup.ps1
 - `/paam/import/v1`
 - `/paam/ledger/v1`（事实、Flow 与经济审查）
 - `/paam/tag/v1`
+- `/paam/system/v1`（设置与共享调度诊断）
 
 ## 架构
 
@@ -79,12 +80,14 @@ Import File 标记为 `FAILED`，仍在当前进程中的预览仍可继续修�
 
 ## 文档
 
-- [自动标签部署与就绪检查](src/doc/auto-tag-deployment.md)：启用规则前确认服务级真实分析开关；健康接口成功不代表已注册扫描。
-- [PIRC-24 真实运行验证记录](src/report/pirc24-runtime-acceptance-2026-09-27.md)
-- [10 表逐字段字典](src/doc/data-model.md)
+- [自动标签部署与就绪检查](src/doc/auto-tag-deployment.md)：部署层保持可用，在 Settings 中控制自动分析。
+- [Docker 模型凭据](src/doc/model-credential-deployment.md)
+- [标签分类配置](src/doc/tag-classification.md)
+- [模型调用审计](src/doc/llm-prompt-audit.md)
+- [PIRC-24 最终验收](src/report/pirc24-acceptance.md)
+- [14 表逐字段字典](src/doc/data-model.md)
 - [SQL 重构清单](src/doc/sql-query-refactor.md)
-- [PIRC-9 验收记录](src/doc/pirc-9-verification.md)
-- [文件迁移清单](src/doc/file-migration.md)
+- [测试入口与人工验收边界](src/test/README.md)
 
 项目开发规则在 `AGENTS.md`，模块规则在 `.agents/skills/`。
 
@@ -94,10 +97,13 @@ Import File 标记为 `FAILED`，仍在当前进程中的预览仍可继续修�
 node --check src/frontend/target-ledger.js
 .\.venv\Scripts\python.exe -m compileall -q src/backend src/script src/test
 .\.venv\Scripts\python.exe -m pytest -q
-.\.venv\Scripts\python.exe -m pytest src/report/test_pirc9_regression.py -q
-.\.venv\Scripts\python.exe src/report/verify_smart_sample.py --commit --reverse
-.\.venv\Scripts\python.exe src/script/verify_target_ui.py
+.\.venv\Scripts\python.exe -m pytest src/test/test_browser.py --run-browser -q
 ```
+
+浏览器测试需安装 Playwright 和浏览器，完整命令见测试说明。普通 `pytest`
+默认跳过这四组浏览器集成测试；CI 单独运行并保存 JUnit 结果。运维工具保留在
+`src/script`，可重复的测试和夹具统一位于 `src/test`。原始截图、XML 等生成物
+放到被 Git 忽略的 `artifacts/`；历史验收过程可通过 Git 历史恢复。
 
 以下命令会清空指定数据库，仅在明确需要重建时执行：
 

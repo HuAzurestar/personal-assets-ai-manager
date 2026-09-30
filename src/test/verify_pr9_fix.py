@@ -1,4 +1,4 @@
-"""Browser/API regression for PR 9; disposable data and no provider calls."""
+"""Browser/API regression for PR 9; run via test_browser.py in an isolated process."""
 import os
 from pathlib import Path
 import socket

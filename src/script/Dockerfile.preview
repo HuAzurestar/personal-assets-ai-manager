@@ -1,3 +1,4 @@
+# Local application preview; see src/doc/auto-tag-deployment.md.
 FROM python:3.10
 WORKDIR /app
 COPY requirements.txt ./requirements.txt

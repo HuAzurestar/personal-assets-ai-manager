@@ -42,11 +42,10 @@ jobs:
       - run: pip install -r requirements.txt playwright==1.45.0
       - run: python -m playwright install --with-deps chromium
       - name: Fictional-data browser regressions
-        run: |
-          python src/script/verify_pr9_fix.py
-          python src/script/verify_automation_repair.py
-          python src/script/verify_refresh_ui.py
-          python src/script/verify_automation_presentation.py
+        run: pytest src/test/test_browser.py --run-browser -q --junitxml=browser-result.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: browser-result, path: browser-result.xml }
   windows-package:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [test, browser]

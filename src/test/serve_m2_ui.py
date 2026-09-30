@@ -1,4 +1,4 @@
-"""Explicitly fictional M2 UI acceptance server; never attach a real ledger or keyring."""
+"""Shared fictional browser fixture; never attach a real ledger or keyring."""
 
 from __future__ import annotations
 
@@ -23,12 +23,20 @@ def prepare_app(data_dir: Path):
     os.environ["PAAM_DATABASE_URL"] = f"sqlite:///{database.as_posix()}"
     os.environ["PAAM_AUTOTAG_REAL_ANALYSIS"] = "0"
     os.environ["PAAM_AUTOTAG_SYNTHETIC_ACCEPTANCE"] = "0"
+    os.environ["PAAM_SQL_WEB_ENABLED"] = "0"
+    os.environ["PAAM_CREDENTIAL_STORE"] = "keyring"
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "test"))
 
     from backend import target_main
     from backend.core import target_database
     from backend.router.dependency import get_protected_secret_store
+    from backend.service.configured_llm_analyzer import ConfiguredLlmAnalyzer
+
+    async def forbid_provider(*_args, **_kwargs):
+        raise AssertionError("A browser fixture must never call a model provider")
+
+    ConfiguredLlmAnalyzer.analyze = forbid_provider
 
     class FixtureSecretStore:
         """Fake credential-presence indicator, not an OS or production credential store."""

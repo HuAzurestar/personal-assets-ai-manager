@@ -1,4 +1,4 @@
-"""Offline browser regression for automatic and command refresh presentation state."""
+"""Browser regression for automatic and command refresh presentation state."""
 import os
 import json
 from pathlib import Path

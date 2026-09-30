@@ -1,4 +1,4 @@
-"""Browser regression for serve_pirc24_usability_fixture.py ONLY; contains writes."""
+"""Manual regression for serve_pirc24_usability_fixture.py ONLY; contains writes."""
 import argparse
 import re
 import time

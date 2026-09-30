@@ -1,4 +1,4 @@
-"""Exercise simplified settings and responsive operations with fictional data."""
+"""Browser regression for settings and responsive operations on fictional data."""
 import json
 import os
 from pathlib import Path

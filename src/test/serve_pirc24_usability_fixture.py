@@ -1,4 +1,4 @@
-"""Disposable UI fixture. Run in a throwaway container, never a live deployment."""
+"""Manual usability fixture; run only in a throwaway process, never a live deployment."""
 import os
 import sys
 from pathlib import Path

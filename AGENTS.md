@@ -62,4 +62,4 @@ Read the relevant layer or Router skill before changing that area:
 - `.agents/skills/job-schedule/SKILL.md` — use the single shared scheduler for
   all backend CRON, recurring scans, timer jobs, and startup registration.
 
-The authoritative 10-table dictionary and layer boundaries are in `src/doc/data-model.md`.
+The authoritative 14-table dictionary and layer boundaries are in `src/doc/data-model.md`.

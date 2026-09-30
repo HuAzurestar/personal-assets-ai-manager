@@ -1,4 +1,4 @@
-"""Theme, currency editing and shared inspection regression on disposable data."""
+"""Browser regression for themes, currency editing and shared inspection."""
 import os
 from pathlib import Path
 import socket

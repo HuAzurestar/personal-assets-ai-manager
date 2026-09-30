@@ -1,4 +1,4 @@
-"""Smoke-test the PIRC-9 workbench in a real browser and disposable SQLite."""
+"""Extended workbench browser acceptance using disposable SQLite."""
 
 from __future__ import annotations
 

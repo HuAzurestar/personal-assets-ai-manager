@@ -7,8 +7,8 @@
 !src/frontend/**
 !src/asset/
 !src/asset/**
-!src/report/
-!src/report/Dockerfile.pirc9
-!src/report/Dockerfile.pirc9.dockerignore
+!src/script/
+!src/script/Dockerfile.preview
+!src/script/Dockerfile.preview.dockerignore
 **/__pycache__
 **/*.pyc

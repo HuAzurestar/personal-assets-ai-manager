@@ -1,4 +1,4 @@
-"""Exercise the four inspection pages in Edge/Chromium against disposable SQLite.
+"""Extended inspection browser acceptance against disposable SQLite.
 
 Optional --samples imports local statements only into the temporary database.
 Screenshots use synthetic records; source statement contents are never printed.

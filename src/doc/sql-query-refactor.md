@@ -9,7 +9,7 @@
 - [x] Ledger Entry Type 收敛为 INCOME_AND_EXPENSE、INTERNAL_TRANSFER、ASSET_AND_LIABILITY；Review 行为独立表达。
 - [x] 旧 23 表与 5 张过渡兼容表从开发数据库移除。
 - [x] 旧 Controller、Service、Mapper、ORM、影子迁移器、接口与页面物理删除。
-- [x] 运行入口只初始化 10 张目标表。
+- [x] 原账务模型收敛为 10 张目标表；PIRC-24 在同库增加设置、规则、建议申请和模型审计，当前共 14 张，详见 data-model.md。
 - [x] DTO/VO 不执行 SQL；Controller 和 Service 不拼 SQL。
 - [x] 列表、详情、汇总只查询明确字段，禁止 `SELECT *`。
 - [x] 流水列表的标签使用一次 `ledger_id IN (...)` 批量查询。

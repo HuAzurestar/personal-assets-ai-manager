@@ -14,3 +14,6 @@ build/
 task_plan.md
 findings.md
 progress.md
+artifacts/
+test-result.xml
+browser-result.xml

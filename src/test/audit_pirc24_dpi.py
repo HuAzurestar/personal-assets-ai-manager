@@ -1,4 +1,4 @@
-"""Independent DPI/layout audit on a disposable, fictional PIRC-24 database."""
+"""Manual DPI/layout matrix on a disposable, fictional PIRC-24 database."""
 
 import json
 import os
@@ -17,7 +17,7 @@ from serve_m2_ui import prepare_app
 OUT = Path(
     os.environ.get(
         "PAAM_DPI_EVIDENCE_DIR",
-        str(Path(__file__).resolve().parents[1] / "report" / "pirc24-ui-dpi-fixed"),
+        str(Path(__file__).resolve().parents[2] / "artifacts" / "ui-dpi"),
     )
 )
 MATRIX = [
