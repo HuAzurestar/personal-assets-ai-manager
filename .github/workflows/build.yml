@@ -7,18 +7,48 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: '3.10' }
+      - uses: actions/setup-node@v7
+        with: { node-version: '22' }
       - run: pip install -r requirements.txt
-      - run: pytest -q
+      - run: pytest -q --junitxml=test-result.xml
+      - name: Frontend contracts
+        run: |
+          node src/test/automation_ui.cjs
+          node src/test/automation_m2_ui.cjs
+          node src/test/automation_setting_form.cjs
+          node src/test/tag_assignment_ui.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: test-result, path: test-result.xml }
+  browser:
+    # This matches the platform supported by the pinned browser test toolchain.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.10' }
+      - run: pip install -r requirements.txt playwright==1.45.0
+      - run: python -m playwright install --with-deps chromium
+      - name: Fictional-data browser regressions
+        run: pytest src/test/test_browser.py --run-browser -q --junitxml=browser-result.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: browser-result, path: browser-result.xml }
   windows-package:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: test
+    needs: [test, browser]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4

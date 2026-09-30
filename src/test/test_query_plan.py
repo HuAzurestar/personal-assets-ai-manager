@@ -81,3 +81,20 @@ def test_review_lines_batch_lookup_uses_case_index():
         "WHERE review_case_id IN (1, 2, 3) ORDER BY review_case_id, id",
     )
     assert "ix_review_allocation_case_id" in plan
+
+
+def test_tag_assignment_request_hot_paths_use_indexes():
+    engine = _target_engine()
+    assert "ix_tag_assignment_request_scope_status" in _plan(
+        engine,
+        "SELECT id FROM tag_assignment_request "
+        "WHERE ledger_id = 1 AND view_id = 2 AND status IN (1, 2)",
+    )
+    assert "ix_tag_assignment_request_rule_status" in _plan(
+        engine,
+        "SELECT id FROM tag_assignment_request WHERE rule_id = 1 AND status = 1",
+    )
+    assert "ix_tag_assignment_request_created_time_id" in _plan(
+        engine,
+        "SELECT id FROM tag_assignment_request ORDER BY created_time DESC, id DESC LIMIT 20",
+    )

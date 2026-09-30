@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from datetime import datetime
 
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from backend.error import TargetEconomicError
 from backend.entity.base import utc_now
+from backend.mapper.auto_tag_rule_mapper import AutoTagRuleMapper
+from backend.mapper.tag_assignment_request_mapper import TagAssignmentRequestMapper
 from backend.mapper.target_economic_mapper import (
     ECONOMIC_TYPE_IDS,
     TargetEconomicMapper,
@@ -43,6 +44,8 @@ class TargetEconomicService:
     def __init__(self, db: Session):
         self.mapper = TargetEconomicMapper(db)
         self.tags = TargetTagProjectionService(db)
+        self.auto_rules = AutoTagRuleMapper(db)
+        self.tag_requests = TagAssignmentRequestMapper(db)
 
     def backfill_defaults(self) -> None:
         self.ensure_defaults(self.mapper.all_fact_ids(), commit=True)
@@ -252,6 +255,7 @@ class TargetEconomicService:
                 released[row.transaction_fact_id] += row.amount
             facts = self.mapper.facts(sorted(released))
             fact_by_id = {fact.id: fact for fact in facts}
+            transition_time = utc_now()
             if not self.mapper.revoke_case(
                 case_id,
                 fact_by_id,
@@ -260,11 +264,22 @@ class TargetEconomicService:
                 actor=payload.actor,
                 reason=payload.reason,
                 idempotency_key=payload.idempotency_key,
-                now=utc_now(),
+                now=transition_time,
             ):
                 raise TargetEconomicError(409, "review is not confirmed")
             self._assert_exact(facts)
+            affected_ledger_ids = sorted({
+                row.ledger_entry_id for row in case.allocations
+            })
             self.tags.sync_ledgers(list(self.mapper.active_economic_facts(sorted(released))))
+            self.auto_rules.rewind_for_ledger_ids(
+                affected_ledger_ids,
+                now=transition_time,
+            )
+            self.tag_requests.retire_for_ledger_ids(
+                affected_ledger_ids,
+                now=transition_time,
+            )
             self.mapper.commit()
             return self._required(case_id)
         except TargetEconomicError:
@@ -332,6 +347,7 @@ class TargetEconomicService:
                 for fact_id, amount in requested.items()
                 if default_by_fact[fact_id] > amount
             ]
+            transition_time = utc_now()
             if not self.mapper.restore_case(
                 case_id,
                 default_rows,
@@ -340,11 +356,15 @@ class TargetEconomicService:
                 actor=payload.actor,
                 reason=payload.reason,
                 idempotency_key=payload.idempotency_key,
-                now=utc_now(),
+                now=transition_time,
             ):
                 raise TargetEconomicError(409, "review is not revoked")
             self._assert_exact(facts)
             self.tags.sync_ledgers(list(self.mapper.active_economic_facts(fact_ids)))
+            self.auto_rules.rewind_for_ledger_ids(
+                sorted({row.ledger_entry_id for row in case.allocations}),
+                now=transition_time,
+            )
             self.mapper.commit()
             return self._required(case_id)
         except TargetEconomicError:

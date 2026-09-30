@@ -1,0 +1,14 @@
+**
+!requirements.txt
+!src/
+!src/backend/
+!src/backend/**
+!src/frontend/
+!src/frontend/**
+!src/asset/
+!src/asset/**
+!src/script/
+!src/script/Dockerfile.preview
+!src/script/Dockerfile.preview.dockerignore
+**/__pycache__
+**/*.pyc

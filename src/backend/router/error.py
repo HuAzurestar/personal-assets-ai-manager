@@ -17,6 +17,51 @@ from backend.schema.response import ErrorBody, ErrorResponse
 
 logger = logging.getLogger(__name__)
 
+_SENSITIVE_FIELDS = {
+    "api_key",
+    "authorization",
+    "password",
+    "secret",
+    "token",
+}
+
+
+def _is_sensitive_field(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    key = value.casefold()
+    return (
+        key in _SENSITIVE_FIELDS
+        or key.endswith("_api_key")
+        or "password" in key
+        or "secret" in key
+    )
+
+
+def _redact_sensitive_values(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: "[REDACTED]" if _is_sensitive_field(key) else _redact_sensitive_values(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_sensitive_values(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_sensitive_values(item) for item in value)
+    return value
+
+
+def _redact_validation_errors(errors: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for raw_error in errors:
+        error = _redact_sensitive_values(dict(raw_error))
+        # An unknown field can contain a credential even when its name gives no
+        # clue (for example, an extra "access_token" field). The input value is
+        # not needed to locate or explain a validation failure.
+        error.pop("input", None)
+        result.append(error)
+    return result
+
 
 def _error_response(
     status_code: int,
@@ -55,7 +100,7 @@ def _validation_error_response(error: RequestValidationError) -> JSONResponse:
         422,
         "Request validation failed",
         "VALIDATION_ERROR",
-        details=error.errors(),
+        details=_redact_validation_errors(error.errors()),
     )
 
 

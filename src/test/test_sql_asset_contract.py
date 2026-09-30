@@ -26,16 +26,27 @@ from backend.mapper.target_economic_mapper import TargetEconomicMapper
 
 SQL_DIR = Path(__file__).parents[1] / "asset" / "sql"
 EXPECTED_TABLES = {
+    "auto_tag_rule",
+    "llm_prompt_audit",
     "ledger_entry",
     "ledger_entry_tag",
     "review_allocation",
     "review_case",
     "review_revision",
+    "setting",
     "tag",
     "tag_view",
+    "tag_assignment_request",
     "transaction_fact",
     "transaction_import_file",
     "transaction_import_row",
+}
+
+LEGACY_CHECK_FREE_TABLES = EXPECTED_TABLES - {
+    "auto_tag_rule",
+    "llm_prompt_audit",
+    "setting",
+    "tag_assignment_request",
 }
 
 
@@ -62,10 +73,10 @@ def test_target_sql_assets_create_the_reviewed_tables():
         connection.close()
 
 
-def test_target_sql_assets_have_no_check_constraints():
+def test_existing_target_sql_assets_keep_check_constraint_free_contract():
     connection = _create_target_schema()
     try:
-        for table in EXPECTED_TABLES:
+        for table in LEGACY_CHECK_FREE_TABLES:
             create_sql = connection.execute(
                 "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?",
                 (table,),

@@ -320,6 +320,51 @@ def test_target_import_writes_fact_evidence_and_hot_projection(target_import_api
         assert db.query(TransactionImportFile).count() == 1
 
 
+@pytest.mark.parametrize("mode", ["batch", "forward", "reverse"])
+def test_overlapping_import_order_preserves_facts_and_projection(target_import_api, mode):
+    """Replace the old private 803-record experiment with synthetic API regression."""
+    client, sessions, _ = target_import_api
+    first = _rows(amount="10.01", prefix="order")[0]
+    second = _rows(2, amount="20.10", prefix="order")[1]
+    files = [
+        {"filename": name, "content_base64": base64.b64encode(content).decode()}
+        for name, content in (
+            ("first.csv", _csv([first])),
+            ("overlap.csv", _csv([first, second])),
+        )
+    ]
+    groups = [files] if mode == "batch" else [
+        [item] for item in (files if mode == "forward" else reversed(files))
+    ]
+    for group in groups:
+        response = client.post("/paam/import/v1/preview", json={"files": group})
+        assert response.status_code == 200, response.text
+        plan = response.json()["body"]
+        assert plan["can_confirm"]
+        confirmed = _confirm(client, plan)
+        assert confirmed.status_code == 200, confirmed.text
+    with sessions() as db:
+        facts = db.execute(select(
+            TransactionFact.amount, TransactionFact.currency_code,
+            TransactionFact.cash_direction, TransactionFact.account_code,
+            TransactionFact.occurred_time,
+        ).order_by(TransactionFact.occurred_time)).all()
+        entries = db.execute(select(
+            LedgerEntry.amount, LedgerEntry.currency_code, LedgerEntry.account_code,
+            LedgerEntry.occurred_time,
+        ).order_by(LedgerEntry.occurred_time)).all()
+    assert [(r.amount, r.currency_code, r.cash_direction) for r in facts] == [
+        (1001, "CNY", CASH_DIRECTION_OUT), (2010, "CNY", CASH_DIRECTION_OUT),
+    ]
+    assert [tuple(r) for r in entries] == [
+        (r.amount, r.currency_code, r.account_code, r.occurred_time) for r in facts
+    ]
+    assert len({r.account_code for r in facts}) == 1
+    replay = client.post("/paam/import/v1/preview", json={"files": files})
+    assert replay.status_code == 200
+    assert replay.json()["body"]["counts"].get("new", 0) == 0
+
+
 def test_zero_amount_rows_are_preserved_without_creating_facts(target_import_api):
     client, sessions, _ = target_import_api
     rows = _rows(amount="0.00", prefix="zero") + _rows(

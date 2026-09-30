@@ -193,12 +193,51 @@ Fact 只放跨来源稳定、计算必须的核心字段。客户详情、完整
 
 `(ledger_id, tag_id)` 唯一。Tag Assignment 直接以 Ledger ID 为对象，不经 Fact 或 Review 间接派生；每个活动 Ledger 在每个活动 Tag View 下恰有一个当前值。列表页按返回的 Ledger ID 一次批量读取。当前规模无需 Elasticsearch；引入第二套存储会增加一致性成本。
 
+## 四、自动标签配置与审查
+
+自动标签继续使用同一 SQLite 和同一应用进程。模型调用、文件解析和用户交互必须在写事务外完成；规则扫描结果、请求状态、标签投影与累计量由 Service 在短写事务中协调。
+
+### 11. `setting`：应用设置根对象
+
+本期只允许 `id=1` 的一行。除公共时间列外只有 `value_json TEXT NOT NULL`，其根对象必须包含 `schema_version=1`。自动化配置位于 `automation` 子对象；API 密钥不进入该 JSON，而由系统凭据库按 `PAAM.llm`、`model/{model_id}` 定位。
+
+### 12. `auto_tag_rule`：自动标签规则
+
+| 字段 | 类型 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `name` | TEXT | 无伪造默认 | 展示名；身份只使用 `id` |
+| `view_id` | INTEGER | 无伪造默认 | 正整数逻辑 Tag View ID；普通索引 |
+| `method` | INTEGER | `1` | 1=LLM_DIRECT |
+| `method_config_json` | TEXT | 无伪造默认 | `schema_version=1`、`model_id` 与 Prompt |
+| `enabled` / `cron` | INTEGER / TEXT | `0` / `''` | 是否注册调度及 Cron 表达式 |
+| `amount_mode` | INTEGER | `1` | 1=BAND，2=EXACT，3=NONE |
+| `rule_revision` | INTEGER | `1` | 正整数规则内容版本 |
+| `scan_after_ledger_id` / `scan_epoch` | INTEGER | `0` / `1` | 扫描检查点及代次 |
+| `analyzed_count` / `failed_count` | BIGINT | `0` | 分析与失败累计量 |
+| `suggested_count` / `accepted_count` / `rejected_count` | BIGINT | `0` | 请求与人工决定累计量 |
+
+五个累计量必须保持在有符号 64 位非负整数范围内。规则只禁用、不复用 ID；关系由 Service 批量校验，不声明外键。
+
+### 13. `tag_assignment_request`：自动标签审查请求
+
+| 字段 | 类型 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `rule_id` / `rule_revision` | INTEGER | 无伪造默认 | 正整数规则 ID 及生成时版本 |
+| `ledger_id` / `view_id` | INTEGER | 无伪造默认 | 正整数目标 Ledger 与 Tag View ID |
+| `proposed_tag_id` | INTEGER | 无伪造默认 | 正整数候选 Tag ID |
+| `status` | INTEGER | `1` | 1=PENDING，2=ENABLED，3=REJECTED，4=CANCELLED，5=REPLACED |
+| `reason_summary` | TEXT | `''` | 已清洗理由，最多 200 字 |
+
+请求没有 UUID、来源哈希、独立 decision 或归档字段。一次分析可生成多条请求；最终状态转换、标签互斥和规则计数在后续 Service 事务中实现。
+
 ## 热、冷与读取规则
 
 | 数据 | 热度 | 正常读取方式 |
 | --- | --- | --- |
 | `ledger_entry` | 热 | 读取已确认 Review 发布的列表、筛选和按币种汇总 |
 | `ledger_entry_tag`、`tag`、`tag_view` | 热/温 | 列表按 ID 批量取；字典独立取 |
+| `setting`、`auto_tag_rule` | 温 | 按根对象或规则 ID/View 批量读取 |
+| `tag_assignment_request` | 热/温 | 审查列表只读主表热字段，详情按 ID 读取 |
 | `transaction_fact` | 温 | 导入核对、审查、单条详情 |
 | `review_case`、`review_allocation` | 温 | 审查工作台与单条详情 |
 | `transaction_import_file`、`transaction_import_row`、`review_revision` | 冷 | 来源追溯、问题核查、审计详情 |
@@ -207,11 +246,12 @@ Fact 只放跨来源稳定、计算必须的核心字段。客户详情、完整
 
 ## 迁移结论
 
-旧业务表和过渡表已经从模型和运行时删除。新数据库直接创建 10 张目标表；不提供旧数据库原位迁移。必要语义分别进入：
+旧业务表和过渡表已经从模型和运行时删除。新数据库直接创建 13 张目标表；已有 10 表目标数据库通过三个幂等 `CREATE TABLE IF NOT EXISTS` 资产增量接入，既有行不改写。仍不提供更早旧业务表的原位迁移。必要语义分别进入：
 
 - 文件/批次/来源/异常：`transaction_import_file + transaction_import_row`。
 - 规范流水：`transaction_fact`。
 - 正常交易与借钱/还钱行为：统一 Review 三表。
 - 正式经济结果：`ledger_entry`、三元 `review_allocation` 与标签表。
+- 自动标签配置与审查：`setting + auto_tag_rule + tag_assignment_request`。
 
-应用只创建当前结构，不在启动时升级或回填旧数据库。导入事务为新 Fact 同步创建 CONFIRMED Review、等额 INCOME_AND_EXPENSE 与 `review_allocation`。
+应用只创建当前结构；除从既有 10 表目标库幂等补建上述三表外，不在启动时升级或回填旧业务表。导入事务为新 Fact 同步创建 CONFIRMED Review、等额 INCOME_AND_EXPENSE 与 `review_allocation`。

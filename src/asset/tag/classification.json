@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "name": "综合消费用途与购买渠道",
+  "views": [
+    {
+      "name": "消费用途",
+      "system_name": "expense_purpose",
+      "tags": [
+        {"name": "医疗", "system_name": "medical"},
+        {"name": "出行", "system_name": "transport"},
+        {"name": "餐饮", "system_name": "food"},
+        {"name": "服装", "system_name": "clothing"},
+        {"name": "日用消耗品", "system_name": "consumable"},
+        {"name": "食品生鲜", "system_name": "grocery"},
+        {"name": "数码家电", "system_name": "electronics"},
+        {"name": "居住缴费", "system_name": "housing"},
+        {"name": "教育学习", "system_name": "education"},
+        {"name": "休闲娱乐", "system_name": "leisure"},
+        {"name": "住宿旅游", "system_name": "lodging"},
+        {"name": "通信订阅", "system_name": "communication"}
+      ],
+      "rule": {
+        "name": "综合消费用途分类",
+        "cron": "* * * * *",
+        "amount_mode": 1,
+        "prompt": "根据商户和摘要选择一个标签。仅判断消费用途，不判断购买渠道。医疗：医院、挂号、诊疗、药品、体检。出行：地铁、公交、高铁、机票、打车、加油、停车。餐饮：早餐、午餐、晚餐、聚餐、餐厅、咖啡、外卖。服装：服装、服饰、衣服、裤子、连衣裙、鞋帽。日用消耗品：纸巾、卫生纸、洗衣液、洗发水、牙膏、清洁用品。食品生鲜：生鲜、蔬菜、水果、食品；餐厅、外卖优先餐饮。数码家电：手机、电脑、耳机、家电。居住缴费：房租、水费、电费、燃气、物业。教育学习：学费、培训、图书。休闲娱乐：电影、游戏、运动、健身。住宿旅游：酒店、住宿、旅游。通信订阅：话费、网费、通信、订阅。网购、购物、超市、支付宝、微信支付不能单独决定用途。转账、退款、报销、还款、收入、混合商品用途不明时返回insufficient；信息不足或候选标签不适配时返回insufficient。"
+      }
+    },
+    {
+      "name": "购买渠道",
+      "system_name": "purchase_channel",
+      "tags": [
+        {"name": "网购", "system_name": "online"},
+        {"name": "线下", "system_name": "offline"}
+      ],
+      "rule": {
+        "name": "购买渠道识别",
+        "cron": "* * * * *",
+        "amount_mode": 3,
+        "prompt": "根据商户和摘要选择一个标签。仅判断购买渠道，不判断消费用途。网购：网购、电商、网上商城、淘宝、天猫、京东、拼多多、线上订单、外卖。线下：到店、线下、门店、柜台、POS。支付宝、微信支付、银行卡、现金仅表示支付方式，不能单独决定购买渠道。转账、退款、报销、还款或信息不足时返回insufficient。"
+      }
+    }
+  ]
+}

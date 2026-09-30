@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session
 from backend.error import TargetTagError
 from backend.entity.base import utc_now
 from backend.mapper.target_tag_mapper import TargetTagMapper
+from backend.mapper.auto_tag_rule_mapper import AutoTagRuleMapper
+from backend.mapper.tag_assignment_request_mapper import TagAssignmentRequestMapper
 from backend.schema.list_query import BetweenValue, iter_filter_fields
 from backend.schema.target_tag import (
     TargetTagCreateRequest,
@@ -32,6 +34,8 @@ class TargetTagService:
 
     def __init__(self, db: Session):
         self.mapper = TargetTagMapper(db)
+        self.rule_mapper = AutoTagRuleMapper(db)
+        self.request_mapper = TagAssignmentRequestMapper(db)
         self.projection = TargetTagProjectionService(db)
 
     def list(
@@ -132,9 +136,11 @@ class TargetTagService:
             self.mapper.begin_write()
             if self.mapper.view(view_id) is None:
                 raise TargetTagError(404, "tag view not found")
+            now = utc_now()
             self.mapper.create_tag(
-                view_id, payload.name.strip(), payload.system_name, utc_now()
+                view_id, payload.name.strip(), payload.system_name, now
             )
+            self._invalidate_rules(view_id, now)
             self.mapper.commit()
             return self._required(view_id)
         except TargetTagError:
@@ -157,9 +163,17 @@ class TargetTagService:
     ) -> TargetTagViewRead:
         try:
             self.mapper.begin_write()
-            if not self.mapper.set_view_status(view_id, payload.status, utc_now()):
+            current = self._required(view_id)
+            if current.status == payload.status:
+                self.mapper.rollback()
+                return current
+            now = utc_now()
+            if not self.mapper.set_view_status(view_id, payload.status, now):
                 raise TargetTagError(404, "tag view not found")
+            if payload.status != "ACTIVE":
+                self.request_mapper.retire_dictionary_sources(view_id, tag_id=None, now=now)
             self.projection.sync_all()
+            self._invalidate_rules(view_id, now)
             self.mapper.commit()
             return self._required(view_id)
         except TargetTagError:
@@ -191,9 +205,16 @@ class TargetTagService:
                 raise TargetTagError(404, "tag not found in this view")
             if tag.system_name == "unclassified" and payload.status != "ACTIVE":
                 raise TargetTagError(422, "unclassified tag cannot be archived")
-            if not self.mapper.set_tag_status(view_id, tag_id, payload.status, utc_now()):
+            if tag.status == payload.status:
+                self.mapper.rollback()
+                return view
+            now = utc_now()
+            if not self.mapper.set_tag_status(view_id, tag_id, payload.status, now):
                 raise TargetTagError(404, "tag not found in this view")
+            if payload.status != "ACTIVE":
+                self.request_mapper.retire_dictionary_sources(view_id, tag_id=tag_id, now=now)
             self.projection.sync_all()
+            self._invalidate_rules(view_id, now)
             self.mapper.commit()
             return self._required(view_id)
         except TargetTagError:
@@ -216,3 +237,20 @@ class TargetTagService:
         if view is None:
             raise TargetTagError(404, "tag view not found")
         return view
+
+    def _invalidate_rules(self, view_id: int, now: datetime) -> None:
+        try:
+            effective_time, rule_ids = self.rule_mapper.advance_for_view_ids(
+                {view_id},
+                now=now,
+            )
+        except ValueError as error:
+            raise TargetTagError(
+                409,
+                "automatic tag rule revision counter is exhausted",
+                code="AUTO_TAG_RULE_REVISION_EXHAUSTED",
+            ) from error
+        self.request_mapper.cancel_pending_for_rule_ids(
+            rule_ids,
+            now=effective_time,
+        )

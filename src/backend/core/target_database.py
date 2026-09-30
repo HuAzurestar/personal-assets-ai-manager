@@ -38,12 +38,18 @@ TARGET_TABLE_NAMES = (
     "tag_view",
     "tag",
     "ledger_entry_tag",
+    "setting",
+    "auto_tag_rule",
+    "tag_assignment_request",
+    "llm_prompt_audit",
 )
 
 SQL_ASSET_DIR = Path(__file__).resolve().parents[2] / "asset" / "sql"
 UTC_TIMESTAMP_COLUMNS = {
     table_name: ("created_time", "updated_time")
     for table_name in TARGET_TABLE_NAMES
+    # This table is new and append-heavy; it has no legacy millisecond rows.
+    if table_name != "llm_prompt_audit"
 }
 UTC_TIMESTAMP_COLUMNS["transaction_fact"] += ("occurred_time",)
 UTC_TIMESTAMP_COLUMNS["ledger_entry"] += ("occurred_time",)

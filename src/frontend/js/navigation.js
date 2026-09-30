@@ -16,6 +16,11 @@ export const moduleMeta = {
     caption: "导入与审查",
     page: "import",
   },
+  settings: {
+    label: "设置",
+    caption: "连接与自动化",
+    page: "settings",
+  },
 };
 
 const secondaryMeta = {
@@ -25,6 +30,7 @@ const secondaryMeta = {
     ["ledger-reviews", "审查记录", "Review"],
     ["ledger-imports", "导入文件", "Import File"],
     ["ledger-tags", "标签管理", "Tag"],
+    ["auto-rules", "自动规则", "Auto Tag Rule"],
   ],
   overview: [
     ["summary", "概览", "Ledger Summary"],
@@ -32,6 +38,10 @@ const secondaryMeta = {
   workbench: [
     ["import", "导入 / 上传", "预览并写入事实层"],
     ["reviews", "账单审查", "配置 Fact 与 Ledger"],
+    ["tag-review", "打标签审查", "建议确认与来源核对"],
+  ],
+  settings: [
+    ["settings", "自动化", "模型连接与安全披露"],
   ],
 };
 
@@ -41,10 +51,13 @@ const pageModules = {
   "ledger-reviews": "details",
   "ledger-imports": "details",
   "ledger-tags": "details",
+  "auto-rules": "details",
   summary: "overview",
   reviews: "workbench",
   import: "workbench",
   "import-history": "workbench",
+  "tag-review": "workbench",
+  settings: "settings",
 };
 
 const canonicalPages = {
@@ -68,10 +81,13 @@ const pagePaths = {
   "ledger-reviews": "details/review",
   "ledger-imports": "details/import-file",
   "ledger-tags": "details/tag",
+  "auto-rules": "details/auto-rule",
   summary: "overview",
   import: "workbench/import",
   reviews: "workbench/review",
   "import-history": "workbench/import/history",
+  "tag-review": "workbench/tag-review",
+  settings: "settings/automation",
 };
 
 const pathPages = Object.fromEntries(Object.entries(pagePaths).map(([page, path]) => [path, page]));
@@ -136,6 +152,20 @@ export function shellMarkup() {
   </div>`;
 }
 
+function revealSelectedNavigation(navigation) {
+  const selected = navigation.querySelector('[aria-pressed="true"]');
+  if (!selected) return;
+  const container = navigation.getBoundingClientRect();
+  const button = selected.getBoundingClientRect();
+  if (button.left < container.left) navigation.scrollLeft += button.left - container.left;
+  else if (button.right > container.right) navigation.scrollLeft += button.right - container.right;
+}
+
+const navigationResizeObserver = typeof ResizeObserver === "function"
+  ? new ResizeObserver((entries) => {
+    for (const entry of entries) revealSelectedNavigation(entry.target);
+  }) : null;
+
 export function syncNavigation(page) {
   const active = pageModule(page);
   $$('[data-module]').forEach((button) => {
@@ -152,8 +182,13 @@ export function syncNavigation(page) {
       <button type="button" data-page="${id}" class="${id === selectedPage ? "active" : ""}" aria-pressed="${id === selectedPage}">
         <strong>${esc(label)}</strong><small>${esc(caption)}</small>
       </button>`).join("");
+    navigationResizeObserver?.observe(secondaryNavigation);
+    revealSelectedNavigation(secondaryNavigation);
   }
-  $("#section-kicker").textContent = active === "details"
-    ? "DETAILS"
-    : active === "overview" ? "LEDGER OVERVIEW" : "WORKBENCH";
+  const domainNote = $(".domain-note");
+  if (domainNote) domainNote.innerHTML = active === "settings"
+    ? "<strong>自动化设置</strong>"
+    : "<span>账目形成</span><strong>事实流水 → 审查 → 经济流水</strong><p>事实保留来源，审查负责解释，经济流水是最终阅读和统计结果。</p>";
+  const kicker = { details: "DETAILS", overview: "LEDGER OVERVIEW", workbench: "WORKBENCH", settings: "SETTINGS" };
+  $("#section-kicker").textContent = kicker[active];
 }

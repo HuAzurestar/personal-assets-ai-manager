@@ -1,13 +1,14 @@
-import { checkConnection, request, jsonRequest } from "../api/client.js?v=20260921.2";
+import { checkConnection, request, jsonRequest } from "../api/client.js";
+import { preserveView } from "../util/view_state.js?v=20260928.6";
 import { toast } from "../component/toast.js";
 import { table } from "../component/table.js";
-import { openInspection } from "../component/inspection.js?v=20260921.4";
+import { openInspection } from "../component/inspection.js?v=20260928.6";
 import {
   detailList, detailPager,
 } from "../component/detail.js?v=20260917.10";
 import {
   bindDateTimeRanges, dateTimeRangeControl,
-} from "../component/date-time-range.js?v=20260921.1";
+} from "../component/date-time-range.js?v=20260928.6";
 import { state } from "../state/ledger.js";
 import {
   $, $$, currencyPrecision, date, decimalAmount, esc, key, money,
@@ -17,10 +18,13 @@ import {
 } from "../util/core.js";
 import {
   canonicalHash, parseHash, shellMarkup, syncNavigation,
-} from "../navigation.js?v=20260921.3";
+} from "../navigation.js?v=20260928.6";
 import {
   accountsMarkup, cursorFromParam, monthBounds,
 } from "./account.js?v=20260917.10";
+import {
+  automationSettingsPage, autoRulesPage, bindAutomation, tagReviewPage, stopAutomationPolling, startAutomationRefresh,
+} from "./automation.js?v=20260929.1";
 
 const entryTypeValues = { TRANSACTION: 0, ACCOUNT_TRANSFER: 1, CLAIM: 2 };
 const entryTypeCodes = { 0: "TRANSACTION", 1: "ACCOUNT_TRANSFER", 2: "CLAIM" };
@@ -110,11 +114,14 @@ const pageInfo = {
   "ledger-reviews": ["明细", "查看事实如何通过审查和 Allocation 形成经济流水。"],
   "ledger-imports": ["明细", "在统一列表中追溯导入文件、原始行和处理结果。"],
   "ledger-tags": ["明细", "在统一列表中查看分类维度、标签值和启用状态。"],
+  "auto-rules": ["明细", ""],
   summary: ["概览", "基于 Ledger Summary 查看月度收支、趋势和账本活动；具体流水继续回到“明细”查看。"],
   ledger: ["明细", "查看导入后不可变的事实流水；最终结果请切换到经济明细。"],
   import: ["导入 / 上传", "选择来源、添加文件，并在写入账本前逐项核对。"],
   "import-history": ["导入记录", "查找已经写入的文件、处理结果和原始行。"],
   reviews: ["账单审查", "选择待审查事实，配置 Fact 与 Ledger 的关系，预览后生成账本流水。"],
+  "tag-review": ["打标签审查", ""],
+  settings: ["设置", ""],
 };
 const validPages = new Set(Object.keys(pageInfo));
 
@@ -135,8 +142,43 @@ function readRoute() {
 }
 window.addEventListener("hashchange", readRoute);
 
-async function render() {
-  const renderVersion = ++state.renderVersion;
+let renderedRoute = null;
+let backgroundBusy = false;
+let foregroundBusy = 0;
+let pendingCommands = 0;
+let interactionVersion = 0;
+document.addEventListener('paam:mutation', (event) => {
+  pendingCommands = Math.max(0, pendingCommands + (event.detail.phase === 'start' ? 1 : -1));
+  ++interactionVersion;
+  ++state.renderVersion; // Invalidate page reads issued before this command.
+  $('#page-content')?.removeAttribute('aria-busy');
+});
+document.addEventListener('input', () => { ++interactionVersion; });
+document.addEventListener('change', () => { ++interactionVersion; });
+const livePages = new Set(['summary', 'ledger', 'economy', 'ledger-reviews', 'ledger-imports', 'ledger-tags', 'import-history']);
+function canRefreshPage() {
+  return !document.hidden && !pendingCommands && !foregroundBusy && !document.querySelector('dialog[open]')
+    && !document.activeElement?.matches('input, textarea, select, [contenteditable="true"]')
+    && !document.querySelector('[data-range-popover]:not([hidden])')
+    && !document.querySelector('[data-form="inline-tag"]:not([hidden])');
+}
+window.setInterval(async () => {
+  if (backgroundBusy || !livePages.has(state.page) || !canRefreshPage()) return;
+  backgroundBusy = true;
+  try {
+    const history = $('[data-form="history-filter"]');
+    if (state.page === 'import-history' && history) await refreshHistoryResults(history, Number(history.dataset.page || 1), true);
+    else await render({ background: true });
+  } finally { backgroundBusy = false; }
+}, 5000);
+
+async function render({ background = false } = {}) {
+  stopAutomationPolling();
+  const renderVersion = background ? state.renderVersion : ++state.renderVersion;
+  if (!background) foregroundBusy++;
+  const interaction = interactionVersion;
+  const routeKey = location.hash;
+  const samePage = renderedRoute === routeKey;
   const page = state.page;
   const root = $("#page-content");
   const [title, help] = pageInfo[page];
@@ -144,32 +186,57 @@ async function render() {
   $("#help").textContent = help;
   $(".module-heading").hidden = true;
   $("#content").classList.add("compact-content");
-  syncNavigation(page);
-  const secondaryNavigation = $("#secondary-nav");
-  if (secondaryNavigation) bindPage(secondaryNavigation);
-  renderPageActions();
-  root.innerHTML = '<div class="busy">正在加载…</div>';
+  if (!samePage) {
+    syncNavigation(page);
+    const secondaryNavigation = $("#secondary-nav");
+    if (secondaryNavigation) bindPage(secondaryNavigation);
+    renderPageActions();
+  }
+  if (!samePage) root.innerHTML = '<div class="busy">正在加载…</div>';
+  root.setAttribute('aria-busy', 'true');
   try {
     const content = await ({
       economy: economicPage,
       "ledger-reviews": ledgerReviewsPage,
       "ledger-imports": ledgerImportsPage,
       "ledger-tags": ledgerTagsPage,
+      "auto-rules": () => autoRulesPage(state.params),
       summary: summaryPage,
       ledger: ledgerPage,
       import: importPage,
       "import-history": importHistoryPage,
       reviews: reviewCreatePage,
+      "tag-review": () => tagReviewPage(state.params),
+      settings: automationSettingsPage,
     })[page]();
-    if (renderVersion !== state.renderVersion || page !== state.page) return;
-    root.innerHTML = content;
-    bindPage(root);
+    if (renderVersion !== state.renderVersion || page !== state.page || routeKey !== location.hash) return;
+    if (background && (interaction !== interactionVersion || !canRefreshPage())) return;
+    const historyPage = $('[data-form="history-filter"]', root)?.dataset.page;
+    const apply = () => {
+      root.innerHTML = content;
+      bindPage(root);
+      const history = $('[data-form="history-filter"]', root);
+      if (samePage && history && historyPage) history.dataset.page = historyPage;
+    };
+    if (samePage) preserveView(root, apply); else apply();
+    renderedRoute = routeKey;
     if (page === "import") renderImportPlan();
     if (page === "reviews") await mountEconomicReviewEditor(root);
   } catch (error) {
-    if (renderVersion !== state.renderVersion || page !== state.page) return;
-    root.innerHTML = `<section class="panel"><div class="error">${esc(error.message)}</div><div class="actions"><button data-action="reload">重新加载</button></div></section>`;
-    bindPage(root);
+    if (renderVersion !== state.renderVersion || page !== state.page || routeKey !== location.hash) return;
+    if (samePage) {
+      let errorSlot = root.querySelector('[data-refresh-error]');
+      if (!errorSlot) { errorSlot = document.createElement('p'); errorSlot.dataset.refreshError = ''; errorSlot.setAttribute('role', 'status'); root.append(errorSlot); }
+      errorSlot.textContent = `刷新失败，保留上次内容：${error.message}`;
+      startAutomationRefresh(root, { stale: true });
+    } else {
+      renderedRoute = null;
+      root.innerHTML = `<section class="panel"><div class="error">${esc(error.message)}</div><div class="actions"><button data-action="reload">重新加载</button></div></section>`;
+      bindPage(root);
+    }
+  } finally {
+    if (!background) foregroundBusy--;
+    if (renderVersion === state.renderVersion) root.removeAttribute('aria-busy');
   }
 }
 
@@ -518,7 +585,7 @@ async function mountEconomicReviewEditor(root) {
     candidatePage = await request(`/paam/ledger/v1/review_candidate/list?${params}`);
     renderCandidatePage();
   };
-  const renderLedgers = () => {
+  const renderLedgers = () => preserveView(definitionRoot, () => {
     const choices = selectedFacts();
     definitionRoot.innerHTML = ledgers.map((item, index) => `<article class="review-ledger-row" data-ledger-key="${item.key}"><header><span>LEDGER ${String(index + 1).padStart(2, "0")}</span><strong>${esc(typeNames[item.type])}</strong></header><label>来源 Fact<select data-ledger-fact>${choices.map((fact) => `<option value="${fact.id}" ${fact.id === item.factId ? "selected" : ""}>#${fact.id} · ${esc(fact.counterparty_name || fact.summary || "未命名流水")}</option>`).join("")}</select></label><label>账本类型<select data-ledger-type>${["TRANSACTION", "ACCOUNT_TRANSFER", "CLAIM"].map((value) => `<option value="${value}" ${value === item.type ? "selected" : ""}>${esc(typeNames[value])}</option>`).join("")}</select></label><label>分配金额<input data-ledger-amount inputmode="decimal" value="${esc(item.amount)}" placeholder="0.00"></label><button type="button" class="quiet" data-remove-ledger>移除</button></article>`).join("") || '<div class="empty-state">请返回上一步选择待审查流水</div>';
     $$('[data-ledger-key]', definitionRoot).forEach((row) => {
@@ -528,7 +595,7 @@ async function mountEconomicReviewEditor(root) {
       $("[data-ledger-amount]", row).oninput = (event) => { item.amount = event.target.value; };
       $("[data-remove-ledger]", row).onclick = () => { ledgers.splice(ledgers.indexOf(item), 1); renderLedgers(); };
     });
-  };
+  });
   const reviewPlan = () => {
     if (!selected.size) throw new Error("请选择至少一条待审查流水");
     if (!ledgers.length) throw new Error("请至少配置一条 Ledger");
@@ -669,7 +736,7 @@ async function editTags(ledgerId) {
   if (renderVersion !== state.renderVersion) return;
   if (!views.length) return toast("请先创建标签维度", true);
   const current = assignment.tag_state;
-  const dialog = modal("编辑最终流水标签", `<form data-form="tag-assignment" data-ledger="${ledgerId}" data-updated-time="${esc(assignment.updated_time || "")}" class="stack">${views.map((view) => `<label>${esc(view.name)}<select name="${esc(view.system_name)}">${view.tags.filter((tag) => tag.status === "ACTIVE").map((tag) => `<option value="${esc(tag.system_name)}" ${(current[view.system_name] || "unclassified") === tag.system_name ? "selected" : ""}>${esc(tag.name)}</option>`).join("")}</select></label>`).join("")}<div class="actions"><button class="primary">保存标签</button></div></form>`);
+  const dialog = modal("编辑最终流水标签", `<form data-form="tag-assignment" data-ledger="${ledgerId}" data-updated-time="${esc(assignment.updated_time || "")}" class="stack"><p>修改标签只影响对应维度；标签不变时，可勾选将该维度接管为人工。</p>${views.map((view) => `<div><label>${esc(view.name)}<select name="${esc(view.system_name)}" data-original="${esc(current[view.system_name] || "unclassified")}">${view.tags.filter((tag) => tag.status === "ACTIVE").map((tag) => `<option value="${esc(tag.system_name)}" ${(current[view.system_name] || "unclassified") === tag.system_name ? "selected" : ""}>${esc(tag.name)}</option>`).join("")}</select></label><label><input type="checkbox" data-manual-view="${esc(view.system_name)}">将${esc(view.name)}接管为人工</label></div>`).join("")}<div class="actions"><button class="primary">保存标签</button></div></form>`);
   bindPage(dialog);
 }
 
@@ -762,11 +829,17 @@ function historyResultsMarkup(result) {
 }
 
 async function importHistoryPage() {
+  const previous = $('[data-form="history-filter"]');
   const initialQuery = new URLSearchParams({
-    page_index: "1",
+    page_index: previous?.dataset.page || "1",
     page_size: "10",
     sorter: JSON.stringify([{ key: "created_time", direction: "desc" }]),
   });
+  if (previous) {
+    const expressions = ['source_type', 'status'].filter((name) => previous.elements[name].value !== '')
+      .map((name) => ({ key: name, op: '=', val: Number(previous.elements[name].value) }));
+    if (expressions.length) initialQuery.set('filter', JSON.stringify(expressions.length === 1 ? expressions[0] : { op: 'AND', expression: expressions }));
+  }
   const conflictFilter = encodeURIComponent(JSON.stringify({ key: "status", op: "=", val: "PENDING" }));
   const [result, summary, conflicts] = await Promise.all([
     request(`/paam/import/v1/import_file/list?${initialQuery}`),
@@ -780,7 +853,9 @@ async function importHistoryPage() {
   return `<div class="history-summary" data-history-summary>${historySummaryMarkup(summary, conflicts.total)}</div>${conflictPanel}<section class="panel history-panel"><div class="section-head"><div><h2>导入文件</h2><p class="import-section-help">来源和状态筛选只更新下方结果。</p></div><button class="primary" data-page="import">＋ 导入新数据</button></div><form class="toolbar history-toolbar" data-form="history-filter"><label>来源<select name="source_type"><option value="">全部来源</option>${sourceOptions}</select></label><label>状态<select name="status"><option value="">全部状态</option>${statusOptions}</select></label><span class="history-updating" data-history-updating aria-live="polite"></span></form><div data-history-results>${historyResultsMarkup(result)}</div></section>`;
 }
 
-async function refreshHistoryResults(form, page = 1) {
+async function refreshHistoryResults(form, page = 1, background = false) {
+  const interaction = interactionVersion;
+  form.dataset.page = String(page);
   clearTimeout(state.historyFilterTimer);
   state.historyRequestController?.abort();
   const controller = new AbortController();
@@ -811,11 +886,11 @@ async function refreshHistoryResults(form, page = 1) {
       request("/paam/import/v1/import_file/summary", { signal: controller.signal }),
     ]);
     if (requestVersion !== state.historyRequestVersion || state.page !== "import-history") return;
-    if (summaryRoot) summaryRoot.innerHTML = historySummaryMarkup(summary);
-    if (resultsRoot) {
-      resultsRoot.innerHTML = historyResultsMarkup(result);
-      bindPage(resultsRoot);
-    }
+    if (!form.isConnected || (background && (interaction !== interactionVersion || !canRefreshPage()))) return;
+    preserveView($('#page-content'), () => {
+      if (summaryRoot) summaryRoot.innerHTML = historySummaryMarkup(summary);
+      if (resultsRoot) { resultsRoot.innerHTML = historyResultsMarkup(result); bindPage(resultsRoot); }
+    });
   } catch (error) {
     if (error.name !== "AbortError") toast(error.message, true);
   } finally {
@@ -959,6 +1034,11 @@ function openPreviewDrawer(documentIndex) {
   });
 }
 function renderImportPlan() {
+  const root = $('#import-preview');
+  if (root) preserveView(root, renderImportPlanContent);
+}
+
+function renderImportPlanContent() {
   const plan = state.importPlan;
   const root = $("#import-preview");
   if (!plan || !root) return;
@@ -1040,7 +1120,7 @@ async function tagsPage() {
       return `<span class="tag-pill${isSystem ? " system" : ""}${isTagActive ? "" : " archived"}" title="系统名称：${esc(tag.system_name)}">${isSystem ? '<span class="tag-pill-lock" aria-hidden="true">◆</span>' : ""}<span>${esc(tag.name)}</span>${isSystem ? `<code>${esc(tag.system_name)}</code>` : ""}${action}</span>`;
     }).join("");
     const creator = isActive ? `<div class="tag-inline-creator"><button class="tag-inline-launch" type="button" data-action="new-tag-inline" data-id="${view.id}" aria-controls="tag-create-${view.id}" aria-expanded="false"><span aria-hidden="true">＋</span> 新标签</button><form id="tag-create-${view.id}" class="tag-inline-form" data-form="inline-tag" data-view="${view.id}" hidden><label class="sr-only" for="tag-name-${view.id}">显示名称</label><input id="tag-name-${view.id}" name="name" maxlength="120" placeholder="显示名称" autocomplete="off" required><span class="tag-inline-divider" aria-hidden="true"></span><label class="sr-only" for="tag-system-${view.id}">系统名称</label><input id="tag-system-${view.id}" name="system_name" maxlength="64" pattern="[a-z][a-z0-9_]{0,63}" placeholder="自动生成系统名称" autocomplete="off" required><button class="tag-inline-submit" type="submit" aria-label="保存标签" title="保存">✓</button><button class="tag-inline-cancel" type="button" data-action="cancel-tag" aria-label="取消添加标签" title="取消">×</button></form></div>` : "";
-    return `<article class="tag-view-card${isActive ? "" : " archived"}" aria-labelledby="tag-view-${view.id}"><header class="tag-view-head"><div class="tag-view-meta"><div class="tag-view-title"><h3 id="tag-view-${view.id}">${esc(view.name)}</h3><span class="tag-view-status ${isActive ? "active" : "archived"}"><span aria-hidden="true">●</span>${esc(statusNames[view.status] || view.status)}</span></div><code>${esc(view.system_name)}</code></div><div class="tag-view-actions">${isActive ? `<button type="button" data-action="new-tag" data-id="${view.id}" aria-controls="tag-create-${view.id}" aria-expanded="false">＋ 添加标签</button>` : ""}<button class="quiet" type="button" data-action="view-status" data-id="${view.id}" data-status="${isActive ? "ARCHIVED" : "ACTIVE"}">${isActive ? "归档维度" : "恢复维度"}</button></div></header><div class="tag-pill-list">${tagsMarkup}${creator}</div></article>`;
+    return `<article data-view-card="${view.id}" class="tag-view-card${isActive ? "" : " archived"}" aria-labelledby="tag-view-${view.id}"><header class="tag-view-head"><div class="tag-view-meta"><div class="tag-view-title"><h3 id="tag-view-${view.id}">${esc(view.name)}</h3><span class="tag-view-status ${isActive ? "active" : "archived"}"><span aria-hidden="true">●</span>${esc(statusNames[view.status] || view.status)}</span></div><code>${esc(view.system_name)}</code></div><div class="tag-view-actions">${isActive ? `<button type="button" data-action="new-tag" data-id="${view.id}" aria-controls="tag-create-${view.id}" aria-expanded="false">＋ 添加标签</button>` : ""}<button class="quiet" type="button" data-action="view-status" data-id="${view.id}" data-status="${isActive ? "ARCHIVED" : "ACTIVE"}">${isActive ? "归档维度" : "恢复维度"}</button></div></header><div class="tag-pill-list">${tagsMarkup}${creator}</div></article>`;
   }).join("");
   return `<section class="tag-manager" aria-labelledby="tag-manager-title"><div class="tag-manager-head"><div><h2 id="tag-manager-title">标签维度</h2><p>${views.length ? `共 ${viewPage.total} 个维度，${activeCount} 个启用中${atViewLimit ? "；已达 100 个上限" : ""}` : "用维度组织同一类标签"}</p></div><button class="primary" data-action="new-view" ${atViewLimit ? 'disabled title="标签维度上限为 100"' : ""}>${atViewLimit ? "已达维度上限" : "＋ 新建维度"}</button></div><div class="tag-view-list">${cards || '<div class="panel empty-state">尚未创建标签维度</div>'}</div></section>`;
 }
@@ -1175,6 +1255,7 @@ function closeInlineTag(form) {
 }
 
 function bindPage(root) {
+  bindAutomation(root, render, toast, route);
   $$('button[data-page], a[data-page]', root).forEach((button) => button.onclick = () => {
     if (button.closest("dialog")) closeDialogs();
     route(button.dataset.page);
@@ -1431,6 +1512,24 @@ function bindPage(root) {
   $$('form[data-form]', root).forEach(bindCommandForm);
 }
 
+window.addEventListener("paam:automation-saved", async (event) => {
+  toast(event.detail?.message || "自动化配置已保存");
+  if (event.detail?.createdRuleId) {
+    route("auto-rules", new URLSearchParams({ sort: "desc", rule_id: String(event.detail.createdRuleId) }));
+    return;
+  }
+  await render();
+});
+
+function manualTagViewNames(form) {
+  const changed = [...form.querySelectorAll("select[name]")]
+    .filter((select) => select.value !== select.dataset.original)
+    .map((select) => select.name);
+  const claimed = [...form.querySelectorAll("[data-manual-view]:checked")]
+    .map((checkbox) => checkbox.dataset.manualView);
+  return [...new Set([...changed, ...claimed])];
+}
+
 async function submitTags(event) {
   event.preventDefault(); const form = event.currentTarget; const data = new FormData(form);
   if (!beginSubmit(form)) return;
@@ -1438,6 +1537,7 @@ async function submitTags(event) {
     await jsonRequest(`/paam/tag/v1/assignment/${form.dataset.ledger}`, "PUT", {
       expected_updated_time: form.dataset.updatedTime || null,
       tag_state: Object.fromEntries(data),
+      view_names: manualTagViewNames(form),
     });
     closeDialogs(); toast("标签已保存"); await render();
   } catch (error) { endSubmit(form); showFormError(form, error); }

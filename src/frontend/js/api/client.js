@@ -15,7 +15,15 @@ function setConnectionState(state) {
   if (label) label.textContent = connectionCopy[state];
 }
 
-export async function request(url, options = {}) {
+export async function request(url, options = {}, includeEnvelope = false) {
+  const mutating = !['GET', 'HEAD'].includes((options.method || 'GET').toUpperCase());
+  const announce = (phase) => document.dispatchEvent(new CustomEvent('paam:mutation', { detail: { phase } }));
+  if (mutating) announce('start');
+  try { return await readResponse(url, options, includeEnvelope); }
+  finally { if (mutating) announce('end'); }
+}
+
+async function readResponse(url, options, includeEnvelope) {
   const response = await fetch(url, options).catch((error) => {
     if (error.name === "AbortError") throw error;
     setConnectionState("disconnected");
@@ -24,15 +32,25 @@ export async function request(url, options = {}) {
   setConnectionState("connected");
   const payload = response.status === 204 ? null : await response.json().catch(() => null);
   if (!response.ok) {
-    const detail = payload?.message || payload?.detail;
+    const validationDetails = payload?.body?.code === "VALIDATION_ERROR"
+      && Array.isArray(payload?.body?.details)
+      ? payload.body.details.map((item) => item?.msg).filter(Boolean)
+      : [];
+    const detail = validationDetails.length
+      ? validationDetails
+      : payload?.message || payload?.detail;
     const text = Array.isArray(detail)
-      ? detail.map((item) => item.msg).join("；")
+      ? detail.map((item) => typeof item === "string" ? item : item?.msg).filter(Boolean).join("；")
       : detail || `请求失败（${response.status}）`;
-    throw new Error(text);
+    const error = new Error(text);
+    error.code = payload?.body?.code;
+    error.details = payload?.body?.details;
+    error.status = response.status;
+    throw error;
   }
   const isEnvelope = payload && Object.hasOwn(payload, "body")
     && (payload.status === response.status || payload.status === "success");
-  return isEnvelope
+  return isEnvelope && !includeEnvelope
     ? payload.body
     : payload;
 }
@@ -52,8 +70,8 @@ export async function checkConnection() {
   }
 }
 
-export const jsonRequest = (url, method, body) => request(url, {
+export const jsonRequest = (url, method, body, includeEnvelope = false) => request(url, {
   method,
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify(body),
-});
+}, includeEnvelope);

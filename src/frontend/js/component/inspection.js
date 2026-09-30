@@ -1,4 +1,5 @@
 import { request } from "../api/client.js";
+import { preserveView } from "../util/view_state.js?v=20260928.6";
 import { esc, money, date as when, typeNames, statusNames } from "../util/core.js";
 
 const names = { fact: "事实流水", ledger: "账本流水", review: "审查记录", file: "导入文件" };
@@ -10,6 +11,13 @@ const rowStates = { 0: "状态未知", 1: "已关联事实", 2: "已跳过", 3: 
 const formats = { 1: "CSV", 2: "XLS", 3: "XLSX", 4: "PDF" };
 const endpoints = { fact: "/paam/ledger/v1/transaction_fact/", ledger: "/paam/ledger/v1/flow/", review: "/paam/ledger/v1/review/", file: "/paam/import/v1/import_file/" };
 const actionKinds = { "fact-detail": "fact", "economic-detail": "ledger", "economic-review-detail": "review", "import-file-detail": "file" };
+const adapters = new Map();
+
+export function registerInspection(kind, adapter) {
+  adapters.set(kind, adapter);
+  names[kind] = adapter.name;
+  actionKinds[adapter.action] = kind;
+}
 
 export function readableAccount(value) {
   if (!value || value === "UNKNOWN" || /^[a-f\d]{32,}$/i.test(value)) return "账户名称未识别";
@@ -158,6 +166,7 @@ async function mountFileRows(root, initial, bindActions) {
 }
 
 function describe(kind, data) {
+  if (adapters.has(kind)) return adapters.get(kind).describe(data);
   const p = new Presentation();
   let item, title, subtitle, hero = "", body = "", actions = "";
   if (kind === "fact") {
@@ -182,7 +191,7 @@ function describe(kind, data) {
     body = metrics([["账本金额", amount(item), "accent"], ["来源事实金额", fact ? amount(fact) : "未提供"], ["占来源事实", fact?.amount > 0 && fact.currency_code === item.currency_code ? `${(item.amount / fact.amount * 100).toFixed(2)}%` : "不适用"]])
       + '<div class="inspection-dashboard">'
       + card("账本概览", fields([["摘要", item.summary], ["有效状态", item.active ? "有效" : "已停用"], ["经济分类", typeNames[item.entry_type]], ["本方账户", readableAccount(item.account_code)], ["发生时间", when(item.occurred_time)]]), { tone: "accent" })
-      + card("分类标签", item.tags.length ? `<div class="inspection-tags">${item.tags.map(tag => `<span><small>${esc(tag.view_name)}</small>${esc(tag.tag_name)}</span>`).join("")}</div>` : '<p class="inspection-empty">暂无标签</p>')
+      + card("分类标签", item.tags.length ? `<div class="inspection-tags">${item.tags.map(tag => `<span><small>${esc(tag.view_name)}</small><strong>${esc(tag.tag_name)}</strong><small>${tag.source_type === "AUTO_RULE" ? `自动规则 #${esc(tag.rule_id)} · Rev ${esc(tag.rule_revision)} · Request #${esc(tag.request_id)}` : "人工 / 默认标签"}</small></span>`).join("")}</div>` : '<p class="inspection-empty">暂无标签</p>')
       + allocationSection(p, data.allocations, data.facts, [item], data.reviews, { kind, id: item.id }) + "</div>";
     actions = `<button data-action="edit-ledger-account" data-id="${item.id}">编辑账户</button><button data-action="edit-tags" data-id="${item.id}">编辑标签</button>`;
   } else if (kind === "review") {
@@ -209,6 +218,7 @@ function describe(kind, data) {
 }
 
 async function load(kind, id) {
+  if (adapters.has(kind)) return adapters.get(kind).load(id);
   if (kind !== "file") return request(`${endpoints[kind]}${id}`);
   const [detail, rows] = await Promise.all([
     request(`${endpoints.file}${id}`),
@@ -309,34 +319,40 @@ export async function openInspection(kind, id, bindActions) {
   }
   async function navigate(nextKind, nextId, record = true, fresh = false) {
     const ticket = ++version;
-    if (record && selected) stack.push({ ...selected, scroll: body.scrollTop });
+    const sameRecord = selected?.kind === nextKind && selected?.id === nextId;
+    if (record && selected && !sameRecord) stack.push({ ...selected, scroll: body.scrollTop });
     selected = { kind: nextKind, id: nextId };
-    dialog.querySelector("[data-kind-label]").textContent = names[nextKind];
-    dialog.querySelector("#inspection-title").textContent = "正在加载…";
-    dialog.querySelector("[data-inspect-subtitle]").textContent = "";
-    dialog.querySelector("[data-inspect-hero]").textContent = "";
-    dialog.querySelector("[data-inspect-actions]").innerHTML = "";
-    dialog.querySelector("[data-inspect-back]").disabled = !stack.length;
-    updateSelection();
-    body.innerHTML = '<p role="status">正在加载详情…</p>';
+    if (!sameRecord) {
+      dialog.querySelector("[data-kind-label]").textContent = names[nextKind];
+      dialog.querySelector("#inspection-title").textContent = "正在加载…";
+      dialog.querySelector("[data-inspect-subtitle]").textContent = "";
+      dialog.querySelector("[data-inspect-hero]").textContent = "";
+      dialog.querySelector("[data-inspect-actions]").innerHTML = "";
+      dialog.querySelector("[data-inspect-back]").disabled = !stack.length;
+      updateSelection();
+      body.innerHTML = '<p role="status">正在加载详情…</p>';
+    }
     try {
       const data = await get(nextKind, nextId, fresh);
       if (ticket !== version || !dialog.isConnected) return;
       const view = describe(nextKind, data);
-      dialog.querySelector("#inspection-title").textContent = view.title;
-      dialog.querySelector("[data-inspect-subtitle]").textContent = view.subtitle;
-      dialog.querySelector("[data-inspect-hero]").textContent = view.hero;
-      const actions = dialog.querySelector("[data-inspect-actions]");
-      actions.innerHTML = view.actions;
-      bindActions(actions);
-      body.innerHTML = view.body;
-      view.presentation.mount(body);
-      if (view.kind === "file") mountFileRows(body, data.rows, bindActions);
-      body.scrollTop = 0;
-      dialog.dataset.renderVersion = String(ticket);
-      dialog.querySelector(".inspection-heading").focus({ preventScroll: true });
+      const apply = () => {
+        dialog.querySelector("#inspection-title").textContent = view.title;
+        dialog.querySelector("[data-inspect-subtitle]").textContent = view.subtitle;
+        dialog.querySelector("[data-inspect-hero]").textContent = view.hero;
+        const actions = dialog.querySelector("[data-inspect-actions]");
+        actions.innerHTML = view.actions;
+        bindActions(actions);
+        body.innerHTML = view.body;
+        view.presentation.mount(body);
+        if (view.kind === "file") mountFileRows(body, data.rows, bindActions);
+        dialog.dataset.renderVersion = String(ticket);
+      };
+      if (sameRecord) preserveView(dialog, apply);
+      else { apply(); body.scrollTop = 0; dialog.querySelector(".inspection-heading").focus({ preventScroll: true }); }
     } catch (error) {
       if (ticket !== version || !dialog.isConnected) return;
+      if (sameRecord) { dialog.querySelector('[data-inspect-subtitle]').textContent = `刷新失败，保留上次内容：${error.message}`; return; }
       dialog.querySelector("#inspection-title").textContent = "详情暂时无法加载";
       body.innerHTML = `<p role="alert">${esc(error.message)}</p><button data-inspect-retry>重试</button>`;
     }

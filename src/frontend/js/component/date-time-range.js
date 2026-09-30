@@ -1,4 +1,5 @@
 import { $, $$, esc, selectedCalendarDate } from "../util/core.js";
+import { preserveView } from "../util/view_state.js?v=20260928.6";
 
 let openedControl = null;
 let outsideHandler = null;
@@ -64,6 +65,10 @@ function options(count, selected) {
 }
 
 function render(control, message = "") {
+  preserveView(control, () => renderContent(control, message), { restoreValues: false, restoreScroll: false });
+}
+
+function renderContent(control, message = "") {
   const startInput = $("[name=date_from]", control);
   const endInput = $("[name=date_to]", control);
   const start = parts(startInput.value, "start");

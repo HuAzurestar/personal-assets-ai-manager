@@ -16,6 +16,23 @@ APP_SLUG = "personal-assets-ai-manager"
 APP_DISPLAY_NAME = "个人账本与资产管家"
 DATA_DIR = Path(os.getenv("PAAM_DATA_DIR", BASE_DIR / "data"))
 DATABASE_URL = os.getenv("PAAM_DATABASE_URL", f"sqlite:///{DATA_DIR / f'{APP_SLUG}.db'}")
+SQL_WEB_ENABLED = os.getenv("PAAM_SQL_WEB_ENABLED", "0") == "1"
+AUTOTAG_SYNTHETIC_ACCEPTANCE = (
+    os.getenv("PAAM_AUTOTAG_SYNTHETIC_ACCEPTANCE") == "1"
+    and "PAAM_DATABASE_URL" in os.environ
+    and DATABASE_URL.startswith("sqlite:///")
+    and Path(DATABASE_URL.removeprefix("sqlite:///")).name == "synthetic.db"
+)
+# Ordinary deployments register enabled rules without an additional opt-in.
+# An explicitly requested synthetic mode must never fall back to real analysis,
+# even when its database guard rejects the supplied database path.
+_real_analysis_default = "0" if os.getenv("PAAM_AUTOTAG_SYNTHETIC_ACCEPTANCE") == "1" else "1"
+_real_analysis_setting = os.getenv("PAAM_AUTOTAG_REAL_ANALYSIS", _real_analysis_default)
+if _real_analysis_setting not in {"0", "1"}:
+    raise RuntimeError("PAAM_AUTOTAG_REAL_ANALYSIS must be 0 or 1")
+AUTOTAG_REAL_ANALYSIS = _real_analysis_setting == "1"
+if AUTOTAG_REAL_ANALYSIS and AUTOTAG_SYNTHETIC_ACCEPTANCE:
+    raise RuntimeError("Choose either real analysis or synthetic acceptance, not both")
 LLM_PROVIDER = os.getenv("PAAM_LLM_PROVIDER", "mock")
 LLM_BASE_URL = os.getenv("PAAM_LLM_BASE_URL", "")
 LLM_MODEL = os.getenv("PAAM_LLM_MODEL", "")

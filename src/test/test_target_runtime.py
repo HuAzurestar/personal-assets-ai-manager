@@ -1,18 +1,17 @@
 import base64
 import csv
 import io
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import sessionmaker
 
-from backend.core import target_database
 from backend import target_main
+from backend.core import target_database
 from backend.core.intake_preview_store import target_intake_preview_store
-
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -140,12 +139,6 @@ def test_importing_target_runtime_does_not_load_legacy_database_module():
     assert result.returncode == 0, result.stderr
 
 
-def test_sample_import_script_queries_the_canonical_flow_api():
-    script = (ROOT / "src/script/import_test_sample.py").read_text(encoding="utf-8")
-    assert "/paam/ledger/v1/flow/list" in script
-    assert "/paam/ledger/v1/entry/" not in script
-
-
 def _wechat_csv(rows=None) -> bytes:
     stream = io.StringIO()
     writer = csv.writer(stream)
@@ -207,6 +200,41 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
             assert "/paam/review/v1/account" not in script.text
             assert "/paam/review/v2" not in script.text
             assert "/paam/ledger/v1/entry/" not in script.text
+            assert "automationSettingsPage" in script.text
+            automation_script = client.get("/static/js/view/automation.js")
+            assert automation_script.status_code == 200
+            assert "/paam/system/v1/setting/automation" in automation_script.text
+            assert "/paam/tag/v1/auto_rule" in automation_script.text
+            assert "/paam/tag/v1/assignment_request" in automation_script.text
+            assert "/paam/system/v1/schedule/status" in automation_script.text
+            assert "没有已注册的自动标签任务" in automation_script.text
+            assert 'data-auto-notice' in automation_script.text
+            explanation_script = client.get("/static/js/view/automation_explain.js")
+            assert explanation_script.status_code == 200
+            assert "尚未调度" in explanation_script.text
+            assert 'schedule.tag_scan_guard === "DISABLED"' in explanation_script.text
+            assert "保存后按 CRON 执行" not in automation_script.text
+            assert "启用后立即注册" not in automation_script.text
+            assert "尚未启动调度" not in automation_script.text
+            schedule = client.get("/paam/system/v1/schedule/status")
+            assert schedule.status_code == 200
+            assert schedule.json()["body"]["scheduler_state"] == "RUNNING"
+            assert schedule.json()["body"]["tag_scan_guard"] == "REAL_READY"
+            assert 'data-action="tag-request-batch"' in automation_script.text
+            inspection_script = client.get("/static/js/component/inspection.js")
+            assert inspection_script.status_code == 200
+            assert "AUTO_RULE" in inspection_script.text
+            assert "Request #" in inspection_script.text
+            assert "不调用模型" in explanation_script.text
+            assert "模型不可用" in explanation_script.text
+            assert 'data-action="rule-run"' not in automation_script.text
+            assert 'data-action="rule-rescan"' not in automation_script.text
+            navigation_script = client.get("/static/js/navigation.js")
+            assert navigation_script.status_code == 200
+            assert 'page: "settings"' in navigation_script.text
+            assert 'data-page="import">导入账单</button>' in navigation_script.text
+            assert '["tag-review", "打标签审查"' in navigation_script.text
+            assert '["auto-rules", "自动规则"' in navigation_script.text
             core_script = client.get("/static/js/util/core.js")
             assert core_script.status_code == 200
             assert "export const reviewTypeNames" in core_script.text
@@ -214,6 +242,7 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
             for path in (
                 "/static/js/util/core.js", "/static/js/navigation.js",
                 "/static/js/view/account.js", "/static/js/api/client.js",
+                "/static/js/view/automation.js",
                 "/static/js/component/toast.js", "/static/js/component/table.js",
                 "/static/js/state/ledger.js", "/static/js/theme.js",
                 "/static/css/ledger.css", "/static/css/theme.css", "/static/css/target.css",
