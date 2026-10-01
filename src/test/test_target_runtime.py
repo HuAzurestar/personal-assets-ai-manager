@@ -169,6 +169,7 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
             assert client.get("/api/health").json() == {
                 "status": "ok",
                 "schema": "pirc-9-target",
+                "operational_log": "ok",
             }
             home = client.get("/")
             assert home.status_code == 200

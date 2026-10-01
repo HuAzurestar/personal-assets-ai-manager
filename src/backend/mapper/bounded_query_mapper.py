@@ -13,6 +13,7 @@ from backend.error import ListQueryError, TargetEconomicError
 from backend.schema.list_query import FilterFieldExpression
 from backend.schema.bounded_search import normal_text
 from backend.entity.base import UTCISO8601DateTime
+from backend.core.feature_observability import observe
 
 _query_progress = ContextVar("bounded_query_progress", default=None)
 
@@ -28,6 +29,16 @@ def cursor_error():
 
 @contextmanager
 def query_budget(db, seconds=30, code="QUERY_BUSY"):
+    # A nested query can be inside a financial write. Aggregate in memory here;
+    # never append/rotate files while holding that write lock. The outer HTTP
+    # or publication boundary emits the correlated operational event.
+    with observe("QUERY", "query_duration_ms", log=False):
+        with _query_budget(db, seconds, code):
+            yield
+
+
+@contextmanager
+def _query_budget(db, seconds, code):
     connection = db.connection()
     driver = connection.connection.driver_connection
     start = monotonic()

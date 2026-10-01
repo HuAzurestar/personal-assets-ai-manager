@@ -8,10 +8,12 @@ import sys
 from threading import BoundedSemaphore
 from time import monotonic
 from backend.error import TargetIntakeError
+from backend.core.feature_observability import observed
 
 _parser_slot = BoundedSemaphore(1)
 
 
+@observed("IMPORT_PARSE", "import_parse_duration_ms")
 def parse_statement(content, filename, password=None, source=None, *, source_timezone, deadline=None):
     deadline = deadline if deadline is not None else monotonic() + 30
     if not _parser_slot.acquire(blocking=False):

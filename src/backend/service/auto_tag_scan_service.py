@@ -12,6 +12,8 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from backend.core.job_scheduler import JobCallback, JobRunContext
+from backend.core.short_database_work import short_database_work
+from backend.core.feature_observability import observed, observability
 from backend.error import LlmAdapterError, TargetTagError
 from backend.mapper.auto_tag_scan_mapper import ScanPage
 from backend.mapper.auto_tag_scan_batch_mapper import AutoTagScanBatchMapper as AutoTagScanMapper
@@ -110,6 +112,7 @@ class AutoTagScanService:
             rule_id, context, build, suggestion_validator=validate, stop_on_provider_error=True,
         )
 
+    @observed("TAG_SCAN")
     async def _run(
         self, rule_id: int, context: JobRunContext, payload_builder: PayloadBuilder,
         *, suggestion_validator: SuggestionValidator | None = None, stop_on_provider_error=False,
@@ -172,6 +175,9 @@ class AutoTagScanService:
             if reason in {"TAG_RELATION_BROKEN", "CONFIG_CHANGED", "SOURCE_CHANGED"}:
                 context.emit(reason, phase="FINISH")
             context.progress(phase="FINISH", **asdict(counts))
+            observability.metric("scan_pending", "TAG_SCAN", counts.request_count)
+            observability.metric("scan_failed", "TAG_SCAN", counts.failed_count + int(reason in {
+                "TAG_RELATION_BROKEN", "COMMIT_FAILED", "RESULT_UNKNOWN", "AUDIT_STORAGE_UNAVAILABLE"}))
             return ScanRunReport(rule_id=rule_id, stopped_reason=reason, last_error_code=last_error_code, **asdict(counts))
 
         context.progress(phase="SCAN")
@@ -332,19 +338,7 @@ class AutoTagScanService:
 
     @staticmethod
     async def _database_work(operation, *args):
-        # A blocking SQLite commit must not prevent HTTP read snapshots from
-        # closing on this event loop. Keep a whole Session on one worker thread.
-        task = asyncio.create_task(asyncio.to_thread(operation, *args))
-        try:
-            return await asyncio.shield(task)
-        except asyncio.CancelledError:
-            # A started short transaction cannot be cancelled halfway through.
-            # Drain it before allowing scheduler shutdown to close the runtime.
-            try:
-                await task
-            except Exception:
-                pass
-            raise
+        return await short_database_work(operation, *args)
 
     def _read_page(self, rule_id: int, limit: int) -> ScanPage | None:
         with self._sessions() as db:

@@ -15,6 +15,9 @@ from backend.core.config import (
     SQL_WEB_ENABLED,
 )
 from backend.core.job_scheduler import JobRunContext, job_scheduler
+from backend.core.config import DATA_DIR
+from backend.core.feature_observability import observability
+from backend.core.short_database_work import short_database_work
 from backend.router.auto_tag_rule import router as auto_tag_rule_router
 from backend.router.error import register_error_handlers
 from backend.router.import_conflict import router as import_conflict_router
@@ -49,6 +52,10 @@ if SQL_WEB_ENABLED:
 
 
 async def _sweep_timed_out_import_previews(_: JobRunContext) -> None:
+    await short_database_work(_sweep_import_previews)
+
+
+def _sweep_import_previews():
     with target_database.SessionLocal() as db:
         TargetIntakeService(db).fail_expired_pending_files()
 
@@ -56,6 +63,7 @@ async def _sweep_timed_out_import_previews(_: JobRunContext) -> None:
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     target_database.init_target_db()
+    observability.configure(DATA_DIR / "feature-logs")
     if SQL_WEB_ENABLED:
         initialize_sql_web()
     with target_database.SessionLocal() as db:

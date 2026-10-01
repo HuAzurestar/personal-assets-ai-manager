@@ -90,7 +90,8 @@ def test_canonical_batch_counts_are_this_decision_not_durable_counter_replay(req
     terminal = client.post("/paam/tag/v1/assignment_request/batch_reject", json=dict(request_ids=ids[2:]))
     assert terminal.status_code == 409
     assert terminal.json()["body"] == dict(code="SUGGESTION_STALE", details=dict(
-        results=[dict(id=ids[2], status=3, code="SUGGESTION_STALE")], accepted=0, rejected=0, conflicts=1))
+        results=[dict(id=ids[2], status=3, code="SUGGESTION_STALE")], accepted=0, rejected=0, conflicts=1,
+        trace_id=terminal.headers["X-PAAM-Trace-ID"]))
     with sessions() as db:
         current = db.get(AutoTagRule, rule)
         assert (current.accepted_count, current.rejected_count) == (2, 1)

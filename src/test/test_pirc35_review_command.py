@@ -46,6 +46,30 @@ def counts(db):
                   ReviewLedgerPositionLegAllocation, ReviewRevision))
 
 
+def test_publish_duration_records_both_success_and_failure_without_business_labels(db):
+    from backend.core.feature_observability import observability
+    service = ReviewCommandService(db)
+    change = dict(new_reviews=[normal(1)])
+    preview = service.preview(ReviewChangeInput(**change))
+    command = ReviewCommandInput(**change, expected_reviews=preview["expected_reviews"], preview_digest=preview["preview_digest"])
+    before = counts(db)
+
+    def fail(stage):
+        if stage == "tags":
+            raise RuntimeError("fictional private ledger amount")
+
+    with pytest.raises(RuntimeError):
+        service.command(command, fault=fail)
+    assert counts(db) == before
+    assert not any(row["name"] == "tag_invalidated" for row in observability.snapshot()["metrics"])
+    result = service.command(command)
+    assert result["created_reviews"]
+    metrics = {row["name"]: row for row in observability.snapshot()["metrics"]}
+    assert metrics["publish_duration_ms"]["count"] == 2
+    assert metrics["tag_invalidated"]["total"] == 1
+    assert "private ledger" not in str(observability.snapshot())
+
+
 def test_preview_is_read_only_and_replacement_restores_existing_defaults(db):
     before = counts(db)
     service = ReviewCommandService(db)

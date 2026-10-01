@@ -43,6 +43,57 @@ def confirm(service, current, keys, **extra):
         preview_digest=current["preview_digest"], selected_rows=[dict(file_id=key[0], source_row_number=key[1]) for key in keys]), **extra)
 
 
+def test_operational_counters_distinguish_no_write_rollback_and_unknown_committed_result(service):
+    from backend.core.feature_observability import observability
+    current = preview(service)
+    keys = sorted(service.store.get(current["token"]).rows)[:1]
+    current = choose(service, current, keys)
+
+    def totals():
+        return {row["name"]: row["total"] for row in observability.snapshot()["metrics"]}
+
+    with pytest.raises(TargetIntakeError, match="STALE_PREVIEW"):
+        confirm(service, current | dict(preview_digest="0" * 64), keys)
+    assert totals().get("import_batch_rollback_count", 0) == 0
+
+    def fault(stage):
+        if stage == "before_commit":
+            raise RuntimeError("fictional private bill should never enter logs")
+
+    with pytest.raises(RuntimeError):
+        confirm(service, current, keys, fault=fault)
+    assert totals()["import_batch_rollback_count"] == 1
+    assert service.db.scalar(select(func.count()).select_from(TransactionFact)) == 0
+
+    def lost(stage):
+        if stage == "after_commit":
+            raise RuntimeError("fictional response lost")
+
+    with pytest.raises(TargetIntakeError, match="RESULT_UNKNOWN"):
+        confirm(service, current, keys, fault=lost)
+    assert totals()["import_batch_rollback_count"] == 1
+    assert totals()["import_result_unknown_count"] == 1
+    assert totals()["import_rows"] == 24
+    assert service.db.scalar(select(func.count()).select_from(TransactionFact)) == 1
+    assert "private bill" not in str(observability.snapshot())
+
+
+def test_sweep_failure_is_safe_observable_and_does_not_advance_cursor(service, monkeypatch):
+    from backend.core.feature_observability import observability
+    original = type(service).sweep_cursor
+
+    def fail_write(_):
+        raise TargetIntakeError(503, "fictional private SQL", code="WRITE_BUSY")
+
+    monkeypatch.setattr(service, "write_metadata", fail_write)
+    with pytest.raises(TargetIntakeError):
+        service.sweep_pending()
+    assert type(service).sweep_cursor == original
+    metrics = {row["name"]: row["total"] for row in observability.snapshot()["metrics"]}
+    assert metrics["preview_sweep_failed_count"] == metrics["write_busy_count"] == 1
+    assert "private SQL" not in str(observability.snapshot())
+
+
 @pytest.mark.parametrize("name", ["abc-1.csv", "ccb-2.csv", "wechat-3.csv", "cmb-4.csv", "cmb-5.csv", "alipay-6.csv"])
 def test_approved_fictional_fixture_has_explicit_batches_and_current_persisted_progress(service, name):
     current = preview(service, name)

@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 
 from backend.entity.base import utc_now
 from backend.core.tag_semantics import tag_effect
+from backend.core.feature_observability import observed, observability
 from backend.error import TargetEconomicError
 from backend.mapper.auto_tag_rule_mapper import AutoTagRuleMapper
 from backend.mapper.review_command_mapper import ReviewCommandMapper, chunks
@@ -294,6 +295,7 @@ class ReviewCommandService:
         return dict(preview=preview, drafts=drafts, facts=facts, states=states, review_rows=review_rows,
                     bundle=full, changed=changed, affected_ledgers=affected_ledgers, view_ids=view_ids)
 
+    @observed("PUBLISH", "publish_duration_ms")
     def command(self, intent: ReviewCommandInput, *, fault=None):
         commit_started = False
         try:
@@ -354,6 +356,11 @@ class ReviewCommandService:
             self.mapper.end_write()
             commit_started = True
             self.db.commit()
+            observability.metric("tag_invalidated", "PUBLISH", len({row["ledger_id"]
+                for row in plan["bundle"]["allocations"]
+                if row["review_id"] in plan["changed"] and plan["states"][row["review_id"]] == 1}))
+            observability.metric("manual_mapping_ambiguous", "PUBLISH",
+                sum(mapping.get("disposition") == "REVIEW_REQUIRED" for mapping in committed_mappings))
             if fault:
                 fault("response")
             return result

@@ -16,6 +16,7 @@ from backend.core.import_identity import fact_key, fact_values, same_fact
 from backend.core.import_public_text import masked_summary
 from backend.core.import_preview_store import ImportPreviewState, import_preview_store
 from backend.core.config import IMPORT_PREVIEW_TIMEOUT_MINUTES
+from backend.core.feature_observability import observed, observability
 from backend.entity.base import utc_now
 from backend.core.source_account_identity import reliable_source
 from backend.error import ListQueryError, TargetIntakeError
@@ -116,6 +117,7 @@ class ImportBatchService:
             doc["file_id"] = files[sha]["id"]
             documents[sha] = doc
             row_count += len(doc["rows"])
+            observability.metric("import_rows", "IMPORT_PARSE", len(doc["rows"]))
             if row_count > 20000 or monotonic() - started > 30:
                 fail("PARSE_LIMIT", 422)
         self.write_metadata(lambda: self.mapper.persist_parse(list(documents.values())))
@@ -205,6 +207,7 @@ class ImportBatchService:
         self.release_files(removed)
         return self.current(token)
 
+    @observed("IMPORT_BATCH")
     def confirm(self, token, payload, *, fault=None):
         with self.store.claim(token, payload.expected_updated_time) as lease:
             state = lease.state
@@ -217,8 +220,10 @@ class ImportBatchService:
             choices = {key: state.choices[key] for key in order if key in state.choices}
             committed = False
             commit_attempted = False
+            began = False
             try:
                 self.mapper.begin_write()
+                began = True
                 current = self.mapper.match(rows, choices)
                 # Processed-row errors have a distinct action from stale inputs.
                 self.mapper.validate_selection(current, choices, processed_only=True)
@@ -244,7 +249,10 @@ class ImportBatchService:
             except Exception as error:
                 self.db.rollback()
                 if committed or commit_attempted:
+                    observability.metric("import_result_unknown_count", "IMPORT_BATCH")
                     fail("RESULT_UNKNOWN", 503)
+                if began:
+                    observability.metric("import_batch_rollback_count", "IMPORT_BATCH")
                 if isinstance(error, (OperationalError, IntegrityError)):
                     fail("WRITE_BUSY", 503)
                 raise
@@ -263,6 +271,7 @@ class ImportBatchService:
         self.release_files([state])
         return dict(cancelled=state is not None)
 
+    @observed("PREVIEW_SWEEP")
     def sweep_pending(self, *, startup=False, resume=False):
         """Short PK batches; advance only committed cursor, never reset PARTIAL."""
         started, count = monotonic(), 0
@@ -275,7 +284,11 @@ class ImportBatchService:
                     fail("WRITE_BUSY", 503)
                 self.mapper.mark_abandoned(ids)
                 return ids
-            ids = self.write_metadata(tick)
+            try:
+                ids = self.write_metadata(tick)
+            except Exception:
+                observability.metric("preview_sweep_failed_count", "PREVIEW_SWEEP")
+                raise
             count += len(ids)
             if len(ids) < 1000:
                 type(self).sweep_cursor = 0

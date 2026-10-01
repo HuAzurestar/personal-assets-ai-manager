@@ -1,6 +1,7 @@
 """Domain error translation shared by PAAM HTTP routers."""
 
 import logging
+from time import monotonic
 from collections.abc import Callable, Coroutine
 from typing import Any
 
@@ -13,6 +14,7 @@ from starlette.responses import JSONResponse
 
 from backend.error import DomainError
 from backend.schema.response import ErrorBody, ErrorResponse
+from backend.core.feature_observability import observability, trace_id, trace_scope
 
 
 logger = logging.getLogger(__name__)
@@ -71,6 +73,16 @@ def _error_response(
     details: Any = None,
     headers: dict[str, str] | None = None,
 ) -> JSONResponse:
+    safe_trace = trace_id()
+    if safe_trace is None:
+        with trace_scope() as safe_trace:
+            observability.emit("HTTP", code=code)
+    else:
+        observability.emit("HTTP", code=code)
+    if details is not None and not isinstance(details, dict):
+        details = {"field": details}
+    details = dict(details or {}, trace_id=safe_trace)
+    headers = dict(headers or {}, **{"X-PAAM-Trace-ID": safe_trace})
     response = ErrorResponse(
         status=status_code,
         message=message,
@@ -177,6 +189,15 @@ class DomainErrorRoute(APIRoute):
         original = super().get_route_handler()
 
         async def translated(request: Request) -> Response:
+            with trace_scope() as safe_trace:
+                started = monotonic()
+                response = await handle(request)
+                response.headers["X-PAAM-Trace-ID"] = safe_trace
+                if response.status_code < 400:
+                    observability.emit("HTTP", duration_ms=(monotonic() - started) * 1000)
+                return response
+
+        async def handle(request: Request) -> Response:
             try:
                 return await original(request)
             except DomainError as error:
