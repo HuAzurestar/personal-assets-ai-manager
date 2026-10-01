@@ -185,7 +185,19 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
             assert "/paam/import/v1/preview/" in script.text
             assert "/paam/ledger/v1/flow" in script.text
             assert "/paam/ledger/v1/review" in script.text
-            assert "/paam/ledger/v1/review_candidate" in script.text
+            assert "mountReviewWorkbench" in script.text
+            assert "/paam/ledger/v1/review_candidate" not in script.text
+            review_script = client.get("/static/js/view/review-workbench.js")
+            assert review_script.status_code == 200
+            assert "/paam/ledger/v1/candidate" in review_script.text
+            assert '`${base}/preview`' in review_script.text
+            assert '`${base}/command`' in review_script.text
+            assert "idempotency_key" not in review_script.text
+            position_script = client.get("/static/js/view/position.js")
+            assert position_script.status_code == 200
+            assert "/paam/financial/v1/position" in position_script.text
+            assert "UNKNOWN" in position_script.text
+            assert "NEEDS_REVIEW" in position_script.text
             assert "/paam/ledger/v1/fact/list" not in script.text
             assert "/paam/review/v1/account" not in script.text
             assert "/paam/review/v2" not in script.text
