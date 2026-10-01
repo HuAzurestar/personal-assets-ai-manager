@@ -257,3 +257,40 @@ def test_invalid_file_error_is_public_code_not_private_parser_text(service, monk
     assert current["issues"][0]["code"] == "PARSE_ERROR"
     assert "0000000000123456" not in str(current) and "mock-private" not in str(current)
     assert service.db.scalar(select(TransactionImportFile.status)) == 3
+
+
+def test_current_reads_one_sqlite_snapshot_and_locked_rematch_does_not_nest_begin(service, monkeypatch):
+    current = preview(service)
+    keys = sorted(service.store.get(current["token"]).rows)[:1]
+    current = choose(service, current, keys)
+    service.db.rollback()
+    observed = []
+    progress, match = service.mapper.progress, service.mapper._match
+
+    def in_snapshot(label):
+        driver = service.db.connection().connection.driver_connection
+        observed.append((label, driver.in_transaction))
+
+    def read_progress(*args, **kwargs):
+        in_snapshot("progress")
+        return progress(*args, **kwargs)
+
+    def read_match(*args, **kwargs):
+        in_snapshot("match")
+        return match(*args, **kwargs)
+
+    monkeypatch.setattr(service.mapper, "progress", read_progress)
+    monkeypatch.setattr(service.mapper, "_match", read_match)
+    current = service.current(current["token"])
+    assert observed and all(active for _label, active in observed)
+    assert ("progress", True) in observed
+    service.db.rollback()
+    state = service.store.get(current["token"])
+    service.mapper.match(state.rows, state.choices)
+    assert ("match", True) in observed
+    observed.clear()
+    # This replaces the previous read transaction with BEGIN IMMEDIATE. A
+    # nested BEGIN would fail rather than silently promoting that old snapshot.
+    result = confirm(service, current, keys)
+    assert result["new_fact_count"] == 1
+    assert ("match", True) in observed and all(active for _label, active in observed)

@@ -21,6 +21,8 @@ from backend.core.source_account_identity import reliable_source
 from backend.error import ListQueryError, TargetIntakeError
 from backend.entity import TransactionImportFile
 from backend.mapper.import_batch_mapper import ImportBatchMapper, fail, fingerprint
+from backend.mapper.trusted_relation_mapper import TrustedRelationMapper
+from backend.mapper.bounded_query_mapper import query_budget
 from backend.parser.bounded_statement import parse_statement
 from backend.schema.list_query import FilterFieldExpression
 
@@ -147,6 +149,11 @@ class ImportBatchService:
                         for key, candidate in sorted(state.candidates.items())]))
 
     def current(self, token):
+        with query_budget(self.db):
+            TrustedRelationMapper(self.db).read_snapshot()
+            return self._current(token)
+
+    def _current(self, token):
         state = self.store.get(token)
         progress = {row["file_id"]: row for row in self.mapper.progress([file["file_id"] for file in state.files])}
         stored_files = {row["id"]: row for row in self.mapper.rows(TransactionImportFile, TransactionImportFile.id,

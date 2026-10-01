@@ -20,6 +20,7 @@ from backend.entity.base import utc_now
 from backend.error import TargetIntakeError
 from backend.mapper.account_management_mapper import AccountManagementMapper
 from backend.mapper.review_command_mapper import ReviewCommandMapper, chunks
+from backend.mapper.trusted_relation_mapper import TrustedRelationMapper
 from backend.service.target_tag_projection_service import TargetTagProjectionService
 
 
@@ -273,6 +274,7 @@ class ImportBatchMapper(ReviewCommandMapper):
 
     def match(self, input_rows, choices):
         """Snapshot one selected scope, safe for both preview and locked recheck."""
+        TrustedRelationMapper(self.db).read_snapshot()
         with self.match_budget():
             return self._match(input_rows, choices)
 
