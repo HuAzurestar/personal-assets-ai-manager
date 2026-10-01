@@ -190,6 +190,15 @@ function describe(kind, data) {
   if (adapters.has(kind)) return adapters.get(kind).describe(data);
   const p = new Presentation();
   let item, title, subtitle, hero = "", body = "", actions = "";
+  if (kind === "review" && data.paged_relations) {
+    const review = data.review;
+    const relations = [['allocation','Fact → Ledger 关系'], ['flow','原始现金结果'],
+      ['position_leg','原始数量腿'], ['position_allocation','款项归因（不是额外现金）'], ['position','独立数量对象']];
+    return { title: review.title || `Review #${review.id}`, subtitle: `${reviewTypeNames[review.type]} · ${statusNames[review.status]} · 分页只读详情`, hero: '',
+      body: '<p>完整详情超出预算，各关系独立分页。原始结果不变；当前页不是完整集合，不计算截断合计。</p>'
+        + relations.map(([name,label]) => `<section class="inspection-card" data-review-relation="${name}" data-review-id="${review.id}"><h3>${label}</h3><div data-rel-items></div><nav class="inspection-pagination"><span data-rel-status>正在读取…</span><button data-rel-prev disabled>上一页</button><button data-rel-next disabled>下一页</button></nav></section>`).join(''),
+      actions: '超大审查关系只读；操作前需重新预览完整影响', presentation: p, kind: 'review-paged' };
+  }
   if (kind === "ledger" && data.paged_relations) {
     const source = data.source;
     return { title: businessTitle(source.fact), subtitle: `${typeNames[source.ledger_entry.economic_type]} · ${source.active ? "有效" : "已停用"} · 分页只读详情`, hero: amount(source.ledger_entry),
@@ -258,6 +267,16 @@ function describe(kind, data) {
 
 async function load(kind, id) {
   if (adapters.has(kind)) return adapters.get(kind).load(id);
+  if (kind === 'review') {
+    try { return await request(`${endpoints.review}${id}`); }
+    catch (error) {
+      if (error.code !== 'DETAIL_LIMIT') throw error;
+      const query = new URLSearchParams({page_index:'1',page_size:'1',filter:JSON.stringify({key:'id',op:'=',val:Number(id)})});
+      const page = await request(`${endpoints.review}list?${query}`);
+      if (page.total !== 1 || page.items.length !== 1) throw new Error('原始审查不存在，请重新读取');
+      return {paged_relations:true, review:page.items[0]};
+    }
+  }
   if (kind === "ledger") {
     try { return await request(`${endpoints.ledger}${id}`); }
     catch (error) {
@@ -276,8 +295,10 @@ async function load(kind, id) {
 }
 
 function mountFlowRelations(root) {
-  root.querySelectorAll('[data-flow-relation]').forEach(panel => {
-    const name = panel.dataset.flowRelation;
+  root.querySelectorAll('[data-flow-relation], [data-review-relation]').forEach(panel => {
+    const isReview = !!panel.dataset.reviewRelation;
+    const name = panel.dataset.reviewRelation || panel.dataset.flowRelation;
+    const url = `${isReview ? endpoints.review : endpoints.ledger}${isReview ? panel.dataset.reviewId : panel.dataset.ledgerId}/${name}/list`;
     let page = 1, busy = false, total = 0;
     const prev = panel.querySelector('[data-rel-prev]'), next = panel.querySelector('[data-rel-next]');
     async function fetchPage(target) {
@@ -286,10 +307,10 @@ function mountFlowRelations(root) {
       const status = panel.querySelector('[data-rel-status]');
       status.textContent = '正在读取…';
       try {
-        const result = await request(`${endpoints.ledger}${panel.dataset.ledgerId}/${name}/list?page_index=${target}&page_size=20`);
+        const result = await request(`${url}?page_index=${target}&page_size=20`);
         if (!panel.isConnected) return;
         page = result.page_index; total = result.total;
-        panel.querySelector('[data-rel-items]').innerHTML = result.items.map(row => name === 'tag'
+        panel.querySelector('[data-rel-items]').innerHTML = result.items.map(row => isReview ? reviewRelationRow(name, row) : name === 'tag'
           ? `<article class="inspection-flow"><strong>${esc(row.tag_name)}</strong><p>${esc(row.view_name)} · ${esc(row.view_status)} / ${esc(row.tag_status)} · ${esc(row.source_type)}</p></article>`
           : `<article class="inspection-flow"><strong>${esc(amount(row.allocation))}</strong><p>Link #${row.allocation.id} · Leg #${row.position_leg.id} · ${esc(row.review.status)}</p><p>${esc(row.position_leg.leg_direction)} ${quantityDecimal(row.position_leg.leg_amount, row.position_leg.unit_code)} ${esc(row.position_leg.unit_code)}</p><a href="#workbench/position?id=${row.position.id}">Position #${row.position.id} ${esc(row.position.title)}</a></article>`).join('') || '<p>该集合当前页没有记录</p>';
         status.textContent = `共 ${total} 项 · 第 ${page} 页（仅本页）`;
@@ -300,6 +321,14 @@ function mountFlowRelations(root) {
     next.onclick = () => fetchPage(page + 1);
     fetchPage(1);
   });
+}
+
+function reviewRelationRow(name, row) {
+  if (name === 'flow') return `<article class="inspection-flow"><strong>${esc(amount(row))}</strong><p>${esc(typeNames[row.economic_type])} · ${esc(row.cash_direction)}</p>${relationButton('ledger',row.id,`Ledger #${row.id}`)}</article>`;
+  if (name === 'allocation') return `<article class="inspection-flow"><strong>${esc(amount(row))}</strong><p>Allocation #${row.id}</p>${relationButton('fact',row.transaction_id,`Fact #${row.transaction_id}`)}${relationButton('ledger',row.ledger_id,`Ledger #${row.ledger_id}`)}</article>`;
+  if (name === 'position_leg') return `<article class="inspection-flow"><strong>${esc(row.leg_direction)} ${quantityDecimal(row.leg_amount,row.unit_code)} ${esc(row.unit_code)}</strong><p>Leg #${row.id} · ${esc(row.type)} · 来源腿 #${row.source_position_leg_id}</p><p>${esc(row.basis)}</p><a href="#workbench/position?id=${row.position_id}">Position #${row.position_id}</a></article>`;
+  if (name === 'position_allocation') return `<article class="inspection-flow"><strong>${esc(amount(row))}</strong><p>Link #${row.id} · Leg #${row.position_leg_id}（不是额外现金）</p>${relationButton('ledger',row.ledger_id,`Ledger #${row.ledger_id}`)}</article>`;
+  return `<article class="inspection-flow"><a href="#workbench/position?id=${row.id}">Position #${row.id} ${esc(row.title)}</a><p>${esc(row.type)} · ${esc(row.unit_code)} · ${esc(row.status)}</p></article>`;
 }
 
 let current = null;
@@ -421,7 +450,7 @@ export async function openInspection(kind, id, bindActions) {
         body.innerHTML = view.body;
         view.presentation.mount(body);
         if (view.kind === "file") mountFileRows(body, data.rows, bindActions);
-        if (view.kind === "ledger-paged") mountFlowRelations(body);
+        if (view.kind === "ledger-paged" || view.kind === "review-paged") mountFlowRelations(body);
         dialog.dataset.renderVersion = String(ticket);
       };
       if (sameRecord) preserveView(dialog, apply);

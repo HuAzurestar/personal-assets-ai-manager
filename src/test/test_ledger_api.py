@@ -378,7 +378,7 @@ def test_review_list_is_database_paged_with_fixed_query_count(economic_api):
             params={
                 "page_index": 2,
                 "page_size": 10,
-                "filter": '{"key":"behavior_type","op":"=","val":0}',
+                "filter": '{"key":"type","op":"=","val":"NORMAL_TRANSACTION"}',
             },
         )
     finally:
@@ -387,7 +387,7 @@ def test_review_list_is_database_paged_with_fixed_query_count(economic_api):
     page = response.json()["body"]
     assert page["total"] == 30
     assert len(page["items"]) == 10
-    assert len(statements) == 2
+    assert len(statements) == 3  # snapshot guard + consistent COUNT and PAGE
 
 
 def test_review_candidate_list_supports_shared_query_contract(economic_api):

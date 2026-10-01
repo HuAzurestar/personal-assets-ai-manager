@@ -35,7 +35,7 @@ def run():
                 else:
                     raise RuntimeError("fictional app did not start")
             from backend.core import target_database
-            from backend.entity import TransactionFact, LedgerEntry, TargetTagView, TargetTag, LedgerEntryTag
+            from backend.entity import TransactionFact, LedgerEntry, TargetTagView, TargetTag, LedgerEntryTag, ReviewCase
             from backend.mapper.review_command_mapper import ReviewCommandMapper
             from sqlalchemy import select, func
             with target_database.SessionLocal() as db:
@@ -47,6 +47,7 @@ def run():
                         "Mock Café literal %_ 1234567890123456" if i == first else "Mock other") for i in ids])
                 db.flush()
                 ReviewCommandMapper(db).create_initial_defaults(ids)
+                db.get(ReviewCase, first).title = "Mock Café review %_ 1234567890123456"
                 db.commit()
                 flow_id = db.scalar(select(LedgerEntry.id).where(LedgerEntry.amount == 1000,
                     LedgerEntry.id >= first).order_by(LedgerEntry.id))
@@ -93,10 +94,57 @@ def run():
                 expect(tags.locator('[data-rel-status]')).to_contain_text("第 2 页（仅本页）")
                 tags.locator('[data-rel-prev]').click()
                 expect(tags.locator('[data-rel-status]')).to_contain_text("第 1 页（仅本页）")
+                drawer.locator('[data-close]').click()
+                page.goto(base + "/#details/review?sort_field=id&sort_order=desc&page_size=2&word=CAFÉ%20review%20%25_")
+                expect(page.locator('[data-review-scan-status]')).to_contain_text("已扫描 2 个候选；找到 0 项")
+                page.locator('[data-review-continue]').click()
+                expect(page.locator('[data-review-scan-status]')).to_contain_text("已扫描 4 个候选；找到 1 项")
+                page.locator('[data-review-continue]').click()
+                expect(page.locator('[data-review-scan-status]')).to_contain_text("已扫描 6 个候选；找到 1 项")
+                page.locator('[data-action="economic-review-detail"]').click()
+                expect(drawer).to_contain_text("Mock Café review %_ ****3456")
+                drawer.locator('[data-close]').click()
+                form = page.locator('[data-form="detail-review-filter"]')
+                expect(form.locator('[name="type"] option')).to_have_count(6)
+                form.locator('[name="word"]').fill('')
+                form.locator('[name="type"]').select_option('NORMAL_TRANSACTION')
+                expect(page.locator('[data-action="economic-review-detail"]')).to_have_count(2)
+                # Legacy large original Review fixture: complete relationships,
+                # no invented system defaults or actual application writes.
+                from sqlalchemy import text
+                with target_database.SessionLocal() as db:
+                    rid = (db.scalar(select(func.max(ReviewCase.id))) or 0) + 1
+                    fstart = (db.scalar(select(func.max(TransactionFact.id))) or 0)
+                    lstart = (db.scalar(select(func.max(LedgerEntry.id))) or 0)
+                    db.add(ReviewCase(id=rid, behavior_type=4, status=0, title='Mock large original Review'))
+                    db.flush()
+                    params = dict(rid=rid,fstart=fstart,lstart=lstart)
+                    db.execute(text("""WITH RECURSIVE seq(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM seq WHERE i<2000)
+                        INSERT INTO transaction_fact(id,fact_key,occurred_time,cash_direction,amount,currency_code,
+                          account_code,counterparty_name,counterparty_account_ref,summary,created_time,updated_time)
+                        SELECT :fstart+i,'mock-big-'||i,'2026-09-01T00:00:00.000000Z',1,1,'CNY','','Mock','','Mock big',
+                          '2026-09-01T00:00:00.000000Z','2026-09-01T00:00:00.000000Z' FROM seq"""), params)
+                    db.execute(text("""INSERT INTO ledger_entry(id,entry_type,entry_direction,cash_amount,cash_currency_code,
+                        account_ref_id,account_code,counterparty_account_ref,occurred_time,created_time,updated_time)
+                        SELECT :lstart+id-:fstart,0,1,1,'CNY',0,'','',occurred_time,created_time,updated_time
+                        FROM transaction_fact WHERE id>:fstart"""), params)
+                    db.execute(text("""INSERT INTO review_transaction_ledger_allocation(review_id,transaction_id,ledger_id,
+                        cash_amount,cash_currency_code,created_time,updated_time)
+                        SELECT :rid,id,:lstart+id-:fstart,1,'CNY',created_time,updated_time FROM transaction_fact WHERE id>:fstart"""), params)
+                    db.commit()
+                page.goto(base + '/#details/review?type=OTHER_MANUAL&sort_field=id&sort_order=desc')
+                page.locator(f'[data-action="economic-review-detail"][data-id="{rid}"]').click()
+                expect(drawer).to_contain_text('各关系独立分页')
+                allocations = drawer.locator('[data-review-relation="allocation"]')
+                expect(allocations.locator('[data-rel-status]')).to_contain_text('共 2000 项 · 第 1 页')
+                allocations.locator('[data-rel-next]').click()
+                expect(allocations.locator('[data-rel-status]')).to_contain_text('第 2 页（仅本页）')
+                flows = drawer.locator('[data-review-relation="flow"]')
+                expect(flows.locator('[data-rel-status]')).to_contain_text('共 2000 项 · 第 1 页')
                 assert not errors, errors
                 assert not writes, writes
                 browser.close()
-                print("PASS canonical Flow UI: empty batches, repeated continuation, masked detail, currency-grouped sort and complete paged fallback; zero writes/providers")
+                print("PASS canonical Flow/Review UI: empty batches, repeated continuation, masking, five Review types, grouped money sort and complete paged fallbacks; zero HTTP writes/providers")
         finally:
             server.should_exit = True
             worker.join(timeout=10)

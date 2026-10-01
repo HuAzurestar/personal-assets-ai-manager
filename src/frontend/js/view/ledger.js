@@ -4,6 +4,7 @@ import { positionPage, bindPosition, stopPositionRead } from "./position.js";
 import { mountReviewWorkbench, transitionReview, stopReviewRead } from "./review-workbench.js";
 import { mountImportBatch, stopImportRead } from "./import-batch.js";
 import { readFlowSearch, bindFlowSearch, stopFlowRead, flowReadBusy, resetFlowSearch } from "./flow-search.js";
+import { candidateScan } from "../util/candidate-scan.js";
 import { preserveView } from "../util/view_state.js?v=20260928.6";
 import { toast } from "../component/toast.js";
 import { table } from "../component/table.js";
@@ -34,6 +35,8 @@ import {
 const entryTypeValues = { TRANSACTION: 0, ACCOUNT_TRANSFER: 1, ASSET_LIABILITY: 2, DUPLICATE: 3 };
 const entryTypeCodes = { 0: "TRANSACTION", 1: "ACCOUNT_TRANSFER", 2: "ASSET_LIABILITY", 3: "DUPLICATE" };
 const reviewBehaviorNames = { 0: "系统原始交易", 1: "借款与还款", 2: "信用卡", 3: "共同费用", 4: "人工解释" };
+const reviewTypes = ['NORMAL_TRANSACTION', 'BORROW_AND_REPAY', 'CREDIT_CARD', 'SHARED_SETTLEMENT', 'OTHER_MANUAL'];
+const reviewScan = candidateScan('/paam/ledger/v1/review', 'review');
 const timeZoneNames = {
   "Asia/Hong_Kong": "香港",
   "Asia/Shanghai": "上海",
@@ -164,7 +167,7 @@ document.addEventListener('input', () => { ++interactionVersion; });
 document.addEventListener('change', () => { ++interactionVersion; });
 const livePages = new Set(['summary', 'ledger', 'economy', 'ledger-reviews', 'ledger-imports', 'ledger-tags', 'import-history']);
 function canRefreshPage() {
-  return !document.hidden && !pendingCommands && !foregroundBusy && !flowReadBusy() && !document.querySelector('dialog[open]')
+  return !document.hidden && !pendingCommands && !foregroundBusy && !flowReadBusy() && !reviewScan.busy() && !document.querySelector('dialog[open]')
     && !document.activeElement?.matches('input, textarea, select, [contenteditable="true"]')
     && !document.querySelector('[data-range-popover]:not([hidden])')
     && !document.querySelector('[data-form="inline-tag"]:not([hidden])');
@@ -185,6 +188,7 @@ async function render({ background = false } = {}) {
   stopReviewRead();
   stopImportRead();
   stopFlowRead();
+  reviewScan.stop();
   stopAutomationPolling();
   const renderVersion = background ? state.renderVersion : ++state.renderVersion;
   if (!background) foregroundBusy++;
@@ -483,7 +487,8 @@ function showSummaryDetail(type) {
 
 async function ledgerReviewsPage() {
   const status = state.params.get("status") || "";
-  const behaviorType = state.params.get("behavior_type") || "";
+  const behaviorType = state.params.get("type") || "";
+  const word = state.params.get("word")?.trim() || "";
   const sortField = state.params.get("sort_field") || "updated_time";
   const sortOrder = state.params.get("sort_order") || "desc";
   const query = new URLSearchParams({
@@ -492,18 +497,31 @@ async function ledgerReviewsPage() {
     sorter: JSON.stringify([{ key: sortField, direction: sortOrder }]),
   });
   const expressions = [];
-  if (status !== "") expressions.push({ key: "status", op: "=", val: Number(status) });
-  if (behaviorType !== "") expressions.push({ key: "behavior_type", op: "=", val: Number(behaviorType) });
+  if (status !== "") expressions.push({ key: "status", op: "=", val: status });
+  if (behaviorType !== "") expressions.push({ key: "type", op: "=", val: behaviorType });
   const filter = expressions.length > 1 ? { op: "AND", expression: expressions } : expressions[0];
   if (filter) query.set("filter", JSON.stringify(filter));
-  const result = await request(`/paam/ledger/v1/review/list?${query}`);
+  if (word) { query.delete('page_index'); query.set('query', JSON.stringify([{key:'title', word}])); }
+  const result = word ? await reviewScan.read(query, location.hash) : await request(`/paam/ledger/v1/review/list?${query}`);
   state.detailEconomicReviews = new Map(result.items.map((item) => [item.id, item]));
-  const rows = result.items.map((item) => `<tr class="detail-click-row" tabindex="0" data-review-row="${item.id}">
-    <td data-label="审查标题"><button type="button" class="detail-primary" data-action="economic-review-detail" data-id="${item.id}" data-inspect-title="${esc(item.title || `审查 #${item.id}`)}" data-inspect-meta="${esc(`${reviewBehaviorNames[item.behavior_type] || `未知类型（${item.behavior_type}）`} · ${statusNames[item.status] || item.status}`)}"><strong>${esc(item.title || `审查 #${item.id}`)}</strong><small>Review #${item.id}</small></button></td><td data-label="类型">${esc(reviewBehaviorNames[item.behavior_type] || `未知类型（${item.behavior_type}）`)}</td>
-    <td data-label="状态"><span class="badge ${item.status === 1 ? "warn" : "neutral"}">${esc(statusNames[item.status] || item.status)}</span></td><td data-label="更新时间">${date(item.updated_time)}</td><td data-label="创建时间">${date(item.created_time)}</td><td class="detail-arrow">→</td>
-  </tr>`).join("");
-  const toolbar = `<form class="detail-filter" data-form="detail-review-filter"><label>状态<select name="status"><option value="">全部状态</option>${[0, 1].map((value) => `<option value="${value}" ${status === String(value) ? "selected" : ""}>${esc(statusNames[value] || value)}</option>`).join("")}</select></label><label>类型<select name="behavior_type"><option value="">全部类型</option>${[0, 1].map((value) => `<option value="${value}" ${behaviorType === String(value) ? "selected" : ""}>${esc(reviewBehaviorNames[value])}</option>`).join("")}</select></label><label class="grow">排序${reviewSortSelect(sortField, sortOrder)}</label><button type="button" class="quiet" data-action="detail-clear" data-page-id="ledger-reviews">清空</button><button type="button" class="primary" data-page="reviews">创建审查</button></form>`;
-  return detailListView({ active: "ledger-reviews", toolbar, title: "Review", description: "每行对应数据库中的一个 Review Case。", total: result.total, headers: ["审查标题", "类型", "状态", "更新时间", "创建时间", ""], rows, footer: detailPager(result, "ledger-reviews") });
+  const toolbar = `<form class="detail-filter" data-form="detail-review-filter"><label>状态<select name="status"><option value="">全部状态</option>${['CONFIRMED','REVOKED'].map(value => `<option value="${value}" ${status === value ? "selected" : ""}>${esc(statusNames[value] || value)}</option>`).join("")}</select></label><label>类型<select name="type"><option value="">全部类型</option>${reviewTypes.map(value => `<option value="${value}" ${behaviorType === value ? "selected" : ""}>${esc(reviewTypeNames[value] || value)}</option>`).join("")}</select></label><label>标题字面检索<input name="word" maxlength="128" value="${esc(word)}"></label><label class="grow">排序${reviewSortSelect(sortField, sortOrder)}</label><button type="submit">查找</button><button type="button" class="quiet" data-action="detail-clear" data-page-id="ledger-reviews">清空</button><button type="button" class="primary" data-page="reviews">创建审查</button></form>`;
+  return `<div data-review-read>${detailListView({ toolbar, headers: ["审查标题", "类型", "状态", "更新时间", "创建时间", ""], rows: reviewRows(result.items, !!word), footer: word ? reviewScanFooter(result) : detailPager(result, "ledger-reviews") })}</div>`;
+}
+
+function reviewRows(items, scanning = false) {
+  return items.map(item => `<tr class="detail-click-row" tabindex="0" data-review-row="${item.id}"><td data-label="审查标题"><button type="button" class="detail-primary" data-action="economic-review-detail" data-id="${item.id}" data-inspect-title="${esc(item.title || `审查 #${item.id}`)}" data-inspect-meta="${esc(`${reviewTypeNames[item.type] || item.type} · ${statusNames[item.status] || item.status}`)}"><strong>${esc(item.title || `审查 #${item.id}`)}</strong><small>Review #${item.id}</small></button></td><td data-label="类型">${esc(reviewTypeNames[item.type] || item.type)}</td><td data-label="状态"><span class="badge ${item.status === 'REVOKED' ? 'warn' : 'neutral'}">${esc(statusNames[item.status] || item.status)}</span></td><td data-label="更新时间">${date(item.updated_time)}</td><td data-label="创建时间">${date(item.created_time)}</td><td class="detail-arrow">→</td></tr>`).join('') || (scanning ? '<tr><td colspan="6">尚无命中；空批次不代表扫描结束。</td></tr>' : '');
+}
+
+function reviewScanFooter(result) {
+  return `<div class="actions"><span data-review-scan-status>已扫描 ${result.scanned_count} 个候选；找到 ${result.items.length} 项；总数未知。${result.has_more ? '可继续扫描' : '本次扫描结束'}</span><button data-review-continue ${result.has_more ? '' : 'disabled'}>继续检索</button></div>`;
+}
+
+function paintReviewSearch(root, result) {
+  const host = root.matches('[data-review-read]') ? root : root.querySelector('[data-review-read]');
+  if (!host) return;
+  const body = host.querySelector('tbody'); body.innerHTML = reviewRows(result.items, true);
+  host.querySelector('.list-footer').innerHTML = reviewScanFooter(result);
+  bindPage(body); reviewScan.bind(host, next => paintReviewSearch(host, next));
 }
 
 async function showEconomicReview(id) {
@@ -946,6 +964,7 @@ function closeInlineTag(form) {
 
 function bindPage(root) {
   bindFlowSearch(root, result => paintFlowSearch(root, result));
+  reviewScan.bind(root, result => paintReviewSearch(root, result));
   bindAccountManagement(root, render);
   bindPosition(root, render);
   bindAutomation(root, render, toast, route);
@@ -982,6 +1001,7 @@ function bindPage(root) {
       params.set("page", "1");
       params.set("page_size", state.params.get("page_size") || "20");
       if (formName === "economic-filter") resetFlowSearch();
+      if (formName === "detail-review-filter") reviewScan.reset();
       route(pageId, params);
     });
     $$('select', form).forEach((select) => select.addEventListener("change", () => form.requestSubmit()));
