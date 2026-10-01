@@ -32,7 +32,7 @@ TARGET_TABLE_NAMES = (
     "transaction_import_row",
     "transaction_fact",
     "review_case",
-    "review_allocation",
+    "review_transaction_ledger_allocation",
     "review_revision",
     "ledger_entry",
     "tag_view",
@@ -42,6 +42,12 @@ TARGET_TABLE_NAMES = (
     "auto_tag_rule",
     "tag_assignment_request",
     "llm_prompt_audit",
+    "ledger_account_party",
+    "ledger_account",
+    "ledger_account_ref",
+    "position",
+    "position_leg",
+    "review_ledger_position_leg_allocation",
 )
 
 SQL_ASSET_DIR = Path(__file__).resolve().parents[2] / "asset" / "sql"
@@ -53,6 +59,7 @@ UTC_TIMESTAMP_COLUMNS = {
 }
 UTC_TIMESTAMP_COLUMNS["transaction_fact"] += ("occurred_time",)
 UTC_TIMESTAMP_COLUMNS["ledger_entry"] += ("occurred_time",)
+UTC_TIMESTAMP_COLUMNS["position_leg"] += ("occurred_time",)
 
 
 def _normalize_legacy_millisecond_timestamps(driver) -> None:
@@ -76,6 +83,8 @@ def ensure_target_schema(bind=None) -> None:
     connection = target_bind.raw_connection()
     try:
         driver = getattr(connection, "driver_connection", connection)
+        if driver.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='review_allocation'").fetchone():
+            raise RuntimeError("SCHEMA_MIGRATION_REQUIRED: run the isolated PIRC-35 copy migration before opening this database")
         driver.execute("PRAGMA encoding = 'UTF-8'")
         for table_name in TARGET_TABLE_NAMES:
             path = SQL_ASSET_DIR / f"{table_name}.sql"

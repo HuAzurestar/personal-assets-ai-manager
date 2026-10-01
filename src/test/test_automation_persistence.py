@@ -9,6 +9,7 @@ from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import Session
 
 from backend.core.target_database import TARGET_TABLE_NAMES, init_target_db
+from backend.service.schema_migration_service import migrate_copy
 from backend.mapper.auto_tag_rule_mapper import (
     AutoTagRuleMapper,
     decode_method_config,
@@ -39,8 +40,10 @@ def test_additive_init_preserves_existing_rows_and_is_idempotent(tmp_path):
     connection = sqlite3.connect(path)
     try:
         for table_name in LEGACY_TARGET_TABLES:
+            legacy = {"review_allocation": "legacy-allocation.sql", "ledger_entry": "legacy-ledger.sql"}
+            asset = Path(__file__).parent / "fixtures/pirc35" / legacy[table_name] if table_name in legacy else SQL_DIR / f"{table_name}.sql"
             connection.executescript(
-                (SQL_DIR / f"{table_name}.sql").read_text(encoding="utf-8")
+                asset.read_text(encoding="utf-8")
             )
         connection.execute(
             "INSERT INTO tag_view "
@@ -55,7 +58,9 @@ def test_additive_init_preserves_existing_rows_and_is_idempotent(tmp_path):
     finally:
         connection.close()
 
-    engine = create_engine(f"sqlite:///{path}")
+    upgraded = tmp_path / "upgraded-target.db"
+    migrate_copy(path, upgraded)
+    engine = create_engine(f"sqlite:///{upgraded}")
     try:
         init_target_db(bind=engine)
         init_target_db(bind=engine)

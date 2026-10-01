@@ -227,7 +227,8 @@ def test_ledger_list_loads_sparse_tags_with_fixed_query_count(economic_api):
         event.remove(engine, "before_cursor_execute", count_selects)
     assert response.status_code == 200, response.text
     assert len(response.json()["body"]["items"]) == 20
-    assert len(statements) == 3
+    # One snapshot integrity probe plus count, page and sparse-tag load.
+    assert len(statements) == 4
 
 
 def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_api):
@@ -703,8 +704,9 @@ def test_ledger_entry_entity_has_only_cash_projection_columns():
         "id",
         "entry_type",
         "entry_direction",
-        "amount",
-        "currency_code",
+        "cash_amount",
+        "cash_currency_code",
+        "account_ref_id",
         "account_code",
         "counterparty_account_ref",
         "occurred_time",

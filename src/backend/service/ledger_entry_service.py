@@ -5,6 +5,7 @@ from collections import defaultdict
 from sqlalchemy.orm import Session
 
 from backend.mapper.ledger_entry_mapper import LedgerEntryMapper
+from backend.mapper.trusted_relation_mapper import TrustedRelationMapper
 from backend.schema.list_query import BetweenValue, iter_filter_fields
 from backend.schema.ledger_entry import (
     LedgerActivitySummaryRead,
@@ -30,8 +31,14 @@ from backend.schema.ledger_entry import (
 class LedgerEntryService:
     def __init__(self, db: Session):
         self.mapper = LedgerEntryMapper(db)
+        self.relations = TrustedRelationMapper(db)
+
+    def _read_snapshot(self):
+        self.relations.read_snapshot()
+        self.relations.validate()
 
     def page(self, *, request: LedgerEntryListRequest) -> LedgerEntryListBody:
+        self._read_snapshot()
         filter_value = self._mapper_filter(request)
         sorter_expression = request.sorter[0] if request.sorter else None
         sorter = LedgerEntrySorter(
@@ -85,6 +92,7 @@ class LedgerEntryService:
         return LedgerEntryFilter.model_validate(values)
 
     def detail(self, ledger_id: int) -> LedgerEntryDetailRead | None:
+        self._read_snapshot()
         data = self.mapper.detail(ledger_id)
         if data is None:
             return None
@@ -114,6 +122,7 @@ class LedgerEntryService:
         return f"{behavior}：{summary}" if summary else behavior
 
     def summary(self, query: LedgerEntrySummaryQuery) -> LedgerEntrySummaryRead:
+        self._read_snapshot()
         rows = self.mapper.summary(query)
         totals = defaultdict(lambda: {
             "income_and_expense_in_amount": 0,
