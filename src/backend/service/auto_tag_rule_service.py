@@ -244,6 +244,8 @@ class AutoTagRuleService:
         )
 
     def candidate_preview(self, rule_id: int) -> AutoTagCandidatePreviewRead:
+        from backend.mapper.trusted_relation_mapper import TrustedRelationMapper
+        TrustedRelationMapper(self.mapper.db).read_snapshot()
         rule = self._required(rule_id)
         view = self.tag_mapper.view(int(rule["view_id"]))
         model = self._model(int(rule["method_config"]["model_id"]))

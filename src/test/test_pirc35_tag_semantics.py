@@ -1,7 +1,7 @@
 import pytest
 from sqlalchemy import func, select
 
-from backend.entity import LedgerAccountRef, LedgerEntryTag, TargetTag, TargetTagView
+from backend.entity import AutoTagRule, LedgerAccountRef, LedgerEntryTag, TargetTag, TargetTagView
 from backend.error import TargetEconomicError
 from backend.schema.review_command import ReviewChangeInput, ReviewCommandInput
 from backend.service.review_command_service import ReviewCommandService
@@ -168,3 +168,27 @@ def test_tag_edit_after_preview_invalidates_semantic_mapping(tagged):
     with pytest.raises(TargetEconomicError, match="preview premises changed"):
         ReviewCommandService(db).command(ReviewCommandInput(**intent,
             expected_reviews=preview["expected_reviews"], preview_digest=preview["preview_digest"]))
+
+
+def test_one_hundred_real_tag_activation_cycles_preserve_rows_and_rewind_disabled_rule(tagged):
+    db, view_id, default, food = tagged
+    original = execute(db, new_reviews=[normal(1)])
+    rid = original["created_reviews"][0]["id"]
+    old = ledger(db, original)
+    assign(db, old, food)
+    rule = AutoTagRule(name="Disabled mock rule", view_id=view_id, method=1,
+        method_config_json='{"schema_version":1,"model_id":9,"prompt":"Mock"}',
+        enabled=0, cron="", amount_mode=1, scan_after_ledger_id=100, scan_epoch=1, rule_revision=1)
+    db.add(rule)
+    db.commit()
+    before = db.scalar(select(func.count()).select_from(LedgerEntryTag))
+    row = db.scalar(select(LedgerEntryTag).where(LedgerEntryTag.ledger_id == old))
+    token = (row.id, row.created_time, row.updated_time)
+    for _ in range(100):
+        execute(db, deactivate_review_ids=[rid])
+        execute(db, activate_review_ids=[rid])
+    assert db.scalar(select(func.count()).select_from(LedgerEntryTag)) == before
+    db.refresh(row)
+    assert (row.id, row.created_time, row.updated_time) == token
+    db.refresh(rule)
+    assert (rule.scan_epoch, rule.rule_revision, rule.scan_after_ledger_id) == (201, 1, 0)

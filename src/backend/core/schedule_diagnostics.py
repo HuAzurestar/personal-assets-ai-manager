@@ -43,7 +43,11 @@ MESSAGES = {
     "WORKER_UNHEALTHY": "后台工作线程异常停止，已停止接收任务；请检查并重启服务。",
     "PREVIOUS_RUN_UNKNOWN": "上次进程在本轮结束前中断；结果未知，请核对业务记录。",
     "JOB_CALLBACK_FAILED": "任务执行异常；请使用诊断编号定位，不代表全部未执行。",
-    "COMMIT_FAILED": "本条写入失败并已回滚；游标和计数未提交。",
+    "COMMIT_FAILED": "本批写入失败并已回滚；游标和计数未提交。",
+    "RESULT_UNKNOWN": "本批提交结果未知；请核对当前申请、游标与计数，不重放旧结果。",
+    "TAG_RELATION_BROKEN": "来源或标签关系损坏，停止在该项之前；已提交前缀请按当前数据核对。",
+    "SOURCE_CHANGED": "来源含义已变化，本批旧结果未提交。",
+    "CONFIG_CHANGED": "当前扫描配置不可用，本批旧结果未提交。",
     "COUNTER_EXHAUSTED": "累计计数已达上限，本条未提交。",
     "REQUEST_TIMEOUT": "模型请求超时，供应商端执行情况未知。",
     "PROVIDER_UNAVAILABLE": "模型服务暂时不可用。",
@@ -80,7 +84,7 @@ INFO_CODES = frozenset({
 })
 WARNING_CODES = frozenset({
     "RUN_CANCELLED", "RETRY_SCHEDULED", "RETRY_DEFERRED", "RULE_DISABLED",
-    "RULE_TOKEN_CHANGED", "CURSOR_ALREADY_ADVANCED", "AMOUNT_BAND_UNCONFIGURED",
+    "RULE_TOKEN_CHANGED", "CURSOR_ALREADY_ADVANCED", "AMOUNT_BAND_UNCONFIGURED", "SOURCE_CHANGED",
 })
 _TASK = re.compile(r"^(?:tag-scan:[1-9][0-9]{0,18}|system:[a-z][a-z0-9-]{0,63})$")
 _RUN = re.compile(r"^[0-9a-f]{32}$")

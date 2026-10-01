@@ -77,7 +77,10 @@ def test_preset_is_idempotent_and_import_cron_review_remain_independent(scan_run
             items = _body(client.get("/paam/tag/v1/assignment_request/list"))["items"]
             return items if len(items) == 2 else None
         requests = _wait(finished)  # Natural shared CRON only; no callback/manual run.
-        assert len(calls) == 2
+        safe_events = _body(client.get("/paam/system/v1/schedule/event/list", params={"page_size": 100}))["items"]
+        if len(calls) != 2:
+            pytest.fail(f"Expected 2 provider calls, got {len(calls)}; safe events:\n" + "\n".join(
+                f"{item['task_key']} {item['code']} {item['phase']} ledger={item.get('ledger_id')} detail={item.get('detail_code')}" for item in safe_events))
         assert {row["proposed_tag_name"] for row in requests} == {"医疗", "网购"}
         assert all(row["status"] == 1 for row in requests)
         for row in first["configuration"]:

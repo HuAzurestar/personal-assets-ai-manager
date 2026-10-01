@@ -156,6 +156,11 @@ def _seed_ledger(
         )
         db.add(ledger)
         db.flush()
+        db.add(TransactionFact(id=ledger.id, fact_key=f"pirc24-gate-fictional-{ledger.id}",
+            occurred_time=NOW, cash_direction=1, amount=12300, currency_code="CNY", account_code="fixture",
+            counterparty_name="Fictional merchant", counterparty_account_ref="", summary="Fictional purchase",
+            created_time=NOW, updated_time=NOW))
+        db.flush()
         review = ReviewCase(
             behavior_type=1,
             status=0 if active else 1,
@@ -205,20 +210,10 @@ def test_acceptance_source_rejects_unmarked_fact(scan_runtime):
     sessions, _, _, tag_ids = scan_runtime
     ledger_id = _seed_ledger(sessions, tag_ids["unclassified"])
     with sessions() as db:
-        db.add(TransactionFact(
-            id=ledger_id,
-            fact_key="ordinary-bill",
-            occurred_time=NOW,
-            cash_direction=2,
-            amount=12_300,
-            currency_code="CNY",
-            account_code="fixture",
-            counterparty_name="Not for model",
-            counterparty_account_ref="",
-            summary="Private summary",
-            created_time=NOW,
-            updated_time=NOW,
-        ))
+        fact = db.get(TransactionFact, ledger_id)
+        fact.fact_key = "ordinary-bill"
+        fact.counterparty_name = "Not for model"
+        fact.summary = "Private summary"
         db.commit()
         mapper = AutoTagScanMapper(db)
         assert mapper.is_synthetic_acceptance_database() is False
@@ -321,17 +316,10 @@ def test_protected_split_uses_ledger_amount_not_original_fact(
 def _protected_ledgers(sessions, tag_id):
     ids = [_seed_ledger(sessions, tag_id) for _ in range(2)]
     with sessions() as db:
-        db.add_all([
-            TransactionFact(
-                id=ledger_id, fact_key=f"pirc24-gate-fictional-{ledger_id}",
-                occurred_time=NOW, cash_direction=1, amount=12300,
-                currency_code="CNY", account_code="fixture",
-                counterparty_name="咖啡馆" * 67, counterparty_account_ref="",
-                summary="茶" * 501 if index == 0 else "文具购买",
-                created_time=NOW, updated_time=NOW,
-            )
-            for index, ledger_id in enumerate(ids)
-        ])
+        for index, ledger_id in enumerate(ids):
+            fact = db.get(TransactionFact, ledger_id)
+            fact.counterparty_name = "咖啡馆" * 67
+            fact.summary = "茶" * 501 if index == 0 else "文具购买"
         db.commit()
     return ids
 

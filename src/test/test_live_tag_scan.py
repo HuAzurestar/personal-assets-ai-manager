@@ -99,6 +99,13 @@ def _requests(client):
     return _body(client.get("/paam/tag/v1/assignment_request/list"))["items"]
 
 
+def _assert_provider_count(client, calls, expected):
+    if len(calls) != expected:
+        events = _body(client.get("/paam/system/v1/schedule/event/list", params={"page_size": 100}))["items"]
+        pytest.fail(f"Expected {expected} provider calls, got {len(calls)}; safe events:\n" + "\n".join(
+            f"{item['code']} {item['phase']} ledger={item.get('ledger_id')} detail={item.get('detail_code')}" for item in events))
+
+
 def _response(value):
     return {"choices": [{"index": 0, "finish_reason": "stop", "message": {
         "role": "assistant", "content": json.dumps(value, ensure_ascii=False),
@@ -131,7 +138,7 @@ def test_import_cron_json_request_reject_restart_and_pause_are_separate(
         _set_enabled(client, rule["id"], True)
         first = _wait(lambda: _requests(client))
         assert len(first) == 1 and first[0]["status"] == 1
-        assert len(calls) == 1
+        _assert_provider_count(client, calls, 1)
         status = _body(client.get("/paam/system/v1/schedule/status"))
         assert status["tag_scan_guard"] == "REAL_READY"
         assert any(task["task_key"] == f"tag-scan:{rule['id']}" for task in status["tasks"])
@@ -145,7 +152,7 @@ def test_import_cron_json_request_reject_restart_and_pause_are_separate(
         _import(client, "second")
         _wait(lambda: len(_requests(client)) == 2)
         time.sleep(1.1)  # Another natural CRON tick must not recreate the rejected request.
-        assert len(calls) == 2
+        _assert_provider_count(client, calls, 2)
         requests = _requests(client)
         assert sorted(row["status"] for row in requests) == [1, 3]
         assert len({row["ledger_id"] for row in requests}) == 2
@@ -154,7 +161,7 @@ def test_import_cron_json_request_reject_restart_and_pause_are_separate(
     with TestClient(target_main.app) as client:
         _import(client, "third-after-restart")
         _wait(lambda: len(_requests(client)) == 3)
-        assert len(calls) == 3
+        _assert_provider_count(client, calls, 3)
         assert len({payload["item"] for payload in calls}) == 3
         _set_enabled(client, rule["id"], False)
         _import(client, "fourth-while-disabled")

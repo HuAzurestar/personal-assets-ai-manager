@@ -124,6 +124,7 @@ class LlmPrivacyService:
             # the Ledger ID. The local scan context owns the Ledger mapping.
             item=f"item_{secrets.token_hex(16)}",
             direction=source.direction,
+            economic_type=source.economic_type,
             merchant=merchant,
             summary=summary,
             rule_prompt=prompt,
