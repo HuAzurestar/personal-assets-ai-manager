@@ -342,23 +342,26 @@ def test_file_relation_summary_deduplicates_source_rows_and_excludes_revoked(imp
     assert before["totals"] == expected
     assert before["allocation_count"] == before["ledger_count"] == before["review_count"] == 2
     with sessions() as db:
-        review = TargetEconomicService(db).create(TargetEconomicReviewCreateRequest(
-            behavior_type=0, title="Split", idempotency_key="file-summary-split",
-            economics=[{"client_key": "part", "economic_type": "ACCOUNT_TRANSFER"}],
-            allocations=[{"fact_id": fact_id, "economic_key": "part", "amount": 400}],
-        ))
-        review_id = review.id
+        from backend.schema.review_command import ReviewChangeInput, ReviewCommandInput
+        from backend.service.review_command_service import ReviewCommandService
+        service = ReviewCommandService(db)
+        intent = dict(new_reviews=[dict(case_code="NORMAL", title="Mock split", parameters=dict(
+            allocations=[dict(transaction_id=fact_id, economic_type="TRANSACTION", cash_amount=amount, account_ref_id=0)
+                         for amount in (400, 480)]))])
+        preview = service.preview(ReviewChangeInput(**intent))
+        result = service.command(ReviewCommandInput(**intent, expected_reviews=preview["expected_reviews"], preview_digest=preview["preview_digest"]))
+        review_id = result["created_reviews"][0]["id"]
     during = client.get(f"/paam/import/v1/import_file/{file_ids[0]}").json()["body"]["relation_summary"]
     assert during["totals"] == expected
     assert during["allocation_count"] == 3
     with sessions() as db:
-        TargetEconomicService(db).revoke(review_id, TargetReviewTransitionRequest(
-            idempotency_key="file-summary-revoke", actor="test", reason="test",
-        ))
+        service = ReviewCommandService(db)
+        intent = dict(deactivate_review_ids=[review_id])
+        preview = service.preview(ReviewChangeInput(**intent))
+        service.command(ReviewCommandInput(**intent, expected_reviews=preview["expected_reviews"], preview_digest=preview["preview_digest"]))
     after = client.get(f"/paam/import/v1/import_file/{file_ids[0]}").json()["body"]["relation_summary"]
     assert after["totals"] == expected
-    # The untouched 480 residual and restored 400 default remain two entries;
-    # revocation does not merge them into a new fabricated aggregate.
-    assert after["allocation_count"] == 3
+    # Restore the original full default, without fabricating residual/default rows.
+    assert after["allocation_count"] == 2
     facts = client.get(f"/paam/import/v1/import_file/{file_ids[0]}/transaction_fact/list").json()["body"]
     assert facts["total"] == 2

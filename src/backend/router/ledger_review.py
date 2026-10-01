@@ -12,12 +12,10 @@ from backend.schema.review_case import (
     ReviewCaseListRequest,
     ReviewCaseListResponse,
 )
-from backend.schema.target_review import (
-    TargetEconomicReviewCreateRequest,
-    TargetEconomicReviewResponse,
-    TargetReviewTransitionRequest,
-)
 from backend.service.target_economic_service import TargetEconomicService
+from backend.schema.review_command import ReviewChangeInput, ReviewCommandInput
+from backend.schema.review_read import ReviewCommandResponse, ReviewPreviewResponse, ReviewReadResponse
+from backend.service.review_command_service import ReviewCommandService
 
 
 router = APIRouter(
@@ -27,39 +25,30 @@ router = APIRouter(
 )
 
 
-@router.post("/review", response_model=TargetEconomicReviewResponse)
+@router.post("/review", deprecated=True)
 def create_case(
-    payload: TargetEconomicReviewCreateRequest,
+    payload: dict,
     db: Session = Depends(get_db),
 ):
-    return TargetEconomicReviewResponse(
-        message="ok",
-        body=TargetEconomicService(db).create(payload),
-    )
+    return TargetEconomicService(db).create(payload)
 
 
-@router.post("/review/{review_id}/revoke", response_model=TargetEconomicReviewResponse)
+@router.post("/review/{review_id}/revoke", deprecated=True)
 def revoke_case(
     review_id: int,
-    payload: TargetReviewTransitionRequest,
+    payload: dict,
     db: Session = Depends(get_db),
 ):
-    return TargetEconomicReviewResponse(
-        message="ok",
-        body=TargetEconomicService(db).revoke(review_id, payload)
-    )
+    return TargetEconomicService(db).revoke(review_id, payload)
 
 
-@router.post("/review/{review_id}/restore", response_model=TargetEconomicReviewResponse)
+@router.post("/review/{review_id}/restore", deprecated=True)
 def restore_case(
     review_id: int,
-    payload: TargetReviewTransitionRequest,
+    payload: dict,
     db: Session = Depends(get_db),
 ):
-    return TargetEconomicReviewResponse(
-        message="ok",
-        body=TargetEconomicService(db).restore(review_id, payload)
-    )
+    return TargetEconomicService(db).restore(review_id, payload)
 
 
 @router.get(
@@ -95,9 +84,19 @@ def case_page(
     )
 
 
-@router.get("/review/{review_id}", response_model=TargetEconomicReviewResponse)
+@router.post("/review/preview", response_model=ReviewPreviewResponse)
+def preview_review(payload: ReviewChangeInput, db: Session = Depends(get_db)):
+    return ReviewPreviewResponse(status=200, message="ok", body=ReviewCommandService(db).preview(payload))
+
+
+@router.post("/review/command", response_model=ReviewCommandResponse)
+def command_review(payload: ReviewCommandInput, db: Session = Depends(get_db)):
+    return ReviewCommandResponse(status=200, message="ok", body=ReviewCommandService(db).command(payload))
+
+
+@router.get("/review/{review_id}", response_model=ReviewReadResponse)
 def case_detail(review_id: int, db: Session = Depends(get_db)):
-    return TargetEconomicReviewResponse(
-        message="ok",
-        body=TargetEconomicService(db).detail(review_id)
+    return ReviewReadResponse(
+        status=200, message="ok",
+        body=ReviewCommandService(db).detail(review_id)
     )

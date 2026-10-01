@@ -389,12 +389,12 @@ def test_inactive_ledger_tag_assignment_is_allowed(target_tag_api):
         case_id = db.scalar(select(ReviewAllocation.review_case_id).where(
             ReviewAllocation.ledger_entry_id == ledger_id,
         ))
-        TargetEconomicService(db).revoke(
-            case_id,
-            TargetReviewTransitionRequest(
-                idempotency_key="revoke-before-tag-edit",
-            ),
-        )
+        from backend.schema.review_command import ReviewChangeInput, ReviewCommandInput
+        from backend.service.review_command_service import ReviewCommandService
+        service = ReviewCommandService(db)
+        intent = dict(new_reviews=[dict(case_code="NORMAL", parameters=dict(transaction_ids=[fact_id]))])
+        preview = service.preview(ReviewChangeInput(**intent))
+        service.command(ReviewCommandInput(**intent, expected_reviews=preview["expected_reviews"], preview_digest=preview["preview_digest"]))
 
     assigned = _assign(client, ledger_id, "food")
     assert assigned.status_code == 200, assigned.text

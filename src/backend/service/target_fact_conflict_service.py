@@ -106,7 +106,8 @@ class TargetFactConflictService:
                 row["transaction_import_file_id"], now
             ):
                 raise TargetReviewError(409, "import file is missing; reload before writing")
-            self.economic.ensure_defaults([fact_id])
+            if payload.resolution_type == "CREATE_NEW":
+                self.economic.ensure_defaults([fact_id])
             self.mapper.commit()
             return self.detail(conflict_id)
         except TargetReviewError:

@@ -30,7 +30,7 @@ class PositionDraft(Intent):
 
     @model_validator(mode="after")
     def known_unit(self):
-        unit_definition(self.unit_code)
+        self.unit_code = unit_definition(self.unit_code).code
         return self
 
 

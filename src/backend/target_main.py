@@ -38,7 +38,6 @@ from backend.router.tag_assignment_request import (
 )
 from backend.service.auto_tag_schedule_service import AutoTagScheduleService
 from backend.service.configured_llm_analyzer import provider_secret_reader
-from backend.service.target_economic_service import TargetEconomicService
 from backend.service.target_intake_service import TargetIntakeService
 
 if SQL_WEB_ENABLED:
@@ -58,7 +57,6 @@ async def lifespan(application: FastAPI):
         initialize_sql_web()
     with target_database.SessionLocal() as db:
         TargetIntakeService(db).fail_orphaned_pending_files()
-        TargetEconomicService(db).backfill_defaults()
     job_scheduler.register_interval(
         "system:import-preview-timeout",
         seconds=IMPORT_PREVIEW_SWEEP_INTERVAL_SECONDS,

@@ -8,6 +8,8 @@ def test_exact_units_reuse_currency_quantum():
     assert quantity_from_decimal("0.001", "KG_3") == 1
     assert quantity_from_decimal("1", "PCS") == 1
     assert quantity_from_decimal("400.00", "CNY") == 40000
+    assert unit_definition("KRW").quantum == "1"
+    assert quantity_from_decimal("400", "KRW") == 400
 
 
 @pytest.mark.parametrize("value,code", [(True, "PCS"), ("NaN", "KG_3"), ("Infinity", "CNY"),

@@ -8,3 +8,4 @@ CREATE TABLE IF NOT EXISTS position_leg /* 不可变Review发布的有据数量�
 );
 CREATE INDEX IF NOT EXISTS ix_position_leg_position_time ON position_leg(position_id,occurred_time,id);
 CREATE INDEX IF NOT EXISTS ix_position_leg_review ON position_leg(review_id,id);
+CREATE INDEX IF NOT EXISTS ix_position_leg_source ON position_leg(source_position_leg_id,review_id,id);

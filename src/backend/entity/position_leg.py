@@ -12,6 +12,7 @@ class PositionLeg(TargetTable, TargetBase):
     __table_args__ = (
         Index("ix_position_leg_position_time", "position_id", "occurred_time", "id"),
         Index("ix_position_leg_review", "review_id", "id"),
+        Index("ix_position_leg_source", "source_position_leg_id", "review_id", "id"),
     )
     position_id: Mapped[int] = mapped_column(Integer, nullable=False)
     review_id: Mapped[int] = mapped_column(Integer, nullable=False)

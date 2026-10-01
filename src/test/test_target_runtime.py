@@ -61,7 +61,9 @@ def test_openapi_locks_canonical_ledger_v1_contract():
         "LedgerEntryListResponse",
         "LedgerEntryDetailResponse",
         "LedgerEntrySummaryResponse",
-        "TargetEconomicReviewResponse",
+        "ReviewReadResponse",
+        "ReviewPreviewResponse",
+        "ReviewCommandResponse",
         "ReviewCaseListResponse",
         "ImportFactConflictResponse",
         "ImportFactConflictListResponse",
@@ -87,25 +89,13 @@ def test_openapi_locks_canonical_ledger_v1_contract():
     } <= allocation_properties
     assert {"review_id", "fact_id", "economic_id"}.isdisjoint(allocation_properties)
 
-    review_request_properties = set(
-        schemas["TargetEconomicReviewCreateRequest"]["properties"]
-    )
-    assert {"behavior_type", "title", "economics", "allocations"} <= review_request_properties
-    assert {"behavior_code", "description", "entries", "result"}.isdisjoint(review_request_properties)
-    economic_request_properties = set(
-        schemas["TargetEconomicDefinitionRequest"]["properties"]
-    )
-    assert "economic_type" in economic_request_properties
-    assert "entry_type" not in economic_request_properties
-    review_properties = set(schemas["TargetEconomicReviewRead"]["properties"])
-    assert {"behavior_type", "status", "title", "ledger_entries"} <= review_properties
-    assert {"behavior_code", "description", "economics", "version", "result"}.isdisjoint(review_properties)
-    review_allocation_properties = set(
-        schemas["TargetFlowAllocationRead"]["properties"]
-    )
-    assert {"review_case_id", "transaction_fact_id", "ledger_entry_id"} <= review_allocation_properties
-    assert {"fact_id", "economic_id"}.isdisjoint(review_allocation_properties)
-    assert "active" in schemas["TargetEconomicFlowRead"]["properties"]
+    review_request_properties = set(schemas["ReviewChangeInput"]["properties"])
+    assert {"deactivate_review_ids","activate_review_ids","new_reviews","expected_reviews"} == review_request_properties
+    assert set(schemas["MoneySplitInput"]["properties"]) == {"transaction_id","economic_type","cash_amount","account_ref_id"}
+    assert {"history","version","behavior_type"}.isdisjoint(schemas["ReviewReadPO"]["properties"])
+    assert {"review_id","transaction_id","ledger_id","cash_amount","cash_currency_code"} <= set(schemas["FirstAllocationPO"]["properties"])
+    assert "/paam/ledger/v1/review/preview" in paths
+    assert "/paam/ledger/v1/review/command" in paths
     assert "active" in schemas["TransactionFactLedgerRead"]["properties"]
 
     for path in ("/paam/ledger/v1/flow/list", "/paam/ledger/v1/review/list"):
@@ -330,90 +320,42 @@ def test_target_review_confirm_revoke_restore_rebuilds_projection(
             fact_ids = confirmation.json()["body"]["bill_fact_ids"]
             assert len(fact_ids) == 2
 
-            created = client.post(
-                "/paam/ledger/v1/review",
-                json={
-                    "behavior_type": 0,
-                    "title": "零钱转入招行",
-                    "economics": [
-                        {"client_key": "out", "economic_type": "ACCOUNT_TRANSFER"},
-                        {"client_key": "in", "economic_type": "ACCOUNT_TRANSFER"},
-                    ],
-                    "allocations": [
-                        {
-                            "fact_id": fact_ids[0],
-                            "economic_key": "out",
-                            "amount": 1000,
-                        },
-                        {
-                            "fact_id": fact_ids[1],
-                            "economic_key": "in",
-                            "amount": 999,
-                        },
-                    ],
-                    "reason": "识别本人账户转账",
-                    "idempotency_key": "create-transfer-1",
-                },
-            )
-            assert created.status_code == 200, created.text
-            case = created.json()["body"]
-            assert case["status"] == 0
-            assert [row["amount"] for row in case["allocations"]] == [1000, 999]
-            assert case["history"][0]["operation"] == 0
-            page = client.get("/paam/ledger/v1/flow/list").json()["body"]
-            assert page["total"] == 4
-            assert {
-                (item["entry_type"], item["entry_direction"], item["amount"])
-                for item in page["items"]
-            } >= {
-                (1, 1, 999),
-                (1, 2, 1000),
-            }
-            detail = client.get(
-                f"/paam/ledger/v1/flow/{page['items'][0]['id']}"
-            ).json()["body"]
-            assert len(detail["facts"]) == 1
-            assert len(detail["allocations"]) == 1
-            assert detail["reviews"][0]["id"] == case["id"]
-            assert detail["reviews"][0]["behavior_type"] == 0
-            summary = client.get("/paam/ledger/v1/flow/summary").json()["body"]
-            assert summary["totals"][0]["internal_transfer_in_amount"] == 999
-            assert summary["totals"][0]["internal_transfer_out_amount"] == 1000
+            def command(**intent):
+                response = client.post("/paam/ledger/v1/review/preview", json=intent)
+                assert response.status_code == 200, response.text
+                plan = response.json()["body"]
+                assert not plan["blocking_issues"], plan
+                response = client.post("/paam/ledger/v1/review/command", json=intent | dict(
+                    expected_reviews=plan["expected_reviews"], preview_digest=plan["preview_digest"]))
+                assert response.status_code == 200, response.text
+                return response.json()["body"]
 
-            revoked = client.post(
-                f"/paam/ledger/v1/review/{case['id']}/revoke",
-                json={
-                    "reason": "撤销核查",
-                    "idempotency_key": "revoke-transfer-1",
-                },
-            )
-            assert revoked.status_code == 200, revoked.text
-            case = revoked.json()["body"]
-            assert case["status"] == 1
-            assert all(not row["active"] for row in case["ledger_entries"])
-            assert case["history"][-1]["operation"] == 2
-            page = client.get("/paam/ledger/v1/flow/list").json()["body"]
-            assert page["total"] == 6
-            assert {item["entry_type"] for item in page["items"]} == {0, 1}
-            assert sum(item["active"] for item in page["items"]) == 2
+            result = command(new_reviews=[dict(case_code="INTERNAL_TRANSFER", title="Mock transfer",
+                parameters=dict(transaction_ids=fact_ids))])
+            rid = result["created_reviews"][0]["id"]
+            original = client.get(f"/paam/ledger/v1/review/{rid}").json()["body"]
+            assert original["status"] == "CONFIRMED"
+            assert original["type"] == "OTHER_MANUAL"
+            assert [row["cash_amount"] for row in original["allocations"]] == [1000,999]
+            assert "history" not in original
+            assert all(row["economic_type"] == "ACCOUNT_TRANSFER" for row in original["ledger_entries"])
+            summary = client.get("/paam/ledger/v1/flow/summary").json()["body"]["totals"][0]
+            assert summary["internal_transfer_in_amount"] == 999
+            assert summary["internal_transfer_out_amount"] == 1000
+            command(deactivate_review_ids=[rid])
+            revoked = client.get(f"/paam/ledger/v1/review/{rid}").json()["body"]
+            assert revoked["status"] == "REVOKED"
+            assert revoked["ledger_entries"] == original["ledger_entries"]
+            assert client.get("/paam/ledger/v1/flow/list").json()["body"]["total"] == 4
             for fact_id in fact_ids:
-                fact_detail = client.get(
-                    f"/paam/ledger/v1/transaction_fact/{fact_id}"
-                ).json()["body"]
-                assert sum(row["active"] for row in fact_detail["ledgers"]) == 1
-
-            restored = client.post(
-                f"/paam/ledger/v1/review/{case['id']}/restore",
-                json={
-                    "reason": "恢复核查",
-                    "idempotency_key": "restore-transfer-1",
-                },
-            )
-            assert restored.status_code == 200, restored.text
-            restored_case = restored.json()["body"]
-            assert restored_case["status"] == 0
-            assert restored_case["history"][-1]["operation"] == 3
-            assert client.get("/paam/ledger/v1/flow/list").json()["body"]["total"] == 6
+                detail = client.get(f"/paam/ledger/v1/transaction_fact/{fact_id}").json()["body"]
+                assert sum(row["active"] for row in detail["ledgers"]) == 1
+            command(activate_review_ids=[rid])
+            restored = client.get(f"/paam/ledger/v1/review/{rid}").json()["body"]
+            assert restored["status"] == "CONFIRMED"
+            assert restored["allocations"] == original["allocations"]
+            assert restored["ledger_entries"] == original["ledger_entries"]
+            assert client.get("/paam/ledger/v1/flow/list").json()["body"]["total"] == 4
     finally:
         target_intake_preview_store.clear()
         engine.dispose()

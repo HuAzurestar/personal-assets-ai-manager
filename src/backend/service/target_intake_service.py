@@ -182,7 +182,7 @@ class TargetIntakeService:
                 # uses transaction_fact.
                 result["bill_fact_ids"] = list(result["transaction_fact_ids"])
                 TargetEconomicService(self.db).ensure_defaults(
-                    result["affected_fact_ids"]
+                    result["transaction_fact_ids"]  # only truly new Facts, never linked evidence
                 )
                 self.write_mapper.commit()
                 state.result = result
