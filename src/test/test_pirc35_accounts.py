@@ -5,10 +5,10 @@ from zoneinfo import ZoneInfo
 import base64
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select, func, update
+from sqlalchemy import select, func, update, insert
 
 from backend.core import target_database
-from backend.entity import LedgerAccountRef, LedgerAccount, LedgerEntry, TransactionFact, ReviewCase
+from backend.entity import LedgerAccountParty, LedgerAccountRef, LedgerAccount, LedgerEntry, TransactionFact, ReviewCase
 from backend.mapper.review_command_mapper import ReviewCommandMapper
 from backend.mapper.account_management_mapper import AccountManagementMapper
 from backend.mapper.trusted_relation_mapper import TrustedRelationMapper
@@ -17,6 +17,7 @@ from backend.target_main import app
 from backend.parser.statement_parser import parse_statement
 from backend.schema.intake import IntakePreviewRequest, IntakeConfirmRequest
 from backend.service.target_intake_service import TargetIntakeService
+from backend.error import TargetIntakeError
 
 BASE = "/paam/ledger/v1"
 
@@ -178,3 +179,92 @@ def test_initial_default_failure_rolls_back_new_identity_fact_and_sources(monkey
         assert db.scalar(select(func.count()).select_from(TransactionFact)) == 0
         assert db.scalar(select(func.count()).select_from(LedgerAccountRef)) == 0
         assert db.scalar(select(func.count()).select_from(ReviewCase)) == 0
+
+
+def test_import_preview_detects_changed_source_ref_and_closed_source_does_not_add_fact():
+    target_database.init_target_db()
+    content = (Path(__file__).parent / "fixtures/pirc35/ccb-2.csv").read_bytes()
+    with target_database.SessionLocal() as db:
+        service = TargetIntakeService(db)
+        first = upload(service, content)
+        service.confirm(first["token"], IntakeConfirmRequest(version=first["version"]))
+        preview = upload(service, content.replace(b"2024-", b"2025-"))
+        db.execute(update(LedgerAccountRef).values(name="changed after preview", status="CLOSED",
+            updated_time=datetime(2026, 1, 1, tzinfo=timezone.utc)))
+        db.commit()
+        with pytest.raises(TargetIntakeError) as stale:
+            service.confirm(preview["token"], IntakeConfirmRequest(version=preview["version"]))
+        assert stale.value.status_code == 409
+        fresh = upload(service, content.replace(b"2024-", b"2025-"))
+        with pytest.raises(TargetIntakeError) as closed:
+            service.confirm(fresh["token"], IntakeConfirmRequest(version=fresh["version"]))
+        assert closed.value.code == "ACCOUNT_NOT_ACTIVE"
+        assert db.scalar(select(func.count()).select_from(TransactionFact)) == 24
+        assert db.scalar(select(func.count()).select_from(ReviewCase)) == 24
+
+
+def test_edit_cas_and_commit_outcome_unknown_preserve_current_metadata(monkeypatch):
+    from backend.service.account_management_service import AccountManagementService
+    from backend.schema.account_management import PartyCreate, PartyUpdate
+    target_database.init_target_db()
+    with target_database.SessionLocal() as db:
+        service = AccountManagementService(db)
+        party = service.create("party", PartyCreate(name="Mock person"))
+        patch = PartyUpdate(name="Changed", status="ACTIVE", expected_updated_time=party["updated_time"])
+        changed = service.update("party", party["id"], patch)
+        with pytest.raises(TargetEconomicError) as stale:
+            service.update("party", party["id"], patch)
+        assert stale.value.code == "ENTITY_CHANGED"
+        original_commit = db.commit
+        def commit_then_lose():
+            original_commit()
+            raise OperationalError("synthetic", {}, Exception("response lost"))
+        from sqlalchemy.exc import OperationalError
+        monkeypatch.setattr(db, "commit", commit_then_lose)
+        with pytest.raises(TargetEconomicError) as unknown:
+            service.update("party", party["id"], PartyUpdate(name="Committed but unknown", status="ACTIVE",
+                expected_updated_time=changed["updated_time"]))
+        assert unknown.value.code == "RESULT_UNKNOWN"
+        monkeypatch.setattr(db, "commit", original_commit)
+        assert service.get("party", party["id"])["name"] == "Committed but unknown"
+        assert db.scalar(select(func.count()).select_from(LedgerAccountParty)) == 1
+
+
+@pytest.mark.parametrize("size", [100, 1000, 10000])
+def test_account_scope_uses_indexed_ref_set_without_literal_id_expansion(size):
+    """Index/performance probe, not a published ledger fixture."""
+    from time import perf_counter
+    target_database.init_target_db()
+    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    with target_database.SessionLocal() as db:
+        db.add_all([LedgerAccountParty(id=i, name=f"Mock person {i}") for i in (1, 2)])
+        db.add_all([LedgerAccount(id=i, party_id=i, name=f"Mock set {i}") for i in (1, 2)])
+        db.flush()
+        for offset in range(0, size, 400):
+            ids = range(offset + 1, min(offset + 400, size) + 1)
+            db.execute(insert(LedgerAccountRef.__table__), [dict(id=i, account_id=1 if i % 2 else 2,
+                status="CLOSED" if i % 5 == 0 else "ACTIVE") for i in ids])
+            db.execute(insert(LedgerEntry.__table__), [dict(id=i, account_ref_id=i, entry_type=0, entry_direction=2,
+                cash_amount=100, cash_currency_code="USD" if i % 2 else "KRW", account_code="",
+                occurred_time=now) for i in ids])
+        db.commit()
+        mapper = AccountManagementMapper(db)
+        elapsed = []
+        for dimension in ("account_id", "party_id"):
+            predicate = LedgerEntry.account_ref_id.in_(mapper.ref_scope(dimension, 1))
+            count = select(func.count()).select_from(LedgerEntry).where(predicate)
+            page = select(LedgerEntry.id).where(predicate).order_by(LedgerEntry.occurred_time, LedgerEntry.id).limit(100)
+            sql = str(page.compile(db.bind, compile_kwargs={"literal_binds": True}))
+            plan = "\n".join(str(row) for row in db.connection().exec_driver_sql("EXPLAIN QUERY PLAN " + sql))
+            assert "ledger_entry_account_ref_time" in plan
+            assert "ledger_account_ref_account" in plan
+            if dimension == "party_id":
+                assert "ledger_account_party_lookup" in plan
+            for _ in range(5):
+                start = perf_counter()
+                assert db.scalar(count) == size // 2
+                assert len(db.scalars(page).all()) == min(size // 2, 100)
+                elapsed.append(perf_counter() - start)
+        assert max(elapsed) < 2, f"indexed local probe exceeded two seconds at {size} refs"
+        assert db.scalar(select(func.count()).select_from(LedgerEntry).where(
+            LedgerEntry.account_ref_id.in_(mapper.ref_scope("party_id", 999)))) == 0

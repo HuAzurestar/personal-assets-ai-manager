@@ -61,9 +61,22 @@ class AccountManagementMapper(ReviewCommandMapper):
                 .join(ReviewAllocation, ReviewAllocation.ledger_entry_id == LedgerEntry.id)
                 .join(TransactionFact, TransactionFact.id == ReviewAllocation.transaction_fact_id)
                 .join(TransactionImportRow, TransactionImportRow.transaction_fact_id == TransactionFact.id)
-                .where(LedgerEntry.account_ref_id.in_(batch)).group_by(LedgerEntry.account_ref_id))
+                .where(LedgerEntry.account_ref_id.in_(batch), TransactionImportRow.row_status == 1)
+                .group_by(LedgerEntry.account_ref_id))
             result.update(dict(rows.all()))
         return result
+
+    def ref_scope(self, dimension, entity_id):
+        """Resolve the current ref set as an indexed subquery, never a giant IN list."""
+        statement = select(LedgerAccountRef.id)
+        if dimension == "account_ref_id":
+            return statement.where(LedgerAccountRef.id == entity_id)
+        if dimension == "account_id":
+            return statement.where(LedgerAccountRef.account_id == entity_id)
+        if dimension == "party_id":
+            return statement.join(LedgerAccount, LedgerAccount.id == LedgerAccountRef.account_id).where(
+                LedgerAccount.party_id == entity_id)
+        raise ValueError("unknown account scope")
 
     def reliable_refs(self, identities):
         """Exact namespace identity pairs only; no inferred fuzzy match."""

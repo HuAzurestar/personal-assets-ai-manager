@@ -84,22 +84,24 @@ export function bindAccountManagement(root, reload) {
       const moving = button.dataset.accountMove;
       const kind = moving ? "ref" : button.dataset.accountCreate || button.dataset.accountEdit;
       const id = moving || button.dataset.id;
-      const row = id ? await request(`${base}/${endpoint[kind]}/${id}`) : {};
+      const row = id ? await request(`${base}/${endpoint[kind]}/${id}`, { signal: readController?.signal }) : {};
       if (!host.isConnected || route !== location.hash) return;
       if (moving) {
         const node = dialog("归属变更预览", `<form class="stack">${input("account_id", "目标管理集合 ID（0 为未分组）", host.dataset.account, 'type="number" min="0" required')}
           <p>可以从账户页查找集合 ID。这里只移动卡的元数据归属，不修改 Review 或 Ledger。</p><p role="status"></p><div data-impact></div>
           <button type="submit">预览影响</button><button type="button" data-confirm disabled>确认当前预览</button></form>`);
-        let plan, change;
-        node.querySelector("input").oninput = () => { plan = null; node.querySelector("[data-confirm]").disabled = true; };
+        let plan, change, generation = 0;
+        node.querySelector("input").oninput = () => { ++generation; plan = null; node.querySelector("[data-confirm]").disabled = true; };
         node.querySelector("form").onsubmit = async (event) => {
           event.preventDefault();
           const submit = node.querySelector("[type=submit]");
           submit.disabled = true;
           change = { account_id: Number(node.querySelector("input").value), expected_updated_time: row.updated_time };
+          const issued = ++generation;
           try {
-            plan = await jsonRequest(`${base}/account-ref/${id}/move-preview`, "POST", change);
-            if (!node.isConnected) return;
+            const nextPlan = await jsonRequest(`${base}/account-ref/${id}/move-preview`, "POST", change);
+            if (!node.isConnected || issued !== generation) return;
+            plan = nextPlan;
             node.querySelector("[data-impact]").textContent = `个人 #${plan.from_party_id} → #${plan.to_party_id}；集合 #${plan.from_account_id} → #${plan.to_account_id}；影响 ${plan.affected_ledger_count} 笔历史流水的当前筛选归属。${plan.cross_party ? "注意：跨个人变更，请核对。" : ""}`;
             node.querySelector("[data-confirm]").disabled = false;
           } catch (error) { writeError(node, error); }
@@ -138,7 +140,10 @@ export function bindAccountManagement(root, reload) {
           node.close(); await reload();
         } catch (error) { writeError(node, error); }
       };
-    } catch (error) { const node = dialog("读取失败", `<p role="status">${esc(error.message)}</p>`); }
+    } catch (error) {
+      if (error.name !== "AbortError" && host.isConnected && route === location.hash)
+        dialog("读取失败", `<p role="status">${esc(error.message)}</p>`);
+    }
     finally { if (button.isConnected) button.disabled = false; }
   };
 }
