@@ -275,7 +275,6 @@ async function summaryPage() {
   const economicSummary = await request(`/paam/ledger/v1/flow/summary?${new URLSearchParams({ date_from: range.from, date_to: range.to, timezone: selectedTimeZone() })}`);
   const summary = {
     entry_count: economicSummary.entry_count,
-    provisional_count: 0,
     totals: economicSummary.totals.map((item) => ({
       ...item,
       income_amount: item.income_and_expense_in_amount,
@@ -284,7 +283,9 @@ async function summaryPage() {
       net_amount: item.income_and_expense_in_amount - item.income_and_expense_out_amount,
     })),
     trend: economicSummary.trend,
-    activities: economicSummary.activities,
+    // Explicit read-only transition for legacy summary field names. Drilldown
+    // always uses the same semantic Flow enum/money fields as the actual list.
+    activities: economicSummary.activities.map(item => ({...item,entry_type_code:entryTypeCodes[item.entry_type_code] || item.entry_type_code})),
   };
   return accountsMarkup({
     summary,
@@ -298,14 +299,15 @@ function accountLedgerParams(extra = {}) {
   const params = new URLSearchParams({
     date_from: extra.day || range.from,
     date_to: extra.day || range.to,
-    currency_code: $('[data-form="account-filter"] select[name="currency_code"]')?.value
+    cash_currency_code: $('[data-form="account-filter"] select[name="currency_code"]')?.value
       || state.params.get("currency_code")
       || "CNY",
   });
   const entryTypeCode = entryTypeCodes[extra.entryTypeCode] || extra.entryTypeCode;
   if (entryTypeCode in entryTypeValues) params.set("economic_type", entryTypeCode);
   const entryDirection = Number(extra.entryDirection);
-  if ([1, 2].includes(entryDirection)) params.set("entry_direction", String(entryDirection));
+  if ([1, 2].includes(entryDirection)) params.set("cash_direction", entryDirection === 1 ? 'IN' : 'OUT');
+  params.set('active','true');
   return params;
 }
 

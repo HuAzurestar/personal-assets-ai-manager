@@ -153,6 +153,14 @@ def run():
                 sources.locator('[data-rel-prev]').click()
                 expect(sources.locator('[data-rel-status]')).to_contain_text('第 1 页（仅本页）')
                 drawer.locator('[data-close]').click()
+                page.goto(base + '/#overview?month=2026-09&currency_code=CNY')
+                expect(page.locator('[data-action="account-type"]').first).to_have_attribute('data-value','TRANSACTION')
+                expect(page.locator('.account-note')).to_contain_text('DUPLICATE 仅留证据，不计金额')
+                page.locator('[data-action="account-metric"][data-value="INCOME"]').click()
+                expect(page.locator('[data-form="economic-filter"] [name="cash_direction"]')).to_have_value('IN')
+                expect(page.locator('[data-form="economic-filter"] [name="cash_currency_code"]')).to_have_value('CNY')
+                expect(page.locator('[data-form="economic-filter"] [name="active"]')).to_have_value('true')
+                assert page.locator('.fact-amount.outflow').count() == 0
                 # Legacy large original Review fixture: complete relationships,
                 # no invented system defaults or actual application writes.
                 from sqlalchemy import text

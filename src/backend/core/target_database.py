@@ -8,6 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from backend.core.config import DATABASE_URL, ensure_data_dir
+from backend.core.stored_timestamp import check_timestamps
 
 
 ensure_data_dir()
@@ -62,18 +63,6 @@ UTC_TIMESTAMP_COLUMNS["ledger_entry"] += ("occurred_time",)
 UTC_TIMESTAMP_COLUMNS["position_leg"] += ("occurred_time",)
 
 
-def _normalize_legacy_millisecond_timestamps(driver) -> None:
-    """Pad legacy `.sssZ` values so text comparison and lock tokens stay exact."""
-    for table_name, columns in UTC_TIMESTAMP_COLUMNS.items():
-        for column_name in columns:
-            driver.execute(
-                f'UPDATE "{table_name}" '
-                f'SET "{column_name}" = substr("{column_name}", 1, 23) || \'000Z\' '
-                f'WHERE length("{column_name}") = 24 '
-                f'AND substr("{column_name}", 24, 1) = \'Z\''
-            )
-
-
 def ensure_target_schema(bind=None) -> None:
     """Create the reviewed SQLite schema from the authoritative SQL assets."""
 
@@ -89,7 +78,9 @@ def ensure_target_schema(bind=None) -> None:
         for table_name in TARGET_TABLE_NAMES:
             path = SQL_ASSET_DIR / f"{table_name}.sql"
             driver.executescript(path.read_text(encoding="utf-8"))
-        _normalize_legacy_millisecond_timestamps(driver)
+        # Opening a target database cannot repair its immutable business times.
+        # The offline copy migration registers and proves equivalent padding.
+        check_timestamps(driver,TARGET_TABLE_NAMES)
         encoding = driver.execute("PRAGMA encoding").fetchone()[0]
         if encoding.upper().replace("-", "") != "UTF8":
             raise RuntimeError(f"SQLite database encoding is {encoding}, expected UTF-8")

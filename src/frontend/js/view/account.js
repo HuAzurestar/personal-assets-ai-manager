@@ -79,7 +79,7 @@ export function accountsMarkup({ summary, currency, cursor }) {
     .filter((item) => item.currency_code === selectedCurrency);
   const visibleActivities = [...actualActivities];
   const visibleTypes = new Set(visibleActivities.map((item) => item.entry_type_code));
-  for (const entryTypeCode of [0, 1, 2]) {
+  for (const entryTypeCode of ['TRANSACTION','ACCOUNT_TRANSFER','ASSET_LIABILITY']) {
     if (visibleActivities.length >= 3) break;
     if (visibleTypes.has(entryTypeCode)) continue;
     visibleActivities.push({
@@ -112,8 +112,8 @@ export function accountsMarkup({ summary, currency, cursor }) {
     <div class="month-metrics">
       <button type="button" data-action="account-metric" data-value="INCOME"><span>本月收入</span><strong class="income">${amount(total.income_amount, selectedCurrency)}</strong><small>点击查看收入流水</small></button>
       <button type="button" data-action="account-metric" data-value="EXPENSE"><span>本月支出</span><strong class="expense">${amount(total.expense_amount, selectedCurrency)}</strong><small>点击查看支出流水</small></button>
-      <article><span>本月净收支</span><strong>${amount(total.net_amount, selectedCurrency)}</strong><small>收入减支出并计入退款抵扣</small></article>
-      <article><span>活跃天数</span><strong>${activeDays} 天</strong><small>${summary.entry_count} 条流水 · ${summary.provisional_count} 条待完善</small></article>
+      <article><span>本月净收支</span><strong>${amount(total.net_amount, selectedCurrency)}</strong><small>收入减支出，仅原币收支交易，不作净资产估值</small></article>
+      <article><span>活跃天数</span><strong>${activeDays} 天</strong><small>${summary.entry_count} 条有效非重复现金结果；不代表账户资料完整</small></article>
     </div>
     <section class="account-activities economic-activity-cards" aria-label="经济流水分类汇总"><div>${activityCards}</div></section>
     <div class="account-chart-grid">
@@ -121,7 +121,7 @@ export function accountsMarkup({ summary, currency, cursor }) {
         <header><div><span class="eyebrow">DAILY CASH FLOW</span><h2>每日收支走势</h2></div><div class="chart-legend"><span class="income-dot">收入</span><span class="expense-dot">支出</span></div></header>
         <div class="month-bars">${chartMarkup(summary, selectedCurrency, range)}</div>
       </article>
-      <aside class="account-note"><span class="eyebrow">当前口径</span><h3>已生效的经济流水</h3><p>收入与支出只统计事实交易；账户流转和债权关系分别展示，不做跨币种折算。</p><button type="button" data-action="account-drilldown">查看本月经济流水 →</button></aside>
+      <aside class="account-note"><span class="eyebrow">当前口径</span><h3>已生效的经济流水</h3><p>收入与支出只统计有效 TRANSACTION；账户转移和资产负债款项分别展示。DUPLICATE 仅留证据，不计金额；不做跨币种折算、余额重建或净资产估值。</p><button type="button" data-action="account-drilldown">查看本月经济流水 →</button></aside>
     </div>
     <article class="calendar-card">
       <header><div><span class="eyebrow">CALENDAR</span><h2>每日收入 / 支出</h2></div><small>点击日期查看当天的经济流水。</small></header>

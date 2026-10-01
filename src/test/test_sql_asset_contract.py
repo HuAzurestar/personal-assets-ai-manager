@@ -127,7 +127,7 @@ def test_sql_default_timestamps_use_the_shared_microsecond_format():
         connection.close()
 
 
-def test_target_schema_normalizes_legacy_millisecond_timestamps(tmp_path):
+def test_target_startup_rejects_legacy_time_without_mutating_business_rows(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'legacy-time.db'}")
     try:
         init_target_db(bind=engine)
@@ -138,15 +138,16 @@ def test_target_schema_normalizes_legacy_millisecond_timestamps(tmp_path):
                 "('Legacy', 'legacy', "
                 "'2026-09-21T12:34:56.123Z', '2026-09-21T12:34:56.947Z')"
             ))
-        init_target_db(bind=engine)
+        with pytest.raises(ValueError,match='TIMESTAMP_MIGRATION_REQUIRED'):
+            init_target_db(bind=engine)
         with engine.connect() as connection:
             row = connection.execute(text(
                 "SELECT created_time, updated_time FROM tag_view "
                 "WHERE system_name = 'legacy'"
             )).one()
         assert row == (
-            "2026-09-21T12:34:56.123000Z",
-            "2026-09-21T12:34:56.947000Z",
+            "2026-09-21T12:34:56.123Z",
+            "2026-09-21T12:34:56.947Z",
         )
     finally:
         engine.dispose()
