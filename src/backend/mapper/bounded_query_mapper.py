@@ -55,6 +55,8 @@ def filter_predicate(expression, columns):
     if isinstance(expression, FilterFieldExpression):
         column = columns[expression.key]
         value = expression.val
+        if callable(column):
+            return column(expression.op, value)
         if expression.op == "between":
             return and_(column >= value["start"], column < value["end"])
         return {"=": lambda: column == value, "!=": lambda: column != value,
