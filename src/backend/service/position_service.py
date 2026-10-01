@@ -137,6 +137,7 @@ class PositionService:
                 reject("ENTITY_CHANGED", "Position metadata changed; reload")
             if payload.status == "SETTLED":
                 quantity = self.mapper.quantity(row)
+                self.mapper.resume_write_budget()
                 if quantity["quantity_state"] != "KNOWN" or quantity["quantity"] != 0:
                     reject("POSITION_NOT_SETTLED", "only a known zero with valid sources may be settled")
             return self.mapper.edit(row, payload.model_dump(exclude={"expected_updated_time"}))

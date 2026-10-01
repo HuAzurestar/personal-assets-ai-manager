@@ -95,11 +95,24 @@ def _domain_error_response(error: DomainError) -> JSONResponse:
     )
 
 
-def _validation_error_response(error: RequestValidationError) -> JSONResponse:
+def _validation_error_response(error: RequestValidationError, request: Request | None = None) -> JSONResponse:
+    code = "VALIDATION_ERROR"
+    path = request.url.path if request is not None else ""
+    review_intent = path in {"/paam/ledger/v1/review/preview", "/paam/ledger/v1/review/command"}
+    position_input = path.startswith("/paam/financial/v1/position")
+    if review_intent or position_input:
+        errors = error.errors()
+        if review_intent and any("behavior_type" in row.get("loc", ()) for row in errors):
+            code = "INVALID_REVIEW_TYPE"
+        elif review_intent and any(row["type"] in {"union_tag_invalid", "union_tag_not_found"}
+                                  or "case_code" in row.get("loc", ()) for row in errors):
+            code = "INVALID_CASE_CODE"
+        elif any("usage_scenario" in row.get("loc", ()) for row in errors):
+            code = "INVALID_USAGE_SCENARIO"
     return _error_response(
         422,
         "Request validation failed",
-        "VALIDATION_ERROR",
+        code,
         details=_redact_validation_errors(error.errors()),
     )
 
@@ -134,10 +147,10 @@ async def _domain_error_handler(_: Request, error: DomainError) -> JSONResponse:
 
 
 async def _validation_error_handler(
-    _: Request,
+    request: Request,
     error: RequestValidationError,
 ) -> JSONResponse:
-    return _validation_error_response(error)
+    return _validation_error_response(error, request)
 
 
 async def _http_error_handler(_: Request, error: HTTPException) -> JSONResponse:
@@ -171,7 +184,7 @@ class DomainErrorRoute(APIRoute):
             except DomainError as error:
                 return _domain_error_response(error)
             except RequestValidationError as error:
-                return _validation_error_response(error)
+                return _validation_error_response(error, request)
             except HTTPException as error:
                 return _http_error_response(error)
             except Exception as error:

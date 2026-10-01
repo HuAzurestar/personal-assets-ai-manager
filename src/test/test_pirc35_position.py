@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 import json
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import insert, select, func
+from sqlalchemy import insert, select, func, update
 from backend.core import target_database
 from backend.entity import Position, LedgerAccountParty, PositionLeg, ReviewCase, LedgerEntry
 from backend.target_main import app
@@ -76,6 +76,27 @@ def test_metadata_alone_unknown_no_legs_cash_and_strict_immutable_fields(client)
         assert db.scalar(select(func.count()).select_from(PositionLeg)) == 0
         assert db.scalar(select(func.count()).select_from(ReviewCase)) == 0
         assert db.scalar(select(func.count()).select_from(LedgerEntry)) == 0
+
+
+def test_invalid_usage_code_on_creation_and_metadata(client):
+    row = create(client)
+    assert change(client, row, usage_scenario="FAKE_USAGE").json()["body"]["code"] == "INVALID_USAGE_SCENARIO"
+    payload = {key: row[key] for key in ("title", "description", "type", "party_id", "counterparty", "unit_code")}
+    response = client.post(BASE, json=payload | dict(usage_scenario="FAKE_USAGE"))
+    assert response.status_code == 422
+    assert response.json()["body"]["code"] == "INVALID_USAGE_SCENARIO"
+
+
+def test_unknown_stored_unit_rejects_detail_list_and_search_in_same_guard(client):
+    from backend.entity import Position
+    row = create(client)
+    with target_database.SessionLocal() as db:
+        db.execute(update(Position).where(Position.id == row["id"]).values(unit_code="NOT_REGISTERED"))
+        db.commit()
+    for path in ("/list", "/search", f"/{row['id']}"):
+        response = client.get(BASE + path)
+        assert response.status_code == 409, response.text
+        assert response.json()["body"]["code"] == "RELATION_BROKEN"
 
 
 def test_quantity_source_token_archive_reopen_and_known_zero_settlement(client):

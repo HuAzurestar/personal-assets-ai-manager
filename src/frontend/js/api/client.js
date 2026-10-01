@@ -32,7 +32,7 @@ async function readResponse(url, options, includeEnvelope) {
   setConnectionState("connected");
   const payload = response.status === 204 ? null : await response.json().catch(() => null);
   if (!response.ok) {
-    const validationDetails = payload?.body?.code === "VALIDATION_ERROR"
+    const validationDetails = ["VALIDATION_ERROR", "INVALID_REVIEW_TYPE", "INVALID_CASE_CODE", "INVALID_USAGE_SCENARIO"].includes(payload?.body?.code)
       && Array.isArray(payload?.body?.details)
       ? payload.body.details.map((item) => item?.msg).filter(Boolean)
       : [];

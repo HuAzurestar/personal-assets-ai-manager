@@ -24,7 +24,7 @@ class SearchRequest(ListRequest):
         return self
 
 
-def parse_search_request(*, page_size=20, query=None, filter=None, sorter=None, cursor=None):
+def parse_search_request(*, page_size=20, query=None, filter=None, sorter=None, cursor=None, request_type=SearchRequest):
     if query is not None:
         try:
             if len(query.encode()) > 16384:
@@ -39,6 +39,6 @@ def parse_search_request(*, page_size=20, query=None, filter=None, sorter=None, 
             query = json.dumps(terms, ensure_ascii=False)
         except (TypeError, ValueError):
             raise ListQueryError("invalid text query", code="LIST_QUERY_INVALID")
-    parsed = parse_list_request(SearchRequest, page_size=page_size, query=query, filter=filter, sorter=sorter)
+    parsed = parse_list_request(request_type, page_size=page_size, query=query, filter=filter, sorter=sorter)
     parsed.cursor = cursor
     return parsed

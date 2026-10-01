@@ -2,6 +2,16 @@ from datetime import datetime
 from typing import Literal
 from backend.schema.review_read import PO
 from backend.schema.response import SuccessResponse
+from backend.schema.list_query import ListRequest
+from backend.schema.bounded_search import SearchRequest
+
+
+class CandidateListRequest(ListRequest):
+    pass
+
+
+class CandidateSearchRequest(SearchRequest):
+    pass
 
 
 class DefaultReviewPO(PO):

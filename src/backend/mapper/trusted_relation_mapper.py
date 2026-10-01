@@ -6,6 +6,7 @@ from backend.entity import (LedgerAccount, LedgerAccountParty, LedgerAccountRef,
                             Position, PositionLeg, ReviewAllocation, ReviewCase,
                             ReviewLedgerPositionLegAllocation, TransactionFact)
 from backend.error import TargetEconomicError
+from backend.core.unit import SUPPORTED_UNIT_CODES
 
 
 class TrustedRelationMapper:
@@ -50,6 +51,7 @@ class TrustedRelationMapper:
         orphan_position = select(position.id).outerjoin(party, party.id == position.party_id).where(or_(
             party.id.is_(None), position.type.not_in(("ASSET", "LIABILITY")),
             position.status.not_in(("ACTIVE", "ARCHIVED", "SETTLED")),
+            position.unit_code.not_in(sorted(SUPPORTED_UNIT_CODES)),
             position.usage_scenario.not_in(("GENERAL", "PERSONAL-LENDING", "SHARED-SETTLEMENT", "STORED-VALUE",
                 "DEPOSIT-PLEDGE", "REIMBURSEMENT", "CREDIT-CARD", "FORMAL-LOAN", "INVESTMENT")),
         )).limit(1)
@@ -60,6 +62,7 @@ class TrustedRelationMapper:
                 leg.type.not_in(("OPENING", "MOVEMENT")), position.type.not_in(("ASSET", "LIABILITY")),
                 position.status.not_in(("ACTIVE", "ARCHIVED", "SETTLED")),
                 and_(leg.leg_direction == "OUT", leg.source_position_leg_id == 0),
+                and_(leg.leg_direction == "IN", leg.source_position_leg_id != 0),
             )).limit(1)
         broken_link = select(link.id).outerjoin(leg, leg.id == link.position_leg_id).outerjoin(
             l, l.id == link.ledger_id).outerjoin(a, a.ledger_entry_id == l.id).where(or_(

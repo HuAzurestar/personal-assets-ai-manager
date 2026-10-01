@@ -5,6 +5,20 @@ from backend.schema.account_management import ExpectedMetadata
 from backend.schema.review_command import UsageScenario
 from backend.schema.review_read import PositionPO, PositionLegPO, PositionAllocationPO, PO, ReviewPO
 from backend.schema.response import SuccessResponse
+from backend.schema.list_query import ListRequest
+from backend.schema.bounded_search import SearchRequest
+
+
+class PositionListRequest(ListRequest):
+    pass
+
+
+class PositionSearchRequest(SearchRequest):
+    pass
+
+
+class PositionLegListRequest(ListRequest):
+    pass
 
 
 class PositionMetadata(ExpectedMetadata):

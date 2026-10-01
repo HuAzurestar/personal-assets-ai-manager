@@ -1,6 +1,6 @@
 import { request } from "../api/client.js";
 import { preserveView } from "../util/view_state.js?v=20260928.6";
-import { esc, money, date as when, typeNames, statusNames } from "../util/core.js";
+import { esc, money, quantityDecimal, date as when, typeNames, statusNames, reviewTypeNames } from "../util/core.js";
 
 const names = { fact: "事实流水", ledger: "账本流水", review: "审查记录", file: "导入文件" };
 const sources = { 0: "来源未识别", 1: "手工录入", 101: "支付宝", 102: "微信支付", 201: "建设银行", 202: "农业银行", 203: "招商银行" };
@@ -196,13 +196,15 @@ function describe(kind, data) {
     actions = `<button data-action="edit-ledger-account" data-id="${item.id}">编辑账户</button><button data-action="edit-tags" data-id="${item.id}">编辑标签</button>`;
   } else if (kind === "review") {
     item = data;
-    title = reviewTitle(item, item.facts);
-    subtitle = `${behavior[item.behavior_type] || "类型未识别"} · ${statusNames[item.status] || "状态未识别"}`;
-    body = metrics([["涉及事实", item.facts.length], ["有效 Ledger", item.ledger_entries.filter(row => row.active).length, "accent"], ["账本结果", item.ledger_entries.length], ["最近更新", when(item.updated_time)]])
-      + totals(item.ledger_entries, "entry_direction") + '<div class="inspection-dashboard">'
-      + allocationSection(p, item.allocations, item.facts, item.ledger_entries, [item], { kind, id: item.id })
-      + card(`变更记录 · ${item.history.length}`, p.collection(item.history, row => `<article class="inspection-history"><strong>${esc(operations[row.operation] || "操作未识别")}</strong><time>${esc(when(row.created_time))}</time><p>${esc(row.reason === "ensure exact accepted-fact coverage" ? "系统建立默认分配，确保事实金额完整入账" : row.reason || "未填写原因")}</p></article>`, "次变更")) + "</div>";
-    actions = `<button data-action="economic-review-transition" data-kind="${item.status === 0 ? "revoke" : "restore"}" data-id="${item.id}">${item.status === 0 ? "撤销并恢复默认交易" : "恢复审查"}</button>`;
+    title = businessTitle(item);
+    subtitle = `${reviewTypeNames[item.type] || item.type} · ${statusNames[item.status] || item.status}`;
+    body = metrics([["涉及事实", new Set(item.allocations.map(row => row.transaction_id)).size], ["原始现金结果", item.ledger_entries.length, "accent"], ["原始数量腿", item.position_legs.length], ["最近状态更新", when(item.updated_time)]])
+      + '<p>内容不可变；停用仍保留原始结果与关系。DUPLICATE 保留证据金额但不计现金；款项归因不是第二笔现金。</p><div class="inspection-dashboard">'
+      + card("原始现金结果", p.collection(item.ledger_entries, row => `<article class="inspection-flow"><strong>${esc(money(row))}</strong><p>${esc(typeNames[row.economic_type])} · ${esc(row.cash_direction)} · 来源卡 #${row.account_ref_id} · ${esc(when(row.occurred_time))}</p>${relationButton("ledger", row.id, `Ledger #${row.id}`)}</article>`), { tone: "accent" })
+      + card("Fact → Ledger 完整关系", p.collection(item.allocations, row => `<article class="inspection-flow"><strong>${esc(money(row))}</strong><p>Allocation #${row.id} · Review #${row.review_id}</p>${relationButton("fact", row.transaction_id, `Fact #${row.transaction_id}`)}${relationButton("ledger", row.ledger_id, `Ledger #${row.ledger_id}`)}</article>`, "条原始关系"))
+      + card("原始数量腿", p.collection(item.position_legs, row => `<article class="inspection-flow"><strong>${esc(row.leg_direction)} ${quantityDecimal(row.leg_amount, row.unit_code)} ${esc(row.unit_code)}</strong><p>Leg #${row.id} · ${esc(row.type)} · 来源腿 #${row.source_position_leg_id} · ${esc(when(row.occurred_time))}</p><p>${esc(row.basis)}</p><a href="#workbench/position?id=${row.position_id}">对象 #${row.position_id}</a></article>`))
+      + card("Ledger → 数量腿款项归因", p.collection(item.position_allocations, row => `<article class="inspection-flow"><strong>${esc(money(row))}</strong><p>Link #${row.id} · Leg #${row.position_leg_id}（不是额外现金）</p>${relationButton("ledger", row.ledger_id, `Ledger #${row.ledger_id}`)}</article>`)) + "</div>";
+    actions = `<button data-action="economic-review-transition" data-kind="${item.status === "CONFIRMED" ? "revoke" : "restore"}" data-id="${item.id}">${item.status === "CONFIRMED" ? "预览停用与默认恢复" : "预览激活原审查"}</button>`;
   } else {
     item = data.import_file;
     title = `${sources[item.source_type] || "来源未识别"}账单`;

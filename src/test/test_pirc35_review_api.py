@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import pytest
 
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
@@ -53,3 +54,25 @@ def test_new_openapi_does_not_accept_published_cash_rows():
     assert set(schemas["MoneySplitInput"]["properties"]) == {"transaction_id", "economic_type", "cash_amount", "account_ref_id"}
     assert schemas["ReviewCommandInput"]["properties"]["new_reviews"]["items"]["discriminator"]["propertyName"] == "case_code"
     assert schemas["ReviewPO"]["properties"]["type"]["enum"] == ["NORMAL_TRANSACTION", "BORROW_AND_REPAY", "CREDIT_CARD", "SHARED_SETTLEMENT", "OTHER_MANUAL"]
+
+
+@pytest.mark.parametrize("endpoint", ["preview", "command"])
+@pytest.mark.parametrize("mutation,code", [("type", "INVALID_REVIEW_TYPE"),
+    ("case", "INVALID_CASE_CODE"), ("usage", "INVALID_USAGE_SCENARIO")])
+def test_public_intent_validation_uses_approved_domain_codes(endpoint, mutation, code):
+    review = dict(case_code="POS_OPENING", allocations=[], legs=[], position_allocations=[],
+        new_positions=[dict(title="Mock", type="ASSET", usage_scenario="GENERAL", party_id=1, unit_code="CNY")])
+    if mutation == "type":
+        review["behavior_type"] = 0
+    elif mutation == "case":
+        review["case_code"] = "FAKE_CASE"
+    else:
+        review["new_positions"][0]["usage_scenario"] = "FAKE_USAGE"
+    payload = dict(new_reviews=[review])
+    if endpoint == "command":
+        payload["preview_digest"] = "0" * 64
+    with TestClient(app) as client:
+        response = client.post(f"/paam/ledger/v1/review/{endpoint}", json=payload)
+    assert response.status_code == 422, response.text
+    assert response.json()["body"]["code"] == code
+    assert all("input" not in row for row in response.json()["body"]["details"])

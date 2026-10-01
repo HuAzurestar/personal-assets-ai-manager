@@ -97,7 +97,9 @@ def expand(raw, facts, positions, refs, parties, sources, source_reviews, defaul
     for leg in draft["legs"]:
         if leg["existing_position_id"] is not None:
             position = positions.get(leg["existing_position_id"])
-            if position is None or position["status"] != "ACTIVE":
+            if position is None:
+                reject("REFERENCE_NOT_FOUND", "Position not found", status=404)
+            if position["status"] != "ACTIVE":
                 reject("POSITION_NOT_ACTIVE", "new leg requires ACTIVE Position", status=409)
         else:
             index = leg["new_position_index"]
@@ -106,6 +108,8 @@ def expand(raw, facts, positions, refs, parties, sources, source_reviews, defaul
             position = draft["new_positions"][index]
             used_new.add(index)
         leg_positions.append(position)
+        if leg["leg_direction"] == "IN" and leg["source"]:
+            reject("INVALID_POSITION_SOURCE", "IN records new evidence and must not reference an old source")
         if leg["type"] == "OPENING" and (leg["source"] or leg["leg_direction"] != "IN"):
             reject("INVALID_POSITION_SOURCE", "opening is IN without a source leg")
         if leg["leg_direction"] == "OUT" and not leg["source"]:
@@ -129,12 +133,14 @@ def expand(raw, facts, positions, refs, parties, sources, source_reviews, defaul
         pairs.add((ai, li))
         split = draft["allocations"][ai]
         fact = facts[split["transaction_id"]]
-        if split["entry_type"] == 3 or link["cash_currency_code"] != fact["currency_code"]:
-            reject("INVALID_POSITION_ALLOCATION", "duplicate/currency mismatch")
+        if split["entry_type"] == 3:
+            reject("INVALID_POSITION_ALLOCATION", "duplicate cannot have a quantity cash link")
+        if link["cash_currency_code"] != fact["currency_code"]:
+            reject("UNIT_MISMATCH", "cash link currency differs from its Ledger")
         totals[ai] += link["cash_amount"]
         linked[li].append((split, fact, link))
     if any(amount > draft["allocations"][index]["cash_amount"] for index, amount in totals.items()):
-        reject("POSITION_ALLOCATION_EXCEEDED", "linked cash exceeds Ledger")
+        reject("LEDGER_POSITION_ALLOCATION_OVERFLOW", "linked cash exceeds Ledger")
     if code == "POS_OPENING" and (draft["allocations"] or any(leg["type"] != "OPENING" for leg in draft["legs"])):
         reject("INVALID_CASE_CODE", "opening must be cash-free opening evidence")
     if code in {"POS_POSITION_OPEN", "POS_POSITION_SETTLE"}:
@@ -155,7 +161,7 @@ def expand(raw, facts, positions, refs, parties, sources, source_reviews, defaul
                 reject("INVALID_PRINCIPAL", "principal links and quantity must agree exactly")
             for split, fact, _ in cash_links:
                 if unit.code != fact["currency_code"]:
-                    reject("INVALID_PRINCIPAL", "cash and quantity currencies differ")
+                    reject("UNIT_MISMATCH", "cash and quantity currencies differ")
                 expected_direction = 2 if (position["type"] == "ASSET") == (leg["leg_direction"] == "IN") else 1
                 expected_type = 2
                 if code == "POS_CREDIT_PURCHASE":

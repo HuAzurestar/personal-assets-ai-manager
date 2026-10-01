@@ -138,10 +138,12 @@ class ReviewCommandMapper:
         connection.exec_driver_sql("PRAGMA busy_timeout=2000")
         connection.exec_driver_sql("BEGIN IMMEDIATE")
         self.write_started = monotonic()
-        connection.connection.driver_connection.set_progress_handler(
-            lambda: int(monotonic() - self.write_started > 2), 1000
-        )
         self.driver = connection.connection.driver_connection
+        self.resume_write_budget()
+
+    def resume_write_budget(self):
+        """Re-arm the original deadline after a nested bounded read."""
+        self.driver.set_progress_handler(lambda: int(monotonic() - self.write_started > 2), 1000)
 
     def end_write(self):
         if getattr(self, "driver", None) is not None:
