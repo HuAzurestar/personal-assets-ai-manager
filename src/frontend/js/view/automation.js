@@ -4,7 +4,7 @@ import { openInspection, registerInspection } from "../component/inspection.js?v
 import { $, $$, esc, money, date } from "../util/core.js";
 import { startVisiblePoll } from "../util/visible_poll.js?v=20260928.6";
 import { openDisclosureEditor, openDisclosurePreview } from "./disclosure.js?v=20260928.6";
-import { helpTip, batchResults, batchResultMarkup, batchFailureMarkup, selectionConflict, ruleStatistics, runtimeMarkup, diagnosticsMarkup, executionResultNames } from "./automation_feedback.js?v=20260928.6";
+import { helpTip, batchResults, batchResultMarkup, batchFailureMarkup, selectionConflict, ruleStatistics, runtimeMarkup, diagnosticsMarkup, executionResultNames } from "./automation_feedback.js?v=20261001.1";
 import { ruleExecution, semanticRuleChange, ruleEditImpact, candidatePreviewMarkup, requestVersionCopy, scopeImpactMarkup } from "./automation_explain.js?v=20260928.6";
 
 let setting = null;
@@ -970,7 +970,7 @@ export function startAutomationRefresh(root, { stale = false } = {}) {
   root.dataset.autoStale = String(stale);
   const route = location.hash;
   stopPolling = startVisiblePoll({
-    interval: () => root.dataset.autoStale === "true" ? 5000 : scheduleStatus?.tag_scan_guard === "DISABLED" ? 30000 : 5000,
+    interval: 5000,
     isAlive: () => page.isConnected && location.hash === route,
     canPoll: () => ![...document.querySelectorAll("dialog[open]")].some(dialog => !dialog.contains(root)) && root.dataset.commandPending !== "true"
       && !(root.contains(document.activeElement) && document.activeElement.matches("input:not([type='checkbox']), select, textarea")),

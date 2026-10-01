@@ -284,7 +284,7 @@ def test_synthetic_request_requires_approval_and_reads_back_source(request_api):
         json={"request_ids": [items[0]["id"]]},
     )
     assert approved.status_code == 200, approved.text
-    assert approved.json()["body"]["items"][0]["status"] == 2
+    assert approved.json()["body"]["results"][0]["status"] == 2
     competing = client.get(
         f"/paam/tag/v1/assignment_request/{items[1]['id']}"
     ).json()["body"]
@@ -328,7 +328,7 @@ def test_reject_keeps_tag_and_increments_rule_counter(request_api):
     )
 
     assert rejected.status_code == 200, rejected.text
-    assert rejected.json()["body"]["items"][0]["status"] == 3
+    assert rejected.json()["body"]["results"][0]["status"] == 3
     all_requests = client.get("/paam/tag/v1/assignment_request/list")
     pending_requests = client.get(
         "/paam/tag/v1/assignment_request/list",
@@ -371,7 +371,7 @@ def test_approval_conflicts_have_item_results_and_never_override_manual_tag(requ
         json={"request_ids": request_ids},
     )
     assert scope_conflict.status_code == 200
-    assert [item["result"] for item in scope_conflict.json()["body"]["items"]] == ["SCOPE_CONFLICT", "SCOPE_CONFLICT"]
+    assert [item["code"] for item in scope_conflict.json()["body"]["results"]] == ["SCOPE_CONFLICT", "SCOPE_CONFLICT"]
     with sessions() as db:
         assert set(db.scalars(select(TagAssignmentRequest.status)).all()) == {1}
 
@@ -394,7 +394,7 @@ def test_approval_conflicts_have_item_results_and_never_override_manual_tag(requ
         json={"request_ids": [request_ids[0]]},
     )
     assert manual_conflict.status_code == 200
-    assert manual_conflict.json()["body"]["items"][0]["result"] == (
+    assert manual_conflict.json()["body"]["results"][0]["code"] == (
         "MANUAL_TAG_CONFLICT"
     )
     with sessions() as db:
@@ -425,7 +425,7 @@ def test_stale_rule_and_inactive_ledger_are_rejected(request_api):
         json={"request_ids": [request_id]},
     )
     assert stale.status_code == 200
-    assert stale.json()["body"]["items"][0]["result"] == "RULE_STALE"
+    assert stale.json()["body"]["results"][0]["code"] == "RULE_STALE"
 
     with sessions() as db:
         db.execute(update(AutoTagRule).where(
@@ -442,8 +442,8 @@ def test_stale_rule_and_inactive_ledger_are_rejected(request_api):
         "/paam/tag/v1/assignment_request/batch_approve",
         json={"request_ids": [request_id]},
     )
-    assert inactive.status_code == 200
-    assert inactive.json()["body"]["items"][0]["result"] == "LEDGER_INACTIVE"
+    assert inactive.status_code == 409
+    assert inactive.json()["body"]["code"] == "SUGGESTION_STALE"
 
 
 def _request_id(sessions, rule_id, ledger_id):
@@ -574,7 +574,7 @@ def test_manual_assignment_cancels_pending_only_for_target_ledger(request_api, c
     assert client.post(
         "/paam/tag/v1/assignment_request/batch_approve",
         json={"request_ids": [request_id]},
-    ).json()["body"]["items"][0]["result"] == "REQUEST_STATE_CONFLICT"
+    ).json()["body"]["code"] == "SUGGESTION_STALE"
     with sessions() as db:
         assert db.get(TagAssignmentRequest, request_id).status == 4
         assert db.get(TagAssignmentRequest, other_request).status == 1

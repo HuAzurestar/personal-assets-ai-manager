@@ -48,22 +48,85 @@ def _seed(runtime, *, count=1):
 
 def _batch(client, ids, operation="approve"):
     response = client.post(f"/paam/tag/v1/assignment_request/batch_{operation}", json={"request_ids": ids})
+    body = response.json()["body"]
+    if response.status_code == 409:
+        assert body["code"] == "SUGGESTION_STALE", response.text
+        assert all(row["code"] == "SUGGESTION_STALE" for row in body["details"]["results"])
+        return body["details"]["results"]
     assert response.status_code == 200, response.text
-    return response.json()["body"]["items"]
+    assert set(body) == {"results", "accepted", "rejected", "conflicts"}
+    return body["results"]
 
 
 def test_partial_results_keep_order_and_repeated_decisions_do_not_count(request_api):
     client, sessions, _, _, _ = request_api
     rule, ledgers, ids = _seed(request_api, count=2)
     first = _batch(client, [9999, ids[0]])
-    assert [item["result"] for item in first] == ["NOT_FOUND", "APPROVED"]
+    assert [item["code"] for item in first] == ["NOT_FOUND", "APPROVED"]
     again = _batch(client, [ids[0], ids[1]])
-    assert [item["result"] for item in again] == ["ALREADY_APPROVED", "APPROVED"]
-    assert _batch(client, [ids[0]], "reject")[0]["result"] == "REQUEST_STATE_CONFLICT"
+    assert [item["code"] for item in again] == ["ALREADY_APPROVED", "APPROVED"]
+    assert _batch(client, [ids[0]], "reject")[0]["code"] == "SUGGESTION_STALE"
     with sessions() as db:
         row = db.get(AutoTagRule, rule)
         assert (row.analyzed_count, row.failed_count, row.suggested_count, row.accepted_count, row.rejected_count) == (2, 0, 2, 2, 0)
     assert all(_assignment(client, ledger)["tag_state"]["mood"] == "happy" for ledger in ledgers)
+
+
+def test_canonical_batch_counts_are_this_decision_not_durable_counter_replay(request_api):
+    client, sessions, _, _, _ = request_api
+    schema = client.app.openapi()["components"]["schemas"]
+    assert set(schema["TagAssignmentBatchRead"]["properties"]) == {"results", "accepted", "rejected", "conflicts"}
+    assert set(schema["TagAssignmentItemResult"]["properties"]) == {"id", "status", "code"}
+    rule, _, ids = _seed(request_api, count=3)
+    first = client.post("/paam/tag/v1/assignment_request/batch_approve", json=dict(request_ids=[ids[1], 9999, ids[0]]))
+    assert first.status_code == 200
+    assert first.json()["body"] == dict(results=[
+        dict(id=ids[1], status=2, code="APPROVED"), dict(id=9999, status=None, code="NOT_FOUND"),
+        dict(id=ids[0], status=2, code="APPROVED")], accepted=2, rejected=0, conflicts=1)
+    again = client.post("/paam/tag/v1/assignment_request/batch_approve", json=dict(request_ids=ids[:2])).json()["body"]
+    assert (again["accepted"], again["rejected"], again["conflicts"]) == (0, 0, 0)
+    assert all(row["code"] == "ALREADY_APPROVED" for row in again["results"])
+    _batch(client, ids[2:], "reject")
+    terminal = client.post("/paam/tag/v1/assignment_request/batch_reject", json=dict(request_ids=ids[2:]))
+    assert terminal.status_code == 409
+    assert terminal.json()["body"] == dict(code="SUGGESTION_STALE", details=dict(
+        results=[dict(id=ids[2], status=3, code="SUGGESTION_STALE")], accepted=0, rejected=0, conflicts=1))
+    with sessions() as db:
+        current = db.get(AutoTagRule, rule)
+        assert (current.accepted_count, current.rejected_count) == (2, 1)
+
+
+def test_mixed_stale_and_legal_batch_commits_only_legal_scope(request_api):
+    client, sessions, _, _, _ = request_api
+    rule, _, ids = _seed(request_api, count=2)
+    _batch(client, ids[:1], "reject")
+    response = client.post("/paam/tag/v1/assignment_request/batch_approve", json=dict(request_ids=ids))
+    assert response.status_code == 200, response.text
+    assert response.json()["body"] == dict(results=[dict(id=ids[0], status=3, code="SUGGESTION_STALE"),
+        dict(id=ids[1], status=2, code="APPROVED")], accepted=1, rejected=0, conflicts=1)
+    with sessions() as db:
+        current = db.get(AutoTagRule, rule)
+        assert (current.accepted_count, current.rejected_count) == (1, 1)
+
+
+def test_reject_same_scope_conflicts_do_not_block_other_scopes(request_api):
+    client, sessions, view_id, _, tags = request_api
+    rule, ledgers, ids = _seed(request_api, count=2)
+    rival_rule = _rule(sessions, view_id, "Fictional reject rival")
+    with sessions() as db:
+        mapper = TagAssignmentRequestMapper(db)
+        mapper.begin_write()
+        rival = mapper.create_many([dict(rule_id=rival_rule, rule_revision=1, ledger_id=ledgers[0],
+            view_id=view_id, proposed_tag_id=tags["category"]["travel"])], NOW)[0]
+        mapper.commit()
+    response = client.post("/paam/tag/v1/assignment_request/batch_reject", json=dict(request_ids=[ids[0], ids[1], rival]))
+    assert response.status_code == 200
+    body = response.json()["body"]
+    assert [row["code"] for row in body["results"]] == ["SCOPE_CONFLICT", "REJECTED", "SCOPE_CONFLICT"]
+    assert (body["accepted"], body["rejected"], body["conflicts"]) == (0, 1, 2)
+    with sessions() as db:
+        assert db.get(TagAssignmentRequest, ids[0]).status == db.get(TagAssignmentRequest, rival).status == 1
+        assert db.get(AutoTagRule, rule).rejected_count == 1
 
 
 def test_scope_conflicts_do_not_block_other_scopes(request_api):
@@ -79,7 +142,7 @@ def test_scope_conflicts_do_not_block_other_scopes(request_api):
         }], NOW)[0]
         mapper.commit()
     results = _batch(client, [ids[0], ids[1], rival])
-    assert [row["result"] for row in results] == ["SCOPE_CONFLICT", "APPROVED", "SCOPE_CONFLICT"]
+    assert [row["code"] for row in results] == ["SCOPE_CONFLICT", "APPROVED", "SCOPE_CONFLICT"]
     with sessions() as db:
         assert db.get(AutoTagRule, rule).accepted_count == 1
         assert db.get(TagAssignmentRequest, ids[0]).status == 1
@@ -95,7 +158,11 @@ def test_concurrent_decisions_have_only_one_first_transition(request_api, operat
     def decide(operation):
         ready.wait(timeout=5)
         with sessions() as db:
-            return getattr(TagAssignmentRequestService(db), operation)(ids).items[0].result
+            try:
+                return getattr(TagAssignmentRequestService(db), operation)(ids).results[0].code
+            except TargetTagError as error:
+                assert error.code == "SUGGESTION_STALE"
+                return error.code
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         result = list(pool.map(decide, operations))
@@ -118,7 +185,11 @@ def test_manual_same_value_racing_approval_never_loses_source_protection(request
         ready.wait(timeout=5)
         with sessions() as db:
             if kind == "approve":
-                return TagAssignmentRequestService(db).approve(ids).items[0].result
+                try:
+                    return TagAssignmentRequestService(db).approve(ids).results[0].code
+                except TargetTagError as error:
+                    assert error.code == "SUGGESTION_STALE"
+                    return error.code
             try:
                 TargetTagAssignmentService(db).assign(ledgers[0], manual)
                 return "MANUAL"
@@ -128,7 +199,7 @@ def test_manual_same_value_racing_approval_never_loses_source_protection(request
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         result = list(pool.map(decide, ["approve", "manual"]))
-    assert result in (["APPROVED", "STALE"], ["REQUEST_STATE_CONFLICT", "MANUAL"])
+    assert result in (["APPROVED", "STALE"], ["SUGGESTION_STALE", "MANUAL"])
     current = _assignment(client, ledgers[0])
     assert current["tag_state"]["category"] == ("food" if result[0] == "APPROVED" else "unclassified")
     assert current["tag_state"]["mood"] == "happy"
@@ -181,7 +252,7 @@ def test_counter_overflow_rejects_only_affected_rule(request_api):
             accepted_count=MAX_COUNTER_VALUE, suggested_count=MAX_COUNTER_VALUE,
         ))
         db.commit()
-    assert [item["result"] for item in _batch(client, first + second)] == ["COUNTER_EXHAUSTED", "APPROVED"]
+    assert [item["code"] for item in _batch(client, first + second)] == ["COUNTER_EXHAUSTED", "APPROVED"]
     with sessions() as db:
         assert db.get(AutoTagRule, exhausted).accepted_count == MAX_COUNTER_VALUE
         assert db.get(AutoTagRule, normal).accepted_count == 1
@@ -224,13 +295,13 @@ def test_new_request_cannot_override_an_already_effective_nondefault_value(reque
             "view_id": view_id, "proposed_tag_id": tags["category"]["travel"],
         }], NOW)
         mapper.commit()
-    assert _batch(client, fresh)[0]["result"] == "MANUAL_TAG_CONFLICT"
+    assert _batch(client, fresh)[0]["code"] == "MANUAL_TAG_CONFLICT"
     with sessions() as db:
         assert db.get(TagAssignmentRequest, ids[0]).status == 2
         assert db.get(AutoTagRule, old_rule).accepted_count == 1
         assert db.get(AutoTagRule, new_rule).accepted_count == 0
         assert db.scalar(select(func.count()).select_from(TagAssignmentRequest).where(TagAssignmentRequest.status == 2)) == 1
-    assert _batch(client, ids)[0]["result"] == "ALREADY_APPROVED"
+    assert _batch(client, ids)[0]["code"] == "ALREADY_APPROVED"
 
 
 @pytest.mark.parametrize("scope", ["tag", "view"])
@@ -260,7 +331,7 @@ def test_inactive_ledger_blocks_automatic_and_manual_writes_but_preserves_reads(
         review = db.scalar(select(ReviewAllocation.review_case_id).where(ReviewAllocation.ledger_entry_id == ledgers[0]))
         db.execute(update(ReviewCase).where(ReviewCase.id == review).values(status=1))
         db.commit()
-    assert _batch(client, ids)[0]["result"] == "LEDGER_INACTIVE"
+    assert _batch(client, ids)[0]["code"] == "SUGGESTION_STALE"
     assert _manual(client, ledgers[0], opened["tag_state"], opened["updated_time"]).status_code == 409
     assert _assignment(client, ledgers[0])["tag_state"] == opened["tag_state"]
 

@@ -88,7 +88,7 @@ class TagAssignmentRequestService:
     @staticmethod
     def approval_code(row, context):
         if row["status"] not in (TAG_REQUEST_STATUS_PENDING, TAG_REQUEST_STATUS_ENABLED):
-            return "REQUEST_STATE_CONFLICT"
+            return "SUGGESTION_STALE"
         scope = (int(row["ledger_id"]), int(row["view_id"]))
         rule = context["rules"].get(int(row["rule_id"]))
         current = [item for item in context["scope_tags"].get(scope, []) if item[3] == "ACTIVE"]
@@ -96,15 +96,15 @@ class TagAssignmentRequestService:
         if context["scopes"][scope] > 1:
             return "SCOPE_CONFLICT"
         if rule is None or rule.rule_revision != row["rule_revision"] or rule.view_id != scope[1]:
-            return "RULE_STALE"
+            return "SUGGESTION_STALE" if row["status"] == TAG_REQUEST_STATUS_ENABLED else "RULE_STALE"
         if context["types"].get(scope[0]) == 3:
-            return "LEDGER_DUPLICATE"
+            return "SUGGESTION_STALE" if row["status"] == TAG_REQUEST_STATUS_ENABLED else "LEDGER_DUPLICATE"
         if scope[0] not in context["active_ledgers"]:
-            return "LEDGER_INACTIVE"
+            return "SUGGESTION_STALE"
         if scope[1] not in context["active_views"]:
-            return "VIEW_INACTIVE"
+            return "SUGGESTION_STALE" if row["status"] == TAG_REQUEST_STATUS_ENABLED else "VIEW_INACTIVE"
         if target is None or target[0] != scope[1] or target[1] == "unclassified":
-            return "TAG_INACTIVE"
+            return "SUGGESTION_STALE" if row["status"] == TAG_REQUEST_STATUS_ENABLED else "TAG_INACTIVE"
         sources = context["enabled_sources"].get(scope, [])
         if row["status"] == TAG_REQUEST_STATUS_ENABLED:
             return "ALREADY_APPROVED" if len(current) == 1 and current[0][1] == row["proposed_tag_id"] and sources == [row["proposed_tag_id"]] else "SUGGESTION_STALE"
@@ -128,10 +128,13 @@ class TagAssignmentRequestService:
             self.mapper.begin_write()
             rows = self.mapper.by_ids(request_ids)
             by_id = {int(row["id"]): row for row in rows}
+            scopes = Counter((int(row["ledger_id"]), int(row["view_id"])) for row in rows)
             if accepted:
                 context = self.approval_context(rows)
                 rules, scope_tags = context["rules"], context["scope_tags"]
             else:
+                self.validate_read_rows(self.mapper.read_by_ids(request_ids))
+                TargetTagProjectionMapper(self.mapper.db).current_states(sorted({int(row["ledger_id"]) for row in rows}))
                 rules = self.mapper.rule_rows({int(row["rule_id"]) for row in rows})
                 scope_tags = {}
 
@@ -143,14 +146,14 @@ class TagAssignmentRequestService:
                 status = int(row["status"]) if row is not None else None
                 if row is None:
                     code = "NOT_FOUND"
+                elif scopes[int(row["ledger_id"]), int(row["view_id"])] > 1:
+                    code = "SCOPE_CONFLICT"
                 elif accepted:
                     code = self.approval_code(row, context)
                     if code is None:
                         eligible.append(row)
-                elif status == TAG_REQUEST_STATUS_REJECTED:
-                    code = "ALREADY_REJECTED"
                 elif status != TAG_REQUEST_STATUS_PENDING:
-                    code = "REQUEST_STATE_CONFLICT"
+                    code = "SUGGESTION_STALE"
                 else:
                     rule = rules.get(int(row["rule_id"]))
                     if rule is None:
@@ -158,7 +161,7 @@ class TagAssignmentRequestService:
                     if code is None:
                         eligible.append(row)
                 if code is not None:
-                    results[request_id] = TagAssignmentItemResult(request_id=request_id, result=code, status=status)
+                    results[request_id] = TagAssignmentItemResult(id=request_id, code=code, status=status)
 
             # Overflow rejects only that rule's subset. SQLite never promotes
             # counters to REAL and other rules do not lose their decisions.
@@ -172,7 +175,7 @@ class TagAssignmentRequestService:
             for row in eligible:
                 if int(row["rule_id"]) in exhausted:
                     results[int(row["id"])] = TagAssignmentItemResult(
-                        request_id=int(row["id"]), result="COUNTER_EXHAUSTED", status=TAG_REQUEST_STATUS_PENDING,
+                        id=int(row["id"]), code="COUNTER_EXHAUSTED", status=TAG_REQUEST_STATUS_PENDING,
                     )
                 else:
                     valid.append(row)
@@ -191,14 +194,22 @@ class TagAssignmentRequestService:
                     self.mapper.reject_rows([int(row["id"]) for row in valid], now=now)
                 for row in valid:
                     results[int(row["id"])] = TagAssignmentItemResult(
-                        request_id=int(row["id"]), result="APPROVED" if accepted else "REJECTED",
+                        id=int(row["id"]), code="APPROVED" if accepted else "REJECTED",
                         status=TAG_REQUEST_STATUS_ENABLED if accepted else TAG_REQUEST_STATUS_REJECTED,
                     )
+            ordered = [results[request_id] for request_id in request_ids]
+            body = TagAssignmentBatchRead(results=ordered,
+                accepted=sum(item.code == "APPROVED" for item in ordered),
+                rejected=sum(item.code == "REJECTED" for item in ordered),
+                conflicts=sum(item.code not in {"APPROVED", "REJECTED", "ALREADY_APPROVED"} for item in ordered))
+            if all(item.code == "SUGGESTION_STALE" for item in ordered):
+                # No eligible scope was changed. Mixed batches still return
+                # ordered per-scope results and commit their legal subset.
+                self.mapper.rollback()
+                raise TargetTagError(409, "suggestions are no longer applicable", code="SUGGESTION_STALE",
+                                     details=body.model_dump(mode="json"))
             self.mapper.commit()
-            return TagAssignmentBatchRead(
-                operation="APPROVE" if accepted else "REJECT",
-                items=[results[request_id] for request_id in request_ids],
-            )
+            return body
         except (IntegrityError, OperationalError) as error:
             self.mapper.rollback()
             raise TargetTagError(

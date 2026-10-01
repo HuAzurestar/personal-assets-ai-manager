@@ -36,7 +36,7 @@ def test_duplicate_blocks_automatic_but_allows_explicit_manual_mark(request_api)
         db.commit()
     eligibility = client.get(f"/paam/tag/v1/assignment_request/{ids[0]}").json()["body"]["eligibility"]
     assert eligibility == dict(can_approve=False, code="LEDGER_DUPLICATE")
-    assert _batch(client, ids)[0]["result"] == "LEDGER_DUPLICATE"
+    assert _batch(client, ids)[0]["code"] == "LEDGER_DUPLICATE"
     opened = _assignment(client, ledgers[0])
     state = opened["tag_state"] | dict(category="food")
     assert _manual(client, ledgers[0], state, opened["updated_time"]).status_code == 200
@@ -45,12 +45,12 @@ def test_duplicate_blocks_automatic_but_allows_explicit_manual_mark(request_api)
         assert db.get(AutoTagRule, rule).accepted_count == 0
 
 
-@pytest.mark.parametrize("changed,code", [("review", "LEDGER_INACTIVE"), ("rule", "RULE_STALE"),
+@pytest.mark.parametrize("changed,code", [("review", "SUGGESTION_STALE"), ("rule", "SUGGESTION_STALE"),
                                           ("value", "SUGGESTION_STALE")])
 def test_enabled_request_is_not_a_replay_when_current_premises_differ(request_api, changed, code):
     client, sessions, _, _, tags = request_api
     rule, ledgers, ids = _seed(request_api)
-    assert _batch(client, ids)[0]["result"] == "APPROVED"
+    assert _batch(client, ids)[0]["code"] == "APPROVED"
     with sessions() as db:
         if changed == "review":
             rid = db.scalar(select(ReviewAllocation.review_case_id).where(ReviewAllocation.ledger_entry_id == ledgers[0]))
@@ -61,7 +61,7 @@ def test_enabled_request_is_not_a_replay_when_current_premises_differ(request_ap
             db.execute(update(LedgerEntryTag).where(LedgerEntryTag.ledger_id == ledgers[0],
                 LedgerEntryTag.tag_id == tags["category"]["food"]).values(tag_id=tags["category"]["travel"]))
         db.commit()
-    assert _batch(client, ids)[0]["result"] == code
+    assert _batch(client, ids)[0]["code"] == code
     detail = client.get(f"/paam/tag/v1/assignment_request/{ids[0]}").json()["body"]
     assert detail["eligibility"] == dict(can_approve=False, code=code)
     with sessions() as db:
@@ -110,10 +110,10 @@ def test_both_serialized_publish_approval_orders_retire_the_old_request(request_
     client, sessions, _, _, _ = request_api
     rule, ledgers, ids = _seed(request_api)
     if approve_first:
-        assert _batch(client, ids)[0]["result"] == "APPROVED"
+        assert _batch(client, ids)[0]["code"] == "APPROVED"
     publish(sessions, ledgers[0])
     if not approve_first:
-        assert _batch(client, ids)[0]["result"] == "REQUEST_STATE_CONFLICT"
+        assert _batch(client, ids)[0]["code"] == "SUGGESTION_STALE"
     with sessions() as db:
         assert db.get(TagAssignmentRequest, ids[0]).status == (5 if approve_first else 4)
         assert db.get(AutoTagRule, rule).accepted_count == int(approve_first)
@@ -134,7 +134,11 @@ def test_concurrent_approval_either_invalidates_preview_or_is_retired_by_publica
                 assert error.code == "ENTITY_CHANGED"
                 return "STALE_PREVIEW"
         with sessions() as db:
-            return TagAssignmentRequestService(db).approve(ids)
+            try:
+                return TagAssignmentRequestService(db).approve(ids)
+            except TargetTagError as error:
+                assert error.code == "SUGGESTION_STALE"
+                return error.code
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(compete, ("publish", "approve")))
     if results[0] == "STALE_PREVIEW":

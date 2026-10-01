@@ -8,27 +8,25 @@ export function helpTip(label, copy) {
 
 const resultCopy = {
   APPROVED: "已通过并应用标签", REJECTED: "已拒绝，未改变标签",
-  ALREADY_APPROVED: "此前已通过，本次不重复累计", ALREADY_REJECTED: "此前已拒绝，本次不重复累计",
+  ALREADY_APPROVED: "此前已通过，本次不重复累计",
   SCOPE_CONFLICT: "同一账目和维度只能选择一项，请调整选择",
   RULE_STALE: "规则版本已变化，请刷新核对", LEDGER_INACTIVE: "账目已失效，请刷新核对",
   MANUAL_TAG_CONFLICT: "已有生效标签，不能强制覆盖", NOT_FOUND: "请求不存在，请刷新核对",
   LEDGER_DUPLICATE: "重复证据不参与自动标签，请人工查看原项",
-  SUGGESTION_STALE: "已批准记录与当前标签不再一致，请刷新核对",
-  REQUEST_STATE_CONFLICT: "请求已处理或失效，请刷新核对", VIEW_INACTIVE: "标签维度已停用",
+  SUGGESTION_STALE: "建议已失效或已处理，请刷新核对当前标签",
+  VIEW_INACTIVE: "标签维度已停用",
   TAG_INACTIVE: "候选标签已停用", UNKNOWN: "结果未知，请刷新核对后再决定重试",
   COUNTER_EXHAUSTED: "规则累计计数已达上限，本项未处理，请检查服务端诊断",
 };
 
 export function batchResults(body, ids, operation) {
-  const records = Array.isArray(body?.items) ? body.items : [];
+  const records = Array.isArray(body?.results) ? body.results : [];
   return ids.map((id) => {
-    const record = records.find((item) => (item.request_id ?? item.id) === id);
-    // M1 returns persisted requests; M2's per-item result contract is also supported.
-    const result = record?.result || (record?.status === (operation === "approve" ? 2 : 3)
-      ? (operation === "approve" ? "APPROVED" : "REJECTED") : "UNKNOWN");
+    const record = records.find((item) => item.id === id);
+    const result = record?.code || "UNKNOWN";
     return { id, result, copy: resultCopy[result] || resultCopy.UNKNOWN,
       category: ["APPROVED", "REJECTED"].includes(result) ? "success"
-        : ["ALREADY_APPROVED", "ALREADY_REJECTED"].includes(result) ? "handled" : "failed" };
+        : result === "ALREADY_APPROVED" ? "handled" : "failed" };
   });
 }
 
@@ -44,6 +42,7 @@ export function batchResultMarkup(items, simulated = false) {
 // rejections prove that nothing was submitted; transport/unknown errors do not.
 export function batchFailureMarkup(error, ids) {
   const rejections = {
+    SUGGESTION_STALE: [409, "所选建议已失效或已处理；请刷新查看当前标签。"],
     TAG_REQUEST_NOT_FOUND: [404, "至少一条请求不存在，请刷新核对选择。"],
     TAG_REQUEST_NOT_PENDING: [409, "至少一条请求已处理或失效，请刷新核对选择。"],
     TAG_REQUEST_STALE: [409, "至少一条申请的适用条件已变化（账目、规则、标签或人工来源），请刷新核对。"],
@@ -126,9 +125,9 @@ export function interactionMarkup(scenario) {
   const intro = '<div class="automation-notice compact"><strong>虚构交互演示 · M2-UI</strong><span>以下全部为固定样例，不读取或修改真实账本，不发送批准请求，不是当前运行结果。M2-CORE 的实际结果请看运行状态及安全诊断。</span></div>';
   if (scenario === "PARTIAL" || scenario === "MANUAL") {
     const codes = scenario === "PARTIAL" ? ["APPROVED", "NOT_FOUND", "ALREADY_APPROVED", "RULE_STALE"] : ["MANUAL_TAG_CONFLICT", "SCOPE_CONFLICT"];
-    const items = codes.map((result, index) => ({ request_id: 1001 + index, result }));
-    return intro + batchResultMarkup(batchResults({ items }, items.map((item) => item.request_id), "approve"), true)
-      + (scenario === "MANUAL" ? "<p>同值人工操作也成为人工来源；旧自动申请不得覆盖。只调整目标 View，其他 View 保持不变。此处仅为固定演示。</p>" : "");
+    const results = codes.map((code, index) => ({ id: 1001 + index, code }));
+    return intro + batchResultMarkup(batchResults({ results }, results.map((item) => item.id), "approve"), true)
+      + (scenario === "MANUAL" ? "<p>同值人工操作会取消旧自动建议；已有生效标签不得被新建议强制覆盖。只调整目标 View，其他 View 保持不变。此处仅为固定演示。</p>" : "");
   }
   if (scenario === "ZERO" || scenario === "LARGE") {
     const big = scenario === "LARGE";

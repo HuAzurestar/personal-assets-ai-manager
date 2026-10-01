@@ -844,7 +844,7 @@ def test_review_revoke_and_restore_invalidate_scan_and_pending_request(
         with sessions() as db:
             request_id = db.scalar(select(TagAssignmentRequest.id).where(TagAssignmentRequest.rule_id == rule_id))
         with sessions() as db:
-            assert TagAssignmentRequestService(db).approve([request_id]).items[0].result == "APPROVED"
+            assert TagAssignmentRequestService(db).approve([request_id]).results[0].code == "APPROVED"
 
     with sessions() as db:
         _scan_review_command(db, deactivate_review_ids=[review_id])
