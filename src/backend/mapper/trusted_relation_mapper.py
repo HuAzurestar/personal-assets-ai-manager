@@ -47,6 +47,12 @@ class TrustedRelationMapper:
         )).limit(1)
         invalid_party = select(party.id).where(party.status.not_in(("ACTIVE", "CLOSED"))).limit(1)
         leg, position, link = PositionLeg, Position, ReviewLedgerPositionLegAllocation
+        orphan_position = select(position.id).outerjoin(party, party.id == position.party_id).where(or_(
+            party.id.is_(None), position.type.not_in(("ASSET", "LIABILITY")),
+            position.status.not_in(("ACTIVE", "ARCHIVED", "SETTLED")),
+            position.usage_scenario.not_in(("GENERAL", "PERSONAL-LENDING", "SHARED-SETTLEMENT", "STORED-VALUE",
+                "DEPOSIT-PLEDGE", "REIMBURSEMENT", "CREDIT-CARD", "FORMAL-LOAN", "INVESTMENT")),
+        )).limit(1)
         broken_leg = select(leg.id).outerjoin(position, position.id == leg.position_id).outerjoin(
             r, r.id == leg.review_id).outerjoin(party, party.id == position.party_id).where(or_(
                 position.id.is_(None), r.id.is_(None), party.id.is_(None), leg.leg_amount <= 0,
@@ -72,7 +78,7 @@ class TrustedRelationMapper:
         probes = [(invalid, "RELATION_BROKEN"), (uncovered, "RELATION_BROKEN"),
                   (broken_account, "ACCOUNT_RELATION_BROKEN"), (orphan_account, "ACCOUNT_RELATION_BROKEN"),
                   (orphan_ref, "ACCOUNT_RELATION_BROKEN"), (invalid_party, "ACCOUNT_RELATION_BROKEN"),
-                  (broken_leg, "RELATION_BROKEN"),
+                  (orphan_position, "RELATION_BROKEN"), (broken_leg, "RELATION_BROKEN"),
                   (broken_link, "RELATION_BROKEN"), (over, "RELATION_BROKEN"), (broken_source, "RELATION_BROKEN")]
         code = self.db.scalar(union_all(*[
             select(literal(code).label("code")).where(probe.exists()) for probe, code in probes
