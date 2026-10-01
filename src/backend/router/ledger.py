@@ -60,11 +60,18 @@ def list_ledger_entries(
 
 @router.get("/flow/summary", response_model=LedgerEntrySummaryResponse)
 def ledger_entry_summary(
+    http_request: Request,
     date_from: date | None = None,
     date_to: date | None = None,
     timezone_name: str = Query(default="Asia/Hong_Kong", alias="timezone"),
+    account_ref_id: int | None = Query(default=None, ge=0, le=2**63 - 1),
+    account_id: int | None = Query(default=None, ge=0, le=2**63 - 1),
+    party_id: int | None = Query(default=None, ge=1, le=2**63 - 1),
+    cash_currency_code: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
+    validate_query_parameter_names(http_request, {"date_from", "date_to", "timezone",
+        "account_ref_id", "account_id", "party_id", "cash_currency_code"})
     if date_from and date_to and date_from > date_to:
         raise HTTPException(status_code=422, detail="date_from must be before date_to")
     try:
@@ -90,6 +97,8 @@ def ledger_entry_summary(
             occurred_time_start=start,
             occurred_time_end=end,
             display_timezone=display_timezone,
+            account_ref_id=account_ref_id, account_id=account_id, party_id=party_id,
+            cash_currency_code=cash_currency_code,
         )),
     )
 

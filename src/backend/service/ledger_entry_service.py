@@ -3,6 +3,9 @@ from __future__ import annotations
 from collections import defaultdict
 
 from sqlalchemy.orm import Session
+from backend.core.money import MAX_ABS_AMOUNT, normalize_currency_code
+from backend.error import ListQueryError, TargetEconomicError
+from backend.mapper.bounded_query_mapper import canonical, query_budget
 
 from backend.mapper.ledger_entry_mapper import LedgerEntryMapper
 from backend.mapper.trusted_relation_mapper import TrustedRelationMapper
@@ -122,8 +125,29 @@ class LedgerEntryService:
         return f"{behavior}：{summary}" if summary else behavior
 
     def summary(self, query: LedgerEntrySummaryQuery) -> LedgerEntrySummaryRead:
+        for dimension in ("account_ref_id", "account_id", "party_id"):
+            value = getattr(query, dimension)
+            if value is not None and (type(value) is not int or not
+                    (0 if dimension != "party_id" else 1) <= value <= 2**63 - 1):
+                raise ListQueryError("invalid account scope", code="LIST_FILTER_VALUE_INVALID")
+        if query.cash_currency_code is not None:
+            try:
+                valid = normalize_currency_code(query.cash_currency_code) == query.cash_currency_code
+            except (TypeError, ValueError):
+                valid = False
+            if not valid:
+                raise ListQueryError("invalid currency", code="LIST_FILTER_VALUE_INVALID")
+        # Complete aggregation has a different budget from paged text searches.
+        # Guard, body reads, exact sums and response projection share one snapshot
+        # and one deadline; an overflow/deadline never returns a partial SUM.
+        with query_budget(self.mapper.db, seconds=2, code="AGGREGATION_LIMIT"):
+            return self._aggregate_summary(query)
+
+    def _aggregate_summary(self, query: LedgerEntrySummaryQuery) -> LedgerEntrySummaryRead:
         self._read_snapshot()
         rows = self.mapper.summary(query)
+        if len(rows) > 50000:
+            raise TargetEconomicError(413, "aggregate exceeds contribution budget; narrow scope", code="AGGREGATION_LIMIT")
         totals = defaultdict(lambda: {
             "income_and_expense_in_amount": 0,
             "income_and_expense_out_amount": 0,
@@ -143,6 +167,8 @@ class LedgerEntryService:
             direction = "in" if row["entry_direction"] == 1 else "out"
             key = f"{type_prefixes[row['entry_type']]}_{direction}_amount"
             totals[row["currency_code"]][key] += row["amount"]
+            if totals[row["currency_code"]][key] > MAX_ABS_AMOUNT:
+                raise TargetEconomicError(413, "aggregate exceeds exact display budget; narrow scope", code="AGGREGATION_LIMIT")
             activity_key = (row["entry_type"], row["currency_code"])
             activities[activity_key][f"{direction}_amount"] += row["amount"]
             if row["entry_type"] == 0:
@@ -153,7 +179,7 @@ class LedgerEntryService:
                 )
                 day_key = (local_time.date(), row["currency_code"])
                 trend[day_key]["income_amount" if direction == "in" else "expense_amount"] += row["amount"]
-        return LedgerEntrySummaryRead(
+        result = LedgerEntrySummaryRead(
             entry_count=len(rows),
             totals=[
                 LedgerCurrencySummaryRead(currency_code=currency, **values)
@@ -177,3 +203,6 @@ class LedgerEntryService:
                 for (entry_type, currency), values in sorted(activities.items())
             ],
         )
+        if len(canonical(result.model_dump()).encode()) > 2 * 1024 * 1024:
+            raise TargetEconomicError(413, "aggregate response exceeds budget; narrow scope", code="AGGREGATION_LIMIT")
+        return result

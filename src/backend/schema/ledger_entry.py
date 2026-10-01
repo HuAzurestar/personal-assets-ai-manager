@@ -62,6 +62,10 @@ class LedgerEntrySummaryQuery:
     occurred_time_start: datetime | None = None
     occurred_time_end: datetime | None = None
     display_timezone: tzinfo | None = None
+    account_ref_id: int | None = None
+    account_id: int | None = None
+    party_id: int | None = None
+    cash_currency_code: str | None = None
 
 
 class LedgerEntryTagRead(BaseModel):
