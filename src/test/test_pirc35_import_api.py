@@ -152,3 +152,11 @@ def test_positive_orphan_source_not_silently_dropped_by_join(client):
     dict(filter=json.dumps(dict(key="id", op="=", val=2**100))), dict(sorter=json.dumps([dict(key="id", direction="asc")] * 2))])
 def test_invalid_list_capabilities_values_and_boundaries(client, params):
     assert client.get(BASE + "/import_file/list", params=params).status_code == 422
+
+
+@pytest.mark.parametrize("ids", [[{}], [[]], [True], ["1"], [2**100], [1, 1], [], [1] * 101])
+def test_relation_ids_reject_invalid_input_before_hashing_or_sql(client, ids):
+    file_id = preview(client)["files"][0]["file_id"]
+    response = client.get(BASE + f"/import_file/{file_id}/row/relations", params={"row_ids": json.dumps(ids)})
+    assert response.status_code == 422, response.text
+    assert response.json()["body"]["code"] == "INPUT_LIMIT"

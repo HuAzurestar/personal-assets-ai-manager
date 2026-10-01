@@ -18,6 +18,7 @@ import time
 
 import httpx
 from playwright.sync_api import expect, sync_playwright
+from import_batch_helpers import confirm_api_batch
 
 
 def verify_filters(page, base):
@@ -195,8 +196,9 @@ def run():
 
                 def import_files(files):
                     plan = post("/paam/import/v1/preview", {"files": files})
-                    assert plan["can_confirm"], "Sample preview needs attention"
-                    post(f"/paam/import/v1/preview/{plan['token']}/confirm", {"version": plan["version"]})
+                    assert plan["issue_count"] == 0, "Sample preview needs attention"
+                    response = confirm_api_batch(client, plan)
+                    response.raise_for_status()
 
                 if args.samples:
                     files = [{"filename": file.name, "content_base64": base64.b64encode(file.read_bytes()).decode()} for file in sorted(args.samples.iterdir()) if file.suffix.lower() in {".csv", ".xls", ".xlsx", ".pdf"}]

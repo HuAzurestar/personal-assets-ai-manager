@@ -12,6 +12,7 @@ from backend.core import target_database
 from backend.entity import LedgerEntry, ReviewAllocation, ReviewCase, TransactionFact
 from backend.schema.intake import IntakeConfirmRequest, IntakePreviewRequest
 from backend.service.target_intake_service import TargetIntakeService
+from import_batch_helpers import confirm_service_batch
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures/pirc35"
 
@@ -45,8 +46,8 @@ def test_derived_format_import_has_exact_coverage(sample):
             "filename": sample["file"], "content_base64": base64.b64encode(content).decode(),
         }])
         preview = service.preview(payload, source_timezone=ZoneInfo("Asia/Hong_Kong"))
-        assert preview["can_confirm"]
-        service.confirm(preview["token"], IntakeConfirmRequest(version=preview["version"]))
+        assert preview["issue_count"] == 0
+        confirm_service_batch(service, preview)
         count = sample["mock_rows"]
         assert db.scalar(select(func.count(TransactionFact.id))) == count
         assert db.scalar(select(func.count(ReviewCase.id))) == count

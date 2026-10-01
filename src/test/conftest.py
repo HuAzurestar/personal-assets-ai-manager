@@ -5,6 +5,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from backend.core import target_database
+from backend.core.import_preview_store import import_preview_store
 
 
 def pytest_addoption(parser):
@@ -25,6 +26,7 @@ def pytest_collection_modifyitems(config, items):
 
 @pytest.fixture(autouse=True)
 def isolate_default_database(tmp_path, monkeypatch):
+    import_preview_store.clear()
     path = tmp_path / "default-runtime.db"
     engine = create_engine(
         f"sqlite:///{path}",
@@ -40,4 +42,5 @@ def isolate_default_database(tmp_path, monkeypatch):
     try:
         yield
     finally:
+        import_preview_store.clear()
         engine.dispose()

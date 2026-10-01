@@ -126,6 +126,18 @@ export async function mountImportBatch(host, initial, changed) {
     update();
     const observed = [];
     try {
+      // A prior SKIPPED/INVALID row is already terminal before a recheck.
+      // Do not let that old state unlock writes while the original POST owns
+      // the preview. A resident claimed token cannot be evicted by the server.
+      let confirming = false;
+      if (retained?.token) {
+        try {
+          const current = await request(`/paam/import/v1/preview/${retained.token}`, { signal });
+          confirming = current.status === "CONFIRMING";
+        } catch (error) {
+          if (error.status !== 410) throw error;
+        }
+      }
       // Sequential bounded GETs, exact selected row numbers, no POST retry.
       const byFile = new Map();
       for (const row of rows) {
@@ -154,6 +166,10 @@ export async function mountImportBatch(host, initial, changed) {
       if (!live()) return;
       find("[data-batch-verification]").innerHTML = `<h3>当前持久状态（不是首次命令回执）</h3>${observed.map(row => `<p>文件 #${row.file_id} 第 ${row.source_row_number} 行：${row.actual ? `${statusNames[row.actual.row_status]} · Fact #${row.actual.transaction_id}` : "尚无持久结果；不证明请求未提交"}</p>`).join("")}<p>金融效果按当前Review状态核对；重复证据不是额外现金。</p>${relations.filter(row => row.review_id).map(row => `<p>第 ${row.source_row_number} 行 · Review #${row.review_id} ${esc(row.review_status)} · Ledger #${row.ledger_id} · 来源卡 #${row.account_ref_id}</p>`).join("")}${observed.every(row => row.actual && [1, 2, 3].includes(row.actual.row_status)) ? '<button type="button" data-batch-observed>我已核对这些行，开始新的明确批次</button>' : ""}`;
       const observedButton = find("[data-batch-observed]");
+      if (observedButton && confirming) {
+        observedButton.disabled = true;
+        status("原请求仍在执行；这些可能是重查前的旧状态。保持结果未知，稍后重新核对。");
+      }
       if (observedButton) observedButton.onclick = async () => { localStorage.removeItem(pendingKey); context.unknown = false; context.selected.clear(); context.dirty = false; await refresh(); };
     } catch (error) { status(`无法核实：${error.message}。保持结果未知，不自动重发。`); }
     finally { context.busy = false; update(); }

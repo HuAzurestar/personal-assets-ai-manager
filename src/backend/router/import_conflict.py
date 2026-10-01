@@ -3,10 +3,18 @@ from fastapi import APIRouter
 from backend.router.error import DomainErrorRoute
 from backend.error import TargetIntakeError
 
-router = APIRouter(prefix="/paam/import/v1", tags=["import-fact-conflict"], route_class=DomainErrorRoute)
+router = APIRouter(
+    prefix="/paam/import/v1",
+    tags=["import-fact-conflict"],
+    route_class=DomainErrorRoute,
+)
 
 
 @router.get("/fact_conflict/list", deprecated=True)
+def retired_list():
+    return retired()
+
+
 @router.get("/fact_conflict/{conflict_id}", deprecated=True)
 @router.post("/fact_conflict/{conflict_id}/resolve", deprecated=True)
 @router.post("/fact_conflict/{conflict_id}/dismiss", deprecated=True)

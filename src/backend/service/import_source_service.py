@@ -60,7 +60,7 @@ class ImportSourceService:
                 valid = isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
             elif key == "source_row_number" and expression.op == "between":
                 between = BetweenValue.model_validate(value)
-                valid = type(between.start) is int and type(between.end) is int and 0 < between.start < between.end
+                valid = type(between.start) is int and type(between.end) is int and 0 < between.start < between.end <= 2**63 - 1
                 expression.val = between.model_dump()
             else:
                 allowed = {"source_type": {0, 1, 101, 102, 201, 202, 203}, "file_format": {0, 1, 2, 3, 4},
@@ -112,7 +112,8 @@ class ImportSourceService:
         return self.read(action, limit=1024 * 1024)
 
     def row_relations(self, file_id, row_ids):
-        if not 1 <= len(row_ids) <= 100 or len(set(row_ids)) != len(row_ids) or any(type(id) is not int or id <= 0 for id in row_ids):
+        if not isinstance(row_ids, list) or not 1 <= len(row_ids) <= 100 or \
+           any(type(id) is not int or not 0 < id <= 2**63 - 1 for id in row_ids) or len(set(row_ids)) != len(row_ids):
             fail("INPUT_LIMIT", 422)
         def action():
             self.file(file_id)

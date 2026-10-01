@@ -75,3 +75,11 @@ def test_application_handler_formats_unmatched_route():
         "message": "Not Found",
         "body": {"code": "HTTP_404"},
     }
+
+
+def test_internal_error_log_never_contains_exception_or_traceback(caplog):
+    response = _client().get("/unexpected")
+    assert response.status_code == 500
+    assert "INTERNAL_SERVER_ERROR" in caplog.text
+    assert "private implementation detail" not in caplog.text
+    assert all(record.exc_info is None for record in caplog.records)

@@ -130,11 +130,9 @@ def _http_error_response(error: HTTPException) -> JSONResponse:
 
 
 def _internal_error_response(request: Request, error: Exception) -> JSONResponse:
-    logger.error(
-        "Unhandled error while processing %s",
-        request.url.path,
-        exc_info=error,
-    )
+    # SQL/driver exceptions can embed complete source payloads and parameters.
+    # Neither exception text/traceback nor client-controlled paths are logs.
+    logger.error("Unhandled application error code=INTERNAL_SERVER_ERROR")
     return _error_response(
         500,
         "Internal server error",

@@ -123,6 +123,10 @@ def _read_zip(content: bytes, password: str | None, *, max_bytes=MAX_ARCHIVE_ENT
             members = archive.infolist()
             if len(members) > max_members or sum(entry.file_size for entry in members) > max_bytes:
                 raise ValueError("ZIP decoded content exceeds the safety limit")
+            for member in members:
+                path = PurePosixPath(member.filename.replace('\\', '/'))
+                if path.is_absolute() or ".." in path.parts or any(':' in part for part in path.parts):
+                    raise ValueError("ZIP contains an unsupported file entry")
             entries = [entry for entry in members if not entry.is_dir()]
             if len(entries) != 1:
                 raise ValueError("ZIP must contain exactly one CSV, XLS, or XLSX file")

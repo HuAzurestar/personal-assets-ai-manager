@@ -2,7 +2,8 @@
 from copy import deepcopy
 from datetime import datetime, timezone
 import pytest
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, update, insert
+from backend.core.import_identity import fact_values
 
 from backend.core import target_database
 from backend.core.import_identity import raw_evidence
@@ -192,3 +193,57 @@ def test_every_write_stage_failure_rolls_back_whole_batch(mapper, stage):
     for entity in (TransactionFact, ReviewCase, LedgerEntry, ReviewAllocation, TransactionImportRow):
         assert count(mapper, entity) == 0
     assert mapper.progress([next(iter(rows))[0]])[0]["remaining"] == 1
+
+
+def seed_existing_candidates(mapper, number):
+    original = row()
+    raw_hash, payload = raw_evidence(original, {})
+    file = TransactionImportFile(filename="fictional-legacy.csv", sha256="a" * 64, source_type=201,
+        file_format=1, status=1, total_count=number, success_count=number)
+    fact = TransactionFact(**(fact_values(original, "a" * 64) | dict(fact_key="legacy-first")))
+    mapper.db.add_all([file, fact])
+    mapper.db.flush()
+    mapper.db.execute(insert(TransactionImportRow), [dict(transaction_import_file_id=file.id, source_row_number=index,
+        source_reference=original["reference"], transaction_fact_id=fact.id, row_status=1, raw_hash=raw_hash,
+        raw_payload=payload) for index in range(1, number + 1)])
+    mapper.db.commit()
+    return original, file.id, fact.id
+
+
+def test_ambiguous_legacy_source_identity_never_chooses_latest(mapper):
+    original, file_id, _fact_id = seed_existing_candidates(mapper, 1)
+    second = TransactionFact(**(fact_values(original, "a" * 64) | dict(fact_key="legacy-second")))
+    mapper.db.add(second)
+    mapper.db.flush()
+    raw_hash, payload = raw_evidence(original, {})
+    mapper.db.add(TransactionImportRow(transaction_import_file_id=file_id, source_row_number=2,
+        source_reference=original["reference"], transaction_fact_id=second.id, row_status=1,
+        raw_hash=raw_hash, raw_payload=payload))
+    mapper.db.execute(update(TransactionImportFile).where(TransactionImportFile.id == file_id).values(total_count=2, success_count=2))
+    mapper.db.commit()
+    rows = prepare(mapper, [original], sha="b" * 64)
+    candidates = mapper.match(rows, {})
+    candidate = next(iter(candidates.values()))
+    assert (candidate["classification"], candidate["issue"], candidate["fact_id"]) == ("AMBIGUOUS", "IDENTITY_AMBIGUOUS", 0)
+    with pytest.raises(TargetIntakeError, match="IDENTITY_AMBIGUOUS"):
+        accept(mapper, rows)
+    assert count(mapper, TransactionFact) == 2 and count(mapper, ReviewCase) == 0
+
+
+def test_more_than_50000_source_candidates_fails_not_truncated_match(mapper):
+    original, _file_id, _fact_id = seed_existing_candidates(mapper, 50001)
+    rows = prepare(mapper, [original], sha="b" * 64)
+    with pytest.raises(TargetIntakeError, match="IMPORT_MATCH_LIMIT"):
+        mapper.match(rows, {})
+    assert count(mapper, TransactionFact) == 1 and count(mapper, ReviewCase) == 0
+
+
+@pytest.mark.parametrize("disposition", ["non_posted", "neutral_evidence"])
+def test_non_cash_source_evidence_explicit_skip_is_not_a_zero_fact(mapper, disposition):
+    rows = prepare(mapper, [row(disposition=disposition)])
+    with pytest.raises(TargetIntakeError, match="ROW_INVALID"):
+        accept(mapper, rows)
+    result = accept(mapper, rows, {key: dict(decision="SKIP") for key in rows})
+    assert result["new_fact_count"] == 0 and result["skipped_count"] == 1
+    assert result["files"][0]["status"] == 1
+    assert count(mapper, TransactionFact) == count(mapper, ReviewCase) == 0

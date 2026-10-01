@@ -135,9 +135,9 @@ def identify(text: str, filename: str, headers: list[str], override: str | None)
     raise ValueError("来源证据不足，请在预览中选择来源")
 
 
-def read_table(content: bytes, extension: str):
+def read_tables(content: bytes, extension: str):
     if extension == ".csv":
-        return list(csv.reader(io.StringIO(_decode_csv(content))))
+        return [list(csv.reader(io.StringIO(_decode_csv(content))))]
     if extension == ".xlsx":
         with zipfile.ZipFile(io.BytesIO(content)) as archive:
             if (
@@ -157,19 +157,18 @@ def read_table(content: bytes, extension: str):
                     ]
                     if any(any(v for v in row) for row in rows):
                         nonempty.append(rows)
-                if len(nonempty) != 1:
-                    raise ValueError("需要一个明细工作表，请分别导出多个账单工作表")
-                return nonempty[0]
+                if not nonempty:
+                    raise ValueError("文件没有明细工作表")
+                return nonempty
             finally:
                 book.close()
     if extension == ".xls":
         book = xlrd.open_workbook(file_contents=content, on_demand=True)
         try:
             sheets = [s for s in book.sheets() if s.nrows]
-            if len(sheets) != 1:
-                raise ValueError("需要一个明细工作表")
-            sheet = sheets[0]
-            return [
+            if not sheets:
+                raise ValueError("文件没有明细工作表")
+            return [[
                 [
                     _stringify(
                         xlrd.xldate.xldate_as_datetime(
@@ -181,16 +180,16 @@ def read_table(content: bytes, extension: str):
                     for j in range(sheet.ncols)
                 ]
                 for i in range(sheet.nrows)
-            ]
+            ] for sheet in sheets]
         finally:
             book.release_resources()
     raise ValueError("支持 CSV、XLS、XLSX、PDF 和 ZIP")
 
 
-def pdf_table(content: bytes):
+def pdf_table(content: bytes, password: str | None = None):
     tables, metadata, provider = [], "", None
     try:
-        with pdfplumber.open(io.BytesIO(content)) as document:
+        with pdfplumber.open(io.BytesIO(content), password=password) as document:
             if len(document.pages) > 100:
                 raise ValueError("PDF 超过 100 页，请按区间导出")
             for page_number, page in enumerate(document.pages, 1):
@@ -199,17 +198,22 @@ def pdf_table(content: bytes):
                     raise ValueError(
                         "PDF 没有可读取文本；请提供银行电子明细，而非扫描图片"
                     )
-                if provider is None:
-                    provider = (
+                words = page.extract_words(x_tolerance=1, y_tolerance=2)
+                possible_heading = next((w for w in words if w["text"] in {"记账日期", "交易日期"}), None)
+                header_text = "".join(w["text"] for w in words if possible_heading and w["top"] < possible_heading["top"])
+                detected = (
                         "cmb"
-                        if "招商银行" in text
+                        if "招商银行" in header_text
                         else "abc"
-                        if "农业银行" in text
+                        if "农业银行" in header_text
                         else None
                     )
+                if provider is None:
+                    provider = detected
+                elif detected is not None and provider != detected:
+                    raise ValueError("PDF 包含不同银行的账单页")
                 if provider not in {"cmb", "abc"}:
                     raise ValueError("尚未识别该 PDF 的银行明细格式")
-                words = page.extract_words(x_tolerance=1, y_tolerance=2)
                 date_label = "记账日期" if provider == "cmb" else "交易日期"
                 heading = next((w for w in words if w["text"] == date_label), None)
                 if not heading:
@@ -334,56 +338,72 @@ def parse_statement(
         archive_entry, content = _read_zip(content, password, max_bytes=MAX_UPLOAD_BYTES)
         extension = Path(archive_entry).suffix.lower()
     if extension == ".pdf":
-        detected, preamble, raw_rows = pdf_table(content)
-        if source and source != detected:
-            raise ValueError(f"PDF 正文来自{LABELS[detected]}，与所选来源不符")
-        provider = detected
-        indexed_rows = list(enumerate(raw_rows, 1))
-    else:
-        try:
-            table = read_table(content, extension)
-        except (
-            OSError,
-            zipfile.BadZipFile,
-            xlrd.XLRDError,
-            KeyError,
-            TypeError,
-        ) as error:
-            raise ValueError("表格损坏或内容与扩展名不符") from error
-        idx = next(
-            (
-                i
-                for i, row in enumerate(table[:80])
-                if any(
-                    str(v).strip() in {"交易金额", "金额", "金额(元)", "金额（元）"}
-                    for v in row
-                )
-                and len(row) > 3
-            ),
-            None,
-        )
-        if idx is None:
-            raise ValueError("未找到交易表头")
-        headers = [str(v).strip() for v in table[idx]]
-        if len([h for h in headers if h]) != len(set(h for h in headers if h)):
-            raise ValueError("表头存在重复字段，不能可靠匹配")
-        preamble = "\n".join(" ".join(map(str, row)) for row in table[:idx])
-        provider = identify(preamble, archive_entry or filename, headers, source)
-        indexed_rows = []
-        for n, values in enumerate(table[idx + 1 :], idx + 2):
-            if not any(str(v).strip() for v in values):
-                continue
-            nonempty = [str(v).strip() for v in values if str(v).strip()]
-            if len(nonempty) == 1 and (
-                nonempty[0].startswith(
-                    ("共计", "导出时间", "温馨提示", "说明：", "收入：", "支出：")
-                )
-                or set(nonempty[0]) <= {"-", "="}
-            ):
-                continue
-            indexed_rows.append(
-                (n, {h: str(v).strip() for h, v in zip(headers, values) if h})
+        provider, preamble, raw_rows = pdf_table(content, password=password)
+        if source and source != provider:
+            raise ValueError("PDF source does not match selected bank")
+        return _parse_document(list(enumerate(raw_rows, 1)), preamble, provider,
+                               filename, sha, extension, archive_entry, source_timezone)
+    try:
+        tables = read_tables(content, extension)
+    except (OSError, zipfile.BadZipFile, xlrd.XLRDError, KeyError, TypeError) as error:
+        raise ValueError("Invalid statement workbook") from error
+    documents, offset, total = [], 0, 0
+    for table in tables:
+        provider, preamble, indexed_rows = _tabular_rows(table, archive_entry or filename, source)
+        indexed_rows = [(number + offset, raw) for number, raw in indexed_rows]
+        total += len(indexed_rows)
+        if total > MAX_ROWS:
+            raise ValueError("Statement exceeds 20000 source rows")
+        document = _parse_document(indexed_rows, preamble, provider,
+                                   filename, sha, extension, archive_entry, source_timezone)
+        if documents and provider != documents[0]["source_type"]:
+            raise ValueError("Workbook contains different source providers")
+        documents.append(document)
+        offset += len(table)
+    document = documents[0]
+    document["rows"] = [row for item in documents for row in item["rows"]]
+    return document
+
+
+def _tabular_rows(table, filename, source):
+    idx = next(
+        (
+            i
+            for i, row in enumerate(table[:80])
+            if any(
+                str(v).strip() in {"交易金额", "金额", "金额(元)", "金额（元）"}
+                for v in row
             )
+            and len(row) > 3
+        ),
+        None,
+    )
+    if idx is None:
+        raise ValueError("未找到交易表头")
+    headers = [str(v).strip() for v in table[idx]]
+    if len([h for h in headers if h]) != len(set(h for h in headers if h)):
+        raise ValueError("表头存在重复字段，不能可靠匹配")
+    preamble = "\n".join(" ".join(map(str, row)) for row in table[:idx])
+    provider = identify(preamble, filename, headers, source)
+    indexed_rows = []
+    for n, values in enumerate(table[idx + 1 :], idx + 2):
+        if not any(str(v).strip() for v in values):
+            continue
+        nonempty = [str(v).strip() for v in values if str(v).strip()]
+        if len(nonempty) == 1 and (
+            nonempty[0].startswith(
+                ("共计", "导出时间", "温馨提示", "说明：", "收入：", "支出：")
+            )
+            or set(nonempty[0]) <= {"-", "="}
+        ):
+            continue
+        indexed_rows.append(
+            (n, {h: str(v).strip() for h, v in zip(headers, values) if h})
+        )
+    return provider, preamble, indexed_rows
+
+
+def _parse_document(indexed_rows, preamble, provider, filename, sha, extension, archive_entry, source_timezone):
     if len(indexed_rows) > MAX_ROWS:
         raise ValueError("文件超过20,000来源行")
     compact = re.sub(r"\s+", "", preamble)
@@ -401,6 +421,10 @@ def parse_statement(
     )
     profile = profile_match.group(1).strip() if profile_match else ""
     number = number_match.group(1) if number_match else ""
+    if provider in BANKS:
+        numbers = set(re.findall(r"(?:卡号/账号|账号|账户)[：:]([\d*]{10,30})(?!\d)", compact))
+        if len(numbers) > 1:
+            raise ValueError("同一账单段含多个本方账号，不能可靠分配来源身份")
     if provider in BANKS and not number:
         raise ValueError("银行明细缺少本方账号，请在文件中保留账户信息")
     account = {
@@ -411,19 +435,16 @@ def parse_statement(
         "display_name": f"{LABELS[provider]} · 尾号 {number[-4:]}" if number else "",
     }
     rows = []
+    document_currency = re.search(r"(?:币种|币别|货币)[：:]([^\s\n]+)", preamble)
     for n, raw in indexed_rows:
         try:
-            if provider == "abc":
-                currency_match = re.search(r"币种[：:]([^\s\n]+)", preamble)
-                if not currency_match:
-                    raise ValueError("农行文档缺少币种信息")
-                raw = {**raw, "币种": currency_match.group(1)}
             row = normalise_statement_row(
                 provider,
                 raw,
                 profile,
                 account,
                 source_timezone,
+                document_currency=document_currency.group(1) if document_currency else "",
             )
             row.update(row_number=n, raw=raw, error=None)
         except ValueError as error:
@@ -432,6 +453,7 @@ def parse_statement(
                 "raw": raw,
                 "error": str(error),
                 "disposition": "error",
+                "source_type": provider, "account": dict(account), "profile": profile,
             }
         rows.append(row)
     # Check the declared row count and CCB debit/credit totals before offering confirmation.
@@ -466,6 +488,7 @@ def normalise_statement_row(
     profile: str,
     account: dict,
     source_timezone: tzinfo,
+    *, document_currency: str = "",
 ) -> dict:
     bank = provider in BANKS
 
@@ -483,7 +506,9 @@ def normalise_statement_row(
         amount = amount_minor(value("交易金额"))
         balance = value("账户余额", "本次余额", "联机余额")
         balance = amount_minor(balance) if balance else None
-        currency = value("币别", "货币", "币种") or "CNY"
+        currency = value("币别", "货币", "币种") or document_currency
+        if not currency:
+            raise ValueError("银行明细缺少币种信息")
         merchant = value("对手信息", "对方账号与户名")
         note = " · ".join(
             dict.fromkeys(
@@ -533,7 +558,9 @@ def normalise_statement_row(
         # A merchant order is not a platform transaction ID.
         if not value("交易订单号", "交易单号", "交易号", "支付宝交易号", "交易订单号"):
             reference = ""
-        currency = value("币种", "货币") or "CNY"
+        # These identified wallet export templates are denominated in CNY;
+        # explicit foreign currency remains an error rather than being replaced.
+        currency = value("币种", "货币") or document_currency or "CNY"
         direction = value("收/支", "收支")
         status = value("交易状态", "当前状态")
         category = value("交易分类", "交易类型")

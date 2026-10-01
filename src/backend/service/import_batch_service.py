@@ -214,9 +214,10 @@ class ImportBatchService:
                 self.mapper.begin_write()
                 current = self.mapper.match(rows, choices)
                 # Processed-row errors have a distinct action from stale inputs.
-                self.mapper.validate_selection(current, choices)
+                self.mapper.validate_selection(current, choices, processed_only=True)
                 if any(current[key]["premise_hash"] != state.candidates[key]["premise_hash"] for key in order):
                     fail("STALE_PREVIEW")
+                self.mapper.validate_selection(current, choices)
                 result = self.mapper.write_batch(current, choices, order, fault=fault)
                 if monotonic() - self.mapper.write_started > 2:
                     fail("WRITE_BUSY", 503)

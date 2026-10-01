@@ -353,7 +353,7 @@ class ImportBatchMapper(ReviewCommandMapper):
         return result
 
     @staticmethod
-    def validate_selection(candidates, choices):
+    def validate_selection(candidates, choices, *, processed_only=False):
         for key, candidate in candidates.items():
             choice, stored = choices.get(key), candidate["stored"]
             if choice is None:
@@ -365,8 +365,10 @@ class ImportBatchMapper(ReviewCommandMapper):
                     fail("ROW_RECHECK_REQUIRED")
                 if choice["decision"] != "ACCEPT":
                     fail("ROWS_ALREADY_PROCESSED")
-            if choice["decision"] == "ACCEPT" and candidate["issue"]:
-                fail("ROW_INVALID" if candidate["issue"] in {"NON_POSTED_EVIDENCE", "NEUTRAL_EVIDENCE"} else candidate["issue"], 422)
+            if not processed_only and choice["decision"] == "ACCEPT" and candidate["issue"]:
+                code = candidate["issue"]
+                fail("ROW_INVALID" if code in {"NON_POSTED_EVIDENCE", "NEUTRAL_EVIDENCE"} else code,
+                     409 if code.startswith("ACCOUNT_") else 422)
 
     def write_batch(self, candidates, choices, order, *, fault=None):
         self.validate_selection(candidates, choices)

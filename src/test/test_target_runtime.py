@@ -66,8 +66,9 @@ def test_openapi_locks_canonical_ledger_v1_contract():
         "ReviewPreviewResponse",
         "ReviewCommandResponse",
         "ReviewCaseListResponse",
-        "ImportFactConflictResponse",
-        "ImportFactConflictListResponse",
+        "ImportPreviewResponse",
+        "ImportConfirmResponse",
+        "SourceRowDetailResponse",
         "ImportFileSummaryResponse",
         "LedgerAccountResponse",
         "TargetReviewCandidateListResponse",
@@ -183,7 +184,12 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
             assert script.status_code == 200
             assert "/paam/ledger/v1/flow" in script.text
             assert "ledger_type" not in script.text
-            assert "/paam/import/v1/preview/" in script.text
+            assert "mountImportBatch" in script.text
+            import_script = client.get("/static/js/view/import-batch.js")
+            assert import_script.status_code == 200
+            assert "/paam/import/v1/preview/" in import_script.text
+            assert "expected_updated_time" in import_script.text
+            assert "selected_rows" in import_script.text
             assert "/paam/ledger/v1/flow" in script.text
             assert "/paam/ledger/v1/review" in script.text
             assert "mountReviewWorkbench" in script.text

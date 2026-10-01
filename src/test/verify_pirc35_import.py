@@ -90,6 +90,9 @@ def run():
                     assert page.evaluate("localStorage.getItem('paam.import.pending.v1')") is None
                     assert len(confirmations) == 2
                     page.unroute("**/paam/import/v1/preview/*/confirm", dropped_reply)
+                    page.goto(base + "/#workbench/import/history")
+                    expect(page.locator('[data-form="history-filter"]')).to_be_visible()
+                    expect(page.locator('[data-action="import-file-detail"]')).to_have_count(1)
                     files = client.get("/paam/import/v1/import_file/list").json()["body"]["items"]
                     assert len(files) == 1 and files[0]["success_count"] == 24
                     # Persisted list is light; private raw evidence is fetched on demand.

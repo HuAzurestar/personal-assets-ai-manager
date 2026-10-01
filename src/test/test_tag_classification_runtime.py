@@ -16,6 +16,7 @@ from configure_tag_classification import install  # noqa: E402
 from test_auto_tag_scan import scan_runtime as scan_runtime  # noqa: E402, F401
 from test_live_tag_scan import _body, _install_runtime, _response, _set_enabled, _wait  # noqa: E402
 from backend import target_main  # noqa: E402
+from import_batch_helpers import confirm_api_batch
 
 
 @pytest.fixture(autouse=True)
@@ -63,7 +64,7 @@ def test_preset_is_idempotent_and_import_cron_review_remain_independent(scan_run
             "filename": "fictional-scenario.csv",
             "content_base64": base64.b64encode(stream.getvalue().encode()).decode(),
         }]}))
-        _body(client.post(f"/paam/import/v1/preview/{preview['token']}/confirm", json={"version": preview["version"]}))
+        _body(confirm_api_batch(client, preview))
         assert calls == []  # Import never invokes the model or a scan callback.
 
         for row in first["configuration"]:
