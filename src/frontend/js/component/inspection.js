@@ -115,7 +115,7 @@ function allocationSection(presentation, allocations, facts, ledgers, reviews, c
 }
 
 function evidenceRow(row) {
-  return `<article class="inspection-source-row"><div><span class="inspection-status status-${row.row_status}">${esc(rowStates[row.row_status] || "状态未识别")}</span><strong>${esc(row.filename)}</strong><p>${esc(`${sources[row.source_type] || "来源未识别"} · 第 ${row.source_row_number} 行`)}</p>${row.issue_message ? `<small>${esc(row.issue_message)}</small>` : ""}</div>${relationButton("file", row.transaction_import_file_id, "查看来源文件")}${jsonPayload(row.raw_payload)}</article>`;
+  return `<article class="inspection-source-row"><div><span class="inspection-status status-${row.row_status}">${esc(rowStates[row.row_status] || "状态未识别")}</span><strong>${esc(row.filename)}</strong><p>${esc(`${sources[row.source_type] || "来源未识别"} · 第 ${row.source_row_number} 行`)}</p><small>${esc(row.source_reference)}</small></div>${relationButton("file", row.source_file_id, "查看来源文件")}<button data-fact-source-evidence="${row.id}" data-file-id="${row.source_file_id}">读取此行原始证据（只读）</button></article>`;
 }
 
 function rowReason(row, normalized) {
@@ -190,6 +190,13 @@ function describe(kind, data) {
   if (adapters.has(kind)) return adapters.get(kind).describe(data);
   const p = new Presentation();
   let item, title, subtitle, hero = "", body = "", actions = "";
+  if (kind === 'fact' && data.paged_relations) {
+    const fact = data.fact;
+    return {title:businessTitle(fact), subtitle:`Fact #${fact.id} · 分页只读详情`, hero:amount(fact),
+      body:'<p>完整 Fact 详情超出预算，以下只读取当前关系页；没有截断合计。原文通过来源行单独读取。</p>'
+        + [['allocation','第一段分占与原始审查'],['source_row','脱敏来源索引']].map(([name,label]) => `<section class="inspection-card" data-fact-relation="${name}" data-fact-id="${fact.id}"><h3>${label}</h3><div data-rel-items></div><nav class="inspection-pagination"><span data-rel-status>正在读取…</span><button data-rel-prev disabled>上一页</button><button data-rel-next disabled>下一页</button></nav></section>`).join(''),
+      actions:'来源事实不可修改',presentation:p,kind:'fact-paged'};
+  }
   if (kind === "review" && data.paged_relations) {
     const review = data.review;
     const relations = [['allocation','Fact → Ledger 关系'], ['flow','原始现金结果'],
@@ -213,10 +220,11 @@ function describe(kind, data) {
     title = businessTitle(item);
     subtitle = `${when(item.occurred_time)} · ${direction(item.cash_direction)}`;
     hero = amount(item);
-    const reviewIds = new Set(data.reviews.filter(row => row.status === 0).map(row => row.id));
-    const active = data.allocations.filter(row => reviewIds.has(row.review_case_id) && row.currency_code === item.currency_code);
-    const allocated = active.reduce((sum, row) => sum + row.amount, 0);
-    body = metrics([["已进入账本", amount({ ...item, amount: allocated }), "accent"], ["尚未分配", amount({ ...item, amount: item.amount - allocated })], ["来源行", data.import_evidence.length]])
+    const reviewIds = new Set(data.reviews.filter(row => row.status === 'CONFIRMED').map(row => row.id));
+    const active = data.allocations.filter(row => reviewIds.has(row.review_id) && row.cash_currency_code === item.currency_code);
+    const allocated = active.reduce((sum, row) => sum + row.cash_amount, 0);
+    body = metrics([["有效解释覆盖", amount({ ...item, amount: allocated }), "accent"], ["尚未解释", amount({ ...item, amount: item.amount - allocated })], ["来源行", data.import_evidence.length]])
+      + '<p>分占覆盖包含 DUPLICATE 证据，不等于现金统计。现金计量须核对有效且非重复的 Ledger；多个来源行不是多笔现金。</p>'
       + '<div class="inspection-dashboard">'
       + card("交易概览", fields([["摘要", item.summary], ["交易对手", item.counterparty_name], ["本方账户", readableAccount(item.account_code)], ["发生时间", when(item.occurred_time)]]), { tone: "accent" })
       + card(`来源行 · ${data.import_evidence.length}`, p.collection(data.import_evidence, evidenceRow, "行来源证据"))
@@ -267,6 +275,16 @@ function describe(kind, data) {
 
 async function load(kind, id) {
   if (adapters.has(kind)) return adapters.get(kind).load(id);
+  if (kind === 'fact') {
+    try { return await request(`${endpoints.fact}${id}`); }
+    catch (error) {
+      if (error.code !== 'DETAIL_LIMIT') throw error;
+      const query = new URLSearchParams({page_index:'1',page_size:'1',filter:JSON.stringify({key:'id',op:'=',val:Number(id)})});
+      const page = await request(`${endpoints.fact}list?${query}`);
+      if (page.total !== 1 || page.items.length !== 1) throw new Error('来源事实不存在，请重新读取');
+      return {paged_relations:true,fact:page.items[0]};
+    }
+  }
   if (kind === 'review') {
     try { return await request(`${endpoints.review}${id}`); }
     catch (error) {
@@ -295,10 +313,11 @@ async function load(kind, id) {
 }
 
 function mountFlowRelations(root) {
-  root.querySelectorAll('[data-flow-relation], [data-review-relation]').forEach(panel => {
+  root.querySelectorAll('[data-flow-relation], [data-review-relation], [data-fact-relation]').forEach(panel => {
+    const isFact = !!panel.dataset.factRelation;
     const isReview = !!panel.dataset.reviewRelation;
-    const name = panel.dataset.reviewRelation || panel.dataset.flowRelation;
-    const url = `${isReview ? endpoints.review : endpoints.ledger}${isReview ? panel.dataset.reviewId : panel.dataset.ledgerId}/${name}/list`;
+    const name = panel.dataset.factRelation || panel.dataset.reviewRelation || panel.dataset.flowRelation;
+    const url = isFact ? `/paam/ledger/v1/fact/${panel.dataset.factId}/${name}/list` : `${isReview ? endpoints.review : endpoints.ledger}${isReview ? panel.dataset.reviewId : panel.dataset.ledgerId}/${name}/list`;
     let page = 1, busy = false, total = 0;
     const prev = panel.querySelector('[data-rel-prev]'), next = panel.querySelector('[data-rel-next]');
     async function fetchPage(target) {
@@ -310,7 +329,7 @@ function mountFlowRelations(root) {
         const result = await request(`${url}?page_index=${target}&page_size=20`);
         if (!panel.isConnected) return;
         page = result.page_index; total = result.total;
-        panel.querySelector('[data-rel-items]').innerHTML = result.items.map(row => isReview ? reviewRelationRow(name, row) : name === 'tag'
+        panel.querySelector('[data-rel-items]').innerHTML = result.items.map(row => isFact ? name === 'source_row' ? evidenceRow(row) : `<article class="inspection-flow"><strong>${esc(amount(row.allocation))}</strong><p>Allocation #${row.allocation.id} · ${esc(row.review.status)} · ${esc(typeNames[row.ledger_entry.economic_type])}</p>${relationButton('review',row.review.id,`Review #${row.review.id}`)}${relationButton('ledger',row.ledger_entry.id,`Ledger #${row.ledger_entry.id}`)}</article>` : isReview ? reviewRelationRow(name, row) : name === 'tag'
           ? `<article class="inspection-flow"><strong>${esc(row.tag_name)}</strong><p>${esc(row.view_name)} · ${esc(row.view_status)} / ${esc(row.tag_status)} · ${esc(row.source_type)}</p></article>`
           : `<article class="inspection-flow"><strong>${esc(amount(row.allocation))}</strong><p>Link #${row.allocation.id} · Leg #${row.position_leg.id} · ${esc(row.review.status)}</p><p>${esc(row.position_leg.leg_direction)} ${quantityDecimal(row.position_leg.leg_amount, row.position_leg.unit_code)} ${esc(row.position_leg.unit_code)}</p><a href="#workbench/position?id=${row.position.id}">Position #${row.position.id} ${esc(row.position.title)}</a></article>`).join('') || '<p>该集合当前页没有记录</p>';
         status.textContent = `共 ${total} 项 · 第 ${page} 页（仅本页）`;
@@ -450,7 +469,7 @@ export async function openInspection(kind, id, bindActions) {
         body.innerHTML = view.body;
         view.presentation.mount(body);
         if (view.kind === "file") mountFileRows(body, data.rows, bindActions);
-        if (view.kind === "ledger-paged" || view.kind === "review-paged") mountFlowRelations(body);
+        if (['ledger-paged','review-paged','fact-paged'].includes(view.kind)) mountFlowRelations(body);
         dialog.dataset.renderVersion = String(ticket);
       };
       if (sameRecord) preserveView(dialog, apply);
@@ -517,6 +536,13 @@ export async function openInspection(kind, id, bindActions) {
   dialog.querySelector("[data-inspect-back]").onclick = async () => { const previous = stack.pop(); if (previous) { await navigate(previous.kind, previous.id, false); body.scrollTop = previous.scroll; } };
   for (const [selector, delta] of [["[data-inspect-prev]", -1], ["[data-inspect-next]", 1]]) dialog.querySelector(selector).onclick = () => { const index = rail.findIndex(row => row.kind === selected.kind && row.id === selected.id); const row = rail[index + delta]; if (row) navigate(row.kind, row.id); };
   dialog.addEventListener("click", event => {
+    const evidence = event.target.closest('[data-fact-source-evidence]');
+    if (evidence) {
+      const node = workbenchDialog('单行原始证据（只读）','<p role="status">正在读取…</p>');
+      request(`${endpoints.file}${evidence.dataset.fileId}/row/${evidence.dataset.factSourceEvidence}`).then(detail => {
+        if (node.isConnected) node.querySelector('.dialog-body').innerHTML = `<p>来源第 ${detail.row.source_row_number} 行 · ${esc(rowStates[detail.row.row_status])}</p>${jsonPayload(detail.raw_payload)}`;
+      }).catch(error => { if (node.isConnected) node.querySelector('[role=status]').textContent = error.message; });
+    }
     const railButton = event.target.closest("[data-rail-id]");
     if (railButton) navigate(railButton.dataset.railKind, Number(railButton.dataset.railId), true, true);
     const railPage = event.target.closest("[data-rail-page]");

@@ -131,7 +131,7 @@ export async function mountReviewWorkbench(root, params, completed) {
   const addCash = (fact, amount = fact.cash_amount) => {
     const index = nodes(cashRoot, "[data-cash-row]").length + 1;
     const defaultType = ["BORROW_REPAY", "SHARED_PAYMENT", "POS_CREDIT_REPAY"].includes(form.elements.case_code.value) ? "ASSET_LIABILITY" : form.elements.case_code.value === "INTERNAL_TRANSFER" ? "ACCOUNT_TRANSFER" : form.elements.case_code.value === "DUPLICATE" ? "DUPLICATE" : "TRANSACTION";
-    const row = article(cashRoot, "cashRow", `<h3>现金拆分行 ${index} · Fact #${fact.transaction_id}</h3><p>${esc(fact.summary)} · ${esc(fact.counterparty)} · ${esc(fact.cash_direction)} · ${esc(date(fact.occurred_time))} · ${esc(fact.cash_currency_code)}（方向／币种／时间不可改）</p>
+const row = article(cashRoot, "cashRow", `<h3>现金拆分行 ${index} · Fact #${fact.transaction_id}</h3><p>${esc(fact.summary)} · ${esc(fact.cash_direction)} · ${esc(date(fact.occurred_time))} · ${esc(fact.cash_currency_code)}（方向／币种／时间不可改）</p>
       <input type="hidden" name="transaction_id" value="${fact.transaction_id}">${select("economic_type", "经济分类", Object.keys(typeNames).filter(key => ["TRANSACTION", "ACCOUNT_TRANSFER", "ASSET_LIABILITY", "DUPLICATE"].includes(key)).map(key => [key, typeNames[key]]), defaultType)}
       ${input("cash_amount", "分配金额", quantityDecimal(amount, fact.cash_currency_code), 'inputmode="decimal" required')}${input("account_ref_id", "具体本方来源卡 ID（0 表示未知）", fact.account_ref_id, 'type="number" min="0" required')}<button type="button" data-pick-ref>分页选择来源卡</button>`);
     row.querySelector("[data-pick-ref]").onclick = () => {
@@ -232,7 +232,7 @@ export async function mountReviewWorkbench(root, params, completed) {
     form.querySelector("[data-selected-facts]").textContent = `选择 ${selected.size} 个完整 Fact：${ids([...selected])}`; invalidate();
   };
   await mountPicker(form.querySelector("[data-fact-picker]"), { url: "/paam/ledger/v1/candidate", searchKeys: ["summary"], signal,
-    describe: fact => `Fact #${fact.transaction_id} ${fact.summary} / ${fact.counterparty} / ${money(fact)} ${fact.cash_direction} / 当前覆盖 ${fact.coverage.state} / 默认身份 ${fact.coverage.default_identity_state}`,
+    describe: fact => `Fact #${fact.transaction_id} ${fact.summary} / ${money(fact)} ${fact.cash_direction} / 当前覆盖 ${fact.coverage.state} / 默认身份 ${fact.coverage.default_identity_state}`,
     selected: fact => selected.has(fact.transaction_id), choose,
   });
   for (const id of preselected) {

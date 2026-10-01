@@ -1,4 +1,5 @@
 from backend.core.money import normalize_currency_code
+from backend.core.import_public_text import masked_summary
 from backend.error import ListQueryError, TargetEconomicError
 from backend.mapper.candidate_mapper import CandidateMapper
 from backend.mapper.bounded_query_mapper import query_budget
@@ -22,7 +23,7 @@ class CandidateService:
             key, value = expression.key, expression.val
             valid = True
             if key in ("id", "account_ref_id", "account_id", "party_id"):
-                valid = type(value) is int and value >= (0 if key in ("account_ref_id", "account_id") else 1)
+                valid = type(value) is int and (0 if key in ("account_ref_id", "account_id") else 1) <= value <= 2**63 - 1
             elif key == "cash_direction":
                 valid = value in ("IN", "OUT")
             elif key == "coverage_state":
@@ -58,7 +59,8 @@ class CandidateService:
     def po(row):
         if row["allocated_cash_amount"] > row["cash_amount"] or row["allocated_cash_amount"] < 0:
             raise TargetEconomicError(409, "candidate coverage is inconsistent", code="RELATION_BROKEN")
-        result = {key: row[key] for key in ("occurred_time", "cash_direction", "cash_amount", "cash_currency_code", "summary", "counterparty", "account_ref_id")}
+        result = {key: row[key] for key in ("occurred_time", "cash_direction", "cash_amount", "cash_currency_code", "account_ref_id")}
+        result.update(summary=masked_summary(row["summary"]))
         result["transaction_id"] = row["id"]
         result["default_review"] = dict(review_id=row["default_review_id"], ledger_id=row["default_ledger_id"]) if row["default_count"] == 1 else None
         result["coverage"] = dict(state=row["coverage_state"], allocated_cash_amount=row["allocated_cash_amount"],

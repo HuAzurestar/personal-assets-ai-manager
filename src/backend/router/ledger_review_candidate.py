@@ -8,11 +8,11 @@ from sqlalchemy.orm import Session
 from backend.router.dependency import get_db, validate_query_parameter_names
 from backend.router.error import DomainErrorRoute
 from backend.schema.list_query import parse_list_request
-from backend.schema.target_review import (
-    TargetReviewCandidateListRequest,
+from backend.schema.candidate import (
+    CandidateListRequest,
     TargetReviewCandidateListResponse,
 )
-from backend.service.target_economic_service import TargetEconomicService
+from backend.service.candidate_service import CandidateService
 
 
 router = APIRouter(
@@ -25,7 +25,7 @@ router = APIRouter(
 @router.get(
     "/review_candidate/list",
     response_model=TargetReviewCandidateListResponse,
-    response_model_exclude_none=True,
+    deprecated=True,
 )
 def review_candidate_list(
     http_request: Request,
@@ -41,7 +41,7 @@ def review_candidate_list(
         {"page_index", "page_size", "query", "filter", "sorter"},
     )
     request = parse_list_request(
-        TargetReviewCandidateListRequest,
+        CandidateListRequest,
         page_index=page_index,
         page_size=page_size,
         query=query,
@@ -51,5 +51,5 @@ def review_candidate_list(
     return TargetReviewCandidateListResponse(
         status=200,
         message="ok",
-        body=TargetEconomicService(db).review_candidate_page(request=request),
+        body=CandidateService(db).page(request),
     )

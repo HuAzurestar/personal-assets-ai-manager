@@ -3,6 +3,7 @@ from sqlalchemy import select, func, case, and_
 from backend.entity import TransactionFact, ReviewAllocation, ReviewCase, LedgerEntry
 from backend.mapper.account_management_mapper import AccountManagementMapper
 from backend.mapper.bounded_query_mapper import page_rows, scan_rows
+from backend.core.import_public_text import masked_summary
 
 
 class CandidateMapper:
@@ -54,4 +55,5 @@ class CandidateMapper:
 
     def search(self, request):
         return scan_rows(self.db, self.statement, request, self.columns, scope="local:ledger-v1:candidate",
-            default=(("occurred_time", "desc"), ("id", "asc")))
+            default=(("occurred_time", "desc"), ("id", "asc")),
+            project=lambda row: row | dict(summary=masked_summary(row["summary"]),counterparty=masked_summary(row["counterparty"])))

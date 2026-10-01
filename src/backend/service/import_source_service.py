@@ -11,6 +11,7 @@ from backend.mapper.bounded_query_mapper import query_budget
 from backend.mapper.trusted_relation_mapper import TrustedRelationMapper
 from backend.schema.import_file import parse_import_file_time
 from backend.schema.list_query import iter_filter_fields, validate_list_capabilities, BetweenValue
+from backend.service.fact_read_service import fact_po
 
 
 class ImportSourceService:
@@ -108,7 +109,7 @@ class ImportSourceService:
             except (ValueError, TypeError):
                 fail("RELATION_BROKEN")
             facts = self.mapper.rows(TransactionFact, TransactionFact.id, [row["transaction_fact_id"]]) if row["transaction_fact_id"] else []
-            return dict(row=self.source_po(row), raw_payload=payload, fact=facts[0] if facts else None)
+            return dict(row=self.source_po(row), raw_payload=payload, fact=fact_po(facts[0],detail=True) if facts else None)
         return self.read(action, limit=1024 * 1024)
 
     def row_relations(self, file_id, row_ids):

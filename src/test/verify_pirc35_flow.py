@@ -35,7 +35,8 @@ def run():
                 else:
                     raise RuntimeError("fictional app did not start")
             from backend.core import target_database
-            from backend.entity import TransactionFact, LedgerEntry, TargetTagView, TargetTag, LedgerEntryTag, ReviewCase
+            from backend.entity import (TransactionFact, LedgerEntry, TargetTagView, TargetTag, LedgerEntryTag,
+                ReviewCase, TransactionImportFile, TransactionImportRow)
             from backend.mapper.review_command_mapper import ReviewCommandMapper
             from sqlalchemy import select, func
             with target_database.SessionLocal() as db:
@@ -48,6 +49,10 @@ def run():
                 db.flush()
                 ReviewCommandMapper(db).create_initial_defaults(ids)
                 db.get(ReviewCase, first).title = "Mock Café review %_ 1234567890123456"
+                file_id = (db.scalar(select(func.max(TransactionImportFile.id))) or 0) + 1
+                db.add(TransactionImportFile(id=file_id,filename='Mock source.csv',sha256='f'*64,source_type=101,file_format=1,status=1))
+                db.add(TransactionImportRow(transaction_fact_id=first,transaction_import_file_id=file_id,
+                    source_row_number=1,source_reference='1234567890123456',raw_payload='{"fictional":"explicit raw only"}',row_status=1))
                 db.commit()
                 flow_id = db.scalar(select(LedgerEntry.id).where(LedgerEntry.amount == 1000,
                     LedgerEntry.id >= first).order_by(LedgerEntry.id))
@@ -109,6 +114,45 @@ def run():
                 form.locator('[name="word"]').fill('')
                 form.locator('[name="type"]').select_option('NORMAL_TRANSACTION')
                 expect(page.locator('[data-action="economic-review-detail"]')).to_have_count(2)
+                page.goto(base + '/#details/transaction-fact?sort_field=id&sort_order=desc&page_size=2&word=CAFÉ%20literal%20%25_')
+                expect(page.locator('[data-fact-scan-status]')).to_contain_text('已扫描 2 个候选；找到 0 项')
+                page.locator('[data-fact-continue]').click()
+                expect(page.locator('[data-fact-scan-status]')).to_contain_text('已扫描 4 个候选；找到 1 项')
+                page.locator('[data-fact-continue]').click()
+                expect(page.locator('[data-fact-scan-status]')).to_contain_text('已扫描 6 个候选；找到 1 项')
+                page.locator('[data-action="fact-detail"]').click()
+                expect(drawer).to_contain_text('尚未解释')
+                assert '1234567890123456' not in drawer.inner_text()
+                assert 'explicit raw only' not in drawer.inner_text()
+                drawer.locator('[data-fact-source-evidence]').click()
+                raw = page.locator('dialog[open]').last
+                expect(raw).to_contain_text('explicit raw only')
+                raw.locator('[data-workbench-close]').click()
+                drawer.locator('[data-close]').click()
+                form = page.locator('[data-form="fact-filter"]')
+                form.locator('[name="word"]').fill('')
+                form.locator('[name="sort"]').select_option('signed_amount.asc')
+                expect(page.locator('[data-action="fact-detail"]')).to_have_count(2)
+                # Full source history is never truncated into a fake complete detail.
+                from sqlalchemy import text
+                with target_database.SessionLocal() as db:
+                    db.execute(text("""WITH RECURSIVE seq(i) AS (VALUES(2) UNION ALL SELECT i+1 FROM seq WHERE i<4001)
+                        INSERT INTO transaction_import_row(transaction_fact_id,transaction_import_file_id,source_row_number,
+                          source_reference,raw_payload,raw_hash,row_status,issue_code,issue_message,created_time,updated_time)
+                        SELECT :fid,:file_id,i,'mock-'||i,'{"fictional":"explicit raw only"}','','1','','',
+                          '2026-09-01T00:00:00.000000Z','2026-09-01T00:00:00.000000Z' FROM seq"""),dict(fid=first,file_id=file_id))
+                    db.commit()
+                page.goto(base + '/#details/transaction-fact?sort_field=id&sort_order=asc')
+                page.locator(f'[data-action="fact-detail"][data-id="{first}"]').click()
+                expect(drawer).to_contain_text('完整 Fact 详情超出预算')
+                sources = drawer.locator('[data-fact-relation="source_row"]')
+                expect(sources.locator('[data-rel-status]')).to_contain_text('共 4001 项 · 第 1 页')
+                sources.locator('[data-rel-next]').click()
+                expect(sources.locator('[data-rel-status]')).to_contain_text('第 2 页（仅本页）')
+                assert len(sources.locator('[data-fact-source-evidence]').all()) == 20
+                sources.locator('[data-rel-prev]').click()
+                expect(sources.locator('[data-rel-status]')).to_contain_text('第 1 页（仅本页）')
+                drawer.locator('[data-close]').click()
                 # Legacy large original Review fixture: complete relationships,
                 # no invented system defaults or actual application writes.
                 from sqlalchemy import text
@@ -144,7 +188,7 @@ def run():
                 assert not errors, errors
                 assert not writes, writes
                 browser.close()
-                print("PASS canonical Flow/Review UI: empty batches, repeated continuation, masking, five Review types, grouped money sort and complete paged fallbacks; zero HTTP writes/providers")
+                print("PASS canonical Flow/Review/Fact UI: empty batches, repeated continuation, masking, five Review types, grouped money sort, explicit single-row raw evidence and complete paged fallbacks; zero HTTP writes/providers")
         finally:
             server.should_exit = True
             worker.join(timeout=10)

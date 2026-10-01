@@ -35,7 +35,6 @@ class CandidatePO(PO):
     cash_amount: int
     cash_currency_code: str
     summary: str
-    counterparty: str
     coverage: CandidateCoveragePO
     account_ref_id: int
 
@@ -63,3 +62,7 @@ class CandidateListResponse(SuccessResponse[CandidateListPO]):
 
 class CandidateSearchResponse(SuccessResponse[CandidateSearchPO]):
     pass
+
+
+class TargetReviewCandidateListResponse(CandidateListResponse):
+    """Deprecated read-only URL uses the one canonical candidate contract."""

@@ -37,6 +37,7 @@ const entryTypeCodes = { 0: "TRANSACTION", 1: "ACCOUNT_TRANSFER", 2: "ASSET_LIAB
 const reviewBehaviorNames = { 0: "系统原始交易", 1: "借款与还款", 2: "信用卡", 3: "共同费用", 4: "人工解释" };
 const reviewTypes = ['NORMAL_TRANSACTION', 'BORROW_AND_REPAY', 'CREDIT_CARD', 'SHARED_SETTLEMENT', 'OTHER_MANUAL'];
 const reviewScan = candidateScan('/paam/ledger/v1/review', 'review');
+const factScan = candidateScan('/paam/ledger/v1/fact', 'fact');
 const timeZoneNames = {
   "Asia/Hong_Kong": "香港",
   "Asia/Shanghai": "上海",
@@ -167,7 +168,7 @@ document.addEventListener('input', () => { ++interactionVersion; });
 document.addEventListener('change', () => { ++interactionVersion; });
 const livePages = new Set(['summary', 'ledger', 'economy', 'ledger-reviews', 'ledger-imports', 'ledger-tags', 'import-history']);
 function canRefreshPage() {
-  return !document.hidden && !pendingCommands && !foregroundBusy && !flowReadBusy() && !reviewScan.busy() && !document.querySelector('dialog[open]')
+  return !document.hidden && !pendingCommands && !foregroundBusy && !flowReadBusy() && !reviewScan.busy() && !factScan.busy() && !document.querySelector('dialog[open]')
     && !document.activeElement?.matches('input, textarea, select, [contenteditable="true"]')
     && !document.querySelector('[data-range-popover]:not([hidden])')
     && !document.querySelector('[data-form="inline-tag"]:not([hidden])');
@@ -189,6 +190,7 @@ async function render({ background = false } = {}) {
   stopImportRead();
   stopFlowRead();
   reviewScan.stop();
+  factScan.stop();
   stopAutomationPolling();
   const renderVersion = background ? state.renderVersion : ++state.renderVersion;
   if (!background) foregroundBusy++;
@@ -333,6 +335,8 @@ function sortPresetSelect(sortField, sortOrder) {
     ["occurred_time.asc", "时间：最早优先"],
     ["amount.desc", "金额：从高到低"],
     ["amount.asc", "金额：从低到高"],
+    ["signed_amount.desc", "带方向金额：从高到低"],
+    ["signed_amount.asc", "带方向金额：从低到高"],
   ];
   return `<select name="sort">${options.map(([value, label]) => `<option value="${value}" ${selected === value ? "selected" : ""}>${label}</option>`).join("")}</select>`;
 }
@@ -379,7 +383,10 @@ function compactAccount(value) {
 
 async function ledgerPage() {
   const currency = (state.params.get("currency_code") || "").trim().toUpperCase();
-  const direction = state.params.get("cash_direction") || "";
+  const rawDirection = state.params.get("cash_direction") || "";
+  const direction = ({1: "IN", 2: "OUT"})[rawDirection] || rawDirection;
+  const word = state.params.get("word")?.trim() || "";
+  const searchField = state.params.get("search_field") || "summary";
   const dateFrom = state.params.get("date_from") || "";
   const dateTo = state.params.get("date_to") || "";
   const page = Math.max(1, Number(state.params.get("page") || 1));
@@ -388,7 +395,10 @@ async function ledgerPage() {
   const sortOrder = state.params.get("sort_order") || "desc";
   const expressions = [];
   if (currency) expressions.push({ key: "currency_code", op: "=", val: currency });
-  if (["1", "2"].includes(direction)) expressions.push({ key: "cash_direction", op: "=", val: Number(direction) });
+  if (["IN", "OUT"].includes(direction)) expressions.push({ key: "cash_direction", op: "=", val: direction });
+  for (const key of ["account_ref_id", "account_id", "party_id"]) {
+    if (state.params.has(key)) expressions.push({ key, op: "=", val: Number(state.params.get(key)) });
+  }
   if (dateFrom) expressions.push({ key: "occurred_time", op: ">=", val: filterBoundary(dateFrom) });
   if (dateTo) expressions.push({ key: "occurred_time", op: "<", val: filterBoundary(dateTo, true) });
   const filter = expressions.length > 1 ? { op: "AND", expression: expressions } : expressions[0];
@@ -398,12 +408,31 @@ async function ledgerPage() {
     sorter: JSON.stringify([{ key: sortField, direction: sortOrder }]),
   });
   if (filter) query.set("filter", JSON.stringify(filter));
-  const result = await request(`/paam/ledger/v1/transaction_fact/list?${query}`);
-  const rows = result.items.map((fact) => `<tr class="detail-click-row" tabindex="0" data-fact-row="${fact.id}">
-    <td data-label="摘要"><button type="button" class="detail-primary" data-action="fact-detail" data-id="${fact.id}" data-inspect-title="${esc(fact.summary || "未填写摘要")}" data-inspect-amount="${esc(compactAmount(fact, fact.cash_direction))}"><strong>${esc(fact.summary || "未填写摘要")}</strong><small>Fact #${fact.id}</small></button></td><td data-label="交易对手">${esc(fact.counterparty_name || "—")}</td><td data-label="本方账户" class="mono fact-account" title="${esc(fact.account_code)}">${esc(compactAccount(fact.account_code))}</td><td data-label="金额" class="fact-amount ${fact.cash_direction === 1 ? "inflow" : "outflow"}">${esc(compactAmount(fact, fact.cash_direction))}</td><td data-label="发生时间">${date(fact.occurred_time)}</td><td class="detail-arrow">→</td>
-  </tr>`).join("");
-  const toolbar = `<form class="detail-filter" data-form="fact-filter"><label>收支方向${directionSelect("cash_direction", direction)}</label><label>币种${currencySelect(currency)}</label>${dateTimeRangeControl(dateFrom, dateTo)}<label class="grow">排序${sortPresetSelect(sortField, sortOrder)}</label><div class="detail-filter-actions"><button type="button" class="quiet" data-action="detail-clear" data-page-id="ledger">清空</button></div></form>`;
-  return detailListView({ active: "ledger", toolbar, title: "Transaction Fact", description: "外部账单接受后的不可变事实 PO；查找、筛选与排序均由服务端执行。", total: result.total, headers: ["摘要", "交易对手", "本方账户", "金额", "发生时间", ""], rows, footer: detailPager(result, "ledger") });
+
+  if (word) { query.delete('page_index'); query.set('query', JSON.stringify([{key: searchField, word}])); }
+  const result = word ? await factScan.read(query, location.hash) : await request(`/paam/ledger/v1/transaction_fact/list?${query}`);
+  const toolbar = `<form class="detail-filter" data-form="fact-filter"><label>收支方向<select name="cash_direction"><option value="">全部方向</option>${['IN','OUT'].map(value => `<option ${value === direction ? 'selected' : ''}>${value}</option>`).join('')}</select></label><label>币种${currencySelect(currency)}</label>${dateTimeRangeControl(dateFrom, dateTo)}<label>排序${sortPresetSelect(sortField, sortOrder)}</label>
+    ${[["account_ref_id", "来源卡 ID（0 未识别）"], ["account_id", "账户 ID（0 已识别未分组）"], ["party_id", "个人 ID"]].map(([key, label]) => `<label>${label}<input type="number" name="${key}" min="${key.startsWith('account') ? 0 : 1}" step="1" value="${esc(state.params.get(key) || '')}"></label>`).join('')}
+    <label>字面搜索<select name="search_field"><option value="summary" ${searchField === 'summary' ? 'selected' : ''}>脱敏摘要</option><option value="counterparty_name" ${searchField === 'counterparty_name' ? 'selected' : ''}>脱敏交易对手</option></select><input name="word" maxlength="128" value="${esc(word)}" autocomplete="off"></label><button type="submit">查找</button><button type="button" class="quiet" data-action="detail-clear" data-page-id="ledger">清空</button></form><p>不可变来源事实；金额排序先按币种分组、不换汇。账户归属按当前有效解释筛选，不参与排序。解释覆盖不等于现金汇总。</p>`;
+  return `<div data-fact-read>${detailListView({ active: "ledger", toolbar, title: "Transaction Fact", description: "外部账单接受后的不可变事实 PO；来源原文仅在单条来源行详情显式查看。", total: result.total, headers: ["摘要", "交易对手", "本方账户", "金额", "发生时间", ""], rows: factRows(result.items, !!word), footer: word ? factScanFooter(result) : detailPager(result, "ledger") })}</div>`;
+}
+
+function factRows(items, scanning = false) {
+  return items.map((fact) => `<tr class="detail-click-row" tabindex="0" data-fact-row="${fact.id}">
+    <td data-label="摘要"><button type="button" class="detail-primary" data-action="fact-detail" data-id="${fact.id}" data-inspect-title="${esc(fact.summary || "未填写摘要")}" data-inspect-amount="${esc(compactAmount(fact, fact.cash_direction))}"><strong>${esc(fact.summary || "未填写摘要")}</strong><small>Fact #${fact.id}</small></button></td><td data-label="交易对手">${esc(fact.counterparty_name || "—")}</td><td data-label="本方账户" class="mono fact-account" title="${esc(fact.account_code)}">${esc(compactAccount(fact.account_code))}</td><td data-label="金额" class="fact-amount ${fact.cash_direction === "IN" ? "inflow" : "outflow"}">${esc(compactAmount(fact, fact.cash_direction))}</td><td data-label="发生时间">${date(fact.occurred_time)}</td><td class="detail-arrow">→</td>
+  </tr>`).join("") || (scanning ? '<tr><td colspan="6">尚无命中；空批次不代表扫描结束。</td></tr>' : '');
+}
+
+function factScanFooter(result) {
+  return `<div class="actions"><span data-fact-scan-status>已扫描 ${result.scanned_count} 个候选；找到 ${result.items.length} 项；总数未知。${result.has_more ? '可继续扫描' : '本次扫描结束'}</span><button data-fact-continue ${result.has_more ? '' : 'disabled'}>继续检索</button></div>`;
+}
+
+function paintFactSearch(root, result) {
+  const host = root.matches('[data-fact-read]') ? root : root.querySelector('[data-fact-read]');
+  if (!host) return;
+  const body = host.querySelector('tbody'); body.innerHTML = factRows(result.items, true);
+  host.querySelector('.list-footer').innerHTML = factScanFooter(result);
+  bindPage(body); factScan.bind(host, next => paintFactSearch(host, next));
 }
 
 async function showFactDetail(id) {
@@ -965,6 +994,7 @@ function closeInlineTag(form) {
 function bindPage(root) {
   bindFlowSearch(root, result => paintFlowSearch(root, result));
   reviewScan.bind(root, result => paintReviewSearch(root, result));
+  factScan.bind(root, result => paintFactSearch(root, result));
   bindAccountManagement(root, render);
   bindPosition(root, render);
   bindAutomation(root, render, toast, route);
@@ -1002,6 +1032,7 @@ function bindPage(root) {
       params.set("page_size", state.params.get("page_size") || "20");
       if (formName === "economic-filter") resetFlowSearch();
       if (formName === "detail-review-filter") reviewScan.reset();
+      if (formName === "fact-filter") factScan.reset();
       route(pageId, params);
     });
     $$('select', form).forEach((select) => select.addEventListener("change", () => form.requestSubmit()));

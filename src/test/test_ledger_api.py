@@ -347,7 +347,7 @@ def test_review_candidate_list_is_paged_with_fixed_query_count(economic_api):
     assert page["page_index"] == 1
     assert page["page_size"] == 2
     assert len(page["items"]) == 2
-    assert len(statements) == 2
+    assert len(statements) == 3  # snapshot guard + COUNT + PAGE
 
     second = client.get(
         "/paam/ledger/v1/review_candidate/list?page_index=2&page_size=2"
@@ -400,19 +400,19 @@ def test_review_candidate_list_supports_shared_query_contract(economic_api):
         TargetEconomicService(db).ensure_defaults(fact_ids, commit=True)
 
     response = client.get("/paam/ledger/v1/review_candidate/list", params={
-        "filter": '{"op":"AND","expression":[{"key":"cash_direction","op":"=","val":1},{"key":"currency_code","op":"=","val":"USD"}]}',
+        "filter": '{"op":"AND","expression":[{"key":"cash_direction","op":"=","val":"IN"},{"key":"cash_currency_code","op":"=","val":"USD"}]}',
         "sorter": '[{"key":"occurred_time","direction":"asc"}]',
     })
     assert response.status_code == 200, response.text
     body = response.json()["body"]
-    assert [item["id"] for item in body["items"]] == [fact_ids[1]]
+    assert [item["transaction_id"] for item in body["items"]] == [fact_ids[1]]
     assert set(body) == {"items", "total", "page_index", "page_size"}
 
     ranged = client.get("/paam/ledger/v1/review_candidate/list", params={
         "filter": '{"op":"AND","expression":[{"key":"occurred_time","op":">=","val":"2026-09-13T10:02:00+00:00"},{"key":"occurred_time","op":"<","val":"2026-09-13T10:03:00+00:00"}]}',
     })
     assert ranged.status_code == 200, ranged.text
-    assert [item["id"] for item in ranged.json()["body"]["items"]] == [fact_ids[1]]
+    assert [item["transaction_id"] for item in ranged.json()["body"]["items"]] == [fact_ids[1]]
 
 
 def test_fx_review_uses_two_single_currency_account_transfers(economic_api):

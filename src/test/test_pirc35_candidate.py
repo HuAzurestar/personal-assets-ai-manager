@@ -86,3 +86,20 @@ def test_candidate_time_between_is_left_closed_right_open_and_no_account_sort(cl
     assert {item["transaction_id"] for item in result["items"]} == {1, 2}
     response = client.get("/paam/ledger/v1/candidate/list", params=dict(sorter='[{"key":"account_ref_id","direction":"asc"}]'))
     assert response.status_code == 422
+
+
+def test_candidate_exact_po_masked_search_and_legacy_url_share_guard(client):
+    with target_database.SessionLocal() as db:
+        db.get(TransactionFact,2).summary = 'Mock 1234567890123456 bill@example.invalid'
+        db.commit()
+    canonical = page(client)
+    expected = {'transaction_id','default_review','occurred_time','cash_direction','cash_amount',
+        'cash_currency_code','summary','coverage','account_ref_id'}
+    assert all(set(item) == expected for item in canonical['items'])
+    encoded = json.dumps(canonical)
+    assert '1234567890123456' not in encoded and 'bill@example.invalid' not in encoded
+    alias = client.get('/paam/ledger/v1/review_candidate/list')
+    assert alias.status_code == 200 and alias.json()['body'] == canonical
+    private = client.get('/paam/ledger/v1/candidate/search',params=dict(query=json.dumps([dict(key='summary',word='1234567890123456')])))
+    assert private.status_code == 200 and private.json()['body']['items'] == []
+    assert client.get('/paam/ledger/v1/candidate/list',params=dict(filter=json.dumps(dict(key='id',op='=',val=2**63)))).status_code == 422

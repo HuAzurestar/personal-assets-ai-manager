@@ -92,7 +92,8 @@ def test_openapi_locks_canonical_ledger_v1_contract():
     assert {"review_id","transaction_id","ledger_id","cash_amount","cash_currency_code"} <= set(schemas["FirstAllocationPO"]["properties"])
     assert "/paam/ledger/v1/review/preview" in paths
     assert "/paam/ledger/v1/review/command" in paths
-    assert "active" in schemas["TransactionFactLedgerRead"]["properties"]
+    assert "active" not in schemas["FlowPO"]["properties"]
+    assert schemas["TransactionFactListItem"]["properties"]["cash_direction"]["enum"] == ["IN", "OUT"]
 
     for path in ("/paam/ledger/v1/flow/list", "/paam/ledger/v1/review/list"):
         parameters = specification["paths"][path]["get"]["parameters"]
@@ -357,7 +358,8 @@ def test_target_review_confirm_revoke_restore_rebuilds_projection(
             assert client.get("/paam/ledger/v1/flow/list").json()["body"]["total"] == 4
             for fact_id in fact_ids:
                 detail = client.get(f"/paam/ledger/v1/transaction_fact/{fact_id}").json()["body"]
-                assert sum(row["active"] for row in detail["ledgers"]) == 1
+                active_reviews = {row["id"] for row in detail["reviews"] if row["status"] == "CONFIRMED"}
+                assert sum(row["review_id"] in active_reviews for row in detail["allocations"]) == 1
             command(activate_review_ids=[rid])
             restored = client.get(f"/paam/ledger/v1/review/{rid}").json()["body"]
             assert restored["status"] == "CONFIRMED"
