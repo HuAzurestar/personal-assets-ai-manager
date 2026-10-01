@@ -18,7 +18,8 @@ from test_llm_privacy import _page
 
 from backend import target_main
 from backend.core import target_database
-from backend.core.intake_preview_store import target_intake_preview_store
+from backend.core.import_preview_store import import_preview_store as target_intake_preview_store
+from import_batch_helpers import confirm_api_batch
 from backend.core.job_scheduler import JobScheduler
 from backend.error import LlmAdapterError
 from backend.mapper.auto_tag_scan_mapper import ProtectedScanSource
@@ -75,9 +76,7 @@ def _import(client, serial):
         "filename": f"live-{serial}.csv",
         "content_base64": base64.b64encode(stream.getvalue().encode()).decode(),
     }]}))
-    _body(client.post(f"/paam/import/v1/preview/{preview['token']}/confirm", json={
-        "version": preview["version"],
-    }))
+    _body(confirm_api_batch(client, preview))
 
 
 def _rule(client, view_id, *, enabled=True):

@@ -1,10 +1,10 @@
 """Explicit bounded import choices, not a whole-plan version/replay contract."""
 from datetime import datetime, timezone
 from typing import Annotated, Literal
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictBool, model_validator
 from backend.schema.list_query import ListRequest
 
-Positive = Annotated[StrictInt, Field(gt=0)]
+Positive = Annotated[StrictInt, Field(gt=0, le=2**63 - 1)]
 
 
 class ImportInput(BaseModel):
@@ -18,8 +18,8 @@ class RowIdentity(ImportInput):
 
 class RowChoice(RowIdentity):
     decision: Literal["ACCEPT", "SKIP"]
-    recheck: bool = False
-    account_ref_id: Annotated[StrictInt, Field(ge=0)] | None = None
+    recheck: StrictBool = False
+    account_ref_id: Annotated[StrictInt, Field(ge=0, le=2**63 - 1)] | None = None
 
 
 class PreviewExpected(ImportInput):

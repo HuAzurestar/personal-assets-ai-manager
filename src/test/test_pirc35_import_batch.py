@@ -181,7 +181,7 @@ def test_same_identity_conflicting_explicit_refs_or_core_not_chosen_arbitrarily(
         accept(mapper, changed)
 
 
-@pytest.mark.parametrize("stage", ["facts", "defaults", "source_rows", "file_counts"])
+@pytest.mark.parametrize("stage", ["facts", "defaults", "tags", "source_rows", "file_counts"])
 def test_every_write_stage_failure_rolls_back_whole_batch(mapper, stage):
     rows = prepare(mapper, [row()])
     def fault(current):

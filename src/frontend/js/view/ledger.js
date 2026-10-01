@@ -2,6 +2,7 @@ import { checkConnection, request, jsonRequest } from "../api/client.js";
 import { accountManagementPage, bindAccountManagement, stopAccountRead } from "./account-management.js";
 import { positionPage, bindPosition, stopPositionRead } from "./position.js";
 import { mountReviewWorkbench, transitionReview, stopReviewRead } from "./review-workbench.js";
+import { mountImportBatch, stopImportRead } from "./import-batch.js";
 import { preserveView } from "../util/view_state.js?v=20260928.6";
 import { toast } from "../component/toast.js";
 import { table } from "../component/table.js";
@@ -181,6 +182,7 @@ async function render({ background = false } = {}) {
   stopAccountRead();
   stopPositionRead();
   stopReviewRead();
+  stopImportRead();
   stopAutomationPolling();
   const renderVersion = background ? state.renderVersion : ++state.renderVersion;
   if (!background) foregroundBusy++;
@@ -590,6 +592,8 @@ function updateSelectedFiles(form) {
   root.innerHTML = files.length ? files.map((file, index) => `<div class="selected-file-card"><span class="file-type-icon">${esc(fileExtension(file.name))}</span><span class="selected-file-copy"><strong>${esc(file.name)}</strong><small>${formatFileSize(file.size)} · 等待生成预览</small></span><button type="button" class="quiet file-remove" data-action="remove-import-file" data-index="${index}" aria-label="移除 ${esc(file.name)}">移除</button></div>`).join("") : '<div class="selected-files-empty">选择文件后，将在这里显示待预览清单。</div>';
 }
 function clearImportPlan() {
+  state.importPreviewGeneration = (state.importPreviewGeneration || 0) + 1;
+  stopImportRead();
   state.importPlan = null;
   const preview = $("#import-preview");
   if (preview) preview.innerHTML = "";
@@ -715,19 +719,19 @@ function scheduleHistoryRefresh(form) {
 }
 
 const MAX_IMPORT_FILES = 100;
-const MAX_IMPORT_FILE_BYTES = 25 * 1024 * 1024;
-const MAX_IMPORT_TOTAL_BYTES = 100 * 1024 * 1024;
+const MAX_IMPORT_FILE_BYTES = 20 * 1024 * 1024;
+const MAX_IMPORT_TOTAL_BYTES = 20 * 1024 * 1024;
 const importExtensions = new Set(["csv", "xls", "xlsx", "pdf", "zip"]);
 
 function validateImportFiles(files) {
   if (!files.length) throw new Error("请选择至少一个账单文件");
   if (files.length > MAX_IMPORT_FILES) throw new Error(`单次最多选择 ${MAX_IMPORT_FILES} 个文件`);
   const oversized = files.find((file) => file.size > MAX_IMPORT_FILE_BYTES);
-  if (oversized) throw new Error(`${oversized.name} 超过单文件 25 MB 限制`);
+  if (oversized) throw new Error(`${oversized.name} 超过单次20 MiB限制`);
   const unsupported = files.find((file) => !importExtensions.has(fileExtension(file.name).toLowerCase()));
   if (unsupported) throw new Error(`${unsupported.name} 的格式不受支持`);
   const total = files.reduce((sum, file) => sum + file.size, 0);
-  if (total > MAX_IMPORT_TOTAL_BYTES) throw new Error("所选文件总计超过单次 100 MB 限制");
+  if (total > MAX_IMPORT_TOTAL_BYTES) throw new Error("所选文件总计超过单次20 MiB限制");
 }
 
 const fileBase64 = (file) => new Promise((resolve, reject) => {
@@ -763,6 +767,7 @@ async function encodeImportFiles(files, source, password) {
 
 async function previewImport(form) {
   if (!beginSubmit(form)) return;
+  const issued = state.importPreviewGeneration = (state.importPreviewGeneration || 0) + 1;
   try {
     const files = [...form.elements.files.files];
     validateImportFiles(files);
@@ -771,7 +776,11 @@ async function previewImport(form) {
     const timezone = form.elements.timezone.value || selectedImportTimeZone();
     setSelectedImportTimeZone(timezone);
     const payload = { timezone, files: await encodeImportFiles(files, source, password) };
-    state.importPlan = await jsonRequest("/paam/import/v1/preview", "POST", payload);
+    if (!form.isConnected || issued !== state.importPreviewGeneration) return;
+    const preview = await jsonRequest("/paam/import/v1/preview", "POST", payload);
+    if (!form.isConnected || issued !== state.importPreviewGeneration) return;
+    state.importPlan = preview;
+    form.elements.password.value = "";
     renderImportPlan();
   } finally {
     endSubmit(form);
@@ -849,68 +858,8 @@ function renderImportPlanContent() {
   const plan = state.importPlan;
   const root = $("#import-preview");
   if (!plan || !root) return;
-  const sourceTimeZones = [...new Set(
-    (plan.documents || []).map((document) => document.source_timezone).filter(Boolean),
-  )];
-  const rows = (plan.documents || []).flatMap((document) => document.rows || []);
-  const accountRows = new Map();
-  rows.forEach((row) => {
-    if (row.detected_account_identity && !accountRows.has(row.detected_account_identity)) {
-      accountRows.set(row.detected_account_identity, row);
-    }
-  });
-  const accountFields = [...accountRows.entries()].map(([detected, row]) => {
-    const current = row.account?.identity || detected;
-    const options = (plan.accounts || []).map((account) => {
-      const label = `${account.display_name || account.identity} · ${account.provider || "unknown"}${account.number ? ` · ${account.number}` : ""}`;
-      return `<option value="${esc(account.identity)}" ${account.identity === current ? "selected" : ""}>${esc(label)}</option>`;
-    }).join("");
-    return `<label>${esc(row.account?.display_name || detected)}<select name="account:${esc(detected)}">${options}</select><small>${esc(row.account_basis || "按导入文件识别")}</small></label>`;
-  }).join("");
-  const decisions = rows.filter((row) => row.action === "ambiguous").map((row) => {
-    const options = (row.candidates || []).map((candidate) => `<option value="match:${esc(candidate)}">补充已有 Fact #${esc(candidate)}</option>`).join("");
-    return `<label>第 ${esc(row.row_id)} 行：${esc(row.counterparty || row.summary || "未命名交易")}<select name="decision:${esc(row.row_id)}"><option value="">请选择</option><option value="new">保留为新 Fact</option>${options}</select><small>${esc(row.error || "需要人工确定")}</small></label>`;
-  }).join("");
-  const errors = rows.filter((row) => row.action === "error").map((row) => `<li>第 ${esc(row.row_id || "?")} 行：${esc(row.error || "无法导入")}</li>`).join("");
-  const counts = plan.counts || {};
-  const issueCount = Number(counts.error || 0) + Number(counts.errors || 0) + Number(counts.ambiguous || 0);
-  const metric = (label, value, tone, note) => `<div class="preview-metric" data-tone="${tone}"><span>${label}</span><strong>${value}</strong><small>${note}</small></div>`;
-  const documentCards = (plan.documents || []).map((document, index) => {
-    const documentRows = document.rows || [];
-    const previewRows = documentRows.slice(0, 5).map(previewImportRow);
-    const source = sourceLabels[document.source_type] || document.source_type || "未识别来源";
-    const documentIssue = document.error || documentRows.some((row) => ["ambiguous", "error"].includes(row.action));
-    const status = document.error ? "解析失败" : document.duplicate ? "重复文件" : documentIssue ? "需要核对" : "可以导入";
-    const body = document.error
-      ? `<div class="error">${esc(document.error)}</div>`
-      : `<div class="preview-file-meta"><span>来源 <strong>${esc(source)}</strong></span>${document.account?.display_name ? `<span>账户 <strong>${esc(document.account.display_name)}</strong></span>` : ""}<span>共 <strong>${documentRows.length}</strong> 行</span></div>${previewRows.length ? `${table(["交易时间", "摘要 / 备注", "金额", "处理结果"], previewRows)}<div class="preview-detail-row"><span>默认展示前 5 行，确认时仍会处理全部 ${documentRows.length} 行。</span><button type="button" class="quiet" data-action="detail-preview" data-document="${index}">仔细预览全部 ${documentRows.length} 行 →</button></div>` : '<div class="empty-state">文件中没有可预览的交易。</div>'}`;
-    return `<details class="preview-file-card" ${index === 0 ? "open" : ""}><summary><span class="file-type-icon">${esc(fileExtension(document.filename || document.format))}</span><span class="preview-file-title"><strong>${esc(document.filename || "未命名文件")}</strong><small>${esc(source)} · ${documentRows.length} 行</small></span><span class="preview-status ${documentIssue ? "issue" : "ready"}">${status}</span><span class="preview-chevron" aria-hidden="true">⌄</span></summary><div class="preview-file-body">${body}</div></details>`;
-  }).join("");
-  root.innerHTML = `<div class="preview-section" aria-labelledby="preview-title"><div class="preview-heading"><div><span class="step-kicker">步骤 3 / 3</span><h2 id="preview-title" tabindex="-1">预览结果</h2><p>文件卡片默认快速展示前 5 行；需要逐条核对时可打开右侧仔细预览。</p></div><span class="preview-verdict ${plan.can_confirm ? "ready" : "issue"}">${plan.can_confirm ? "✓ 可以写入" : "! 需要处理"}</span></div><div class="preview-metrics">${metric("新增事实", Number(counts.new || 0), "green", "将生成新流水")}${metric("补充证据", Number(counts.supplement || 0), "blue", "关联已有事实")}${metric("跳过 / 留档", Number(counts.duplicate_file || 0) + Number(counts.record || 0), "gray", "不重复写入")}${metric("需处理", issueCount, issueCount ? "orange" : "green", issueCount ? "请检查下方项目" : "未发现阻塞项")}</div><div class="preview-file-list">${documentCards}</div>${errors ? `<div class="error"><strong>无法直接导入的记录</strong><ul class="error-list">${errors}</ul></div>` : ""}<form data-form="import-revise" class="preview-confirm-card"><div><h3>${plan.can_confirm ? "核对完成，准备写入" : "完成核对后再写入"}</h3><p>${plan.can_confirm ? "写入采用原子事务，原始文件和证据会一并保留。" : "请处理账号匹配或交易歧义；文件解析错误需重新导出后上传。"}</p></div>${accountFields ? `<details class="review-fields"><summary>核对或调整账号匹配</summary><div class="stack inset">${accountFields}</div></details>` : ""}${decisions ? `<fieldset><legend>交易匹配决策</legend><div class="stack">${decisions}</div></fieldset>` : ""}<details class="raw-plan" data-raw-plan><summary>查看技术明细</summary><div class="raw-plan-placeholder" data-raw-plan-content>展开后加载技术明细</div></details><div class="confirm-actions"><button type="button" class="quiet back-to-files" data-action="import-step" data-step="2">← 返回文件步骤</button><button type="submit">重新计算预览</button><button type="button" class="primary" data-action="confirm-import" ${plan.can_confirm ? "" : "disabled"}>确认并写入事实层</button></div></form></div>`;
-  const previewHelp = $(".preview-heading p", root);
-  if (previewHelp && sourceTimeZones.length) {
-    previewHelp.append(` 账单原始时间按 ${sourceTimeZones.map(timeZoneName).join("、")} 解释。`);
-  }
-  bindPage(root);
+  mountImportBatch(root, plan, current => { state.importPlan = current; syncImportSteps(); });
   showImportStep(3);
-}
-async function reviseImport(event) {
-  event.preventDefault();
-  if (!state.importPlan) return;
-  const form = event.currentTarget;
-  if (!beginSubmit(form)) return;
-  const accounts = {};
-  const decisions = {};
-  for (const [name, value] of new FormData(form)) {
-    if (name.startsWith("account:") && value) accounts[name.slice(8)] = value;
-    if (name.startsWith("decision:") && value) decisions[name.slice(9)] = value;
-  }
-  try {
-    state.importPlan = await jsonRequest(`/paam/import/v1/preview/${state.importPlan.token}`, "PUT", { accounts, decisions });
-    renderImportPlan();
-    toast("导入预览已重新计算");
-  } catch (error) { toast(error.message, true); }
-  finally { endSubmit(form); }
 }
 
 async function tagsPage() {
@@ -1224,6 +1173,10 @@ function bindPage(root) {
   $$('[data-action="conflict-resolve"]', root).forEach((button) => button.onclick = () => conflictDialog(button));
   const importForm = $('[data-form="import-preview"]', root);
   if (importForm) {
+    $('[data-import-dropzone] small', importForm).textContent = "单次解码总计不超过20 MiB、100个文件；最多20,000来源行";
+    $('.import-submit-copy small', importForm).textContent = "先创建来源预览；确认所选行后才写金融事实。";
+  }
+  if (importForm) {
     const limitCopy = $("[data-import-dropzone] small", importForm);
     if (limitCopy) limitCopy.textContent = "单个不超过 25 MB，最多 100 个，单次总计不超过 100 MB";
     const importTimeZone = importForm.elements.timezone;
@@ -1291,7 +1244,6 @@ function bindPage(root) {
       content.replaceWith(pre);
     });
   });
-  $('[data-action="confirm-import"]', root)?.addEventListener("click", confirmImport);
   $('[data-form="summary-filter"]', root)?.addEventListener("submit", (event) => { event.preventDefault(); const data = new FormData(event.currentTarget); route("summary", new URLSearchParams([...data].filter(([, value]) => value))); });
   $('[data-form="ledger-filter"]', root)?.addEventListener("submit", (event) => { event.preventDefault(); const data = new FormData(event.currentTarget); const params = new URLSearchParams([...data].filter(([, value]) => value)); params.set("page", "1"); route("ledger", params); });
   const historyFilter = $('[data-form="history-filter"]', root);
@@ -1302,7 +1254,6 @@ function bindPage(root) {
   historyFilter?.elements.source_type.addEventListener("change", () => scheduleHistoryRefresh(historyFilter));
   historyFilter?.elements.status.addEventListener("change", () => scheduleHistoryRefresh(historyFilter));
   importForm?.addEventListener("submit", async (event) => { event.preventDefault(); try { await previewImport(event.currentTarget); } catch (error) { showFormError(event.currentTarget, error); } });
-  $('[data-form="import-revise"]', root)?.addEventListener("submit", reviseImport);
   $('[data-form="tag-assignment"]', root)?.addEventListener("submit", submitTags);
   $$('[data-form="inline-tag"]', root).forEach((form) => {
     bindTagSystemName(form);
@@ -1349,14 +1300,6 @@ async function submitTags(event) {
     });
     closeDialogs(); toast("标签已保存"); await render();
   } catch (error) { endSubmit(form); showFormError(form, error); }
-}
-async function confirmImport() {
-  if (!state.importPlan || state.confirmingImport) return;
-  state.confirmingImport = true;
-  const button = $('[data-action="confirm-import"]');
-  if (button) button.disabled = true;
-  try { const result = await jsonRequest(`/paam/import/v1/preview/${state.importPlan.token}/confirm`, "POST", { version: state.importPlan.version }); state.importPlan = null; toast(`导入完成：${result.bill_fact_ids?.length || 0} 条新事实`); route("import-history"); } catch (error) { if (button) button.disabled = false; const form = button?.closest("form"); if (form) showFormError(form, error); else toast(error.message, true); }
-  finally { state.confirmingImport = false; }
 }
 function simpleDictionaryDialog(kind, viewId = "") {
   const dialog = modal(kind === "view" ? "新建标签维度" : "新增标签", `<form data-form="dictionary" data-kind="${kind}" data-view="${viewId}" class="stack"><label>显示名称<input name="name" required maxlength="120" autocomplete="off" placeholder="用于界面展示"></label><label>系统名称 <span><i>根据显示名称自动生成，可修改</i></span><input name="system_name" required maxlength="64" pattern="[a-z][a-z0-9_]{0,63}" placeholder="自动生成系统名称" autocomplete="off"></label><div class="actions"><button class="primary">保存</button></div></form>`, false); bindPage(dialog);

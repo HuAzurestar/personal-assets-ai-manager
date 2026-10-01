@@ -11,7 +11,8 @@ from sqlalchemy.orm import sessionmaker
 
 from backend import target_main
 from backend.core import target_database
-from backend.core.intake_preview_store import target_intake_preview_store
+from backend.core.import_preview_store import import_preview_store as target_intake_preview_store
+from import_batch_helpers import confirm_api_batch
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -272,10 +273,7 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
             )
             assert preview_response.status_code == 200, preview_response.text
             preview = preview_response.json()["body"]
-            confirmation = client.post(
-                    f"/paam/import/v1/preview/{preview['token']}/confirm",
-                json={"version": preview["version"]},
-            )
+            confirmation = confirm_api_batch(client, preview)
             assert confirmation.status_code == 200, confirmation.text
             page = client.get("/paam/ledger/v1/flow/list")
             assert page.status_code == 200, page.text
@@ -324,12 +322,9 @@ def test_target_review_confirm_revoke_restore_rebuilds_projection(
                     "content_base64": base64.b64encode(content).decode(),
                 }]},
             ).json()["body"]
-            confirmation = client.post(
-                    f"/paam/import/v1/preview/{preview['token']}/confirm",
-                json={"version": preview["version"]},
-            )
+            confirmation = confirm_api_batch(client, preview)
             assert confirmation.status_code == 200, confirmation.text
-            fact_ids = confirmation.json()["body"]["bill_fact_ids"]
+            fact_ids = [row["transaction_id"] for row in confirmation.json()["body"]["processed_rows"]]
             assert len(fact_ids) == 2
 
             def command(**intent):

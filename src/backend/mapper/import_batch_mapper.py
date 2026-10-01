@@ -20,6 +20,7 @@ from backend.entity.base import utc_now
 from backend.error import TargetIntakeError
 from backend.mapper.account_management_mapper import AccountManagementMapper
 from backend.mapper.review_command_mapper import ReviewCommandMapper, chunks
+from backend.service.target_tag_projection_service import TargetTagProjectionService
 
 
 def fail(code, status=409):
@@ -290,7 +291,8 @@ class ImportBatchMapper(ReviewCommandMapper):
             try:
                 parsed[key] = fact_values(row, files[key[0]]["sha256"])
             except (ValueError, TypeError, KeyError):
-                errors[key] = "ROW_INVALID"
+                errors[key] = ("NON_POSTED_EVIDENCE" if not row.get("error") and row.get("disposition") == "non_posted"
+                    else "NEUTRAL_EVIDENCE" if not row.get("error") and row.get("disposition") == "neutral_evidence" else "ROW_INVALID")
         found = self.candidates(parsed, files, stored)
         account = self.account_premises(input_rows, choices)
         result, groups = {}, {}
@@ -364,7 +366,7 @@ class ImportBatchMapper(ReviewCommandMapper):
                 if choice["decision"] != "ACCEPT":
                     fail("ROWS_ALREADY_PROCESSED")
             if choice["decision"] == "ACCEPT" and candidate["issue"]:
-                fail(candidate["issue"], 422)
+                fail("ROW_INVALID" if candidate["issue"] in {"NON_POSTED_EVIDENCE", "NEUTRAL_EVIDENCE"} else candidate["issue"], 422)
 
     def write_batch(self, candidates, choices, order, *, fault=None):
         self.validate_selection(candidates, choices)
@@ -387,11 +389,20 @@ class ImportBatchMapper(ReviewCommandMapper):
         defaults = {fact_id: (review.id, ledger[0].id) for fact_id, review, ledger in zip(sorted(facts.values()), reviews, ledgers)}
         if fault:
             fault("defaults")
+        tag_service = TargetTagProjectionService(self.db)
+        ledger_ids = [ledger.id for group in ledgers for ledger in group]
+        active_views = {item.view_id for item in tag_service.mapper.active_dictionary()} if ledger_ids else set()
+        if len(ledger_ids) * len(active_views) > 50000:
+            fail("TAG_IMPACT_LIMIT", 413)
+        for batch in chunks(ledger_ids):
+            tag_service.sync_ledgers(batch)
+        if fault:
+            fault("tags")
         new_rows, updates, outcomes = [], [], {}
         for key in order:
             candidate, choice = candidates[key], choices[key]
             accepted = choice["decision"] == "ACCEPT"
-            status = 1 if accepted else 3 if candidate["issue"] else 2
+            status = 1 if accepted else 3 if candidate["issue"] and candidate["issue"] not in {"NON_POSTED_EVIDENCE", "NEUTRAL_EVIDENCE"} else 2
             fact_id = (candidate["fact_id"] or facts[candidate["values"]["fact_key"]]) if accepted else 0
             values = dict(transaction_fact_id=fact_id, row_status=status,
                           issue_code=candidate["issue"] if status == 3 else "", issue_message=candidate["issue"] if status == 3 else "")

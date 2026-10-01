@@ -16,6 +16,7 @@ import pytest
     "verify_automation_presentation.py",
     "verify_pirc35_account.py",
     "verify_pirc35_position.py",
+    "verify_pirc35_import.py",
 ])
 def test_browser_scenario(scenario):
     source = Path(__file__).parent / scenario

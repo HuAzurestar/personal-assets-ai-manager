@@ -137,6 +137,8 @@ def upload(service, content):
     return service.preview(IntakePreviewRequest(files=[dict(filename="mock.csv",
         content_base64=base64.b64encode(content).decode())]), source_timezone=ZoneInfo("Asia/Hong_Kong"))
 
+from import_batch_helpers import confirm_service_batch, prepare_service_batch
+
 
 def test_reliable_import_reuses_ref_default_atomic_weak_stays_unknown():
     target_database.init_target_db()
@@ -144,14 +146,14 @@ def test_reliable_import_reuses_ref_default_atomic_weak_stays_unknown():
     with target_database.SessionLocal() as db:
         service = TargetIntakeService(db)
         first = upload(service, content)
-        result = service.confirm(first["token"], IntakeConfirmRequest(version=first["version"]))
+        result = confirm_service_batch(service, first)
         ref = db.scalar(select(LedgerAccountRef))
         assert ref.account_id == 0 and ref.source_identity == "990000000000001234"
         assert set(db.scalars(select(LedgerEntry.account_ref_id))) == {ref.id}
         assert "_account_refs" not in result
         again = upload(service, content.replace(b"2024-", b"2025-"))
-        assert again["can_confirm"]
-        service.confirm(again["token"], IntakeConfirmRequest(version=again["version"]))
+        assert again["issue_count"] == 0
+        confirm_service_batch(service, again)
         assert db.scalar(select(func.count()).select_from(LedgerAccountRef)) == 1
         assert db.scalar(select(func.count()).select_from(ReviewCase)) == 48
         # A full card with the same suffix already exists, but weak evidence stays weak.
@@ -159,8 +161,8 @@ def test_reliable_import_reuses_ref_default_atomic_weak_stays_unknown():
         parsed = parse_statement(weak_content, "mock.csv", source_timezone=ZoneInfo("Asia/Hong_Kong"))
         assert all(row["source_account"]["identity_strength"] == "WEAK" for row in parsed["rows"])
         weak = upload(service, weak_content)
-        assert weak["can_confirm"]
-        service.confirm(weak["token"], IntakeConfirmRequest(version=weak["version"]))
+        assert weak["issue_count"] == 0
+        confirm_service_batch(service, weak)
         assert db.scalar(select(func.count()).select_from(LedgerAccountRef)) == 1
         assert db.scalar(select(func.count()).select_from(LedgerEntry).where(LedgerEntry.account_ref_id == 0)) == 24
 
@@ -175,7 +177,7 @@ def test_initial_default_failure_rolls_back_new_identity_fact_and_sources(monkey
             raise RuntimeError("synthetic default failure")
         monkeypatch.setattr(ReviewCommandMapper, "create_initial_defaults", fail)
         with pytest.raises(RuntimeError, match="synthetic default failure"):
-            service.confirm(preview["token"], IntakeConfirmRequest(version=preview["version"]))
+            confirm_service_batch(service, preview)
         assert db.scalar(select(func.count()).select_from(TransactionFact)) == 0
         assert db.scalar(select(func.count()).select_from(LedgerAccountRef)) == 0
         assert db.scalar(select(func.count()).select_from(ReviewCase)) == 0
@@ -187,17 +189,18 @@ def test_import_preview_detects_changed_source_ref_and_closed_source_does_not_ad
     with target_database.SessionLocal() as db:
         service = TargetIntakeService(db)
         first = upload(service, content)
-        service.confirm(first["token"], IntakeConfirmRequest(version=first["version"]))
+        confirm_service_batch(service, first)
         preview = upload(service, content.replace(b"2024-", b"2025-"))
+        intent = prepare_service_batch(service, preview)
         db.execute(update(LedgerAccountRef).values(name="changed after preview", status="CLOSED",
             updated_time=datetime(2026, 1, 1, tzinfo=timezone.utc)))
         db.commit()
         with pytest.raises(TargetIntakeError) as stale:
-            service.confirm(preview["token"], IntakeConfirmRequest(version=preview["version"]))
+            service.confirm(preview["token"], intent)
         assert stale.value.status_code == 409
         fresh = upload(service, content.replace(b"2024-", b"2025-"))
         with pytest.raises(TargetIntakeError) as closed:
-            service.confirm(fresh["token"], IntakeConfirmRequest(version=fresh["version"]))
+            confirm_service_batch(service, fresh)
         assert closed.value.code == "ACCOUNT_NOT_ACTIVE"
         assert db.scalar(select(func.count()).select_from(TransactionFact)) == 24
         assert db.scalar(select(func.count()).select_from(ReviewCase)) == 24

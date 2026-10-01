@@ -85,7 +85,7 @@ def page_rows(db, statement, request, columns, *, condition=True, default=(("id"
     return [dict(row) for row in rows], total
 
 
-def scan_rows(db, statement, request, columns, *, scope, condition=True, default=(("id", "asc"),)):
+def scan_rows(db, statement, request, columns, *, scope, condition=True, default=(("id", "asc"),), project=None):
     start = monotonic()
     sorts, order = effective_sort(request, columns, default)
     condition_hash = hashlib.sha256(canonical(dict(scope=scope,
@@ -129,7 +129,8 @@ def scan_rows(db, statement, request, columns, *, scope, condition=True, default
             cursor_error()
     candidates = [dict(row) for row in db.execute(statement.where(predicate).order_by(*order)
                                                 .limit(request.page_size)).mappings()]
-    items = [row for row in candidates if all(expression.word in normal_text(str(row.get(expression.key) or ""))
+    public_candidates = [project(row) for row in candidates] if project is not None else candidates
+    items = [row for row in public_candidates if all(expression.word in normal_text(str(row.get(expression.key) or ""))
              for expression in request.query)]
     has_more = len(candidates) == request.page_size
     next_cursor = None

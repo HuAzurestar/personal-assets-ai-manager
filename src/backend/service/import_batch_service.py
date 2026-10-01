@@ -21,7 +21,7 @@ from backend.core.source_account_identity import reliable_source
 from backend.error import ListQueryError, TargetIntakeError
 from backend.entity import TransactionImportFile
 from backend.mapper.import_batch_mapper import ImportBatchMapper, fail, fingerprint
-from backend.parser.statement_parser import parse_statement
+from backend.parser.bounded_statement import parse_statement
 from backend.schema.list_query import FilterFieldExpression
 
 
@@ -107,7 +107,7 @@ class ImportBatchService:
                 fail("PARSE_LIMIT", 422)
             try:
                 doc = parse_statement(content, item.filename, item.password, item.source_type,
-                                      source_timezone=source_timezone)
+                                      source_timezone=source_timezone, deadline=started + 30)
             except (ValueError, TypeError):
                 # Raw parser exceptions may contain account numbers or content.
                 doc = dict(filename=PureWindowsPath(item.filename).name, sha256=sha, rows=[], error="PARSE_ERROR")
@@ -119,7 +119,7 @@ class ImportBatchService:
         self.write_metadata(lambda: self.mapper.persist_parse(list(documents.values())))
         summaries, rows = [], {}
         for sha, doc in documents.items():
-            summaries.append(dict(file_id=doc["file_id"], sha256=sha, filename=doc["filename"],
+            summaries.append(dict(file_id=doc["file_id"], sha256=sha, filename=PureWindowsPath(doc["filename"]).name,
                 parsed_row_count=len(doc["rows"]), error=doc.get("error")))
             metadata = {key: doc.get(key) for key in ("parser_version", "source_timezone")}
             for row in doc["rows"]:

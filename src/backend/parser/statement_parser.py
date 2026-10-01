@@ -16,8 +16,6 @@ import pdfplumber
 import xlrd
 
 from backend.parser.file_import import (
-    MAX_UPLOAD_BYTES,
-    MAX_ROWS,
     _decode_csv,
     _read_zip,
     _stringify,
@@ -34,6 +32,8 @@ LABELS = {
 }
 BANKS = {"ccb", "abc", "cmb"}
 EMPTY = {"", "/", "--", "-", "无"}
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+MAX_ROWS = 20000
 
 
 def digest(value) -> str:
@@ -141,9 +141,9 @@ def read_table(content: bytes, extension: str):
     if extension == ".xlsx":
         with zipfile.ZipFile(io.BytesIO(content)) as archive:
             if (
-                len(archive.infolist()) > 5000
+                len(archive.infolist()) > 100
                 or sum(info.file_size for info in archive.infolist())
-                > MAX_UPLOAD_BYTES * 2
+                > MAX_UPLOAD_BYTES
             ):
                 raise ValueError("Excel 解压内容超过安全上限")
         with io.BytesIO(content) as stream:
@@ -326,12 +326,12 @@ def parse_statement(
     source_timezone: tzinfo,
 ) -> dict:
     if not content or len(content) > MAX_UPLOAD_BYTES:
-        raise ValueError("文件为空或超过 25 MB")
+        raise ValueError("文件为空或超过 20 MiB")
     extension = Path(filename).suffix.lower()
     sha = hashlib.sha256(content).hexdigest()
     archive_entry = None
     if extension == ".zip":
-        archive_entry, content = _read_zip(content, password)
+        archive_entry, content = _read_zip(content, password, max_bytes=MAX_UPLOAD_BYTES)
         extension = Path(archive_entry).suffix.lower()
     if extension == ".pdf":
         detected, preamble, raw_rows = pdf_table(content)
@@ -384,8 +384,8 @@ def parse_statement(
             indexed_rows.append(
                 (n, {h: str(v).strip() for h, v in zip(headers, values) if h})
             )
-    if not indexed_rows or len(indexed_rows) > MAX_ROWS:
-        raise ValueError("文件没有交易或超过 10,000 行")
+    if len(indexed_rows) > MAX_ROWS:
+        raise ValueError("文件超过20,000来源行")
     compact = re.sub(r"\s+", "", preamble)
     number_match = (
         re.search(r"(?:卡号/账号|账号|账户)[：:]([\d*]{10,30})(?!\d)", compact)

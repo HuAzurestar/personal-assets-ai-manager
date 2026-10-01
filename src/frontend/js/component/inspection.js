@@ -1,4 +1,5 @@
 import { request } from "../api/client.js";
+import { workbenchDialog } from "./workbench.js";
 import { preserveView } from "../util/view_state.js?v=20260928.6";
 import { esc, money, quantityDecimal, date as when, typeNames, statusNames, reviewTypeNames } from "../util/core.js";
 
@@ -50,7 +51,7 @@ function relationButton(kind, id, label, note = "") {
 function jsonPayload(payload, label = "查看原始 JSON") {
   if (!payload) return '<p class="inspection-empty">没有保留原始 JSON</p>';
   let formatted = payload;
-  try { formatted = JSON.stringify(JSON.parse(payload), null, 2); } catch { /* Preserve malformed evidence verbatim. */ }
+  try { formatted = JSON.stringify(typeof payload === "string" ? JSON.parse(payload) : payload, null, 2); } catch { /* Preserve malformed evidence verbatim. */ }
   return `<details class="inspection-json"><summary>${esc(label)}</summary><pre>${esc(formatted)}</pre></details>`;
 }
 function totals(rows, directionField) {
@@ -121,15 +122,7 @@ function rowReason(row, normalized) {
   return row.row_status === 2 ? "该来源行未生成事实" : "需要检查来源数据";
 }
 function importRow(row) {
-  let payload = null;
-  try { payload = row.raw_payload ? JSON.parse(row.raw_payload) : null; } catch { payload = null; }
-  const normalized = payload?.normalized || {};
-  const fact = row.transaction_fact;
-  const title = fact ? businessTitle(fact) : normalized.note || normalized.merchant || `来源第 ${row.source_row_number} 行`;
-  const conflict = row.issue_code === "FACT_CONFLICT"
-    ? `<button type="button" class="inspection-link" data-action="fact-conflict-detail" data-id="${row.id}">处理事实冲突</button>`
-    : "";
-  return `<article class="inspection-import-row status-${row.row_status}"><div class="inspection-row-number">第 ${row.source_row_number} 行</div><div class="inspection-row-content"><span class="inspection-status status-${row.row_status}">${esc(rowStates[row.row_status] || "状态未识别")}</span><strong>${esc(title)}</strong><p>${esc(rowReason(row, normalized))}</p>${fact ? `<small>${esc(`${when(fact.occurred_time)} · ${fact.counterparty_name || "交易方未提供"}`)}</small>` : ""}</div>${fact ? `<div class="inspection-row-money">${esc(amount(fact))}${relationButton("fact", fact.id, "查看事实流水")}</div>` : conflict}<div class="inspection-row-json">${jsonPayload(row.raw_payload)}</div></article>`;
+  return `<article class="inspection-import-row status-${row.row_status}"><div class="inspection-row-number">第 ${row.source_row_number} 行</div><div class="inspection-row-content"><span class="inspection-status status-${row.row_status}">${esc(rowStates[row.row_status] || "状态未识别")}</span><p>${esc(row.issue_code || "来源证据已保留")} · 来源号 ${esc(row.source_reference || "未提供")}</p></div>${row.transaction_id ? relationButton("fact", row.transaction_id, `事实 #${row.transaction_id}`) : ""}<button type="button" data-source-evidence="${row.id}">查看单行原始证据与关系</button></article>`;
 }
 
 function fileRowsCard(fileId, initial) {
@@ -144,24 +137,48 @@ async function mountFileRows(root, initial, bindActions) {
   const status = panel.querySelector("[data-row-status]");
   const pager = panel.querySelector("[data-row-pager]");
   let page = 1;
+  let busy = false;
   let data = initial;
   const paint = () => {
     items.innerHTML = data.items.length ? `<div class="inspection-record-list">${data.items.map(importRow).join("")}</div>` : '<p class="inspection-empty">当前条件下没有来源行</p>';
     bindActions(items);
+    items.querySelectorAll("[data-source-evidence]").forEach(button => {
+      button.onclick = async () => {
+        const dialog = workbenchDialog("单行原始证据（只读）", '<p role="status">正在读取…</p>');
+        try {
+          const rowId = Number(button.dataset.sourceEvidence);
+          const detail = await request(`${endpoints.file}${fileId}/row/${rowId}`);
+          const params = new URLSearchParams({ row_ids: JSON.stringify([rowId]) });
+          const relations = await request(`${endpoints.file}${fileId}/row/relations?${params}`);
+          if (!dialog.isConnected) return;
+          dialog.querySelector(".dialog-body").innerHTML = `<p>来源第 ${detail.row.source_row_number} 行 · ${esc(rowStates[detail.row.row_status])}</p>${detail.fact ? `<p>Fact #${detail.fact.id} · ${esc(amount(detail.fact))} · ${esc(when(detail.fact.occurred_time))}</p>` : "<p>未接受为Fact</p>"}${jsonPayload(detail.raw_payload)}<h3>当前可核验关系</h3>${relations.items.map(row => `<p>Review #${row.review_id || "无"} ${esc(row.review_status || "")} · Ledger #${row.ledger_id || "无"}</p>`).join("")}`;
+        } catch (error) { if (dialog.isConnected) dialog.querySelector("[role=status]").textContent = error.message; }
+      };
+    });
     const start = data.total ? (data.page_index - 1) * data.page_size + 1 : 0;
     pager.querySelector("span").textContent = `显示 ${start}–${Math.min(data.page_index * data.page_size, data.total)} / ${data.total} 行`;
     pager.querySelector("[data-row-prev]").disabled = data.page_index <= 1;
     pager.querySelector("[data-row-next]").disabled = data.page_index * data.page_size >= data.total;
   };
-  const fetchRows = async () => {
-    items.innerHTML = '<p role="status">正在加载来源行…</p>';
+  const fetchRows = async requestedPage => {
+    if (busy) return;
+    busy = true;
+    status.disabled = true;
+    pager.querySelectorAll("button").forEach(button => { button.disabled = true; });
     const filter = status.value ? `&filter=${encodeURIComponent(JSON.stringify({ key: "row_status", op: "=", val: Number(status.value) }))}` : "";
-    data = await request(`${endpoints.file}${fileId}/row/list?page_index=${page}&page_size=20${filter}`);
-    paint();
+    try {
+      const next = await request(`${endpoints.file}${fileId}/row/list?page_index=${requestedPage}&page_size=20${filter}`);
+      if (!panel.isConnected) return;
+      data = next;
+      page = requestedPage;
+      paint();
+    } catch (error) {
+      if (panel.isConnected) { paint(); items.insertAdjacentHTML("afterbegin", `<p role="status">${esc(error.message)}；分页未推进，请重新读取。</p>`); }
+    } finally { busy = false; status.disabled = false; }
   };
-  status.onchange = () => { page = 1; fetchRows(); };
-  pager.querySelector("[data-row-prev]").onclick = () => { page--; fetchRows(); panel.scrollIntoView({ block: "start" }); };
-  pager.querySelector("[data-row-next]").onclick = () => { page++; fetchRows(); panel.scrollIntoView({ block: "start" }); };
+  status.onchange = () => fetchRows(1);
+  pager.querySelector("[data-row-prev]").onclick = () => { fetchRows(page - 1); panel.scrollIntoView({ block: "start" }); };
+  pager.querySelector("[data-row-next]").onclick = () => { fetchRows(page + 1); panel.scrollIntoView({ block: "start" }); };
   paint();
 }
 
@@ -206,14 +223,14 @@ function describe(kind, data) {
       + card("Ledger → 数量腿款项归因", p.collection(item.position_allocations, row => `<article class="inspection-flow"><strong>${esc(money(row))}</strong><p>Link #${row.id} · Leg #${row.position_leg_id}（不是额外现金）</p>${relationButton("ledger", row.ledger_id, `Ledger #${row.ledger_id}`)}</article>`)) + "</div>";
     actions = `<button data-action="economic-review-transition" data-kind="${item.status === "CONFIRMED" ? "revoke" : "restore"}" data-id="${item.id}">${item.status === "CONFIRMED" ? "预览停用与默认恢复" : "预览激活原审查"}</button>`;
   } else {
-    item = data.import_file;
+    item = data.file;
     title = `${sources[item.source_type] || "来源未识别"}账单`;
     subtitle = `${fileStates[item.status] || "状态未识别"} · ${formats[item.file_format] || "格式未识别"} · ${when(item.period_start)} 至 ${when(item.period_end)}`;
-    const summary = data.relation_summary;
-    body = metrics([["来源总行数", item.total_count], ["已关联事实", item.success_count, "positive"], ["已跳过", item.skip_count, "muted"], ["异常", item.issue_count, item.issue_count ? "negative" : "base"]])
+    const progress = data.progress;
+    body = metrics([["来源总行数", item.total_count], ["已关联事实", progress.accepted, "positive"], ["已跳过", progress.skipped, "muted"], ["异常", progress.invalid, progress.invalid ? "negative" : "base"], ["剩余未处理", progress.remaining]])
       + '<div class="inspection-dashboard">'
-      + card("文件概览", fields([["文件", item.filename], ["来源", sources[item.source_type]], ["格式", formats[item.file_format]], ["覆盖时间", `${when(item.period_start)} 至 ${when(item.period_end)}`], ["导入时间", when(item.created_time)]]), { tone: "accent" })
-      + card("形成的账本结果", metrics([["有效审查", summary.review_count], ["账本结果", summary.ledger_count]]) + totals(summary.totals, "entry_direction"))
+      + card("文件概览", fields([["文件", item.filename], ["来源", sources[item.source_type]], ["格式", formats[item.file_format]], ["活动范围（不证明完整覆盖）", `${when(item.period_start)} 至 ${when(item.period_end)}`], ["首次导入时间", when(item.created_time)]]), { tone: "accent" })
+      + card("核对说明", "<p>接受行仅表示来源已关联Fact；当前金融效果须核对Review状态。原文只在单行详情展示，多条来源证据不能当多份现金。</p>")
       + fileRowsCard(item.id, data.rows) + "</div>";
   }
   return { title, subtitle, hero, body, actions, presentation: p, kind };
