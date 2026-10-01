@@ -87,7 +87,7 @@ def test_preset_is_idempotent_and_import_cron_review_remain_independent(scan_run
             _set_enabled(client, row["rule_id"], False)
         ledger_id = requests[0]["ledger_id"]
         def tags():
-            entry = _body(client.get(f"/paam/ledger/v1/flow/{ledger_id}"))["ledger_entry"]
+            entry = _body(client.get(f"/paam/ledger/v1/flow/{ledger_id}"))
             return {tag["view_system_name"]: tag["tag_system_name"] for tag in entry["tags"]}
         assert tags()["expense_purpose"] == tags()["purchase_channel"] == "unclassified"
         medical = next(row for row in requests if row["proposed_tag_name"] == "医疗")

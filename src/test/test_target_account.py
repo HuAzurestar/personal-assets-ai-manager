@@ -11,6 +11,7 @@ from backend.core.target_database import init_target_db
 from backend.entity import (
     CASH_DIRECTION_IN,
     CASH_DIRECTION_OUT,
+    LedgerEntry,
     ReviewAllocation,
     ReviewCase,
     TransactionFact,
@@ -98,9 +99,13 @@ def test_ledger_account_is_independent_from_transaction_fact(target_account_api)
 
     with sessions() as db:
         assert db.get(TransactionFact, fact_id).account_code == "fact-wallet"
+        assert db.get(LedgerEntry, ledger_id).account_code == "fact-wallet"
     detail = client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]
-    assert detail["ledger_entry"]["account_code"] == "fact-wallet"
-    assert detail["facts"][0]["account_code"] == "fact-wallet"
+    assert detail["ledger_entry"]["account_ref_id"] == 0
+    assert detail["account"] == {
+        "state": "UNIDENTIFIED", "ref": None, "account": None, "party": None,
+    }
+    assert detail["facts"][0]["account_code"] == "****llet"
 
 
 def test_ledger_account_uses_serial_writes_and_rejects_projection_sentinel(

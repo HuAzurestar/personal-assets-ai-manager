@@ -336,7 +336,7 @@ def test_ledger_tag_assignment_is_direct_and_idempotent(target_tag_api):
     assert _assign(client, ledger_id, "food").status_code == 200
 
     detail = client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]
-    assert detail["ledger_entry"]["tags"][0]["tag_system_name"] == "food"
+    assert detail["tags"][0]["tag_system_name"] == "food"
     assert all("review_type" not in item for item in detail["reviews"])
     with sessions() as db:
         assert db.get(LedgerEntry, ledger_id).updated_time == previous_updated_time
@@ -444,7 +444,7 @@ def test_archived_tag_invalidates_assignment_and_advances_projection(target_tag_
     assert archived.status_code == 200, archived.text
     invalidated = client.get(
         f"/paam/ledger/v1/flow/{ledger_id}"
-    ).json()["body"]["ledger_entry"]
+    ).json()["body"]
     assert invalidated["tags"][0]["tag_system_name"] == "unclassified"
     assert _assign(
         client, ledger_id, "food"
@@ -457,5 +457,5 @@ def test_archived_tag_invalidates_assignment_and_advances_projection(target_tag_
     assert restored.status_code == 200, restored.text
     after_restore = client.get(
         f"/paam/ledger/v1/flow/{ledger_id}"
-    ).json()["body"]["ledger_entry"]
+    ).json()["body"]
     assert after_restore["tags"][0]["tag_system_name"] == "unclassified"

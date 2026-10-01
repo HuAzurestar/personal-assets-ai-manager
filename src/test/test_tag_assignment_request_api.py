@@ -274,10 +274,10 @@ def test_synthetic_request_requires_approval_and_reads_back_source(request_api):
 
     before = client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]
     before_tags = {
-        item["view_system_name"]: item for item in before["ledger_entry"]["tags"]
+        item["view_system_name"]: item for item in before["tags"]
     }
     assert before_tags["category"]["tag_system_name"] == "unclassified"
-    assert before_tags["category"]["source_type"] == "MANUAL"
+    assert before_tags["category"]["source_type"] == "UNKNOWN"
 
     approved = client.post(
         "/paam/tag/v1/assignment_request/batch_approve",
@@ -292,13 +292,24 @@ def test_synthetic_request_requires_approval_and_reads_back_source(request_api):
 
     after = client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]
     after_tags = {
-        item["view_system_name"]: item for item in after["ledger_entry"]["tags"]
+        item["view_system_name"]: item for item in after["tags"]
     }
+    with sessions() as db:
+        accepted_tag_row_id = db.scalar(select(LedgerEntryTag.id).where(
+            LedgerEntryTag.ledger_id == ledger_id,
+            LedgerEntryTag.tag_id == tag_ids["category"]["food"],
+        ))
+    assert accepted_tag_row_id is not None
     assert after_tags["category"] == {
+        "id": accepted_tag_row_id,
+        "view_id": category_id,
+        "tag_id": tag_ids["category"]["food"],
         "view_name": "Category",
         "view_system_name": "category",
         "tag_name": "Food",
         "tag_system_name": "food",
+        "view_status": "ACTIVE",
+        "tag_status": "ACTIVE",
         "source_type": "AUTO_RULE",
         "request_id": items[0]["id"],
         "rule_id": food_rule,
@@ -541,9 +552,10 @@ def test_same_value_manual_save_takes_ownership_and_is_then_idempotent(request_a
     assert replay.status_code == 200
     assert replay.json()["body"] == current
     assert _manual(client, ledger_id, opened["tag_state"], opened["updated_time"]).status_code == 409
-    tags = client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]["ledger_entry"]["tags"]
+    tags = client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]["tags"]
     category = next(item for item in tags if item["view_system_name"] == "category")
-    assert category["source_type"] == "MANUAL"
+    # The retained tag value proves no origin once the AUTO request is replaced.
+    assert category["source_type"] == "UNKNOWN"
     assert category["request_id"] is None
     with sessions() as db:
         assert db.get(TagAssignmentRequest, request_id).status == 5

@@ -143,7 +143,7 @@ def test_import_cron_json_request_reject_restart_and_pause_are_separate(
         assert status["tag_scan_guard"] == "REAL_READY"
         assert any(task["task_key"] == f"tag-scan:{rule['id']}" for task in status["tasks"])
         ledger_id = first[0]["ledger_id"]
-        ledger = _body(client.get(f"/paam/ledger/v1/flow/{ledger_id}"))["ledger_entry"]
+        ledger = _body(client.get(f"/paam/ledger/v1/flow/{ledger_id}"))
         assert ledger["tags"][0]["tag_system_name"] == "unclassified"
 
         _body(client.post("/paam/tag/v1/assignment_request/batch_reject", json={

@@ -302,11 +302,11 @@ def test_target_import_writes_fact_evidence_and_hot_projection(target_import_api
     assert set(inspect(engine).get_table_names()) == set(
         target_database.TARGET_TABLE_NAMES
     )
-    ledger_v2 = client.get("/paam/ledger/v1/flow/list")
-    assert ledger_v2.status_code == 200, ledger_v2.text
-    assert ledger_v2.json()["body"]["total"] == 1
-    assert ledger_v2.json()["body"]["items"][0]["entry_type"] == 0
-    assert ledger_v2.json()["body"]["items"][0]["amount"] == 1000
+    flows = client.get("/paam/ledger/v1/flow/list")
+    assert flows.status_code == 200, flows.text
+    assert flows.json()["body"]["total"] == 1
+    assert flows.json()["body"]["items"][0]["economic_type"] == "TRANSACTION"
+    assert flows.json()["body"]["items"][0]["cash_amount"] == 1000
 
     repeated = _preview(client, "renamed.csv", _csv())
     assert repeated["counts"]["processed"] == 1
@@ -519,10 +519,7 @@ def test_import_history_child_returns_all_related_rows(target_import_api):
     ).json()["body"]
     assert (first["total"], len(first["items"])) == (26, 26)
     assert first["items"][0]["id"] > 0
-    assert first["items"][0]["cash_direction"] in {
-        CASH_DIRECTION_IN,
-        CASH_DIRECTION_OUT,
-    }
+    assert first["items"][0]["cash_direction"] in {"IN", "OUT"}
 
     unsupported_page = client.get(
         f"/paam/import/v1/import_file/{batch_id}/transaction_fact/list",
