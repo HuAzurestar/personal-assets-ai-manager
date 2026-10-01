@@ -10,7 +10,8 @@ PAAM uses a layered modular monolith. Keep the trusted ledger transactionally co
   SQLite, acquires the write slot before reading data that controls the write.
 - Batch-load and validate all affected rows before mutation. Do not perform
   network calls, file parsing, or user interaction while a write transaction is open.
-- Idempotency protects command retries. Do not add optimistic version fields
+- Unknown writes require reading current state, not automatic POST replay or
+  persistent receipts. Do not add optimistic version fields
   solely for hypothetical multi-user or distributed writers; revisit that
   decision only when the deployment profile changes.
 
@@ -19,7 +20,7 @@ PAAM uses a layered modular monolith. Keep the trusted ledger transactionally co
 `Router -> Service -> Data Mapper -> Entity / SQLite`
 
 - Routers own HTTP parsing, response codes, and DTO validation only.
-- Services own use cases, business rules, transactions, idempotency, and projection updates.
+- Services own use cases, business rules, short transactions, preview guards, and immutable publication.
 - Data Mappers own explicit-column SQL, batch loading, and row-to-VO assembly.
 - Entities declare storage only, one file per table. DTOs and VOs never execute SQL.
 - Do not add a Repository layer unless it has a documented responsibility that a Mapper does not already provide.
@@ -45,12 +46,14 @@ PAAM uses a layered modular monolith. Keep the trusted ledger transactionally co
 
 - Fact source fields are immutable after acceptance. Raw payloads are append-only; only their processing/link status may change.
 - Confirmed Review is authoritative input. Pending suggestions never change published economic values.
-- Every accepted Fact has exact confirmed allocation coverage. Import creates a
-  confirmed DEFAULT Review and an equal INCOME_AND_EXPENSE entry in the same transaction.
-- Ledger projections are rebuildable and may only be written by the economic review service.
+- Every newly accepted Fact has exact confirmed allocation coverage. Import
+  creates its unique system NORMAL_TRANSACTION Review and equal TRANSACTION
+  Ledger in the same transaction. Legacy gaps are reported, not auto-repaired.
+- Published Review, Ledger, allocations and Position legs are immutable;
+  changing an explanation creates a new Review, not a rebuild of old outputs.
 - Historical payloads and raw evidence are detail-only data and must not be loaded by list/summary queries.
-- A Review change, its ternary allocations, DEFAULT residuals, and every affected
-  economic projection update commit atomically.
+- Review changes, both allocation stages, tag effects and activation of each
+  Fact's original system default commit atomically. No residual defaults.
 
 Read the relevant layer or Router skill before changing that area:
 
@@ -62,4 +65,6 @@ Read the relevant layer or Router skill before changing that area:
 - `.agents/skills/job-schedule/SKILL.md` — use the single shared scheduler for
   all backend CRON, recurring scans, timer jobs, and startup registration.
 
-The authoritative 14-table dictionary and layer boundaries are in `src/doc/data-model.md`.
+The current 20-table model is in `src/doc/data-model.md`; exact physical fields
+and indexes are in `src/asset/sql`. PIRC-35's confirmed REQ/SOL replace older
+skill examples about CLAIM, content revisions, v2 writers and replay receipts.
