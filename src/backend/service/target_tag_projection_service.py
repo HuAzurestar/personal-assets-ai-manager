@@ -22,16 +22,21 @@ class TargetTagProjectionService:
             return
         dictionary = self.mapper.active_dictionary()
         defaults, tag_ids = self._dictionary_maps(dictionary)
-        current = self.mapper.current_states(ledger_ids)
-        resolved: dict[int, tuple[int, ...]] = {}
-        for ledger_id in ledger_ids:
-            state = current.get(ledger_id, {})
-            resolved[ledger_id] = tuple(
-                tag_ids[(view_name, state.get(view_name, default_name))]
-                for view_name, default_name in sorted(defaults.items())
-                if (view_name, state.get(view_name, default_name)) in tag_ids
-            )
-        self.mapper.replace(resolved)
+        if len(ledger_ids) * len(defaults) > 50000:
+            from backend.error import TargetEconomicError
+            raise TargetEconomicError(413, "tag projection exceeds the write budget", code="TAG_IMPACT_LIMIT")
+        for offset in range(0, len(ledger_ids), 400):
+            batch = ledger_ids[offset:offset + 400]
+            current = self.mapper.current_states(batch)
+            resolved: dict[int, tuple[int, ...]] = {}
+            for ledger_id in batch:
+                state = current.get(ledger_id, {})
+                resolved[ledger_id] = tuple(
+                    tag_ids[(view_name, state.get(view_name, default_name))]
+                    for view_name, default_name in sorted(defaults.items())
+                    if (view_name, state.get(view_name, default_name)) in tag_ids
+                )
+            self.mapper.replace(resolved)
 
     def sync_all(self) -> None:
         self.sync_ledgers(self.mapper.active_ledger_ids())

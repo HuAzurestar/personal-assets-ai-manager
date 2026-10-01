@@ -13,6 +13,10 @@ function previewMarkup(plan, facts = new Map(), positions = new Map()) {
   return `<h3>服务端预览（尚未发布）</h3><p>整体停用冲突 Review：${ids(plan.impact.conflicting_review_ids)}；恢复原始系统默认：${ids(plan.impact.restored_default_review_ids)}</p>
     <p>账户来源：${ids(plan.impact.affected_account_ref_ids)}；对象：${ids(plan.impact.affected_position_ids)}；可能失效的后续腿：${ids(plan.impact.dependent_position_leg_ids)}</p>
     <p>标签影响 Ledger：${ids(plan.impact.tag_ledger_ids)}；涉及 ${(plan.tag_effect.affected_views || []).length} 个视图、${(plan.tag_effect.affected_rule_ids || []).length} 条规则。旧标签保留，异步请求随账务状态失效。</p>
+    <p>将失效的建议：${plan.tag_effect.invalidated_request_count ?? 0}；扫描状态：${esc(plan.tag_effect.scan_state || "NOT_NEEDED")}。只有完整含义相同且新旧各唯一的输出延续标签。</p>
+    ${(plan.tag_effect.mappings || []).length ? `<section class="panel" data-tag-mappings><h4>新旧标签对照</h4>
+      ${(plan.tag_effect.mappings || []).slice(0, 100).map(mapping => `<p>旧 Ledger ${mapping.old_ledger_id ? `#${mapping.old_ledger_id}` : "无唯一来源"} → ${mapping.new_output ? `新解释 ${mapping.new_output.review_index + 1} / 现金行 ${mapping.new_output.allocation_index + 1}` : "保留停用原项"} · View #${mapping.view_id} / Tag #${mapping.tag_id} · ${esc({ KEEP: "延续已生效值", REVIEW_REQUIRED: "默认值，待人工核对", RETAIN_INACTIVE: "原项标签不改" }[mapping.disposition] || mapping.disposition)}</p>`).join("")}
+      ${(plan.tag_effect.mappings || []).length > 100 ? `<p>显示前100项，共${plan.tag_effect.mappings.length}项；服务端确认覆盖整个原子组。</p>` : ""}</section>` : ""}
     ${plan.blocking_issues.map(issue => `<p class="error">${esc(issue.code)}：${esc(issue.message)}</p>`).join("")}
     ${plan.new_reviews.map(row => `<section class="panel"><h4>${esc(row.case_code)} → ${esc(reviewTypeNames[row.type] || row.type)} · ${esc(row.title)}</h4>
       ${row.allocations.map(allocation => {

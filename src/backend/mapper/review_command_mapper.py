@@ -43,6 +43,11 @@ class ReviewCommandMapper:
                     "parties": LedgerAccountParty, "tags": LedgerEntryTag, "requests": TagAssignmentRequest,
                     "rules": AutoTagRule}
         entity = entities[name]
+        if name in {"tags", "rules"}:
+            try:
+                return self.rows(entity, getattr(entity, key), ids, limit=50000)
+            except TargetEconomicError as error:
+                raise TargetEconomicError(413, "tag effect exceeds the publication budget", code="TAG_IMPACT_LIMIT") from error
         return self.rows(entity, getattr(entity, key), ids)
 
     def tag_dictionary(self):

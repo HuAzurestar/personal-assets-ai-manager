@@ -8,6 +8,7 @@ from time import monotonic
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 from backend.entity.base import utc_now
+from backend.core.tag_semantics import tag_effect
 from backend.error import TargetEconomicError
 from backend.mapper.auto_tag_rule_mapper import AutoTagRuleMapper
 from backend.mapper.review_command_mapper import ReviewCommandMapper, chunks
@@ -256,12 +257,21 @@ class ReviewCommandService:
         position_ids.update(row["position_id"] for row in dependents)
         tags = self.mapper.named_rows("tags", affected_ledgers, "ledger_id")
         dictionary = self.mapper.tag_dictionary()
+        # Also validates active Views with no Tag rows; an inner join cannot.
+        self.tags.mapper.active_dictionary()
+        for batch in chunks(affected_ledgers):
+            self.tags.mapper.current_states(batch)
         view_ids = {row["view_id"] for row in dictionary}
         projected = (len(affected_ledgers) + sum(len(d["allocations"]) for d in drafts)) * len(view_ids)
         if projected > 50000:
             reject("TAG_IMPACT_LIMIT", "tag effect exceeds publication budget", status=413)
         rules = self.mapper.named_rows("rules", view_ids, "view_id") if affected_ledgers or any(d["allocations"] for d in drafts) else []
         requests = self.mapper.impact_requests(affected_ledgers)
+        if max(projected, len(tags)) + len(requests) + len(rules) > 50000:
+            reject("TAG_IMPACT_LIMIT", "combined tag/request/rule effect exceeds publication budget", status=413)
+        closing_now = {rid for rid in changed if states[rid] == 1}
+        effect = tag_effect(full, closing_now, drafts, facts, positions, dictionary, tags, len(requests), True)
+        effect.update(affected_views=sorted(view_ids), affected_rule_ids=sorted(row["id"] for row in rules))
         preview_drafts = [dict(case_code=draft["case_code"], type=REVIEW_NAMES[draft["type"]], title=draft["title"],
             allocations=[{key: row[key] for key in ("transaction_id", "economic_type", "cash_amount", "account_ref_id")}
                          for row in draft["allocations"]], new_positions=draft["new_positions"], legs=draft["legs"],
@@ -273,8 +283,7 @@ class ReviewCommandService:
                 affected_account_ref_ids=sorted(ref_ids | {row["account_ref_id"] for row in full["ledger_entries"] if row["account_ref_id"]}),
                 affected_position_ids=sorted(position_ids), dependent_position_leg_ids=sorted(row["id"] for row in dependents),
                 tag_ledger_ids=affected_ledgers), blocking_issues=[], expected_reviews=expected,
-            tag_effect=dict(retained_old_tags=True, affected_views=sorted(view_ids), affected_rule_ids=sorted(row["id"] for row in rules),
-                            new_ledger_count=sum(len(d["allocations"]) for d in drafts)))
+            tag_effect=effect)
         premises = dict(intent=intent.model_dump(exclude={"expected_reviews", "preview_digest"}), preview=preview,
             facts=list(facts.values()), originals=full, current=current, positions=list(positions.values()), refs=list(refs.values()),
             accounts=accounts, parties=list(parties.values()), sources=list(sources.values()), source_reviews=list(source_reviews.values()),
@@ -308,6 +317,17 @@ class ReviewCommandService:
                           if row["review_id"] in plan["changed"] and plan["states"][row["review_id"]] == 0]
             for batch in chunks(new_ids + active_old):
                 self.tags.sync_ledgers(batch)
+            inherited = defaultdict(list)
+            committed_mappings = []
+            for mapping in preview["tag_effect"]["mappings"]:
+                output = mapping["new_output"]
+                ledger_id = ledger_groups[output["review_index"]][output["allocation_index"]].id if output else None
+                committed_mappings.append({key: value for key, value in mapping.items() if key != "new_output"} |
+                                          dict(ledger_id=ledger_id))
+                if output:
+                    inherited[ledger_id].append(mapping["tag_id"])
+            for batch in chunks(inherited):
+                self.tags.mapper.replace({lid: tuple(inherited[lid]) for lid in batch})
             affected = sorted(set(plan["affected_ledgers"] + new_ids))
             now = utc_now()
             for batch in chunks(affected):
@@ -322,7 +342,7 @@ class ReviewCommandService:
                 created_positions=[dict(id=row.id, title=row.title, unit_code=row.unit_code) for group in positions for row in group],
                 review_states=[dict(review_id=row["id"], status="CONFIRMED" if row["status"] == 0 else "REVOKED",
                                     updated_time=row["updated_time"]) for row in self.mapper.named_rows("reviews", plan["states"])],
-                coverage=preview["coverage"], tag_effect=preview["tag_effect"],
+                coverage=preview["coverage"], tag_effect=preview["tag_effect"] | dict(mappings=committed_mappings),
                 consumer_state=dict(affected_position_ids=sorted(set(preview["impact"]["affected_position_ids"] +
                                         [row.id for group in positions for row in group])),
                     position_states=[dict(position_id=change.get("position_id") or
