@@ -19,6 +19,10 @@ class SearchRequest(ListRequest):
             raise ListQueryError("at most eight text terms", code="LIST_QUERY_INVALID")
         for expression in self.query:
             expression.word = normal_text(expression.word)
+            try:
+                expression.word.encode("utf8")
+            except UnicodeError:
+                raise ListQueryError("invalid Unicode text term", code="LIST_QUERY_INVALID")
             if not expression.word.strip() or len(expression.word) > 128:
                 raise ListQueryError("normalized text term must contain 1..128 characters", code="LIST_QUERY_INVALID")
         return self
@@ -36,6 +40,7 @@ def parse_search_request(*, page_size=20, query=None, filter=None, sorter=None, 
                 if not isinstance(term, dict) or not isinstance(term.get("word"), str):
                     raise ValueError("invalid term")
                 term["word"] = normal_text(term["word"])
+                term["word"].encode("utf8")
             query = json.dumps(terms, ensure_ascii=False)
         except (TypeError, ValueError):
             raise ListQueryError("invalid text query", code="LIST_QUERY_INVALID")

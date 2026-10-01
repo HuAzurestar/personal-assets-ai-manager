@@ -33,8 +33,8 @@ function reviewTitle(item, facts) {
   }
   return businessTitle(item);
 }
-function direction(value) { return value === 1 ? "流入" : value === 2 ? "流出" : "方向未提供"; }
-function amount(item) { return `${money(item)} ${item.currency_code}`; }
+function direction(value) { return value === 1 || value === "IN" ? "流入" : value === 2 || value === "OUT" ? "流出" : "方向未提供"; }
+function amount(item) { return `${money(item)} ${item.cash_currency_code ?? item.currency_code}`; }
 function fields(items) {
   return `<dl class="inspection-fields">${items.map(([label, value]) => `<div><dt>${esc(label)}</dt><dd>${esc(value === "" || value == null ? "未提供" : value)}</dd></div>`).join("")}</dl>`;
 }
@@ -91,17 +91,21 @@ class Presentation {
 }
 
 function allocationSection(presentation, allocations, facts, ledgers, reviews, context = {}) {
+  // Read-only presentation compatibility while Fact callers migrate. Financial
+  // commands accept only the canonical contract; this is not another writer.
+  allocations = allocations.map(row => ({ ...row, review_case_id: row.review_id ?? row.review_case_id,
+    transaction_fact_id: row.transaction_id ?? row.transaction_fact_id, ledger_entry_id: row.ledger_id ?? row.ledger_entry_id }));
   const factMap = new Map(facts.map(row => [row.id, row]));
   const ledgerMap = new Map(ledgers.map(row => [row.id, row]));
   const reviewMap = new Map(reviews.map(row => [row.id, row]));
   const isActive = row => ledgerMap.get(row.ledger_entry_id)?.active
-    ?? (reviewMap.get(row.review_case_id)?.status === 0);
+    ?? ([0, "CONFIRMED"].includes(reviewMap.get(row.review_case_id)?.status));
   const render = row => {
     const fact = factMap.get(row.transaction_fact_id);
     const ledger = ledgerMap.get(row.ledger_entry_id);
     const review = reviewMap.get(row.review_case_id);
     const active = isActive(row);
-    return `<article class="inspection-flow ${active ? "is-active" : "is-history"}"><div class="inspection-flow-main"><span>${active ? "Ledger 有效" : "Ledger 已停用"}</span><strong>${esc(amount(row))}</strong><p>${esc(businessTitle(fact || review || {}))}</p><small>${esc(`${behavior[review?.behavior_type] || "类型未识别"} → ${typeNames[ledger?.entry_type] || "账本分类未识别"} · ${direction(ledger?.entry_direction)}`)}</small></div><div class="inspection-flow-actions">${context.kind === "fact" ? "" : relationButton("fact", row.transaction_fact_id, "查看来源事实")}${context.kind === "review" ? "" : relationButton("review", row.review_case_id, "查看审查")}${context.kind === "ledger" ? "" : relationButton("ledger", row.ledger_entry_id, "查看账本结果")}</div></article>`;
+    return `<article class="inspection-flow ${active ? "is-active" : "is-history"}"><div class="inspection-flow-main"><span>${active ? "Ledger 有效" : "Ledger 已停用"}</span><strong>${esc(amount(row))}</strong><p>${esc(businessTitle(fact || review || {}))}</p><small>${esc(`${reviewTypeNames[review?.type] || behavior[review?.behavior_type] || "类型未识别"} → ${typeNames[ledger?.economic_type ?? ledger?.entry_type] || "账本分类未识别"} · ${direction(ledger?.cash_direction ?? ledger?.entry_direction)}`)}</small></div><div class="inspection-flow-actions">${context.kind === "fact" ? "" : relationButton("fact", row.transaction_fact_id, "查看来源事实")}${context.kind === "review" ? "" : relationButton("review", row.review_case_id, "查看审查")}${context.kind === "ledger" ? "" : relationButton("ledger", row.ledger_entry_id, "查看账本结果")}</div></article>`;
   };
   const active = allocations.filter(isActive);
   const history = allocations.filter(row => !isActive(row));
@@ -186,6 +190,15 @@ function describe(kind, data) {
   if (adapters.has(kind)) return adapters.get(kind).describe(data);
   const p = new Presentation();
   let item, title, subtitle, hero = "", body = "", actions = "";
+  if (kind === "ledger" && data.paged_relations) {
+    const source = data.source;
+    return { title: businessTitle(source.fact), subtitle: `${typeNames[source.ledger_entry.economic_type]} · ${source.active ? "有效" : "已停用"} · 分页只读详情`, hero: amount(source.ledger_entry),
+      body: '<p>完整详情超出预算。以下集合独立分页，当前页不是完整关系；不会提供截断合计。</p>'
+        + card("原始资金来源", fields([["Ledger", source.ledger_entry.id], ["Fact", source.fact.id], ["Review", `${source.review.id} · ${source.review.status}`], ["脱敏摘要", source.fact.summary], ["当前归属", source.account.state]]))
+        + relationButton("fact", source.fact.id, "查看来源事实") + relationButton("review", source.review.id, "查看原始审查")
+        + ['tag', 'position_allocation'].map(name => `<section class="inspection-card" data-flow-relation="${name}" data-ledger-id="${source.ledger_entry.id}"><h3>${name === 'tag' ? '标签证据' : '款项归因与数量腿（不是额外现金）'}</h3><div data-rel-items></div><nav class="inspection-pagination"><span data-rel-status>正在读取…</span><button data-rel-prev disabled>上一页</button><button data-rel-next disabled>下一页</button></nav></section>`).join(''),
+      actions: "超大关系详情只读；编辑须重新核对当前数据", presentation: p, kind: "ledger-paged" };
+  }
   if (kind === "fact") {
     item = data.transaction_fact;
     title = businessTitle(item);
@@ -203,14 +216,21 @@ function describe(kind, data) {
     item = data.ledger_entry;
     const fact = data.facts[0];
     title = businessTitle(fact || item);
-    subtitle = `${typeNames[item.entry_type] || "分类未识别"} · ${item.active ? "Ledger 有效" : "Ledger 已停用"} · ${direction(item.entry_direction)}`;
+    subtitle = `${typeNames[item.economic_type] || "分类未识别"} · ${data.active ? "Ledger 有效" : "Ledger 已停用"} · ${direction(item.cash_direction)}`;
     hero = amount(item);
-    body = metrics([["账本金额", amount(item), "accent"], ["来源事实金额", fact ? amount(fact) : "未提供"], ["占来源事实", fact?.amount > 0 && fact.currency_code === item.currency_code ? `${(item.amount / fact.amount * 100).toFixed(2)}%` : "不适用"]])
+    const owner = data.account;
+    const ownerText = owner.state === "UNIDENTIFIED" ? "来源未识别（ref = 0）" : owner.state === "UNASSIGNED" ? "来源已识别，尚未分组" : `个人 #${owner.party.id} ${owner.party.name} / 账户 #${owner.account.id} ${owner.account.name}`;
+    body = metrics([["原始现金金额", amount(item), "accent"], ["来源事实金额", fact ? amount(fact) : "未提供"], ["占来源事实", fact?.cash_amount > 0 && fact.cash_currency_code === item.cash_currency_code ? `${(item.cash_amount / fact.cash_amount * 100).toFixed(2)}%` : "不适用"]])
+      + `<p>${item.economic_type === "DUPLICATE" ? "DUPLICATE 金额仅保留证据，不计入财务汇总。" : "现金效果仅在原 Review 有效时计入。"} 款项归因不是第二笔现金；没有数量腿不代表数量为零。</p>`
       + '<div class="inspection-dashboard">'
-      + card("账本概览", fields([["摘要", item.summary], ["有效状态", item.active ? "有效" : "已停用"], ["经济分类", typeNames[item.entry_type]], ["本方账户", readableAccount(item.account_code)], ["发生时间", when(item.occurred_time)]]), { tone: "accent" })
-      + card("分类标签", item.tags.length ? `<div class="inspection-tags">${item.tags.map(tag => `<span><small>${esc(tag.view_name)}</small><strong>${esc(tag.tag_name)}</strong><small>${tag.source_type === "AUTO_RULE" ? `自动规则 #${esc(tag.rule_id)} · Rev ${esc(tag.rule_revision)} · Request #${esc(tag.request_id)}` : "人工 / 默认标签"}</small></span>`).join("")}</div>` : '<p class="inspection-empty">暂无标签</p>')
-      + allocationSection(p, data.allocations, data.facts, [item], data.reviews, { kind, id: item.id }) + "</div>";
-    actions = `<button data-action="edit-ledger-account" data-id="${item.id}">编辑账户</button><button data-action="edit-tags" data-id="${item.id}">编辑标签</button>`;
+      + card("账本概览", fields([["脱敏摘要", data.summary], ["有效状态", data.active ? "有效" : "已停用"], ["经济分类", typeNames[item.economic_type]], ["发生时间", when(item.occurred_time)]]), { tone: "accent" })
+      + card("当前账户归属（不改来源事实）", fields([["来源 ID", item.account_ref_id], ["分组", ownerText], ["原账单账户（脱敏）", fact?.account_code]]))
+      + card("分类标签", p.collection(data.tags, tag => `<article class="inspection-flow"><strong>${esc(tag.tag_name)}</strong><p>${esc(tag.view_name)} · ${esc(tag.view_status)} / ${esc(tag.tag_status)}</p><small>${tag.source_type === "AUTO_RULE" ? `自动规则 #${esc(tag.rule_id)} · Rev ${esc(tag.rule_revision)} · Request #${esc(tag.request_id)}` : tag.tag_system_name === "unclassified" ? "默认未分类" : "UNKNOWN（现有证据不能证明来源）"}</small></article>`))
+      + allocationSection(p, data.allocations, data.facts, [item], data.reviews, { kind, id: item.id })
+      + card(`数量身份 · ${data.position_identity_state}`, p.collection(data.positions, row => `<article class="inspection-flow"><a href="#workbench/position?id=${row.id}">Position #${row.id} ${esc(row.title)}</a><p>${esc(row.type)} · ${esc(row.unit_code)} · ${esc(row.status)}</p></article>`))
+      + card("原始数量腿（只读）", p.collection(data.position_legs, row => `<article class="inspection-flow"><strong>${esc(row.leg_direction)} ${quantityDecimal(row.leg_amount, row.unit_code)} ${esc(row.unit_code)}</strong><p>Leg #${row.id} · Review #${row.review_id} · ${esc(row.type)} · 来源腿 #${row.source_position_leg_id}</p><p>${esc(row.basis)}</p></article>`))
+      + card("现金到数量腿归因（不是额外现金）", p.collection(data.position_allocations, row => `<article class="inspection-flow"><strong>${esc(amount(row))}</strong><p>Link #${row.id} · Leg #${row.position_leg_id}</p>${relationButton("review", row.review_id, `Review #${row.review_id}`)}</article>`)) + "</div>";
+    actions = data.active ? `<button data-action="edit-ledger-account" data-id="${item.id}">用新解释更正账户</button><button data-action="edit-tags" data-id="${item.id}">编辑标签</button>` : "原审查已停用，关系仅供读取";
   } else if (kind === "review") {
     item = data;
     title = businessTitle(item);
@@ -238,12 +258,48 @@ function describe(kind, data) {
 
 async function load(kind, id) {
   if (adapters.has(kind)) return adapters.get(kind).load(id);
+  if (kind === "ledger") {
+    try { return await request(`${endpoints.ledger}${id}`); }
+    catch (error) {
+      if (error.code !== 'DETAIL_LIMIT') throw error;
+      const page = await request(`${endpoints.ledger}${id}/allocation/list?page_index=1&page_size=1`);
+      if (page.total !== 1 || page.items.length !== 1) throw new Error('来源关系不完整，请检查数据');
+      return { paged_relations: true, source: page.items[0] };
+    }
+  }
   if (kind !== "file") return request(`${endpoints[kind]}${id}`);
   const [detail, rows] = await Promise.all([
     request(`${endpoints.file}${id}`),
     request(`${endpoints.file}${id}/row/list?page_index=1&page_size=20`),
   ]);
   return { ...detail, rows };
+}
+
+function mountFlowRelations(root) {
+  root.querySelectorAll('[data-flow-relation]').forEach(panel => {
+    const name = panel.dataset.flowRelation;
+    let page = 1, busy = false, total = 0;
+    const prev = panel.querySelector('[data-rel-prev]'), next = panel.querySelector('[data-rel-next]');
+    async function fetchPage(target) {
+      if (busy) return;
+      busy = true; prev.disabled = next.disabled = true;
+      const status = panel.querySelector('[data-rel-status]');
+      status.textContent = '正在读取…';
+      try {
+        const result = await request(`${endpoints.ledger}${panel.dataset.ledgerId}/${name}/list?page_index=${target}&page_size=20`);
+        if (!panel.isConnected) return;
+        page = result.page_index; total = result.total;
+        panel.querySelector('[data-rel-items]').innerHTML = result.items.map(row => name === 'tag'
+          ? `<article class="inspection-flow"><strong>${esc(row.tag_name)}</strong><p>${esc(row.view_name)} · ${esc(row.view_status)} / ${esc(row.tag_status)} · ${esc(row.source_type)}</p></article>`
+          : `<article class="inspection-flow"><strong>${esc(amount(row.allocation))}</strong><p>Link #${row.allocation.id} · Leg #${row.position_leg.id} · ${esc(row.review.status)}</p><p>${esc(row.position_leg.leg_direction)} ${quantityDecimal(row.position_leg.leg_amount, row.position_leg.unit_code)} ${esc(row.position_leg.unit_code)}</p><a href="#workbench/position?id=${row.position.id}">Position #${row.position.id} ${esc(row.position.title)}</a></article>`).join('') || '<p>该集合当前页没有记录</p>';
+        status.textContent = `共 ${total} 项 · 第 ${page} 页（仅本页）`;
+      } catch (error) { if (panel.isConnected) status.textContent = `读取失败，未更新当前页：${error.message}`; }
+      finally { busy = false; if (panel.isConnected) { prev.disabled = page <= 1; next.disabled = page * 20 >= total; } }
+    }
+    prev.onclick = () => fetchPage(page - 1);
+    next.onclick = () => fetchPage(page + 1);
+    fetchPage(1);
+  });
 }
 
 let current = null;
@@ -365,6 +421,7 @@ export async function openInspection(kind, id, bindActions) {
         body.innerHTML = view.body;
         view.presentation.mount(body);
         if (view.kind === "file") mountFileRows(body, data.rows, bindActions);
+        if (view.kind === "ledger-paged") mountFlowRelations(body);
         dialog.dataset.renderVersion = String(ticket);
       };
       if (sameRecord) preserveView(dialog, apply);

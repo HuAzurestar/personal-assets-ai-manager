@@ -75,21 +75,15 @@ def test_openapi_locks_canonical_ledger_v1_contract():
     ):
         assert schemas[name]["properties"]["status"]["const"] == 200
 
-    entry_properties = set(schemas["LedgerEntryListItem"]["properties"])
-    assert {
-        "active", "entry_type", "entry_direction", "amount", "currency_code"
-    } <= entry_properties
-    assert {"economic_type", "cash_direction", "projection_version"}.isdisjoint(entry_properties)
+    entry_properties = set(schemas["FlowPO"]["properties"])
+    assert entry_properties == {"id", "economic_type", "cash_direction", "cash_amount", "cash_currency_code",
+        "account_ref_id", "occurred_time", "created_time", "updated_time"}
     detail_properties = set(schemas["LedgerEntryDetailRead"]["properties"])
     assert "ledger_entry" in detail_properties
     assert "flow" not in detail_properties
-    allocation_properties = set(schemas["LedgerAllocationEvidenceRead"]["properties"])
-    assert {
-        "review_case_id",
-        "transaction_fact_id",
-        "ledger_entry_id",
-    } <= allocation_properties
-    assert {"review_id", "fact_id", "economic_id"}.isdisjoint(allocation_properties)
+    allocation_properties = set(schemas["FirstAllocationPO"]["properties"])
+    assert allocation_properties == {"id", "review_id", "transaction_id", "ledger_id", "cash_amount",
+        "cash_currency_code", "created_time", "updated_time"}
 
     review_request_properties = set(schemas["ReviewChangeInput"]["properties"])
     assert {"deactivate_review_ids","activate_review_ids","new_reviews","expected_reviews"} == review_request_properties

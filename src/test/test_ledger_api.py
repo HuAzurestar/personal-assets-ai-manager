@@ -102,27 +102,16 @@ def test_ledger_v1_exposes_only_confirmed_cash_entry_fields(economic_api):
     assert page.status_code == 200, page.text
     item = page.json()["body"]["items"][0]
     assert set(item) == {
-        "id",
-        "active",
-        "summary",
-        "review_behavior_type",
-        "entry_type",
-        "entry_direction",
-        "amount",
-        "currency_code",
-        "account_code",
-        "counterparty_account_ref",
-        "occurred_time",
-        "created_time",
-        "updated_time",
-        "tags",
+        "id", "economic_type", "cash_direction", "cash_amount", "cash_currency_code",
+        "account_ref_id", "occurred_time", "created_time", "updated_time",
     }
-    assert item["tags"] == []
-    assert item["active"] is True
-    assert item["summary"] == "事实交易"
-    assert item["review_behavior_type"] == 0
-    assert (item["entry_type"], item["entry_direction"]) == (0, CASH_DIRECTION_OUT)
+    assert (item["economic_type"], item["cash_direction"]) == ("TRANSACTION", "OUT")
+    assert (item["cash_amount"], item["cash_currency_code"]) == (12345, "CNY")
     detail = client.get(f"/paam/ledger/v1/flow/{item['id']}").json()["body"]
+    assert detail["tags"] == []
+    assert detail["active"] is True
+    assert detail["summary"] == ""
+    assert detail["reviews"][0]["type"] == "NORMAL_TRANSACTION"
     assert "role" not in detail["allocations"][0]
     assert detail["ledger_entry"] == item
     assert client.get("/paam/economy/v1/flow/list").status_code == 404
@@ -186,13 +175,13 @@ def test_ledger_lists_accept_whitelisted_filter_and_sorter_objects(economic_api)
     page = client.get(
         "/paam/ledger/v1/flow/list",
         params={
-            "filter": '{"op":"AND","expression":[{"key":"entry_direction","op":"=","val":1},{"key":"currency_code","op":"=","val":"CNY"}]}',
-            "sorter": '[{"key":"amount","direction":"asc"}]',
+            "filter": '{"op":"AND","expression":[{"key":"cash_direction","op":"=","val":"IN"},{"key":"cash_currency_code","op":"=","val":"CNY"}]}',
+            "sorter": '[{"key":"cash_amount","direction":"asc"}]',
         },
     ).json()["body"]
     assert page["total"] == 1
-    assert page["items"][0]["amount"] == 1000
-    assert page["items"][0]["summary"] == "事实交易：fact"
+    assert page["items"][0]["cash_amount"] == 1000
+    assert "summary" not in page["items"][0]
     assert set(page) == {"items", "total", "page_index", "page_size"}
 
     rejected = client.get(
@@ -210,7 +199,7 @@ def test_ledger_lists_accept_whitelisted_filter_and_sorter_objects(economic_api)
     assert rejected_active.json()["body"]["code"] == "LIST_FILTER_VALUE_INVALID"
 
 
-def test_ledger_list_loads_sparse_tags_with_fixed_query_count(economic_api):
+def test_ledger_list_uses_fixed_query_count_without_loading_evidence(economic_api):
     client, sessions = economic_api
     fact_ids = _facts(sessions, [("OUT", 1000 + index, "CNY") for index in range(30)])
     with sessions() as db:
@@ -230,8 +219,8 @@ def test_ledger_list_loads_sparse_tags_with_fixed_query_count(economic_api):
         event.remove(engine, "before_cursor_execute", count_selects)
     assert response.status_code == 200, response.text
     assert len(response.json()["body"]["items"]) == 20
-    # One snapshot integrity probe plus count, page and sparse-tag load.
-    assert len(statements) == 4
+    # One snapshot integrity probe plus count and page; no evidence/tag load.
+    assert len(statements) == 3
 
 
 def test_advance_review_is_ternary_exact_and_revoke_restores_defaults(economic_api):
@@ -479,8 +468,8 @@ def test_tag_sync_uses_allocations_for_every_split_ledger_entry(economic_api):
         client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]
         for ledger_id in ledger_ids
     ]
-    assert details[0]["ledger_entry"]["tags"][0]["tag_system_name"] == "food"
-    assert details[1]["ledger_entry"]["tags"][0]["tag_system_name"] == "unclassified"
+    assert details[0]["tags"][0]["tag_system_name"] == "food"
+    assert details[1]["tags"][0]["tag_system_name"] == "unclassified"
 
     archived = client.put(f"/paam/tag/v1/view/{view['id']}", json={
         "status": "ARCHIVED",

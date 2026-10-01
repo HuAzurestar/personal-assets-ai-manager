@@ -30,3 +30,57 @@ assert.ok(typeNames.DUPLICATE);
 assert.equal(typeNames.CLAIM, undefined);
 ''', text=True, capture_output=True, encoding="utf-8", timeout=10)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_flow_candidate_scan_continuation_and_stale_generation():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node is required for frontend unit execution")
+    module = (Path(__file__).parents[1] / "frontend/js/view/flow-search.js").resolve().as_uri()
+    result = subprocess.run([node, "--input-type=module"], input=f'''
+import assert from 'node:assert/strict';
+globalThis.document = {{ querySelector: () => null }};
+globalThis.location = {{ hash: '#details/economy?word=Mock' }};
+let calls = [], pending;
+const replies = [
+  {{items:[], total:null, scanned_count:2, has_more:true, next_cursor:'one'}},
+  {{items:[{{id:3}}], total:null, scanned_count:2, has_more:true, next_cursor:'two'}},
+  {{items:[{{id:3}},{{id:4}}], total:null, scanned_count:2, has_more:false, next_cursor:null}},
+];
+globalThis.fetch = async (url) => {{
+  calls.push(url);
+  const body = replies.shift() || await new Promise(resolve => pending = resolve);
+  return {{ok:true, status:200, json:async () => ({{status:200, message:'ok', body}})}};
+}};
+const {{readFlowSearch,bindFlowSearch,stopFlowRead,flowReadBusy}} = await import({module!r});
+const query = new URLSearchParams({{page_size:'2',query:'[{{"key":"summary","word":"Mock"}}]'}});
+const first = await readFlowSearch(query, location.hash);
+assert.equal(first.total, null); assert.equal(first.items.length, 0);
+const button = {{ disabled:false, isConnected:true }}, status = {{textContent:''}};
+const root = {{isConnected:true, querySelector:key => key === '[data-flow-continue]' ? button : status}};
+let painted = [];
+bindFlowSearch(root, result => painted.push(result));
+await button.onclick();
+assert.equal(painted[0].scanned_count, 4); assert.equal(painted[0].next_cursor, 'two');
+await button.onclick();
+assert.deepEqual(painted[1].items.map(row => row.id), [3,4]);
+assert.equal(painted[1].scanned_count, 6); assert.equal(painted[1].has_more, false);
+assert.ok(calls[1].includes('cursor=one') && calls[2].includes('cursor=two'));
+await button.onclick(); assert.equal(calls.length, 3);
+// Start another scan, then cancel a pending continuation. Its late result must
+// not repaint the new route, and simultaneous clicks cannot duplicate scans.
+replies.push(first);
+location.hash = '#details/economy?word=Other';
+const other = new URLSearchParams({{page_size:'2',query:'[{{"key":"summary","word":"Other"}}]'}});
+await readFlowSearch(other, location.hash);
+bindFlowSearch(root, result => painted.push(result));
+const reading = button.onclick();
+await new Promise(resolve => setTimeout(resolve, 0));
+assert.equal(flowReadBusy(), true);
+const before = calls.length; await button.onclick(); assert.equal(calls.length,before);
+stopFlowRead(); location.hash = '#workbench/position';
+pending({{items:[{{id:999}}],total:null,scanned_count:2,has_more:false,next_cursor:null}});
+await reading;
+assert.equal(painted.length,2); assert.equal(flowReadBusy(),false);
+''', text=True, capture_output=True, encoding="utf-8", timeout=10)
+    assert result.returncode == 0, result.stdout + result.stderr

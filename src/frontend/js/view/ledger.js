@@ -3,6 +3,7 @@ import { accountManagementPage, bindAccountManagement, stopAccountRead } from ".
 import { positionPage, bindPosition, stopPositionRead } from "./position.js";
 import { mountReviewWorkbench, transitionReview, stopReviewRead } from "./review-workbench.js";
 import { mountImportBatch, stopImportRead } from "./import-batch.js";
+import { readFlowSearch, bindFlowSearch, stopFlowRead, flowReadBusy, resetFlowSearch } from "./flow-search.js";
 import { preserveView } from "../util/view_state.js?v=20260928.6";
 import { toast } from "../component/toast.js";
 import { table } from "../component/table.js";
@@ -163,7 +164,7 @@ document.addEventListener('input', () => { ++interactionVersion; });
 document.addEventListener('change', () => { ++interactionVersion; });
 const livePages = new Set(['summary', 'ledger', 'economy', 'ledger-reviews', 'ledger-imports', 'ledger-tags', 'import-history']);
 function canRefreshPage() {
-  return !document.hidden && !pendingCommands && !foregroundBusy && !document.querySelector('dialog[open]')
+  return !document.hidden && !pendingCommands && !foregroundBusy && !flowReadBusy() && !document.querySelector('dialog[open]')
     && !document.activeElement?.matches('input, textarea, select, [contenteditable="true"]')
     && !document.querySelector('[data-range-popover]:not([hidden])')
     && !document.querySelector('[data-form="inline-tag"]:not([hidden])');
@@ -183,6 +184,7 @@ async function render({ background = false } = {}) {
   stopPositionRead();
   stopReviewRead();
   stopImportRead();
+  stopFlowRead();
   stopAutomationPolling();
   const renderVersion = background ? state.renderVersion : ++state.renderVersion;
   if (!background) foregroundBusy++;
@@ -356,14 +358,14 @@ function importSortSelect(sortField, sortOrder) {
 }
 
 function compactAmount(item, direction) {
-  const code = String(item.currency_code || "").toUpperCase();
+  const code = String(item.cash_currency_code ?? item.currency_code ?? "").toUpperCase();
   const precision = currencyPrecision(code);
-  const value = Number(item.amount) / (10 ** precision);
+  const value = Number(item.cash_amount ?? item.amount) / (10 ** precision);
   const amount = new Intl.NumberFormat("zh-CN", {
     minimumFractionDigits: precision,
     maximumFractionDigits: precision,
   }).format(value);
-  return `${direction === 1 ? "+" : "−"} ${amount} ${code.split("_", 1)[0]}`;
+  return `${direction === 1 || direction === "IN" ? "+" : "−"} ${amount} ${code.split("_", 1)[0]}`;
 }
 
 function compactAccount(value) {
@@ -407,17 +409,22 @@ async function showFactDetail(id) {
 async function economicPage() {
   const selectedType = state.params.get("economic_type") || "";
   const active = state.params.get("active") || "";
-  const currency = (state.params.get("currency_code") || "").trim().toUpperCase();
-  const direction = state.params.get("entry_direction") || "";
+  const currency = (state.params.get("cash_currency_code") || "").trim().toUpperCase();
+  const direction = state.params.get("cash_direction") || "";
+  const word = state.params.get("word")?.trim() || "";
+  const searchField = state.params.get("search_field") || "summary";
   const dateFrom = state.params.get("date_from") || "";
   const dateTo = state.params.get("date_to") || "";
   const sortField = state.params.get("sort_field") || "occurred_time";
   const sortOrder = state.params.get("sort_order") || "desc";
   const expressions = [];
-  if (selectedType in entryTypeValues) expressions.push({ key: "entry_type", op: "=", val: entryTypeValues[selectedType] });
+  if (selectedType in entryTypeValues) expressions.push({ key: "economic_type", op: "=", val: selectedType });
   if (["true", "false"].includes(active)) expressions.push({ key: "active", op: "=", val: active === "true" });
-  if (currency) expressions.push({ key: "currency_code", op: "=", val: currency });
-  if (["1", "2"].includes(direction)) expressions.push({ key: "entry_direction", op: "=", val: Number(direction) });
+  if (currency) expressions.push({ key: "cash_currency_code", op: "=", val: currency });
+  if (["IN", "OUT"].includes(direction)) expressions.push({ key: "cash_direction", op: "=", val: direction });
+  for (const key of ["account_ref_id", "account_id", "party_id", "tag_id"]) {
+    if (state.params.has(key)) expressions.push({ key, op: "=", val: Number(state.params.get(key)) });
+  }
   if (dateFrom) expressions.push({ key: "occurred_time", op: ">=", val: filterBoundary(dateFrom) });
   if (dateTo) expressions.push({ key: "occurred_time", op: "<", val: filterBoundary(dateTo, true) });
   const filter = expressions.length > 1 ? { op: "AND", expression: expressions } : expressions[0];
@@ -427,17 +434,33 @@ async function economicPage() {
     sorter: JSON.stringify([{ key: sortField, direction: sortOrder }]),
   });
   if (filter) query.set("filter", JSON.stringify(filter));
-  const result = await request(`/paam/ledger/v1/flow/list?${query}`);
-  state.detailEconomics = new Map(result.items.map((item) => [item.id, item]));
-  const rows = result.items.map((item) => {
-    const tags = (item.tags || []).filter((tag) => tag.tag_system_name !== "unclassified");
-    const tagMarkup = tags.length ? `<small class="ledger-row-tags">${tags.map((tag) => `<span title="${esc(tag.view_name)}">${esc(tag.tag_name)}</span>`).join("")}</small>` : "";
-    return `<tr class="detail-click-row" tabindex="0" data-economic-row="${item.id}">
-    <td data-label="摘要"><button type="button" class="detail-primary" data-action="economic-detail" data-id="${item.id}" data-inspect-title="${esc(item.summary || "未填写摘要")}" data-inspect-amount="${esc(compactAmount(item, item.entry_direction))}"><strong>${esc(item.summary || "未填写摘要")}</strong><small>Ledger #${item.id}</small>${tagMarkup}</button></td><td data-label="有效状态"><span class="badge ${item.active ? "" : "warn"}">${item.active ? "有效" : "已停用"}</span></td><td data-label="对手账户" title="${esc(item.counterparty_account_ref || "")}">${esc(compactAccount(item.counterparty_account_ref) || "—")}</td><td data-label="本方账户" class="mono fact-account" title="${esc(item.account_code)}">${esc(compactAccount(item.account_code))}</td><td data-label="金额" class="fact-amount ${item.entry_direction === 1 ? "inflow" : "outflow"}">${esc(compactAmount(item, item.entry_direction))}</td><td data-label="发生时间">${date(item.occurred_time)}</td><td class="detail-arrow">→</td>
-  </tr>`;
-  }).join("");
-  const toolbar = `<form class="detail-filter ledger-detail-filter" data-form="economic-filter"><label>账本类型<select name="economic_type"><option value="">全部类型</option>${Object.keys(entryTypeValues).map((value) => `<option value="${value}" ${selectedType === value ? "selected" : ""}>${esc(typeNames[value] || value)}</option>`).join("")}</select></label><label>有效状态<select name="active"><option value="">全部状态</option><option value="true" ${active === "true" ? "selected" : ""}>有效</option><option value="false" ${active === "false" ? "selected" : ""}>已停用</option></select></label><label>收支方向${directionSelect("entry_direction", direction)}</label><label>币种${currencySelect(currency)}</label>${dateTimeRangeControl(dateFrom, dateTo)}<label class="grow">排序${sortPresetSelect(sortField, sortOrder)}</label><div class="detail-filter-actions"><button type="button" class="quiet" data-action="detail-clear" data-page-id="economy">清空</button></div></form>`;
-  return detailListView({ active: "economy", toolbar, title: "Ledger", description: "数据库中的 Ledger PO；摘要来自关联 Fact，行为类型与有效状态来自创建它的 Review。", total: result.total, headers: ["摘要", "有效状态", "对手账户", "本方账户", "金额", "发生时间", ""], rows, footer: detailPager(result, "economy") });
+  if (word) { query.delete("page_index"); query.set("query", JSON.stringify([{ key: searchField, word }])); }
+  const result = word ? await readFlowSearch(query, location.hash) : await request(`/paam/ledger/v1/flow/list?${query}`);
+  const sortOptions = [["occurred_time.desc", "时间：最新优先"], ["occurred_time.asc", "时间：最早优先"],
+    ["cash_amount.desc", "绝对金额：从高到低"], ["cash_amount.asc", "绝对金额：从低到高"],
+    ["signed_cash_amount.desc", "带方向金额：从高到低"], ["signed_cash_amount.asc", "带方向金额：从低到高"]];
+  const toolbar = `<form class="detail-filter ledger-detail-filter" data-form="economic-filter"><label>账本类型<select name="economic_type"><option value="">全部类型</option>${Object.keys(entryTypeValues).map(value => `<option value="${value}" ${selectedType === value ? "selected" : ""}>${esc(typeNames[value] || value)}</option>`).join("")}</select></label><label>有效状态<select name="active"><option value="">全部状态</option><option value="true" ${active === "true" ? "selected" : ""}>有效</option><option value="false" ${active === "false" ? "selected" : ""}>已停用</option></select></label><label>收支方向<select name="cash_direction"><option value="">全部方向</option>${["IN", "OUT"].map(value => `<option ${value === direction ? "selected" : ""}>${value}</option>`).join("")}</select></label><label>币种${currencySelect(currency).replace('name="currency_code"', 'name="cash_currency_code"')}</label>${dateTimeRangeControl(dateFrom, dateTo)}<label>排序<select name="sort">${sortOptions.map(([value, label]) => `<option value="${value}" ${value === `${sortField}.${sortOrder}` ? "selected" : ""}>${esc(label)}</option>`).join("")}</select></label>
+    ${[["account_ref_id", "来源卡 ID（0 未识别）"], ["account_id", "账户 ID（0 已识别未分组）"], ["party_id", "个人 ID"], ["tag_id", "标签 ID"]].map(([key, label]) => `<label>${label}<input type="number" name="${key}" min="${key.startsWith("account") ? 0 : 1}" step="1" value="${esc(state.params.get(key) || "")}"></label>`).join("")}
+    <label>字面搜索<select name="search_field"><option value="summary" ${searchField === "summary" ? "selected" : ""}>脱敏摘要</option><option value="counterparty" ${searchField === "counterparty" ? "selected" : ""}>脱敏交易对手</option></select><input name="word" maxlength="128" value="${esc(word)}" autocomplete="off"></label><button type="submit">查找</button><button type="button" class="quiet" data-action="detail-clear" data-page-id="economy">清空</button></form><p>金额排序先按币种分组，不作汇率换算。账户只筛选，不参与排序。有效性、标签、脱敏摘要及数量关系请打开详情核对。</p>`;
+  return `<div data-flow-read>${detailListView({ toolbar, headers: ["原始现金结果", "本方来源", "金额", "发生时间", ""], rows: flowRows(result.items, !!word), footer: word ? flowScanFooter(result) : detailPager(result, "economy") })}</div>`;
+}
+
+function flowRows(items, scanning = false) {
+  return items.map(item => `<tr class="detail-click-row" tabindex="0" data-economic-row="${item.id}"><td data-label="原始现金结果"><button type="button" class="detail-primary" data-action="economic-detail" data-id="${item.id}" data-inspect-title="Ledger #${item.id}" data-inspect-amount="${esc(compactAmount(item, item.cash_direction))}"><strong>${esc(typeNames[item.economic_type] || item.economic_type)}</strong><small>Ledger #${item.id}${item.economic_type === "DUPLICATE" ? " · 仅证据，不计财务汇总" : ""}</small></button></td><td data-label="本方来源">${item.account_ref_id ? `来源卡 #${item.account_ref_id}（归属见详情）` : "来源未识别"}</td><td data-label="金额" class="fact-amount ${item.cash_direction === "IN" ? "inflow" : "outflow"}">${esc(compactAmount(item, item.cash_direction))}</td><td data-label="发生时间">${date(item.occurred_time)}</td><td class="detail-arrow">→</td></tr>`).join("") || (scanning ? '<tr><td colspan="5">尚未找到命中；扫描未结束时可继续推进。</td></tr>' : "");
+}
+
+function flowScanFooter(result) {
+  return `<div class="actions"><span data-flow-scan-status>已扫描 ${result.scanned_count} 个候选；找到 ${result.items.length} 项；总数未知。${result.has_more ? "空命中也可继续" : "本次扫描结束"}</span><button type="button" data-flow-continue ${result.has_more ? "" : "disabled"}>继续检索</button></div>`;
+}
+
+function paintFlowSearch(root, result) {
+  const host = root.matches('[data-flow-read]') ? root : root.querySelector('[data-flow-read]');
+  if (!host) return;
+  const body = host.querySelector('tbody');
+  body.innerHTML = flowRows(result.items, true);
+  host.querySelector('.list-footer').innerHTML = flowScanFooter(result);
+  bindPage(body);
+  bindFlowSearch(host, next => paintFlowSearch(host, next));
 }
 
 async function showEconomicDetail(id) {
@@ -922,6 +945,7 @@ function closeInlineTag(form) {
 }
 
 function bindPage(root) {
+  bindFlowSearch(root, result => paintFlowSearch(root, result));
   bindAccountManagement(root, render);
   bindPosition(root, render);
   bindAutomation(root, render, toast, route);
@@ -957,6 +981,7 @@ function bindPage(root) {
       }
       params.set("page", "1");
       params.set("page_size", state.params.get("page_size") || "20");
+      if (formName === "economic-filter") resetFlowSearch();
       route(pageId, params);
     });
     $$('select', form).forEach((select) => select.addEventListener("change", () => form.requestSubmit()));
