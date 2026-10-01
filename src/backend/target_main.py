@@ -22,6 +22,7 @@ from backend.router.import_file import router as import_file_router
 from backend.router.import_router import router as import_router
 from backend.router.ledger import router as ledger_router
 from backend.router.ledger_account import router as ledger_account_router
+from backend.router.account_management import router as account_management_router
 from backend.router.ledger_review import router as ledger_review_router
 from backend.router.ledger_review_candidate import (
     router as ledger_review_candidate_router,
@@ -99,6 +100,7 @@ app.include_router(ledger_review_router)
 app.include_router(ledger_review_candidate_router)
 app.include_router(ledger_transaction_fact_router)
 app.include_router(ledger_account_router)
+app.include_router(account_management_router)
 app.include_router(tag_router)
 app.include_router(tag_assignment_router)
 app.include_router(tag_assignment_request_router)

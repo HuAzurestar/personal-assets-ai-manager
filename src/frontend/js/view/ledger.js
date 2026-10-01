@@ -1,4 +1,5 @@
 import { checkConnection, request, jsonRequest } from "../api/client.js";
+import { accountManagementPage, bindAccountManagement, stopAccountRead } from "./account-management.js";
 import { preserveView } from "../util/view_state.js?v=20260928.6";
 import { toast } from "../component/toast.js";
 import { table } from "../component/table.js";
@@ -110,6 +111,7 @@ timezoneSelect.addEventListener("change", () => {
 });
 
 const pageInfo = {
+  "account-management": ["个人与账户", "维护个人、管理集合和具体来源卡，不改历史现金。"],
   economy: ["明细", "查看最终经济流水，并追溯对应的审查、分配关系与事实。"],
   "ledger-reviews": ["明细", "查看事实如何通过审查和 Allocation 形成经济流水。"],
   "ledger-imports": ["明细", "在统一列表中追溯导入文件、原始行和处理结果。"],
@@ -173,6 +175,7 @@ window.setInterval(async () => {
 }, 5000);
 
 async function render({ background = false } = {}) {
+  stopAccountRead();
   stopAutomationPolling();
   const renderVersion = background ? state.renderVersion : ++state.renderVersion;
   if (!background) foregroundBusy++;
@@ -197,6 +200,7 @@ async function render({ background = false } = {}) {
   try {
     const content = await ({
       economy: economicPage,
+      "account-management": () => accountManagementPage(state.params),
       "ledger-reviews": ledgerReviewsPage,
       "ledger-imports": ledgerImportsPage,
       "ledger-tags": ledgerTagsPage,
@@ -1255,6 +1259,7 @@ function closeInlineTag(form) {
 }
 
 function bindPage(root) {
+  bindAccountManagement(root, render);
   bindAutomation(root, render, toast, route);
   $$('button[data-page], a[data-page]', root).forEach((button) => button.onclick = () => {
     if (button.closest("dialog")) closeDialogs();

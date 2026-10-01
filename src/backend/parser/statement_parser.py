@@ -608,6 +608,12 @@ def normalise_statement_row(
         "note": note,
         "reference": reference,
         "currency": "CNY",
+        "source_account": {
+            "source_namespace": f"{provider}:statement-v1" if bank else "",
+            "source_identity": account["number"] if bank and re.fullmatch(r"[0-9]{10,30}", account["number"]) else "",
+            "identity_strength": "RELIABLE" if bank and re.fullmatch(r"[0-9]{10,30}", account["number"])
+                                 else "WEAK" if bank or re.search(r"[（(][0-9]{4}[)）]", method) else "UNKNOWN",
+        },
         "account": dict(account)
         if bank
         else payment_account(provider, profile, method),

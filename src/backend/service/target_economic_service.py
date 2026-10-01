@@ -34,7 +34,7 @@ class TargetEconomicService:
     def backfill_defaults(self) -> None:
         raise TargetEconomicError(410, "startup default backfill retired", code="REVIEW_WRITE_RETIRED")
 
-    def ensure_defaults(self, fact_ids: list[int], *, commit: bool = False) -> None:
+    def ensure_defaults(self, fact_ids: list[int], *, commit: bool = False, account_refs=None) -> None:
         """Compatibility intake hook: initialize truly unallocated new Facts only."""
         from backend.mapper.review_command_mapper import ReviewCommandMapper, chunks
         mapper = ReviewCommandMapper(self.mapper.db)
@@ -52,7 +52,7 @@ class TargetEconomicService:
             raise TargetEconomicError(409, "original defaults need review", code="DEFAULT_IDENTITY_REQUIRED")
         new_ids = set(fact_ids) - allocated
         if new_ids:
-            _, _, ledgers, _ = mapper.create_initial_defaults(new_ids)
+            _, _, ledgers, _ = mapper.create_initial_defaults(new_ids, account_refs=account_refs)
             for batch in chunks(row.id for group in ledgers for row in group):
                 self.tags.sync_ledgers(batch)
         if commit:
