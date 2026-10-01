@@ -15,12 +15,15 @@ from backend.entity import (
 from backend.entity.base import utc_now
 from backend.error import TargetTagError
 from backend.mapper.tag_assignment_request_mapper import TagAssignmentRequestMapper
+from backend.mapper.target_tag_projection_mapper import TargetTagProjectionMapper
+from backend.mapper.trusted_relation_mapper import TrustedRelationMapper
 from backend.schema.tag_assignment_request import (
     TagAssignmentBatchRead,
     TagAssignmentItemResult,
     TagAssignmentRequestListBody,
     TagAssignmentRequestListRequest,
     TagAssignmentRequestRead,
+    TagAssignmentRequestDetail,
     TagAssignmentRequestSorter,
     tag_assignment_request_filter,
 )
@@ -36,23 +39,78 @@ class TagAssignmentRequestService:
     def __init__(self, db: Session):
         self.mapper = TagAssignmentRequestMapper(db)
 
-    def get(self, request_id: int) -> TagAssignmentRequestRead:
+    def get(self, request_id: int) -> TagAssignmentRequestDetail:
+        TrustedRelationMapper(self.mapper.db).read_snapshot()
         row = self.mapper.read(request_id)
         if row is None:
             raise TargetTagError(404, "标签建议请求不存在", code="TAG_REQUEST_NOT_FOUND")
-        return TagAssignmentRequestRead(**row)
+        self.validate_read_rows([row])
+        context = self.approval_context([row])
+        code = self.approval_code(row, context)
+        return TagAssignmentRequestDetail(**row, eligibility=dict(can_approve=code is None, code=code or "ELIGIBLE"))
 
     def list(self, request: TagAssignmentRequestListRequest) -> TagAssignmentRequestListBody:
+        TrustedRelationMapper(self.mapper.db).read_snapshot()
         sorter_expression = request.sorter[0] if request.sorter else None
         rows, total = self.mapper.list(
             page=request.page_index, page_size=request.page_size,
             filter_value=tag_assignment_request_filter(request),
             sorter=TagAssignmentRequestSorter(order=sorter_expression.direction if sorter_expression else "desc"),
         )
+        self.validate_read_rows(rows)
+        TargetTagProjectionMapper(self.mapper.db).current_states(sorted({int(row["ledger_id"]) for row in rows}))
         return TagAssignmentRequestListBody(
             items=[TagAssignmentRequestRead(**row) for row in rows],
             total=total, page_index=request.page_index, page_size=request.page_size,
         )
+
+    @staticmethod
+    def validate_read_rows(rows):
+        if any(row[key] is None for row in rows for key in
+               ("rule_name", "view_name", "view_system_name", "proposed_tag_name", "proposed_tag_system_name", "ledger_amount")):
+            raise TargetTagError(409, "suggestion reference is damaged", code="TAG_RELATION_BROKEN")
+
+    def approval_context(self, rows):
+        self.validate_read_rows(self.mapper.read_by_ids([int(row["id"]) for row in rows]))
+        ledger_ids = {int(row["ledger_id"]) for row in rows}
+        view_ids = {int(row["view_id"]) for row in rows}
+        scopes = {(int(row["ledger_id"]), int(row["view_id"])) for row in rows}
+        projection = TargetTagProjectionMapper(self.mapper.db)
+        projection.active_dictionary()
+        projection.current_states(sorted(ledger_ids))
+        return dict(rules=self.mapper.rule_rows({int(row["rule_id"]) for row in rows}),
+            scopes=Counter((int(row["ledger_id"]), int(row["view_id"])) for row in rows),
+            active_ledgers=self.mapper.active_ledger_ids(ledger_ids), types=self.mapper.ledger_types(ledger_ids),
+            active_views=self.mapper.active_view_ids(view_ids),
+            targets=self.mapper.active_dictionary_rows({int(row["proposed_tag_id"]) for row in rows}),
+            scope_tags=self.mapper.scope_tag_rows(scopes), enabled_sources=self.mapper.enabled_sources(scopes))
+
+    @staticmethod
+    def approval_code(row, context):
+        if row["status"] not in (TAG_REQUEST_STATUS_PENDING, TAG_REQUEST_STATUS_ENABLED):
+            return "REQUEST_STATE_CONFLICT"
+        scope = (int(row["ledger_id"]), int(row["view_id"]))
+        rule = context["rules"].get(int(row["rule_id"]))
+        current = [item for item in context["scope_tags"].get(scope, []) if item[3] == "ACTIVE"]
+        target = context["targets"].get(int(row["proposed_tag_id"]))
+        if context["scopes"][scope] > 1:
+            return "SCOPE_CONFLICT"
+        if rule is None or rule.rule_revision != row["rule_revision"] or rule.view_id != scope[1]:
+            return "RULE_STALE"
+        if context["types"].get(scope[0]) == 3:
+            return "LEDGER_DUPLICATE"
+        if scope[0] not in context["active_ledgers"]:
+            return "LEDGER_INACTIVE"
+        if scope[1] not in context["active_views"]:
+            return "VIEW_INACTIVE"
+        if target is None or target[0] != scope[1] or target[1] == "unclassified":
+            return "TAG_INACTIVE"
+        sources = context["enabled_sources"].get(scope, [])
+        if row["status"] == TAG_REQUEST_STATUS_ENABLED:
+            return "ALREADY_APPROVED" if len(current) == 1 and current[0][1] == row["proposed_tag_id"] and sources == [row["proposed_tag_id"]] else "SUGGESTION_STALE"
+        if len(current) != 1 or current[0][2] != "unclassified" or sources:
+            return "MANUAL_TAG_CONFLICT"
+        return None
 
     def approve(self, request_ids: list[int]) -> TagAssignmentBatchRead:
         return self._transition(request_ids, accepted=True)
@@ -70,16 +128,11 @@ class TagAssignmentRequestService:
             self.mapper.begin_write()
             rows = self.mapper.by_ids(request_ids)
             by_id = {int(row["id"]): row for row in rows}
-            rules = self.mapper.rule_rows({int(row["rule_id"]) for row in rows})
-            scopes = {(int(row["ledger_id"]), int(row["view_id"])) for row in rows}
-            scope_counts = Counter((int(row["ledger_id"]), int(row["view_id"])) for row in rows)
             if accepted:
-                active_ledgers = self.mapper.active_ledger_ids({int(row["ledger_id"]) for row in rows})
-                active_views = self.mapper.active_view_ids({int(row["view_id"]) for row in rows})
-                targets = self.mapper.active_dictionary_rows({int(row["proposed_tag_id"]) for row in rows})
-                scope_tags = self.mapper.scope_tag_rows(scopes)
-                enabled_sources = self.mapper.enabled_sources(scopes)
+                context = self.approval_context(rows)
+                rules, scope_tags = context["rules"], context["scope_tags"]
             else:
+                rules = self.mapper.rule_rows({int(row["rule_id"]) for row in rows})
                 scope_tags = {}
 
             results: dict[int, TagAssignmentItemResult] = {}
@@ -90,33 +143,18 @@ class TagAssignmentRequestService:
                 status = int(row["status"]) if row is not None else None
                 if row is None:
                     code = "NOT_FOUND"
-                elif status == (TAG_REQUEST_STATUS_ENABLED if accepted else TAG_REQUEST_STATUS_REJECTED):
-                    code = "ALREADY_APPROVED" if accepted else "ALREADY_REJECTED"
+                elif accepted:
+                    code = self.approval_code(row, context)
+                    if code is None:
+                        eligible.append(row)
+                elif status == TAG_REQUEST_STATUS_REJECTED:
+                    code = "ALREADY_REJECTED"
                 elif status != TAG_REQUEST_STATUS_PENDING:
                     code = "REQUEST_STATE_CONFLICT"
                 else:
                     rule = rules.get(int(row["rule_id"]))
-                    scope = (int(row["ledger_id"]), int(row["view_id"]))
                     if rule is None:
                         code = "RULE_STALE"
-                    elif accepted:
-                        current = [item for item in scope_tags.get(scope, []) if item[3] == "ACTIVE"]
-                        target = targets.get(int(row["proposed_tag_id"]))
-                        if scope_counts[scope] > 1:
-                            code = "SCOPE_CONFLICT"
-                        elif rule.rule_revision != row["rule_revision"] or rule.view_id != row["view_id"]:
-                            code = "RULE_STALE"
-                        elif scope[0] not in active_ledgers:
-                            code = "LEDGER_INACTIVE"
-                        elif scope[1] not in active_views:
-                            code = "VIEW_INACTIVE"
-                        elif target is None or target[0] != scope[1] or target[1] == "unclassified":
-                            code = "TAG_INACTIVE"
-                        elif len(current) != 1 or not (
-                            (current[0][2] == "unclassified" and not enabled_sources.get(scope))
-                            or enabled_sources.get(scope) == [current[0][1]]
-                        ):
-                            code = "MANUAL_TAG_CONFLICT"
                     if code is None:
                         eligible.append(row)
                 if code is not None:

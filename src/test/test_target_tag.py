@@ -380,7 +380,7 @@ def test_archived_view_is_excluded_from_assignment_state(target_tag_api):
     assert _assignment(client, ledger_id)["tag_state"] == {}
 
 
-def test_inactive_ledger_tag_assignment_is_allowed(target_tag_api):
+def test_inactive_ledger_tag_assignment_is_read_only(target_tag_api):
     client, sessions, _engine = target_tag_api
     fact_id = _add_facts(sessions, 1)[0]
     _create_tag_dictionary(client)
@@ -397,12 +397,14 @@ def test_inactive_ledger_tag_assignment_is_allowed(target_tag_api):
         service.command(ReviewCommandInput(**intent, expected_reviews=preview["expected_reviews"], preview_digest=preview["preview_digest"]))
 
     assigned = _assign(client, ledger_id, "food")
-    assert assigned.status_code == 200, assigned.text
+    assert assigned.status_code == 409, assigned.text
+    assert assigned.json()["body"]["code"] == "LEDGER_INACTIVE"
     with sessions() as db:
         assignment = db.scalar(select(LedgerEntryTag).where(
             LedgerEntryTag.ledger_id == ledger_id,
         ))
-        assert db.get(TargetTag, assignment.tag_id).system_name == "food"
+        assert db.get(TargetTag, assignment.tag_id).system_name == "unclassified"
+    assert _assignment(client, ledger_id)["tag_state"] == {"category": "unclassified"}
 
 
 def test_tag_assignment_has_bounded_reads(target_tag_api):

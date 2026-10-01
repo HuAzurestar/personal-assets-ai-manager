@@ -211,7 +211,7 @@ def test_approval_advances_past_latest_other_view_token_and_preserves_that_view(
         )) == future
 
 
-def test_new_request_can_replace_only_matching_automatic_source(request_api):
+def test_new_request_cannot_override_an_already_effective_nondefault_value(request_api):
     client, sessions, view_id, _, tags = request_api
     old_rule, ledgers, ids = _seed(request_api)
     _batch(client, ids)
@@ -224,13 +224,13 @@ def test_new_request_can_replace_only_matching_automatic_source(request_api):
             "view_id": view_id, "proposed_tag_id": tags["category"]["travel"],
         }], NOW)
         mapper.commit()
-    assert _batch(client, fresh)[0]["result"] == "APPROVED"
+    assert _batch(client, fresh)[0]["result"] == "MANUAL_TAG_CONFLICT"
     with sessions() as db:
-        assert db.get(TagAssignmentRequest, ids[0]).status == 5
+        assert db.get(TagAssignmentRequest, ids[0]).status == 2
         assert db.get(AutoTagRule, old_rule).accepted_count == 1
-        assert db.get(AutoTagRule, new_rule).accepted_count == 1
+        assert db.get(AutoTagRule, new_rule).accepted_count == 0
         assert db.scalar(select(func.count()).select_from(TagAssignmentRequest).where(TagAssignmentRequest.status == 2)) == 1
-    assert _batch(client, ids)[0]["result"] == "REQUEST_STATE_CONFLICT"
+    assert _batch(client, ids)[0]["result"] == "ALREADY_APPROVED"
 
 
 @pytest.mark.parametrize("scope", ["tag", "view"])
@@ -252,7 +252,7 @@ def test_archived_dictionary_retires_source_and_reactivation_does_not_resurrect_
             assert (row.accepted_count, row.rejected_count) == (1, 0)
 
 
-def test_inactive_ledger_blocks_automatic_approval_but_preserves_manual_history_api(request_api):
+def test_inactive_ledger_blocks_automatic_and_manual_writes_but_preserves_reads(request_api):
     client, sessions, _, _, _ = request_api
     _, ledgers, ids = _seed(request_api)
     opened = _assignment(client, ledgers[0])
@@ -261,9 +261,8 @@ def test_inactive_ledger_blocks_automatic_approval_but_preserves_manual_history_
         db.execute(update(ReviewCase).where(ReviewCase.id == review).values(status=1))
         db.commit()
     assert _batch(client, ids)[0]["result"] == "LEDGER_INACTIVE"
-    # Existing manual Ledger history assignment is intentionally allowed. Do not
-    # expand the automatic-review gate into a restriction on another subsystem.
-    assert _manual(client, ledgers[0], opened["tag_state"], opened["updated_time"]).status_code == 200
+    assert _manual(client, ledgers[0], opened["tag_state"], opened["updated_time"]).status_code == 409
+    assert _assignment(client, ledgers[0])["tag_state"] == opened["tag_state"]
 
 
 def test_batch_validation_select_count_does_not_scale_with_rows(request_api):
