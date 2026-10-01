@@ -77,6 +77,9 @@ class _RetryDeferred(Exception):
 
 PayloadBuilder = Callable[[ScanPage, int], LlmAnalysisInput | None]
 SuggestionValidator = Callable[[tuple, int], None]
+_FAILURE_STOPS = frozenset({"AUTH_ERROR", "CONFIG_ERROR", "AUDIT_STORAGE_ERROR",
+    "TAG_RELATION_BROKEN", "COMMIT_FAILED", "RESULT_UNKNOWN", "COUNTER_EXHAUSTED",
+    "ANALYSIS_ABORTED", "SYNTHETIC_FIXTURE_MISSING", "SYNTHETIC_FIXTURE_INVALID"})
 
 
 class AutoTagScanService:
@@ -112,7 +115,9 @@ class AutoTagScanService:
             rule_id, context, build, suggestion_validator=validate, stop_on_provider_error=True,
         )
 
-    @observed("TAG_SCAN")
+    @observed("TAG_SCAN", result_code=lambda report: report.last_error_code or
+        (report.stopped_reason if report.stopped_reason in _FAILURE_STOPS else "OK"),
+        result_count=lambda report: report.inspected_count)
     async def _run(
         self, rule_id: int, context: JobRunContext, payload_builder: PayloadBuilder,
         *, suggestion_validator: SuggestionValidator | None = None, stop_on_provider_error=False,
@@ -176,8 +181,7 @@ class AutoTagScanService:
                 context.emit(reason, phase="FINISH")
             context.progress(phase="FINISH", **asdict(counts))
             observability.metric("scan_pending", "TAG_SCAN", counts.request_count)
-            observability.metric("scan_failed", "TAG_SCAN", counts.failed_count + int(reason in {
-                "TAG_RELATION_BROKEN", "COMMIT_FAILED", "RESULT_UNKNOWN", "AUDIT_STORAGE_UNAVAILABLE"}))
+            observability.metric("scan_failed", "TAG_SCAN", counts.failed_count + int(reason in _FAILURE_STOPS))
             return ScanRunReport(rule_id=rule_id, stopped_reason=reason, last_error_code=last_error_code, **asdict(counts))
 
         context.progress(phase="SCAN")

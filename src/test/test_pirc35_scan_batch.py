@@ -89,13 +89,21 @@ def test_local_candidate_preview_rejects_orphan_positive_fact_reference(scan_run
         assert error.value.code == "TAG_RELATION_BROKEN"
 
 
-def test_auth_failure_preserves_completed_prefix_but_not_the_failed_item(scan_runtime):
+@pytest.mark.parametrize("error_code", ["AUTH_ERROR", "CONFIG_ERROR", "AUDIT_STORAGE_ERROR"])
+def test_fatal_adapter_failure_preserves_completed_prefix_but_not_the_failed_item(scan_runtime, error_code):
     sessions, _, _, tags = scan_runtime
     ids, rule, fixtures = seed(scan_runtime, 3)
     analyzer = SequenceAnalyzer([lambda payload: _suggest(payload, tags["food"]),
-                                 LlmAdapterError("safe auth failure", code="AUTH_ERROR")])
+                                 LlmAdapterError("safe adapter failure", code=error_code)])
     report = _run(AutoTagScanService(sessions, analyzer).run_synthetic(rule, fixtures, _context()))
-    assert report.stopped_reason == "AUTH_ERROR" and report.request_count == 1
+    assert report.stopped_reason == error_code and report.request_count == 1
+    from backend.core.feature_observability import observability
+    diagnostic = observability.snapshot()
+    metrics = {row["name"]: row["total"] for row in diagnostic["metrics"]}
+    assert metrics["scan_pending"] == metrics["scan_failed"] == 1
+    assert diagnostic["events"][-1]["code"] == error_code
+    assert diagnostic["events"][-1]["level"] == "WARNING"
+    assert diagnostic["events"][-1]["row_count"] == report.inspected_count
     assert analyzer.calls == 2
     with sessions() as db:
         row = db.get(AutoTagRule, rule)

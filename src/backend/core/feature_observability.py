@@ -32,8 +32,9 @@ CODES = frozenset({"OK", "OTHER", "INTERNAL_SERVER_ERROR", "VALIDATION_ERROR",
     "PARSE_ERROR", "PARSE_BUSY", "PARSE_LIMIT", "IMPORT_MATCH_LIMIT", "DETAIL_LIMIT",
     "SUMMARY_LIMIT", "AGGREGATION_LIMIT", "TAG_IMPACT_LIMIT", "POSITION_LIMIT", "REQUEST_LIMIT",
     "CONFIG_ERROR", "AUTH_ERROR", "RATE_LIMIT", "REQUEST_TIMEOUT",
-    "PROVIDER_UNAVAILABLE", "AUDIT_STORAGE_UNAVAILABLE", "SUGGESTION_STALE",
-    "OUTPUT_SEMANTIC_INVALID", "INPUT_INVALID", "COMMIT_FAILED"})
+    "PROVIDER_UNAVAILABLE", "AUDIT_STORAGE_ERROR", "SUGGESTION_STALE",
+    "OUTPUT_SEMANTIC_INVALID", "INPUT_INVALID", "COMMIT_FAILED", "COUNTER_EXHAUSTED",
+    "ANALYSIS_ABORTED", "SYNTHETIC_FIXTURE_MISSING", "SYNTHETIC_FIXTURE_INVALID"})
 _trace = ContextVar("paam_operational_trace", default=None)
 
 
@@ -172,34 +173,51 @@ def failure_metrics(operation, code):
 
 @contextmanager
 def observe(operation, duration_metric=None, *, log=True):
-    started, code = monotonic(), "OK"
+    started = monotonic()
+    outcome = dict(code="OK", row_count=0)
     with trace_scope():
         try:
-            yield
+            yield outcome
         except BaseException as error:
-            candidate = getattr(error, "code", "INTERNAL_SERVER_ERROR")
-            code = candidate if isinstance(candidate, str) and candidate in CODES else "OTHER"
-            failure_metrics(operation, code)
+            outcome["code"] = getattr(error, "code", "INTERNAL_SERVER_ERROR")
             raise
         finally:
+            candidate = outcome["code"]
+            code = candidate if isinstance(candidate, str) and candidate in CODES else "OTHER"
+            failure_metrics(operation, code)
             duration = (monotonic() - started) * 1000
             if duration_metric is not None:
                 observability.metric(duration_metric, operation, duration)
             if log:
-                observability.emit(operation, code=code, duration_ms=duration)
+                observability.emit(operation, code=code, row_count=outcome["row_count"], duration_ms=duration)
 
 
-def observed(operation, duration_metric=None):
+def observed(operation, duration_metric=None, *, result_code=None, result_count=None):
+    def classify(outcome, result):
+        # Only explicitly supplied, fixed result projections are inspected, not
+        # arbitrary response dictionaries, payloads, IDs or exception text.
+        try:
+            if result_code is not None:
+                outcome["code"] = result_code(result)
+            if result_count is not None:
+                outcome["row_count"] = result_count(result)
+        except Exception:
+            outcome["code"] = "OTHER"
+
     def decorate(function):
         if inspect.iscoroutinefunction(function):
             @wraps(function)
             async def asynchronous(*args, **kwargs):
-                with observe(operation, duration_metric):
-                    return await function(*args, **kwargs)
+                with observe(operation, duration_metric) as outcome:
+                    result = await function(*args, **kwargs)
+                    classify(outcome, result)
+                    return result
             return asynchronous
         @wraps(function)
         def synchronous(*args, **kwargs):
-            with observe(operation, duration_metric):
-                return function(*args, **kwargs)
+            with observe(operation, duration_metric) as outcome:
+                result = function(*args, **kwargs)
+                classify(outcome, result)
+                return result
         return synchronous
     return decorate

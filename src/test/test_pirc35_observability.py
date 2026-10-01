@@ -159,6 +159,26 @@ def test_validation_errors_also_have_object_details_and_correlated_trace():
     assert details["trace_id"] == response.headers["X-PAAM-Trace-ID"]
 
 
+def test_returned_operational_failure_is_not_logged_as_success_and_projection_cannot_change_result(monkeypatch):
+    observer = FeatureObservability()
+    monkeypatch.setattr(feature, "observability", observer)
+
+    @observed("TAG_SCAN", result_code=lambda result: result["code"], result_count=lambda result: result["count"])
+    def scan():
+        return dict(code="AUDIT_STORAGE_ERROR", count=2)
+
+    assert scan()["code"] == "AUDIT_STORAGE_ERROR"
+    assert observer.snapshot()["events"][-1]["code"] == "AUDIT_STORAGE_ERROR"
+    assert observer.snapshot()["events"][-1]["row_count"] == 2
+
+    @observed("TAG_SCAN", result_code=lambda result: result["missing"])
+    def broken_projection():
+        return dict(code="OK")
+
+    assert broken_projection() == dict(code="OK")
+    assert observer.snapshot()["events"][-1]["code"] == "OTHER"
+
+
 def test_repeated_shutdown_cancellation_drains_short_database_unit():
     started, release, finished = Event(), Event(), Event()
 
