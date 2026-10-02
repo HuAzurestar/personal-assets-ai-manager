@@ -2,9 +2,10 @@
 import copy
 from datetime import datetime, timezone
 import pytest
-from backend.entity import TransactionFact, Position
+from backend.entity import TransactionFact, Position, ReviewCase
+from backend.error import TargetEconomicError
 from backend.mapper.review_command_mapper import ReviewCommandMapper
-from backend.schema.review_command import ReviewChangeInput
+from backend.schema.review_command import ReviewChangeInput, ReviewCommandInput
 from backend.service.review_command_service import ReviewCommandService
 from test_pirc35_review_command import db, execute
 
@@ -110,3 +111,55 @@ def test_movement_in_cannot_reference_an_old_source_and_unknown_object_is_explic
     assert ReviewCommandService(db).preview(ReviewChangeInput(new_reviews=[invalid]))["blocking_issues"][0]["code"] == "INVALID_POSITION_SOURCE"
     invalid["legs"][0].update(existing_position_id=99999, source=0)
     assert ReviewCommandService(db).preview(ReviewChangeInput(new_reviews=[invalid]))["blocking_issues"][0]["code"] == "REFERENCE_NOT_FOUND"
+
+
+@pytest.mark.parametrize("code", ["BORROW_REPAY", "SHARED_PAYMENT", "POS_CREDIT_PURCHASE", "POS_CREDIT_REPAY"])
+def test_dedicated_principal_rejects_partial_cash_attribution_before_publication(db, code):
+    nature = "LIABILITY" if code.startswith("POS_CREDIT") else "ASSET"
+    positions = [position("Mock principal", nature)]
+    legs = [leg(10000, "IN", new=0)]
+    if code == "POS_CREDIT_REPAY":
+        opening = execute(db, new_reviews=[dict(case_code="POS_OPENING", allocations=[],
+            new_positions=positions, legs=[dict(leg(40000, "IN", new=0), type="OPENING")], position_allocations=[])])
+        pid, rid = opening["created_positions"][0]["id"], opening["created_reviews"][0]["id"]
+        source = ReviewCommandService(db).detail(rid)["position_legs"][0]["id"]
+        positions, legs = [], [leg(10000, "OUT", existing=pid, source=source)]
+    parameters = dict(new_positions=positions, allocations=[split(1, 40000,
+        "TRANSACTION" if code == "POS_CREDIT_PURCHASE" else "ASSET_LIABILITY")],
+        legs=legs, position_allocations=[link(0, 0, 10000)])
+    if code == "SHARED_PAYMENT":
+        parameters["phase"] = "ADVANCE_OUT"
+    review = dict(case_code=code, **parameters) if code.startswith("POS_") else dict(case_code=code, parameters=parameters)
+    service = ReviewCommandService(db)
+    original = copy.deepcopy(service.detail(1))
+    count = db.query(ReviewCase).count()
+    change = dict(new_reviews=[review])
+    preview = service.preview(ReviewChangeInput(**change))
+    assert preview["blocking_issues"][0]["code"] == "INVALID_PRINCIPAL"
+    with pytest.raises(TargetEconomicError) as rejected:
+        service.command(ReviewCommandInput(**change, expected_reviews=preview["expected_reviews"],
+            preview_digest=preview["preview_digest"]))
+    assert rejected.value.code == "INVALID_PRINCIPAL"
+    assert db.query(ReviewCase).count() == count
+    assert service.detail(1) == original
+
+
+def test_credit_principal_and_independent_fee_are_explicit_separate_splits(db):
+    result = execute(db, new_reviews=[dict(case_code="POS_CREDIT_PURCHASE",
+        new_positions=[position("Mock credit debt", "LIABILITY")],
+        allocations=[split(1, 30000, "TRANSACTION"), split(1, 10000, "TRANSACTION")],
+        legs=[leg(30000, "IN", new=0)], position_allocations=[link(0, 0, 30000)])])
+    detail = ReviewCommandService(db).detail(result["created_reviews"][0]["id"])
+    assert sum(row["cash_amount"] for row in detail["ledger_entries"]) == 40000
+    assert detail["position_legs"][0]["leg_amount"] == 30000
+
+
+def test_complete_principal_can_span_multiple_objects_and_generic_event_can_be_partial(db):
+    principal = dict(case_code="BORROW_REPAY", parameters=dict(
+        new_positions=[position("Mock note A"), position("Mock note B")],
+        allocations=[split(1, 40000)], legs=[leg(10000, "IN", new=0), leg(30000, "IN", new=1)],
+        position_allocations=[link(0, 0, 10000), link(0, 1, 30000)]))
+    assert ReviewCommandService(db).preview(ReviewChangeInput(new_reviews=[principal]))["blocking_issues"] == []
+    generic = dict(case_code="POS_POSITION_OPEN", new_positions=[position("Mock generic")],
+        allocations=[split(1, 40000)], legs=[leg(10000, "IN", new=0)], position_allocations=[link(0, 0, 10000)])
+    assert ReviewCommandService(db).preview(ReviewChangeInput(new_reviews=[generic]))["blocking_issues"] == []

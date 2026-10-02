@@ -1,5 +1,6 @@
 """Actual browser, fictional statements, selected scope and lost response."""
 import os
+import json
 from pathlib import Path
 import socket
 import tempfile
@@ -80,6 +81,23 @@ def run():
                     expect(page.locator("[data-batch-status]")).to_contain_text("结果未知", timeout=15000)
                     expect(page.locator("[data-batch-confirm]")).to_be_disabled()
                     assert page.evaluate("JSON.parse(localStorage.getItem('paam.import.pending.v1')).rows.length") == 4
+                    # Terminal row statuses must not unlock unknown results
+                    # while the original preview still reports CONFIRMING.
+                    token = page.evaluate("JSON.parse(localStorage.getItem('paam.import.pending.v1')).token")
+                    token_url = base + f"/paam/import/v1/preview/{token}"
+                    def still_confirming(route):
+                        response = route.fetch()
+                        payload = response.json()
+                        payload["body"]["status"] = "CONFIRMING"
+                        route.fulfill(response=response, body=json.dumps(payload))
+                    page.route(token_url, still_confirming)
+                    page.locator("[data-batch-verify]").click()
+                    expect(page.locator("[data-batch-verification]")).to_contain_text("已接受", timeout=15000)
+                    expect(page.locator("[data-batch-verify]")).to_be_enabled()  # finally completed
+                    expect(page.locator("[data-batch-observed]")).to_be_disabled()
+                    assert page.evaluate("JSON.parse(localStorage.getItem('paam.import.pending.v1')).rows.length") == 4
+                    assert len(confirmations) == 2
+                    page.unroute(token_url, still_confirming)
                     page.locator("[data-batch-verify]").click()
                     expect(page.locator("[data-batch-verification]")).to_contain_text("已接受", timeout=15000)
                     expect(page.locator("[data-batch-verification]")).to_contain_text("CONFIRMED")

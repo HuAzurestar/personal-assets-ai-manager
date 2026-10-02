@@ -179,7 +179,12 @@ def expand(raw, facts, positions, refs, parties, sources, source_reviews, defaul
                         reject("INVALID_CASE_CODE", "shared phase and Position direction mismatch")
                 if split["entry_type"] != expected_type or fact["cash_direction"] != expected_direction:
                     reject("INVALID_CASE_CODE", "principal cash structure does not match intent")
-        linked_indices = {ai for ai, _ in pairs}
-        if any(split["entry_type"] == 2 and index not in linked_indices for index, split in enumerate(draft["allocations"])):
+        # Every dedicated principal split needs complete attribution, not just
+        # one link. Unlinked TRANSACTION fees and generic Position events keep
+        # their separate semantics; a linked credit purchase is all principal.
+        if any((split["entry_type"] == 2 or
+                (code == "POS_CREDIT_PURCHASE" and index in totals))
+               and totals[index] != split["cash_amount"]
+               for index, split in enumerate(draft["allocations"])):
             reject("INVALID_PRINCIPAL", "principal cash cannot have an unexplained residual")
     return draft

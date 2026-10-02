@@ -21,7 +21,7 @@ export async function mountImportBatch(host, initial, changed) {
   const signal = controller.signal;
   let context = contexts.get(initial.token);
   if (!context) {
-    context = { plan: initial, selected: new Map(), dirty: false, page: 1, busy: false, generation: 0, unknown: !!pending() };
+    context = { plan: initial, selected: new Map(), dirty: false, page: 1, busy: false, generation: 0, unknown: !!pending(), verificationReady: false };
     contexts.set(initial.token, context);
     // Keep UI state bounded just as the server bounds preview residency.
     while (contexts.size > 128) contexts.delete(contexts.keys().next().value);
@@ -41,7 +41,7 @@ export async function mountImportBatch(host, initial, changed) {
     host.querySelectorAll("button,input,select").forEach(node => { node.disabled = context.busy || context.unknown; });
     find("[data-batch-verify]").disabled = context.busy;
     find("[data-batch-refresh]").disabled = context.busy;
-    if (find("[data-batch-observed]")) find("[data-batch-observed]").disabled = context.busy;
+    if (find("[data-batch-observed]")) find("[data-batch-observed]").disabled = context.busy || !context.verificationReady || plan.status === "CONFIRMING";
     find("[data-batch-confirm]").disabled = context.busy || context.unknown || context.dirty || !context.selected.size || plan.status === "CONFIRMING";
     find("[data-batch-prev]").disabled ||= context.page <= 1;
     find("[data-batch-next]").disabled ||= !page || context.page * page.page_size >= page.total;
@@ -119,6 +119,7 @@ export async function mountImportBatch(host, initial, changed) {
   };
   const verify = async () => {
     if (context.busy) return;
+    context.verificationReady = false;
     const retained = pending();
     const rows = retained?.rows || [...context.selected.values()].map(item => ({ file_id: item.row.file_id, source_row_number: item.row.source_row_number }));
     if (!rows.length) { status("没有可核对的所选行定位；按文件sha256查询导入历史，不能凭无响应推断失败。"); return; }
@@ -166,11 +167,16 @@ export async function mountImportBatch(host, initial, changed) {
       if (!live()) return;
       find("[data-batch-verification]").innerHTML = `<h3>当前持久状态（不是首次命令回执）</h3>${observed.map(row => `<p>文件 #${row.file_id} 第 ${row.source_row_number} 行：${row.actual ? `${statusNames[row.actual.row_status]} · Fact #${row.actual.transaction_id}` : "尚无持久结果；不证明请求未提交"}</p>`).join("")}<p>金融效果按当前Review状态核对；重复证据不是额外现金。</p>${relations.filter(row => row.review_id).map(row => `<p>第 ${row.source_row_number} 行 · Review #${row.review_id} ${esc(row.review_status)} · Ledger #${row.ledger_id} · 来源卡 #${row.account_ref_id}</p>`).join("")}${observed.every(row => row.actual && [1, 2, 3].includes(row.actual.row_status)) ? '<button type="button" data-batch-observed>我已核对这些行，开始新的明确批次</button>' : ""}`;
       const observedButton = find("[data-batch-observed]");
+      context.verificationReady = !!observedButton && !confirming;
       if (observedButton && confirming) {
         observedButton.disabled = true;
         status("原请求仍在执行；这些可能是重查前的旧状态。保持结果未知，稍后重新核对。");
       }
-      if (observedButton) observedButton.onclick = async () => { localStorage.removeItem(pendingKey); context.unknown = false; context.selected.clear(); context.dirty = false; await refresh(); };
+      if (observedButton) observedButton.onclick = async () => {
+        if (context.busy || !context.verificationReady || context.plan.status === "CONFIRMING") return;
+        localStorage.removeItem(pendingKey); context.unknown = false; context.verificationReady = false;
+        context.selected.clear(); context.dirty = false; await refresh();
+      };
     } catch (error) { status(`无法核实：${error.message}。保持结果未知，不自动重发。`); }
     finally { context.busy = false; update(); }
   };
@@ -191,6 +197,7 @@ export async function mountImportBatch(host, initial, changed) {
   };
   find("[data-batch-confirm]").onclick = async () => {
     if (context.busy || context.unknown || context.dirty || !context.selected.size) return;
+    context.verificationReady = false;
     const selected = [...context.selected.values()].map(item => ({ file_id: item.row.file_id, source_row_number: item.row.source_row_number }));
     context.busy = true;
     update();
