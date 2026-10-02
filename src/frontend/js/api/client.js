@@ -1,3 +1,5 @@
+import { assertExactResourceIds } from "../util/core.js";
+
 const connectionCopy = {
   checking: "正在检查本地账本",
   connected: "本地账本已连接",
@@ -79,8 +81,11 @@ export async function checkConnection() {
   }
 }
 
-export const jsonRequest = (url, method, body, includeEnvelope = false) => request(url, {
-  method,
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify(body),
-}, includeEnvelope);
+export const jsonRequest = (url, method, body, includeEnvelope = false) => {
+  if (/^\/paam\/(?:ledger|financial|import)\/v1\//.test(url)) assertExactResourceIds(body);
+  return request(url, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }, includeEnvelope);
+};

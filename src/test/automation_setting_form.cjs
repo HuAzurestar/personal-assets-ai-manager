@@ -79,7 +79,7 @@ async function testMissingModelKeys() {
     }) }),
     document: { querySelector: () => null },
   });
-  const clientSource = fs.readFileSync(path.join(__dirname, '../frontend/js/api/client.js'), 'utf8').replace(/^export /gm, '');
+  const clientSource = fs.readFileSync(path.join(__dirname, '../frontend/js/api/client.js'), 'utf8').replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '');
   vm.runInContext(clientSource, clientContext);
   await assert.rejects(vm.runInContext('request("/fixture")', clientContext), (error) => {
     assert.equal(error.code, 'MODEL_KEY_REQUIRED');

@@ -1,5 +1,5 @@
 import { request, jsonRequest, isUnknownWrite } from "../api/client.js";
-import { esc, money, date } from "../util/core.js";
+import { esc, money, date, resourceId } from "../util/core.js";
 import { mountPicker, workbenchDialog } from "../component/workbench.js";
 
 const pendingKey = "paam.import.pending.v1";
@@ -59,11 +59,11 @@ export async function mountImportBatch(host, initial, changed) {
     context.busy = true;
     update();
     const params = new URLSearchParams({ page_index: requestedPage, page_size: "20", preview_digest: context.plan.preview_digest });
-    const filters = [];
-    if (find("[data-batch-file]").value) filters.push({ key: "file_id", op: "=", val: Number(find("[data-batch-file]").value) });
-    if (find("[data-batch-classification]").value) filters.push({ key: "classification", op: "=", val: find("[data-batch-classification]").value });
-    if (filters.length) params.set("filter", JSON.stringify(filters.length === 1 ? filters[0] : { op: "AND", expression: filters }));
     try {
+      const filters = [];
+      if (find("[data-batch-file]").value) filters.push({ key: "file_id", op: "=", val: resourceId(find("[data-batch-file]").value) });
+      if (find("[data-batch-classification]").value) filters.push({ key: "classification", op: "=", val: find("[data-batch-classification]").value });
+      if (filters.length) params.set("filter", JSON.stringify(filters.length === 1 ? filters[0] : { op: "AND", expression: filters }));
       const next = await request(`/paam/import/v1/preview/${context.plan.token}/row/list?${params}`, { signal });
       if (!live() || issued !== context.generation) return;
       page = next;

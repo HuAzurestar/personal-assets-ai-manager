@@ -1,5 +1,5 @@
 import { request, jsonRequest, isUnknownWrite } from "../api/client.js";
-import { esc, date } from "../util/core.js";
+import { esc, date, resourceId } from "../util/core.js";
 import { table } from "../component/table.js";
 
 const base = "/paam/ledger/v1";
@@ -27,7 +27,7 @@ function pageControls(kind, result, params) {
 export async function accountManagementPage(params) {
   stopAccountRead();
   readController = new AbortController();
-  const partyId = Number(params.get("party") || 0), accountId = Number(params.get("account") || 0);
+  const partyId = resourceId(params.get("party") || 0, { allowZero: true }), accountId = resourceId(params.get("account") || 0, { allowZero: true });
   const pages = await Promise.all(Object.keys(endpoint).map(async (kind) => {
     const query = new URLSearchParams({ page_size: "20", page_index: params.get(`${kind}_page`) || "1" });
     if (kind === "account" && partyId) query.set("filter", JSON.stringify({ key: "party_id", op: "=", val: partyId }));
@@ -86,7 +86,8 @@ export function bindAccountManagement(root, reload) {
     try {
       const moving = button.dataset.accountMove;
       const kind = moving ? "ref" : button.dataset.accountCreate || button.dataset.accountEdit;
-      const id = moving || button.dataset.id;
+      const rawId = moving || button.dataset.id;
+      const id = rawId ? resourceId(rawId) : null;
       const row = id ? await request(`${base}/${endpoint[kind]}/${id}`, { signal: readController?.signal }) : {};
       if (!host.isConnected || route !== location.hash) return;
       if (moving) {
@@ -99,9 +100,9 @@ export function bindAccountManagement(root, reload) {
           event.preventDefault();
           const submit = node.querySelector("[type=submit]");
           submit.disabled = true;
-          change = { account_id: Number(node.querySelector("input").value), expected_updated_time: row.updated_time };
           const issued = ++generation;
           try {
+            change = { account_id: resourceId(node.querySelector("input").value, { allowZero: true }), expected_updated_time: row.updated_time };
             const nextPlan = await jsonRequest(`${base}/account-ref/${id}/move-preview`, "POST", change);
             if (!node.isConnected || issued !== generation) return;
             plan = nextPlan;
@@ -131,15 +132,15 @@ export function bindAccountManagement(root, reload) {
         event.preventDefault();
         if (node.dataset.writeOutcome === "UNKNOWN") return;
         node.querySelector("[type=submit]").disabled = true;
-        const values = Object.fromEntries(new FormData(event.target));
-        if (kind === "account") {
-          values.statement_interval_months = Number(values.statement_interval_months);
-          values.snapshot_interval_months = Number(values.snapshot_interval_months);
-          if (!id) values.party_id = Number(host.dataset.party);
-        }
-        if (kind === "ref") values.account_id = id ? row.account_id : Number(host.dataset.account);
-        if (id) values.expected_updated_time = row.updated_time;
         try {
+          const values = Object.fromEntries(new FormData(event.target));
+          if (kind === "account") {
+            values.statement_interval_months = Number(values.statement_interval_months);
+            values.snapshot_interval_months = Number(values.snapshot_interval_months);
+            if (!id) values.party_id = resourceId(host.dataset.party);
+          }
+          if (kind === "ref") values.account_id = resourceId(id ? row.account_id : host.dataset.account, { allowZero: true });
+          if (id) values.expected_updated_time = row.updated_time;
           await jsonRequest(`${base}/${endpoint[kind]}${id ? `/${id}/metadata` : ""}`, id ? "PUT" : "POST", values);
           node.close(); await reload();
         } catch (error) { writeError(node, error); }

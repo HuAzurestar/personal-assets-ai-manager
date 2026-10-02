@@ -1,5 +1,5 @@
 import { request, jsonRequest } from "../api/client.js";
-import { esc, date, quantityDecimal, money } from "../util/core.js";
+import { esc, date, quantityDecimal, money, resourceId } from "../util/core.js";
 import { table } from "../component/table.js";
 import { input, select, workbenchDialog, writeFailure, mountPicker } from "../component/workbench.js";
 
@@ -49,7 +49,7 @@ export async function positionPage(params) {
   const rows = result.items.map(row => `<tr><td><a href="${esc(href(params, { id: row.id, leg_page: null }))}">#${row.id} ${esc(row.title)}</a></td><td>${esc(row.type)} · ${esc(row.usage_scenario)}</td><td>${esc(row.unit_code)}</td><td>${esc(row.status)}</td><td><button data-position-edit="${row.id}">维护元数据</button></td></tr>`);
   let detail = "";
   if (params.get("id")) {
-    const id = Number(params.get("id"));
+    const id = resourceId(params.get("id"));
     const [row, legs] = await Promise.all([
       request(`${base}/${id}`, { signal: controller.signal }),
       request(`${base}/${id}/leg/list?page_size=20&page_index=${Number(params.get("leg_page") || 1)}`, { signal: controller.signal }),
@@ -82,20 +82,25 @@ export function bindPosition(root, reload) {
     button.disabled = true;
     const route = location.hash;
     try {
-      const id = button.dataset.positionEdit;
+      const id = button.dataset.positionEdit ? resourceId(button.dataset.positionEdit) : null;
       const row = id ? await request(`${base}/${id}`, { signal: controller.signal }) : {};
       if (!host.isConnected || route !== location.hash) return;
       const node = workbenchDialog(id ? "维护对象元数据" : "独立创建对象", `<form class="stack">${positionFields(row, !!id)}
         <p>${id ? "性质、个人、对方、单位不可修改。身份纠错需新建对象；归档不删除数量，恢复不激活旧 Review，结清要求有据零且来源有效。" : "创建后数量 UNKNOWN；通过 Review 增加 OPENING 或 MOVEMENT 证据。"}</p><p role="status"></p><button type="submit">保存</button></form>`);
       const form = node.querySelector("form");
       bindPartyPicker(form, controller.signal);
+      let uncertain = false, writing = false;
       form.onsubmit = async event => {
-        event.preventDefault(); const submit = form.querySelector("[type=submit]"); submit.disabled = true;
-        const payload = Object.fromEntries(new FormData(form));
-        if (id) payload.expected_updated_time = row.updated_time;
-        else { payload.party_id = Number(payload.party_id); payload.unit_code = payload.unit_code.trim().toUpperCase(); }
-        try { await jsonRequest(`${base}${id ? `/${id}/metadata` : ""}`, id ? "PUT" : "POST", payload); node.close(); await reload(); }
-        catch (error) { submit.disabled = writeFailure(form, error); }
+        event.preventDefault();
+        if (uncertain || writing) return;
+        const submit = form.querySelector("[type=submit]"); submit.disabled = true; writing = true;
+        try {
+          const payload = Object.fromEntries(new FormData(form));
+          if (id) payload.expected_updated_time = row.updated_time;
+          else { payload.party_id = resourceId(payload.party_id); payload.unit_code = payload.unit_code.trim().toUpperCase(); }
+          await jsonRequest(`${base}${id ? `/${id}/metadata` : ""}`, id ? "PUT" : "POST", payload); node.close(); await reload();
+        } catch (error) { uncertain = writeFailure(form, error); submit.disabled = uncertain; }
+        finally { writing = false; }
       };
     } catch (error) { if (error.name !== "AbortError" && host.isConnected) workbenchDialog("读取失败", `<p>${esc(error.message)}</p>`); }
     finally { if (button.isConnected) button.disabled = false; }

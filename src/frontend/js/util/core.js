@@ -7,6 +7,34 @@ export const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => 
 
 export const key = () => crypto.randomUUID();
 
+// JSON numeric IDs must be exact before they can identify a financial object.
+// Never send a rounded SQLite ID, scientific notation, boolean or empty input.
+export function resourceId(value, { allowZero = false } = {}) {
+  const text = typeof value === "string" ? value.trim() : value;
+  const valid = typeof text === "number" || (typeof text === "string" && /^\d+$/.test(text));
+  const id = valid ? Number(text) : NaN;
+  if (!Number.isSafeInteger(id) || id < (allowZero ? 0 : 1)) {
+    throw Object.assign(new Error(`对象 ID 必须为可精确表示的${allowZero ? "非负" : "正"}整数；本次未发送请求。`),
+      { code: "INVALID_ID", status: 422 });
+  }
+  return id;
+}
+
+// A final guard for server-selected IDs, expected-state IDs and nested intents.
+// Zero is validated by the owning DTO; this guard only prevents precision loss.
+export function assertExactResourceIds(value) {
+  if (!value || typeof value !== "object") return;
+  if (Array.isArray(value)) { value.forEach(assertExactResourceIds); return; }
+  for (const [name, item] of Object.entries(value)) {
+    if (name === "id" || name.endsWith("_id") || name === "source" || name === "source_row_number") {
+      if (name === "account_ref_id" && item == null) continue; // Explicit automatic source choice.
+      resourceId(item, { allowZero: true });
+    } else if (name.endsWith("_ids") && Array.isArray(item)) {
+      item.forEach(id => resourceId(id, { allowZero: true }));
+    } else assertExactResourceIds(item);
+  }
+}
+
 const DEFAULT_TIME_ZONE = "Asia/Hong_Kong";
 const TIME_ZONE_STORAGE_KEY = "paam.timezone";
 const DEFAULT_IMPORT_TIME_ZONE = "Asia/Shanghai";
