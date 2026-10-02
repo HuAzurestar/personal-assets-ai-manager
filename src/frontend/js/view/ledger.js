@@ -560,7 +560,7 @@ async function showEconomicReview(id) {
 }
 
 async function transitionEconomicReview(button) {
-  return transitionReview(Number(button.dataset.id), button.dataset.kind === "restore", async () => { closeDialogs(); await render(); });
+  return transitionReview(button.dataset.id, button.dataset.kind === "restore", async () => { closeDialogs(); await render(); });
 }
 
 function reviewCreatePage() {

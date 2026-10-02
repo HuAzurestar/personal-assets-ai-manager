@@ -123,6 +123,25 @@ def run():
                     expect(page.locator("dialog[open] details summary").last).to_contain_text("JSON")
                     page.locator("dialog[open] [data-workbench-close]").click()
                     page.locator(".inspection-workspace[open] [data-close]").click()
+                    # File diagnostics are not row problems or a successful empty preview.
+                    page.goto(base + "/#workbench/import")
+                    page.locator('[data-action="import-step"][data-step="2"]').first.click()
+                    expect(page.locator('[data-form="import-preview"]')).to_be_visible()
+                    upload = page.locator('[data-form="import-preview"]')
+                    upload.locator('[name="files"]').set_input_files([
+                        {"name": "Mock broken.csv", "mimeType": "text/csv", "buffer": b"not,a,statement"},
+                        {"name": "Mock empty.csv", "mimeType": "text/csv", "buffer":
+                            "建设银行个人交易明细\n账号：990000000000001234\n币种：人民币\n交易日期,交易金额,币别,摘要\n".encode()},
+                        {"name": "Mock accepted.csv", "mimeType": "text/csv", "buffer": (fixtures / "ccb-2.csv").read_bytes()},
+                    ])
+                    upload.locator('[data-action="preview-import"]').click()
+                    expect(page.locator('[data-file-parse-error]')).to_have_count(1, timeout=15000)
+                    expect(page.locator('[data-file-parse-error]')).to_contain_text("解析失败")
+                    expect(page.locator('[data-file-parse-empty]')).to_contain_text("有效空文件")
+                    expect(page.locator('[data-batch-summary]')).to_contain_text("文件解析失败 1 · 行问题 0 · 总问题 1")
+                    expect(page.locator('[data-batch-files]')).to_contain_text("解析成功：24 行")
+                    expect(page.locator('[data-batch-files]')).to_contain_text("重新")
+                    assert len(confirmations) == 2  # No extra cash, retry or implicit confirmation.
                     page.set_viewport_size({"width": 390, "height": 844})
                     page.goto(base + "/#workbench/import")
                     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
