@@ -2,6 +2,7 @@ import { request, jsonRequest } from "../api/client.js";
 import { esc, date, money, quantityDecimal, quantityAmount, typeNames, reviewTypeNames } from "../util/core.js";
 import { input, select, workbenchDialog, writeFailure, mountPicker } from "../component/workbench.js";
 import { positionFields, bindPartyPicker } from "./position.js";
+import { mountTagImpact } from "../component/tag-impact.js";
 
 const base = "/paam/ledger/v1/review";
 const cases = [["NORMAL", "普通收支"], ["REFUND", "退款"], ["SHARED_PAYMENT", "共同费用 / AA"], ["INTERNAL_TRANSFER", "真实内部转账"], ["BORROW_REPAY", "借出、借入、收回、偿还"], ["DUPLICATE", "同一交易的重复证据"], ["POS_OPENING", "对象期初数量"], ["POS_POSITION_OPEN", "对象增加（可无现金）"], ["POS_POSITION_SETTLE", "对象减少（显式来源）"], ["POS_CREDIT_PURCHASE", "信用消费"], ["POS_CREDIT_REPAY", "信用还本"]];
@@ -15,8 +16,7 @@ function previewMarkup(plan, facts = new Map(), positions = new Map()) {
     <p>标签影响 Ledger：${ids(plan.impact.tag_ledger_ids)}；涉及 ${(plan.tag_effect.affected_views || []).length} 个视图、${(plan.tag_effect.affected_rule_ids || []).length} 条规则。旧标签保留，异步请求随账务状态失效。</p>
     <p>将失效的建议：${plan.tag_effect.invalidated_request_count ?? 0}；扫描状态：${esc(plan.tag_effect.scan_state || "NOT_NEEDED")}。只有完整含义相同且新旧各唯一的输出延续标签。</p>
     ${(plan.tag_effect.mappings || []).length ? `<section class="panel" data-tag-mappings><h4>新旧标签对照</h4>
-      ${(plan.tag_effect.mappings || []).slice(0, 100).map(mapping => `<p>旧 Ledger ${mapping.old_ledger_id ? `#${mapping.old_ledger_id}` : "无唯一来源"} → ${mapping.new_output ? `新解释 ${mapping.new_output.review_index + 1} / 现金行 ${mapping.new_output.allocation_index + 1}` : "保留停用原项"} · View #${mapping.view_id} / Tag #${mapping.tag_id} · ${esc({ KEEP: "延续已生效值", REVIEW_REQUIRED: "默认值，待人工核对", RETAIN_INACTIVE: "原项标签不改" }[mapping.disposition] || mapping.disposition)}</p>`).join("")}
-      ${(plan.tag_effect.mappings || []).length > 100 ? `<p>显示前100项，共${plan.tag_effect.mappings.length}项；服务端确认覆盖整个原子组。</p>` : ""}</section>` : ""}
+      <div data-tag-impact></div></section>` : ""}
     ${plan.blocking_issues.map(issue => `<p class="error">${esc(issue.code)}：${esc(issue.message)}</p>`).join("")}
     ${plan.new_reviews.map(row => `<section class="panel"><h4>${esc(row.case_code)} → ${esc(reviewTypeNames[row.type] || row.type)} · ${esc(row.title)}</h4>
       ${row.allocations.map(allocation => {
@@ -46,7 +46,9 @@ function bindPublication(form, build, facts, completed, positions = new Map()) {
   };
   form.addEventListener("input", invalidate);
   form.addEventListener("change", invalidate);
-  const setEditing = disabled => form.querySelectorAll("input, textarea, select, button").forEach(node => { node.disabled = disabled; });
+  const setEditing = disabled => form.querySelectorAll("input, textarea, select, button").forEach(node => {
+    if (!node.hasAttribute?.("data-preview-readonly")) node.disabled = disabled;
+  });
   previewButton.onclick = async () => {
     if (writing || uncertain || previewing) return;
     const issued = ++generation; plan = null; submit.disabled = true; previewing = true; previewButton.disabled = true;
@@ -56,6 +58,7 @@ function bindPublication(form, build, facts, completed, positions = new Map()) {
       if (!form.isConnected || issued !== generation) return;
       plan = next; frozen = intent;
       form.querySelector("[data-review-impact]").innerHTML = previewMarkup(next, facts, positions);
+      if (next.tag_effect.mappings?.length) mountTagImpact(form.querySelector("[data-tag-impact]"), next.tag_effect);
       status.textContent = next.blocking_issues.length ? "有阻塞问题，不能提交。" : "请核对现金、数量、整体冲突和默认恢复后确认。";
       submit.disabled = !!next.blocking_issues.length;
     } catch (error) { if (form.isConnected && issued === generation) status.textContent = `${error.code || "预览失败"}：${error.message}`; }

@@ -80,6 +80,10 @@ def tag_effect(bundle, closing, drafts, facts, positions, dictionary, tags, requ
                 if (old_id, view_id) not in carried:
                     mappings.append(dict(old_ledger_id=old_id, new_output=None, view_id=view_id,
                                          tag_id=tag_id, disposition="RETAIN_INACTIVE"))
-    return dict(invalidated_request_count=request_count, mappings=mappings,
+    used_tags = sorted({row["tag_id"] for row in mappings})
+    labels = [dict(tag_id=tag_id, view_id=by_tag[tag_id]["view_id"],
+        tag_name=by_tag[tag_id].get("tag_name", ""), view_name=by_tag[tag_id].get("view_name", ""))
+        for tag_id in used_tags]
+    return dict(invalidated_request_count=request_count, mappings=mappings, mapping_labels=labels,
                 scan_state=("PENDING" if scan_available else "UNAVAILABLE")
                 if closing_ledgers or outputs else "NOT_NEEDED")

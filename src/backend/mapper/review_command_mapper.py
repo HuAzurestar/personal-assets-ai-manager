@@ -52,7 +52,8 @@ class ReviewCommandMapper:
 
     def tag_dictionary(self):
         return [dict(row) for row in self.db.execute(select(
-            TargetTag.id, TargetTag.view_id, TargetTag.system_name,
+            TargetTag.id, TargetTag.view_id, TargetTag.system_name, TargetTag.name.label("tag_name"),
+            TargetTagView.name.label("view_name"),
             TargetTag.updated_time, TargetTagView.updated_time.label("view_updated_time")
         ).join(TargetTagView, TargetTagView.id == TargetTag.view_id).where(
             TargetTag.status == "ACTIVE", TargetTagView.status == "ACTIVE"

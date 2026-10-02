@@ -48,6 +48,8 @@ def test_unique_equivalent_keeps_value_but_not_old_tag_row_identity(tagged):
     preview = ReviewCommandService(db).preview(ReviewChangeInput(**intent))
     assert preview["tag_effect"]["mappings"] == [dict(old_ledger_id=old,
         new_output=dict(review_index=0, allocation_index=0), view_id=view_id, tag_id=food, disposition="KEEP")]
+    assert preview["tag_effect"]["mapping_labels"] == [dict(tag_id=food, view_id=view_id,
+        tag_name="Mock food", view_name="Mock category")]
     second = execute(db, **intent)
     new = ledger(db, second)
     assert new != old and tags(db, new) == [food] and tags(db, old) == [food]

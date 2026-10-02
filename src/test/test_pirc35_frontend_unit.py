@@ -11,6 +11,7 @@ import pytest
     "automation_setting_form.cjs", "tag_assignment_ui.cjs",
     "import_batch_unknown.cjs",
     "write_failure.cjs",
+    "tag_impact.cjs",
 ])
 def test_standalone_frontend_contract(script):
     """Keep the standalone CI contracts in the local full-test matrix too."""
