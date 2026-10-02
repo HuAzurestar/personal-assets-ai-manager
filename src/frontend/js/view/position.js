@@ -1,7 +1,7 @@
 import { request, jsonRequest } from "../api/client.js";
 import { esc, date, quantityDecimal, money, resourceId } from "../util/core.js";
 import { table } from "../component/table.js";
-import { input, select, workbenchDialog, writeFailure, mountPicker, metadataLabel } from "../component/workbench.js";
+import { input, select, workbenchDialog, writeFailure, namedChoice, bindNamedChoice } from "../component/workbench.js";
 
 const base = "/paam/financial/v1/position";
 export const usages = ["GENERAL", "PERSONAL-LENDING", "SHARED-SETTLEMENT", "STORED-VALUE", "DEPOSIT-PLEDGE", "REIMBURSEMENT", "CREDIT-CARD", "FORMAL-LOAN", "INVESTMENT"];
@@ -14,21 +14,14 @@ export function positionFields(row = {}, metadata = false) {
     + select("usage_scenario", "用途（不决定资产／负债性质）", usages, row.usage_scenario || "GENERAL")
     + (metadata ? select("status", "状态", ["ACTIVE", "ARCHIVED", "SETTLED"], row.status)
       : select("type", "性质", [["ASSET", "资产／债权"], ["LIABILITY", "负债／债务"]], row.type || "ASSET")
-        + input("party_id", "本方个人 ID", row.party_id || "", 'type="number" min="1" required')
-        + '<button type="button" data-pick-party>分页查找个人</button>'
+        + namedChoice('party_id', '本方个人', {value: row.party_id || '', pickAttribute: 'data-pick-party', pick: '查找个人'})
         + input("counterparty", "对象对方（文字，不按同名合并）", row.counterparty || "", 'maxlength="200"')
         + input("unit_code", "单位（CNY / USD / KRW / KG_3 / PCS 等）", row.unit_code || "CNY", 'required maxlength="12"'));
 }
 
 export function bindPartyPicker(form, signal) {
-  form.querySelector("[data-pick-party]")?.addEventListener("click", () => {
-    const node = workbenchDialog("选择本方个人", '<div data-party-picker></div>');
-    mountPicker(node.querySelector("[data-party-picker]"), {
-      url: "/paam/ledger/v1/account-party", searchKeys: ["display_label"], signal,
-      describe: metadataLabel,
-      choose: row => { form.querySelector('[name="party_id"]').value = row.id; form.dispatchEvent(new Event("input", { bubbles: true })); node.close(); },
-    });
-  });
+  if (form.querySelector('[data-named-choice="party_id"]')) bindNamedChoice(form, 'party_id', {
+    url: '/paam/ledger/v1/account-party', title: '选择本方个人', signal, pickerAttribute: 'data-party-picker' });
 }
 
 function href(params, changes) {

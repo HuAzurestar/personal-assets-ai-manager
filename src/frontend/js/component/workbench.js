@@ -12,6 +12,43 @@ export const select = (name, label, choices, value = "") => `<label>${esc(label)
   return `<option value="${esc(code)}" ${String(code) === String(value) ? "selected" : ""}>${esc(title)}</option>`;
 }).join("")}</select></label>`;
 
+export function namedChoice(name, label, { value = '', text = '尚未选择', pick = '选择', pickAttribute = '', clear = '' } = {}) {
+  return `<div class="stack" data-named-choice="${name}"><span>${esc(label)}</span><input type="hidden" name="${name}" value="${esc(value)}"><span data-choice-label>${esc(text)}</span><div class="actions"><button type="button" data-choice-pick ${pickAttribute}>${esc(pick)}</button>${clear ? `<button type="button" data-choice-clear>${esc(clear)}</button>` : ''}</div></div>`;
+}
+
+export function setNamedChoice(host, name, value, text, notify = true) {
+  const field = host.querySelector(`[data-named-choice="${name}"]`);
+  field.querySelector('input').value = value;
+  field.querySelector('[data-choice-label]').textContent = text;
+  if (notify) field.querySelector('input').dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+// Public masked metadata selection. IDs remain transport values, not editable
+// user-facing fields; selection and an explicit zero/clear action are distinct.
+export function bindNamedChoice(host, name, { url, title, signal, describe = metadataLabel, searchKeys = ['display_label'],
+  allowZero = false, zeroLabel = '尚未选择', pickerAttribute = 'data-choice-picker', initialize = true,
+  load = id => request(`${url}/${id}`, { signal }), changed = () => {} }) {
+  const field = host.querySelector(`[data-named-choice="${name}"]`);
+  const apply = (id, text, row) => {
+    if (!host.isConnected || signal?.aborted) return;
+    setNamedChoice(host, name, id, text); changed(row);
+  };
+  field.querySelector('[data-choice-pick]').onclick = () => {
+    const dialog = workbenchDialog(title, `<div ${pickerAttribute}></div>`);
+    mountPicker(dialog.querySelector(`[${pickerAttribute}]`), { url, searchKeys, signal, describe,
+      choose: row => { apply(row.id ?? row.transaction_id, describe(row), row); dialog.close(); } });
+  };
+  field.querySelector('[data-choice-clear]')?.addEventListener('click', () => apply(allowZero ? 0 : '', zeroLabel, null));
+  const initial = field.querySelector('input').value;
+  if (initialize && initial && initial !== '0') load(initial).then(row => {
+    if (host.isConnected && !signal?.aborted && field.querySelector('input').value === initial)
+      setNamedChoice(host, name, initial, describe(row), false);
+  }).catch(error => {
+    if (host.isConnected && !signal?.aborted && error.name !== 'AbortError' && field.querySelector('input').value === initial)
+      field.querySelector('[data-choice-label]').textContent = `对象名称读取失败：${error.message}；请重新选择`;
+  });
+}
+
 export function workbenchDialog(title, body) {
   const node = document.createElement("dialog");
   node.className = "wide";

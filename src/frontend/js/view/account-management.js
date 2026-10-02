@@ -1,6 +1,7 @@
 import { request, jsonRequest, isUnknownWrite } from "../api/client.js";
 import { esc, date, resourceId } from "../util/core.js";
 import { table } from "../component/table.js";
+import { namedChoice, bindNamedChoice } from '../component/workbench.js';
 
 const base = "/paam/ledger/v1";
 const endpoint = { party: "account-party", account: "account", ref: "account-ref" };
@@ -73,6 +74,7 @@ function writeError(node, error) {
     : error.code === "WRITE_BUSY" ? "本次未提交，输入已保留。稍后重新读取或预览，再由你提交；不会自动重发。"
     : `${error.code || "操作失败"}：${error.message}`;
   node.querySelectorAll("[type=submit]").forEach((button) => { button.disabled = uncertain; });
+  node.querySelectorAll('[data-choice-pick], [data-choice-clear]').forEach(button => {button.disabled = uncertain;});
 }
 
 export function bindAccountManagement(root, reload) {
@@ -91,25 +93,38 @@ export function bindAccountManagement(root, reload) {
       const row = id ? await request(`${base}/${endpoint[kind]}/${id}`, { signal: readController?.signal }) : {};
       if (!host.isConnected || route !== location.hash) return;
       if (moving) {
-        const node = dialog("归属变更预览", `<form class="stack">${input("account_id", "目标管理集合 ID（0 为未分组）", host.dataset.account, 'type="number" min="0" required')}
-          <p>可以从账户页查找集合 ID。这里只移动卡的元数据归属，不修改 Review 或 Ledger。</p><p role="status"></p><div data-impact></div>
+        const node = dialog("归属变更预览", `<form class="stack">${namedChoice('account_id', '目标管理集合', {pick: '查找集合', clear: '明确移至未分组'})}
+          <p>这里只移动卡的元数据归属，不修改 Review 或 Ledger。</p><p role="status"></p><div data-impact></div>
           <button type="submit">预览影响</button><button type="button" data-confirm disabled>确认当前预览</button></form>`);
-        let plan, change, generation = 0;
-        node.querySelector("input").oninput = () => { ++generation; plan = null; node.querySelector("[data-confirm]").disabled = true; };
+        let plan, change, target, generation = 0;
+        const pickerController = new AbortController();
+        node.addEventListener('close', () => pickerController.abort(), {once: true});
+        readController?.signal.addEventListener('abort', () => pickerController.abort(), {once: true});
+        const invalidate = () => { ++generation; plan = null; node.querySelector('[data-confirm]').disabled = true; };
+        node.querySelector('form').addEventListener('change', invalidate);
+        bindNamedChoice(node, 'account_id', {url: `${base}/account`, title: '选择目标管理集合',
+          signal: pickerController.signal, allowZero: true, zeroLabel: '未分组', pickerAttribute: 'data-account-picker',
+          initialize: false, changed: row => {target = row;} });
         node.querySelector("form").onsubmit = async (event) => {
           event.preventDefault();
+          if (node.dataset.writeOutcome === 'UNKNOWN') return;
           const submit = node.querySelector("[type=submit]");
           submit.disabled = true;
           const issued = ++generation;
+          plan = null; node.querySelector('[data-confirm]').disabled = true;
           try {
-            change = { account_id: resourceId(node.querySelector("input").value, { allowZero: true }), expected_updated_time: row.updated_time };
+            change = { account_id: resourceId(node.querySelector('[name="account_id"]').value, { allowZero: true }), expected_updated_time: row.updated_time };
             const nextPlan = await jsonRequest(`${base}/account-ref/${id}/move-preview`, "POST", change);
             if (!node.isConnected || issued !== generation) return;
             plan = nextPlan;
-            node.querySelector("[data-impact]").textContent = `个人 #${plan.from_party_id} → #${plan.to_party_id}；集合 #${plan.from_account_id} → #${plan.to_account_id}；影响 ${plan.affected_ledger_count} 笔历史流水的当前筛选归属。${plan.cross_party ? "注意：跨个人变更，请核对。" : ""}`;
+            node.querySelector("[data-impact]").textContent = `${row.party_name || '未分组'} / ${row.account_name || '未分组'} → ${target ? `${target.party_name} / ${target.name}` : '未分组'}；影响 ${plan.affected_ledger_count} 笔历史流水的当前筛选归属。${plan.cross_party ? "注意：跨个人变更，请核对。" : ""}`;
             node.querySelector("[data-confirm]").disabled = false;
-          } catch (error) { writeError(node, error); }
-          finally { submit.disabled = false; }
+          } catch (error) {
+            // A preview POST is read-only: a lost preview can be requested
+            // again; it must not be mistaken for an unknown move command.
+            if (node.isConnected && issued === generation) node.querySelector('[role=status]').textContent = `${error.code || '预览失败'}：${error.message}；未执行归属变更。`;
+          }
+          finally { submit.disabled = node.dataset.writeOutcome === 'UNKNOWN'; }
         };
         node.querySelector("[data-confirm]").onclick = async () => {
           if (!plan || node.dataset.writeOutcome === "UNKNOWN") return;

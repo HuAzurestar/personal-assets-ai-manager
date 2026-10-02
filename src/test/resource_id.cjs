@@ -49,7 +49,7 @@ async function main() {
   // in busy/unknown, and a later valid input must be usable. Unknown stays locked.
   const nodes = new Map(), values = { title: 'Mock', party_id: '9007199254740993', unit_code: 'CNY' };
   const form = { querySelector(selector) {
-    if (selector === '[data-pick-party]') return null;
+    if (selector === '[data-pick-party]' || selector === '[data-named-choice="party_id"]') return null;
     if (!nodes.has(selector)) nodes.set(selector, { disabled: false, textContent: '' });
     return nodes.get(selector);
   } };
@@ -59,7 +59,7 @@ async function main() {
     .replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '');
   let writes = 0, unknown = false;
   const context = vm.createContext({ resourceId, writeFailure, esc, location: { hash: '#workbench/position' },
-    input: () => '', select: () => '', FormData: class { [Symbol.iterator]() { return Object.entries(values)[Symbol.iterator](); } },
+    input: () => '', select: () => '', namedChoice: () => '', FormData: class { [Symbol.iterator]() { return Object.entries(values)[Symbol.iterator](); } },
     workbenchDialog: () => ({ querySelector: () => form, close() {} }),
     jsonRequest: async () => { writes++; if (unknown) throw Object.assign(Error('Mock'), { status: 503, code: 'RESULT_UNKNOWN' }); return {}; },
   });

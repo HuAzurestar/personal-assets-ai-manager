@@ -81,12 +81,16 @@ def run():
                     page.locator("[data-position-create]").click()
                     form = page.locator("dialog[open] form")
                     form.locator('[name="title"]').fill("Mock exact ID")
-                    form.locator('[name="party_id"]').fill("9007199254740993")
+                    # The normal UI no longer exposes an ID input. Deliberately
+                    # tamper with its hidden transport value to retain R18's
+                    # final-boundary rejection proof, not as a user workflow.
+                    form.locator('[name="party_id"]').evaluate("node => {node.value='9007199254740993'; node.dispatchEvent(new Event('change',{bubbles:true}));}")
                     form.locator('[type="submit"]').click()
                     expect(form.locator('[role="status"]')).to_contain_text("INVALID_ID")
                     expect(form.locator('[type="submit"]')).to_be_enabled()
                     assert position_writes == []
-                    form.locator('[name="party_id"]').fill(str(party_id))
+                    form.locator('[data-pick-party]').click()
+                    page.locator(f'dialog[open] [data-party-picker] [data-picker-id="{party_id}"]').click()
                     form.locator('[type="submit"]').click()
                     expect(page.locator("dialog[open]")).to_have_count(0)
                     assert len(position_writes) == 1
@@ -155,9 +159,15 @@ def run():
                     for excluded, kept, ref in [(63, 64, 1), (64, 63, 2)]:
                         review.locator("[data-add-duplicate]").click()
                         duplicate = review.locator("[data-duplicate-row]").last
-                        duplicate.locator('[name="transaction_id"]').fill(str(excluded))
-                        duplicate.locator('[name="kept_transaction_id"]').fill(str(kept))
-                        duplicate.locator('[name="account_ref_id"]').fill(str(ref))
+                        duplicate.locator('[name="transaction_id"]').select_option(str(excluded))
+                        duplicate.locator('[data-pick-kept]').click()
+                        keeper_picker = page.locator('dialog[open] [data-kept-picker]')
+                        keeper_picker.locator('[data-picker-word]').fill(f'Mock audit cash {kept}')
+                        keeper_picker.locator('[data-picker-search]').click()
+                        expect(keeper_picker.locator('[data-picker-scan-status]')).to_contain_text('本次扫描结束')
+                        keeper_picker.locator(f'[data-picker-id="{kept}"]').click()
+                        duplicate.locator('[data-pick-duplicate-ref]').click()
+                        page.locator(f'dialog[open] [data-ref-picker] [data-picker-id="{ref}"]').click()
                     before = counts()
                     review.locator("[data-review-preview]").click()
                     expect(review.locator("[data-review-impact]")).to_contain_text("INVALID_DUPLICATE")

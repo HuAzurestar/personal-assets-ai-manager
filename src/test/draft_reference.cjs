@@ -1,0 +1,40 @@
+const assert = require('node:assert/strict');
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
+const moduleUrl = file => pathToFileURL(path.resolve(__dirname, '../frontend/js', file)).href;
+
+(async () => {
+  const { draftIndex, positionTarget, linkTarget } = await import(moduleUrl('util/draft-reference.js'));
+  const row = id => ({ dataset: { draftId: id } });
+  const cash = [row('cash-a'), row('cash-b')], legs = [row('leg-a'), row('leg-b')];
+  assert.deepEqual(linkTarget('cash-b', 'leg-a', cash, legs), { allocation_index: 1, leg_index: 0 });
+  assert.deepEqual(linkTarget('cash-b', 'leg-a', [...cash].reverse(), [...legs].reverse()), { allocation_index: 0, leg_index: 1 });
+  assert.deepEqual(linkTarget('cash-b', 'leg-a', [cash[1]], legs), { allocation_index: 0, leg_index: 0 });
+  assert.throws(() => linkTarget('cash-b', 'leg-a', [cash[0]], legs), /已移除|重新选择/);
+  assert.throws(() => linkTarget('cash-b', 'leg-a', cash, [legs[1]]), /已移除|重新选择/);
+  const drafts = [row('position-a'), row('position-b')];
+  assert.deepEqual(positionTarget('new:position-b', drafts), { new_position_index: 1 });
+  assert.deepEqual(positionTarget('new:position-b', [drafts[1]]), { new_position_index: 0 });
+  assert.throws(() => positionTarget('new:position-b', [drafts[0]]), /已移除|重新选择/);
+  assert.deepEqual(positionTarget('existing:17', drafts), { existing_position_id: 17 });
+  for (const token of ['', 'new:0', 'existing:0', 'existing:1.5', 'other:1']) assert.throws(() => positionTarget(token, drafts));
+  assert.throws(() => draftIndex(cash, '', '现金'), /选择/);
+  assert.throws(() => draftIndex([row('a'), row('a')], 'a', '现金'), /不唯一/);
+
+  const { zonedISOString, localDateTime } = await import(moduleUrl('util/core.js'));
+  assert.equal(zonedISOString('2024-01-01T08:00:03', false, 'Asia/Hong_Kong'), '2024-01-01T00:00:03.000Z');
+  assert.equal(zonedISOString('2024-01-01T00:00:03', false, 'UTC'), '2024-01-01T00:00:03.000Z');
+  assert.equal(localDateTime('2024-01-01T00:00:03Z', 'Asia/Tokyo'), '2024-01-01T09:00:03');
+  assert.throws(() => zonedISOString('2024-03-10T02:30:00', false, 'America/New_York'), /不存在/);
+  assert.throws(() => zonedISOString('2024-11-03T01:30:00', false, 'America/New_York'), /不唯一/);
+  assert.throws(() => zonedISOString('2024-02-30T12:00:00', false, 'UTC'), /无效/);
+  assert.throws(() => zonedISOString('2024-01-01T25:00:00', false, 'UTC'), /无效/);
+  const { dateTimeField, dateTimeValue } = await import(moduleUrl('component/date-time-field.js'));
+  const markup = dateTimeField('occurred_time', '发生时间', '2024-01-01T00:00:03Z', 'Asia/Hong_Kong');
+  assert.ok(markup.includes('type="datetime-local"') && markup.includes('step="1"'));
+  assert.ok(markup.includes('value="2024-01-01T08:00:03"'));
+  assert.ok(markup.includes('name="occurred_time_timezone"'));
+  const node = { querySelector: selector => ({ value: selector.includes('_timezone') ? 'Asia/Tokyo' : '2024-01-01T09:00:03' }) };
+  assert.equal(dateTimeValue(node, 'occurred_time'), '2024-01-01T00:00:03.000Z');
+  console.log('PASS stable draft references and explicit timezone date/time: reorder, deletion, invalid calendars and DST ambiguity');
+})().catch(error => { console.error(error); process.exitCode = 1; });

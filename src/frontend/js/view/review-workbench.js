@@ -1,8 +1,10 @@
 import { request, jsonRequest } from "../api/client.js";
 import { esc, date, money, quantityDecimal, quantityAmount, typeNames, reviewTypeNames, resourceId } from "../util/core.js";
-import { input, select, workbenchDialog, writeFailure, mountPicker, metadataLabel } from "../component/workbench.js";
+import { input, select, workbenchDialog, writeFailure, mountPicker, namedChoice, bindNamedChoice, setNamedChoice } from "../component/workbench.js";
 import { positionFields, bindPartyPicker } from "./position.js";
 import { mountTagImpact } from "../component/tag-impact.js";
+import { positionTarget, linkTarget } from '../util/draft-reference.js';
+import { dateTimeField, dateTimeValue } from '../component/date-time-field.js';
 
 const base = "/paam/ledger/v1/review";
 const cases = [["NORMAL", "普通收支"], ["REFUND", "退款"], ["SHARED_PAYMENT", "共同费用 / AA"], ["INTERNAL_TRANSFER", "真实内部转账"], ["BORROW_REPAY", "借出、借入、收回、偿还"], ["DUPLICATE", "同一交易的重复证据"], ["POS_OPENING", "对象期初数量"], ["POS_POSITION_OPEN", "对象增加（可无现金）"], ["POS_POSITION_SETTLE", "对象减少（显式来源）"], ["POS_CREDIT_PURCHASE", "信用消费"], ["POS_CREDIT_REPAY", "信用还本"]];
@@ -10,7 +12,7 @@ let controller;
 export function stopReviewRead() { controller?.abort(); }
 const ids = values => values.length ? values.map(id => `#${id}`).join("、") : "无";
 
-function previewMarkup(plan, facts = new Map(), positions = new Map()) {
+function previewMarkup(plan, facts = new Map(), positions = new Map(), labels = new Map()) {
   return `<h3>服务端预览（尚未发布）</h3><p>整体停用冲突 Review：${ids(plan.impact.conflicting_review_ids)}；恢复原始系统默认：${ids(plan.impact.restored_default_review_ids)}</p>
     <p>账户来源：${ids(plan.impact.affected_account_ref_ids)}；对象：${ids(plan.impact.affected_position_ids)}；可能失效的后续腿：${ids(plan.impact.dependent_position_leg_ids)}</p>
     <p>标签影响 Ledger：${ids(plan.impact.tag_ledger_ids)}；涉及 ${(plan.tag_effect.affected_views || []).length} 个视图、${(plan.tag_effect.affected_rule_ids || []).length} 条规则。旧标签保留，异步请求随账务状态失效。</p>
@@ -21,12 +23,12 @@ function previewMarkup(plan, facts = new Map(), positions = new Map()) {
     ${plan.new_reviews.map(row => `<section class="panel"><h4>${esc(row.case_code)} → ${esc(reviewTypeNames[row.type] || row.type)} · ${esc(row.title)}</h4>
       ${row.allocations.map(allocation => {
         const fact = facts.get(allocation.transaction_id);
-        return `<p>Fact #${allocation.transaction_id} → ${esc(typeNames[allocation.economic_type])} · ${fact ? esc(money({ cash_amount: allocation.cash_amount, cash_currency_code: fact.cash_currency_code })) : `${allocation.cash_amount} 最小单位`} · 来源卡 #${allocation.account_ref_id}${fact ? ` · ${esc(fact.cash_direction)} · ${esc(date(fact.occurred_time))}` : ""}</p>`;
+        return `<p>${fact ? `${esc(fact.summary)} · ` : ''}Fact #${allocation.transaction_id} → ${esc(typeNames[allocation.economic_type])} · ${fact ? esc(money({ cash_amount: allocation.cash_amount, cash_currency_code: fact.cash_currency_code })) : `${allocation.cash_amount} 最小单位`} · ${esc(labels.get(`account_ref_id:${allocation.account_ref_id}`) || `来源卡 #${allocation.account_ref_id}`)}${fact ? ` · ${esc(fact.cash_direction)} · ${esc(date(fact.occurred_time))}` : ""}</p>`;
       }).join("")}
-      ${row.new_positions.map((position, index) => `<p>新对象 ${index + 1}：${esc(position.title)} · ${esc(position.type)} · ${esc(position.usage_scenario)} · 个人 #${position.party_id} · ${esc(position.counterparty)} · ${esc(position.unit_code)}</p>`).join("")}
+      ${row.new_positions.map((position, index) => `<p>新对象 ${index + 1}：${esc(position.title)} · ${esc(position.type)} · ${esc(position.usage_scenario)} · ${esc(labels.get(`party_id:${position.party_id}`) || `个人 #${position.party_id}`)} · ${esc(position.counterparty)} · ${esc(position.unit_code)}</p>`).join("")}
       ${row.legs.map((leg, index) => {
         const position = leg.existing_position_id ? positions.get(leg.existing_position_id) : row.new_positions[leg.new_position_index];
-        return `<p>数量腿 ${index + 1} → ${leg.existing_position_id ? `对象 #${leg.existing_position_id}` : `新对象 ${leg.new_position_index + 1}`}：${esc(leg.type)} · ${esc(leg.leg_direction)} ${position ? `${quantityDecimal(leg.leg_amount, position.unit_code)} ${esc(position.unit_code)}` : `${leg.leg_amount} 最小量`} · 来源腿 #${leg.source} · ${esc(date(leg.occurred_time))} · ${esc(leg.basis)}</p>`;
+        return `<p>数量腿 ${index + 1} → ${position ? esc(position.title) : leg.existing_position_id ? `对象 #${leg.existing_position_id}` : `新对象 ${leg.new_position_index + 1}`}：${esc(leg.type)} · ${esc(leg.leg_direction)} ${position ? `${quantityDecimal(leg.leg_amount, position.unit_code)} ${esc(position.unit_code)}` : `${leg.leg_amount} 最小量`} · ${esc(labels.get(`source:${leg.source}`) || `来源腿 #${leg.source}`)} · ${esc(date(leg.occurred_time))} · ${esc(leg.basis)}</p>`;
       }).join("")}
       ${row.position_allocations.map(link => `<p>现金行 ${link.allocation_index + 1} → 数量腿 ${link.leg_index + 1}：${esc(money(link))}（款项归因，不是额外现金）</p>`).join("")}</section>`).join("")}
     ${plan.position_changes.map(change => `<p>对象 ${change.position_id ? `#${change.position_id}` : `新对象 ${change.new_position_index + 1}`}：${esc(change.before.quantity_state)} ${change.before.quantity ?? "—"} → ${esc(change.after.quantity_state)} ${change.after.quantity ?? "—"}（单位最小量；来源失效不能当作有据数量）</p>`).join("")}
@@ -35,7 +37,7 @@ function previewMarkup(plan, facts = new Map(), positions = new Map()) {
 
 // Preview and command share exactly the same frozen intent. Editing cancels
 // the approval; command retries are never automatic, even after a lost reply.
-function bindPublication(form, build, facts, completed, positions = new Map()) {
+function bindPublication(form, build, facts, completed, positions = new Map(), labels = () => new Map()) {
   let generation = 0, plan, frozen, writing = false, uncertain = false, previewing = false;
   const previewButton = form.querySelector("[data-review-preview]");
   const submit = form.querySelector("[data-review-command]");
@@ -57,7 +59,7 @@ function bindPublication(form, build, facts, completed, positions = new Map()) {
       const next = await jsonRequest(`${base}/preview`, "POST", intent);
       if (!form.isConnected || issued !== generation) return;
       plan = next; frozen = intent;
-      form.querySelector("[data-review-impact]").innerHTML = previewMarkup(next, facts, positions);
+      form.querySelector("[data-review-impact]").innerHTML = previewMarkup(next, facts, positions, labels());
       if (next.tag_effect.mappings?.length) mountTagImpact(form.querySelector("[data-tag-impact]"), next.tag_effect);
       status.textContent = next.blocking_issues.length ? "有阻塞问题，不能提交。" : "请核对现金、数量、整体冲突和默认恢复后确认。";
       submit.disabled = !!next.blocking_issues.length;
@@ -107,7 +109,7 @@ export async function transitionReview(id, activate, reload) {
       const factId = resourceId(button.dataset.activationPick);
       const picker = workbenchDialog("明确保留的真实交易", '<div data-kept-picker></div>');
       mountPicker(picker.querySelector("[data-kept-picker]"), {
-        url: "/paam/ledger/v1/review_candidate", searchKeys: ["summary"],
+        url: "/paam/ledger/v1/candidate", searchKeys: ["summary"],
         describe: fact => `${fact.summary} · ${money(fact)} · ${fact.cash_direction} · ${date(fact.occurred_time)} · Fact #${fact.transaction_id}`,
         choose: fact => {
           kept.set(factId, fact);
@@ -131,7 +133,7 @@ export async function mountReviewWorkbench(root, params, completed) {
       ${select("phase", "共同费用阶段（只用于 AA）", [["ADVANCE_OUT", "我垫付：资产增加 / 现金流出"], ["COLLECT_IN", "我收回：资产减少 / 现金流入"], ["RECEIVE_IN", "他人垫付：负债增加 / 现金流入"], ["PAY_OUT", "我偿还：负债减少 / 现金流出"]], "ADVANCE_OUT")}
       <h2>1. 现金事实与完整分配</h2><div data-fact-picker></div><p data-selected-facts>未选择现金 Fact（纯数量场景允许为空）。</p><div data-cash-rows></div><button type="button" data-add-cash>增加现金拆分</button>
       <h2>2. 独立对象与数量</h2><p>可选已有对象，或在本次发布中创建新对象。OUT 必须指定该对象原始 IN 来源腿；不会自动 FIFO。</p>
-      <div class="actions">${input("position_id", "已有对象 ID", params.get("position") || "", 'type="number" min="1"')}<button type="button" data-load-position>读取对象</button><button type="button" data-find-position>分页查找对象</button><button type="button" data-new-position>本次发布新建对象</button></div>
+      <div class="actions"><button type="button" data-find-position>查找已有对象</button><button type="button" data-new-position>本次发布新建对象</button></div>
       <div data-position-choices></div><div data-position-drafts></div><div data-leg-rows></div><button type="button" data-add-leg>增加数量腿</button>
       <h2>3. 现金 → 数量腿的款项归因</h2><p>必须显式选择现金拆分行和数量腿。金额来自现金币种；第二段不新增现金。</p><div data-link-rows></div><button type="button" data-add-link>增加款项归因</button>
       <h2>4. 重复证据（仅显式 A / B）</h2><p>B 不再计现金，原始证据保留；A 与 B 必须已核对不同来源卡、同金额、币种、方向和时间。</p><div data-duplicate-rows></div><button type="button" data-add-duplicate>增加重复证据 B → 保留 A</button>
@@ -140,39 +142,69 @@ export async function mountReviewWorkbench(root, params, completed) {
   const value = (node, name) => node.querySelector(`[name="${name}"]`).value;
   const nodes = (node, selector) => [...node.querySelectorAll(selector)];
   const fail = error => { form.querySelector("[data-review-status]").textContent = `${error.code || "输入错误"}：${error.message}`; };
+  let draftSerial = 0;
+  const refReads = new Map();
+  const readRef = id => {
+    if (!refReads.has(String(id))) refReads.set(String(id), request(`/paam/ledger/v1/account-ref/${id}`, {signal})
+      .catch(error => {refReads.delete(String(id)); throw error;}));
+    return refReads.get(String(id));
+  };
+  const refreshSelect = (field, choices, placeholder) => {
+    const previous = field.value, valid = choices.some(([id]) => String(id) === previous);
+    field.innerHTML = `<option value="">${previous && !valid ? '引用已移除，请重新选择' : esc(placeholder)}</option>`
+      + choices.map(([id, text]) => `<option value="${esc(id)}">${esc(text)}</option>`).join('');
+    field.value = valid ? previous : '';
+    return previous !== field.value;
+  };
+  const positionOptions = () => [...positions.values()].map(row => [`existing:${row.id}`, `${row.title} · ${row.unit_code} · #${row.id}`])
+    .concat(nodes(draftRoot, '[data-position-draft]').map(row => [`new:${row.dataset.draftId}`, `新对象 ${value(row, 'title') || '未命名'} · ${value(row, 'unit_code')}`]));
+  const refreshReferences = () => {
+    nodes(legRoot, '[data-leg-row]').forEach((row, index) => {
+      row.querySelector('h3').textContent = `数量腿 ${index + 1}`;
+      row.querySelector('[data-named-choice="source"]').hidden = value(row, 'leg_direction') === 'IN';
+      if (refreshSelect(row.querySelector('[name="target"]'), positionOptions(), '选择数量对象'))
+        setNamedChoice(row, 'source', 0, '对象已改变，请重新选择原始来源（IN 无需来源）', false);
+    });
+    const cashOptions = nodes(cashRoot, '[data-cash-row]').map((row, index) => {
+      const fact = facts.get(resourceId(value(row, 'transaction_id')));
+      row.querySelector('h3').textContent = `现金拆分 ${index + 1} · ${fact.summary || '未填写摘要'} · Fact #${fact.transaction_id}`;
+      return [row.dataset.draftId, `现金 ${index + 1} · ${fact.summary} · ${fact.cash_direction} ${value(row, 'cash_amount')} ${fact.cash_currency_code}`];
+    });
+    const legOptions = nodes(legRoot, '[data-leg-row]').map((row, index) => [row.dataset.draftId,
+      `数量腿 ${index + 1} · ${row.querySelector('[name="target"]').selectedOptions[0]?.textContent} · ${value(row, 'leg_direction')} ${value(row, 'leg_amount') || '未填数量'}`]);
+    nodes(linkRoot, '[data-link-row]').forEach(row => {
+      refreshSelect(row.querySelector('[name="allocation_ref"]'), cashOptions, '选择现金拆分项');
+      refreshSelect(row.querySelector('[name="leg_ref"]'), legOptions, '选择数量腿');
+    });
+    nodes(duplicateRoot, '[data-duplicate-row]').forEach(row => {
+      if (refreshSelect(row.querySelector('[name="transaction_id"]'), [...selected].map(id => [id, `${facts.get(id).summary} · ${money(facts.get(id))} · Fact #${id}`]), '选择本次排除的事实'))
+        setNamedChoice(row, 'account_ref_id', '', '请重新选择 B 的可靠来源卡', false);
+    });
+  };
   const article = (parent, kind, content) => {
-    const node = document.createElement("article"); node.className = "panel stack"; node.dataset[kind] = "";
-    node.innerHTML = `${content}<button type="button" data-remove>移除此行</button>`;
+    const node = document.createElement("article"); node.className = "panel stack"; node.dataset[kind] = ""; node.dataset.draftId = `draft-${++draftSerial}`;
+    node.innerHTML = `${content}<div class="actions"><button type="button" data-remove>移除此行</button>${['positionDraft', 'cashRow', 'legRow'].includes(kind) ? '<button type="button" data-move-up>上移</button><button type="button" data-move-down>下移</button>' : ''}</div>`;
     node.querySelector("[data-remove]").onclick = () => {
-      if (kind === "positionDraft" && nodes(legRoot, '[name="target"]').some(target => target.value.startsWith("new:")))
-        return fail(new Error("先移除引用新对象的数量腿，再移除新对象；不能让行号变化静默改绑对象"));
-      if (["cashRow", "legRow"].includes(kind)) {
-        linkRoot.replaceChildren();
-        form.querySelector("[data-review-status]").textContent = "现金／数量行结构改变，已清除款项归因，请按当前行号重新明确关联。";
-      }
       node.remove();
-      nodes(cashRoot, "[data-cash-row]").forEach((row, index) => { row.querySelector("h3").textContent = `现金拆分行 ${index + 1} · Fact #${value(row, "transaction_id")}`; });
-      nodes(legRoot, "[data-leg-row]").forEach((row, index) => { row.querySelector("h3").textContent = `数量腿 ${index + 1}`; });
-      invalidate();
+      refreshReferences(); invalidate();
     };
+    node.querySelector('[data-move-up]')?.addEventListener('click', () => {node.previousElementSibling?.before(node); refreshReferences(); invalidate();});
+    node.querySelector('[data-move-down]')?.addEventListener('click', () => {node.nextElementSibling?.after(node); refreshReferences(); invalidate();});
     parent.append(node); invalidate(); return node;
   };
   const refreshPositionChoices = () => {
     form.querySelector("[data-position-choices]").textContent = [...positions.values()].map(row => `#${row.id} ${row.title} / ${row.type} / ${row.unit_code} / ${row.status}`).join("；") || "尚未载入已有对象";
+    refreshReferences();
   };
   const addCash = (fact, amount = fact.cash_amount) => {
     const index = nodes(cashRoot, "[data-cash-row]").length + 1;
     const defaultType = ["BORROW_REPAY", "SHARED_PAYMENT", "POS_CREDIT_REPAY"].includes(form.elements.case_code.value) ? "ASSET_LIABILITY" : form.elements.case_code.value === "INTERNAL_TRANSFER" ? "ACCOUNT_TRANSFER" : form.elements.case_code.value === "DUPLICATE" ? "DUPLICATE" : "TRANSACTION";
 const row = article(cashRoot, "cashRow", `<h3>现金拆分行 ${index} · Fact #${fact.transaction_id}</h3><p>${esc(fact.summary)} · ${esc(fact.cash_direction)} · ${esc(date(fact.occurred_time))} · ${esc(fact.cash_currency_code)}（方向／币种／时间不可改）</p>
       <input type="hidden" name="transaction_id" value="${fact.transaction_id}">${select("economic_type", "经济分类", Object.keys(typeNames).filter(key => ["TRANSACTION", "ACCOUNT_TRANSFER", "ASSET_LIABILITY", "DUPLICATE"].includes(key)).map(key => [key, typeNames[key]]), defaultType)}
-      ${input("cash_amount", "分配金额", quantityDecimal(amount, fact.cash_currency_code), 'inputmode="decimal" required')}${input("account_ref_id", "具体本方来源卡 ID（0 表示未知）", fact.account_ref_id, 'type="number" min="0" required')}<button type="button" data-pick-ref>分页选择来源卡</button>`);
-    row.querySelector("[data-pick-ref]").onclick = () => {
-      const node = workbenchDialog("选择具体来源卡", '<div data-ref-picker></div>');
-      mountPicker(node.querySelector("[data-ref-picker]"), { url: "/paam/ledger/v1/account-ref", searchKeys: ["display_label"], signal,
-        describe: metadataLabel,
-        choose: item => { row.querySelector('[name="account_ref_id"]').value = item.id; invalidate(); node.close(); },
-      });
-    };
+      ${input("cash_amount", "分配金额", quantityDecimal(amount, fact.cash_currency_code), 'inputmode="decimal" required')}${namedChoice('account_ref_id', '具体本方来源卡', {value: fact.account_ref_id, text: fact.account_ref_id ? '正在读取来源名称…' : '来源未识别', pickAttribute: 'data-pick-ref', clear: '明确来源未知'})}`);
+    bindNamedChoice(row, 'account_ref_id', {url: '/paam/ledger/v1/account-ref', title: '选择具体来源卡', signal,
+      allowZero: true, zeroLabel: '来源未识别', pickerAttribute: 'data-ref-picker', load: readRef});
+    refreshReferences();
   };
   const readPosition = async id => {
     id = resourceId(id);
@@ -181,7 +213,8 @@ const row = article(cashRoot, "cashRow", `<h3>现金拆分行 ${index} · Fact #
     positions.set(row.id, row); refreshPositionChoices(); invalidate(); return row;
   };
   const build = () => {
-    const allocations = nodes(cashRoot, "[data-cash-row]").map(row => {
+    const cashRows = nodes(cashRoot, '[data-cash-row]'), draftRows = nodes(draftRoot, '[data-position-draft]'), legRows = nodes(legRoot, '[data-leg-row]');
+    const allocations = cashRows.map(row => {
       const transaction_id = resourceId(value(row, "transaction_id")), fact = facts.get(transaction_id);
       return { transaction_id, economic_type: value(row, "economic_type"), cash_amount: quantityAmount(value(row, "cash_amount"), fact.cash_currency_code), account_ref_id: resourceId(value(row, "account_ref_id"), { allowZero: true }) };
     });
@@ -189,18 +222,15 @@ const row = article(cashRoot, "cashRow", `<h3>现金拆分行 ${index} · Fact #
       const sum = allocations.filter(row => row.transaction_id === id).reduce((sum, row) => sum + row.cash_amount, 0);
       if (!Number.isSafeInteger(sum) || sum !== facts.get(id).cash_amount) throw new Error(`Fact #${id} 需要完整解释：${sum} / ${facts.get(id).cash_amount} 最小单位`);
     }
-    const new_positions = nodes(draftRoot, "[data-position-draft]").map(row => Object.fromEntries(["title", "description", "type", "usage_scenario", "counterparty", "unit_code"].map(key => [key, key === "unit_code" ? value(row, key).trim().toUpperCase() : value(row, key)]).concat([["party_id", resourceId(value(row, "party_id"))]])));
-    const legs = nodes(legRoot, "[data-leg-row]").map(row => {
-      const target = value(row, "target"), newTarget = target.startsWith("new:"), targetId = resourceId(target.split(":")[1], { allowZero: newTarget });
-      const position = newTarget ? new_positions[targetId] : positions.get(targetId);
-      if (!position) throw new Error("数量腿需先载入明确对象；新对象行号改变后请重新选择");
-      const occurred = value(row, "occurred_time");
-      if (!/(?:Z|[+-]\d{2}:\d{2})$/i.test(occurred) || !Number.isFinite(Date.parse(occurred))) throw new Error("数量发生时间需填写带时区 ISO 时间");
-      return { [newTarget ? "new_position_index" : "existing_position_id"]: targetId, type: value(row, "type"), leg_amount: quantityAmount(value(row, "leg_amount"), position.unit_code), leg_direction: value(row, "leg_direction"), occurred_time: occurred, source: resourceId(value(row, "source"), { allowZero: true }), basis: value(row, "basis") };
+    const new_positions = draftRows.map(row => Object.fromEntries(["title", "description", "type", "usage_scenario", "counterparty", "unit_code"].map(key => [key, key === "unit_code" ? value(row, key).trim().toUpperCase() : value(row, key)]).concat([["party_id", resourceId(value(row, "party_id"))]])));
+    const legs = legRows.map(row => {
+      const target = positionTarget(value(row, 'target'), draftRows);
+      const position = target.existing_position_id ? positions.get(target.existing_position_id) : new_positions[target.new_position_index];
+      if (!position) throw new Error('数量腿需先选择明确对象');
+      return { ...target, type: value(row, "type"), leg_amount: quantityAmount(value(row, "leg_amount"), position.unit_code), leg_direction: value(row, "leg_direction"), occurred_time: dateTimeValue(row, 'occurred_time'), source: resourceId(value(row, "source"), { allowZero: true }), basis: value(row, "basis") };
     });
     const position_allocations = nodes(linkRoot, "[data-link-row]").map(row => {
-      const allocation_index = resourceId(value(row, "allocation_index")) - 1, leg_index = resourceId(value(row, "leg_index")) - 1;
-      if (!allocations[allocation_index] || !legs[leg_index]) throw new Error("款项归因引用不存在的现金行或数量腿，请核对当前行号");
+      const {allocation_index, leg_index} = linkTarget(value(row, 'allocation_ref'), value(row, 'leg_ref'), cashRows, legRows);
       const cash_currency_code = facts.get(allocations[allocation_index].transaction_id).cash_currency_code;
       return { allocation_index, leg_index, cash_currency_code, cash_amount: quantityAmount(value(row, "cash_amount"), cash_currency_code) };
     });
@@ -212,7 +242,12 @@ const row = article(cashRoot, "cashRow", `<h3>现金拆分行 ${index} · Fact #
       ...(case_code.startsWith("POS_") ? core : { parameters: { ...core, ...(case_code === "SHARED_PAYMENT" ? { phase: form.elements.phase.value } : {}) } }) };
     return { new_reviews: [review] };
   };
-  const invalidate = bindPublication(form, build, facts, completed, positions);
+  const invalidate = bindPublication(form, build, facts, completed, positions, () => new Map(nodes(form, '[data-named-choice]').map(field => {
+    const name = field.dataset.namedChoice, input = field.querySelector('input');
+    return [`${name}:${input.value}`, field.querySelector('[data-choice-label]').textContent];
+  })));
+  form.addEventListener('input', refreshReferences);
+  form.addEventListener('change', refreshReferences);
   form.querySelector("[data-add-cash]").onclick = () => {
     const fact = facts.get([...selected][0]); if (!fact) return fail(new Error("先选择现金 Fact；纯数量场景无需现金行"));
     if (selected.size === 1) return addCash(fact);
@@ -221,7 +256,6 @@ const row = article(cashRoot, "cashRow", `<h3>现金拆分行 ${index} · Fact #
       try { addCash(facts.get(resourceId(value(node, "fact")))); node.close(); } catch (error) { fail(error); }
     };
   };
-  form.querySelector("[data-load-position]").onclick = () => readPosition(form.elements.position_id.value).catch(fail);
   form.querySelector("[data-find-position]").onclick = () => {
     const node = workbenchDialog("分页选择对象", '<div data-position-picker></div>');
     mountPicker(node.querySelector("[data-position-picker]"), { url: "/paam/financial/v1/position", searchKeys: ["title"], signal,
@@ -231,15 +265,17 @@ const row = article(cashRoot, "cashRow", `<h3>现金拆分行 ${index} · Fact #
   };
   form.querySelector("[data-new-position]").onclick = () => {
     const row = article(draftRoot, "positionDraft", `<h3>本次新对象 ${nodes(draftRoot, "[data-position-draft]").length + 1}</h3>${positionFields()}`);
-    bindPartyPicker(row, signal);
+    bindPartyPicker(row, signal); refreshReferences();
   };
   form.querySelector("[data-add-leg]").onclick = () => {
-    const targets = [...positions.values()].map(row => [`existing:${row.id}`, `#${row.id} ${row.title} (${row.unit_code})`]).concat(nodes(draftRoot, "[data-position-draft]").map((row, index) => [`new:${index}`, `新对象 ${index + 1} ${value(row, "title")} (${value(row, "unit_code")})`]));
+    const targets = positionOptions();
     if (!targets.length) return fail(new Error("先读取已有对象或填写本次新对象"));
     const opening = form.elements.case_code.value === "POS_OPENING";
-    const row = article(legRoot, "legRow", `<h3>数量腿 ${nodes(legRoot, "[data-leg-row]").length + 1}</h3>${select("target", "明确对象", targets, targets[0][0])}${select("type", "数量证据类型", ["MOVEMENT", "OPENING"], opening ? "OPENING" : "MOVEMENT")}${select("leg_direction", "数量方向", ["IN", "OUT"], form.elements.case_code.value.includes("SETTLE") || form.elements.case_code.value === "POS_CREDIT_REPAY" ? "OUT" : "IN")}
-      ${input("leg_amount", "精确数量（按对象单位）", "", 'inputmode="decimal" required')}${input("occurred_time", "带时区发生时间", new Date().toISOString(), 'required')}${input("source", "原始 IN 来源腿 ID（IN 为 0；OUT 必填正数）", 0, 'type="number" min="0" required')}<button type="button" data-find-source>分页查找原始来源腿</button>${input("basis", "数量依据 / 第三人代还说明", "", 'maxlength="2000"')}`);
-    row.querySelector('[name="target"]').onchange = () => { row.querySelector('[name="source"]').value = 0; invalidate(); };
+    const row = article(legRoot, "legRow", `<h3>数量腿 ${nodes(legRoot, "[data-leg-row]").length + 1}</h3>${select("target", "明确对象", [['', '选择数量对象'], ...targets], targets.length === 1 ? targets[0][0] : '')}${select("type", "数量证据类型", ["MOVEMENT", "OPENING"], opening ? "OPENING" : "MOVEMENT")}${select("leg_direction", "数量方向", ["IN", "OUT"], form.elements.case_code.value.includes("SETTLE") || form.elements.case_code.value === "POS_CREDIT_REPAY" ? "OUT" : "IN")}
+      ${input("leg_amount", "精确数量（按对象单位）", "", 'inputmode="decimal" required')}${dateTimeField('occurred_time', '数量发生时间')}${namedChoice('source', '原始 IN 数量证据（OUT 必须明确选择）', {value: 0, text: 'IN 无需来源；OUT 请查找该对象有效的原始 IN 腿', pickAttribute: 'data-find-source', pick: '查找原始来源腿'})}${input("basis", "数量依据 / 第三人代还说明", "", 'maxlength="2000"')}`);
+    const resetSource = () => {setNamedChoice(row, 'source', 0, 'IN 无需来源；OUT 请重新选择原始来源', false); invalidate();};
+    row.querySelector('[name="target"]').onchange = resetSource;
+    row.querySelector('[name="leg_direction"]').onchange = resetSource;
     row.querySelector("[data-find-source]").onclick = () => {
       const target = value(row, "target");
       if (!target.startsWith("existing:")) return fail(new Error("新对象没有已发布来源腿；OUT 需选择已有对象"));
@@ -250,23 +286,33 @@ const row = article(cashRoot, "cashRow", `<h3>现金拆分行 ${index} · Fact #
         describe: leg => `${leg.basis || "依据未填写"} / ${leg.leg_direction} ${quantityDecimal(leg.leg_amount, leg.unit_code)} ${leg.unit_code} / ${date(leg.occurred_time)} / Review #${leg.review_id} ${leg.review.status} / Leg #${leg.id}`,
         choose: leg => {
           if (leg.leg_direction !== "IN" || leg.review.status !== "CONFIRMED") return fail(new Error("只能选择该对象当前有效的原始 IN 来源腿"));
-          row.querySelector('[name="source"]').value = leg.id; invalidate(); node.close();
+          setNamedChoice(row, 'source', leg.id, `${leg.basis || '依据未填写'} · IN ${quantityDecimal(leg.leg_amount, leg.unit_code)} ${leg.unit_code} · ${date(leg.occurred_time)} · Leg #${leg.id}`); node.close();
         },
       });
     };
+    refreshReferences();
   };
-  form.querySelector("[data-add-link]").onclick = () => article(linkRoot, "linkRow", `${input("allocation_index", "当前现金拆分行号（从 1 起）", 1, 'type="number" min="1" required')}${input("leg_index", "当前数量腿行号（从 1 起）", 1, 'type="number" min="1" required')}${input("cash_amount", "归因现金金额（币种取自现金行）", "", 'inputmode="decimal" required')}`);
-  form.querySelector("[data-add-duplicate]").onclick = () => article(duplicateRoot, "duplicateRow", `${input("transaction_id", "重复证据 B 的 Fact ID", "", 'type="number" min="1" required')}${input("kept_transaction_id", "保留计现金 A 的 Fact ID", "", 'type="number" min="1" required')}${input("account_ref_id", "明确 B 来源卡 ID", "", 'type="number" min="1" required')}`);
+  form.querySelector("[data-add-link]").onclick = () => {
+    article(linkRoot, "linkRow", `${select('allocation_ref', '明确现金拆分项', [['', '选择现金拆分项']])}${select('leg_ref', '明确数量腿', [['', '选择数量腿']])}${input("cash_amount", "归因现金金额（币种取自现金行）", "", 'inputmode="decimal" required')}`);
+    refreshReferences();
+  };
+  form.querySelector("[data-add-duplicate]").onclick = () => {
+    const row = article(duplicateRoot, 'duplicateRow', `${select('transaction_id', '重复证据 B（本次所选事实）', [['', '选择本次排除的事实']])}${namedChoice('kept_transaction_id', '保留计现金 A', {pick: '查找保留交易', pickAttribute: 'data-pick-kept'})}${namedChoice('account_ref_id', '明确 B 来源卡', {pick: '查找 B 来源卡', pickAttribute: 'data-pick-duplicate-ref'})}`);
+    bindNamedChoice(row, 'kept_transaction_id', {url: '/paam/ledger/v1/candidate', title: '明确保留的真实交易', signal,
+      initialize: false, searchKeys: ['summary'], pickerAttribute: 'data-kept-picker',
+      describe: fact => `${fact.summary} · ${money(fact)} · ${fact.cash_direction} · ${date(fact.occurred_time)} · Fact #${fact.transaction_id}`});
+    bindNamedChoice(row, 'account_ref_id', {url: '/paam/ledger/v1/account-ref', title: '明确 B 来源卡', signal, pickerAttribute: 'data-ref-picker'});
+    row.querySelector('[name="transaction_id"]').onchange = () => setNamedChoice(row, 'account_ref_id', '', '请重新选择 B 来源卡');
+    refreshReferences();
+  };
   const preselected = new Set((params.get("facts") || "").split(",").filter(Boolean).map(id => resourceId(id)));
   const choose = fact => {
     let id;
     try { id = resourceId(fact.transaction_id); } catch (error) { return fail(error); }
     if (selected.has(id)) {
       selected.delete(id); nodes(cashRoot, "[data-cash-row]").filter(row => resourceId(value(row, "transaction_id")) === id).forEach(row => row.remove());
-      linkRoot.replaceChildren();
-      nodes(cashRoot, "[data-cash-row]").forEach((row, index) => { row.querySelector("h3").textContent = `现金拆分行 ${index + 1} · Fact #${value(row, "transaction_id")}`; });
     } else { facts.set(id, fact); selected.add(id); addCash(fact); }
-    form.querySelector("[data-selected-facts]").textContent = `选择 ${selected.size} 个完整 Fact：${ids([...selected])}`; invalidate();
+    form.querySelector("[data-selected-facts]").textContent = `选择 ${selected.size} 个完整 Fact：${ids([...selected])}`; refreshReferences(); invalidate();
   };
   await mountPicker(form.querySelector("[data-fact-picker]"), { url: "/paam/ledger/v1/candidate", searchKeys: ["summary"], signal,
     describe: fact => `Fact #${fact.transaction_id} ${fact.summary} / ${money(fact)} ${fact.cash_direction} / 当前覆盖 ${fact.coverage.state} / 默认身份 ${fact.coverage.default_identity_state}`,

@@ -90,7 +90,12 @@ export function selectedCalendarDate(value = new Date()) {
   return { year, month, day, iso };
 }
 
-export function zonedISOString(value, exclusiveEnd = false) {
+export function localDateTime(value = new Date(), timeZone = selectedTimeZone()) {
+  const parts = wallClockParts(value, timeZone);
+  return `${String(parts[0]).padStart(4, '0')}-${String(parts[1]).padStart(2, '0')}-${String(parts[2]).padStart(2, '0')}T${parts.slice(3).map(part => String(part).padStart(2, '0')).join(':')}`;
+}
+
+export function zonedISOString(value, exclusiveEnd = false, timeZone = selectedTimeZone()) {
   const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2}))?)?$/);
   if (!match) throw new Error(`无效的本地日期时间：${value}`);
   const dateOnly = match[4] === undefined;
@@ -98,13 +103,17 @@ export function zonedISOString(value, exclusiveEnd = false) {
     Number(match[1]), Number(match[2]) - 1, Number(match[3]),
     Number(match[4] || 0), Number(match[5] || 0), Number(match[6] || 0),
   );
+  const calendar = new Date(wallTimestamp);
+  if (calendar.getUTCFullYear() !== Number(match[1]) || calendar.getUTCMonth() + 1 !== Number(match[2])
+    || calendar.getUTCDate() !== Number(match[3]) || calendar.getUTCHours() !== Number(match[4] || 0)
+    || calendar.getUTCMinutes() !== Number(match[5] || 0) || calendar.getUTCSeconds() !== Number(match[6] || 0))
+    throw new Error(`无效的本地日期时间：${value}`);
   if (exclusiveEnd) wallTimestamp += dateOnly ? 86_400_000 : 60_000;
   const target = new Date(wallTimestamp);
   const desired = Date.UTC(
     target.getUTCFullYear(), target.getUTCMonth(), target.getUTCDate(),
     target.getUTCHours(), target.getUTCMinutes(), target.getUTCSeconds(),
   );
-  const timeZone = selectedTimeZone();
   const wallClockValue = (instant) => {
     const parts = wallClockParts(instant, timeZone);
     return Date.UTC(parts[0], parts[1] - 1, parts[2], parts[3], parts[4], parts[5]);
