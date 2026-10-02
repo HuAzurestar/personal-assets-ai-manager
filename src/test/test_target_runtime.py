@@ -86,7 +86,13 @@ def test_openapi_locks_canonical_ledger_v1_contract():
         "cash_currency_code", "created_time", "updated_time"}
 
     review_request_properties = set(schemas["ReviewChangeInput"]["properties"])
-    assert {"deactivate_review_ids","activate_review_ids","new_reviews","expected_reviews"} == review_request_properties
+    assert {"deactivate_review_ids", "activate_review_ids", "new_reviews", "expected_reviews", "activation_duplicates"} == review_request_properties
+    # Transient explicit keeper decisions validate historical activation; they
+    # are not a content revision, persisted receipt or duplicate Fact pointer.
+    activation = schemas["ReviewChangeInput"]["properties"]["activation_duplicates"]
+    assert activation["maxItems"] == 2000
+    assert activation["items"]["$ref"].endswith("/DuplicateTransaction")
+    assert "activation_duplicates" not in schemas["ReviewChangeInput"].get("required", [])
     assert set(schemas["MoneySplitInput"]["properties"]) == {"transaction_id","economic_type","cash_amount","account_ref_id"}
     assert {"history","version","behavior_type"}.isdisjoint(schemas["ReviewReadPO"]["properties"])
     assert {"review_id","transaction_id","ledger_id","cash_amount","cash_currency_code"} <= set(schemas["FirstAllocationPO"]["properties"])

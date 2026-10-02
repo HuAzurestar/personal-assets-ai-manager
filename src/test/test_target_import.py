@@ -608,7 +608,11 @@ def test_corrupt_workbook_is_a_preview_error(target_import_api, extension):
     client, sessions, _ = target_import_api
     preview = _preview(client, f"bad.{extension}", b"not a workbook")
     assert preview["issue_count"] > 0
-    assert preview["issues"][0]["code"] == "PARSE_ERROR"
+    assert preview["issues"][0]["code"] == "WORKBOOK_INVALID"
+    file = preview["files"][0]
+    assert file["parse_status"] == "FAILED" and file["parse_issue_code"] == "WORKBOOK_INVALID"
+    assert file["parsed_row_count"] == 0 and file["parse_recovery"]
+    assert "not a workbook" not in file["parse_issue_message"]
     with sessions() as db:
         assert db.query(TransactionFact).count() == 0
         import_file = db.scalar(select(TransactionImportFile))
