@@ -206,6 +206,11 @@ async function render({ background = false, restoreValues = true } = {}) {
   const samePage = renderedRoute === routeKey;
   const page = state.page;
   const root = $("#page-content");
+  // Account commands close their dialog before re-reading current ownership.
+  // Keep the old table visible, but not actionable, until that foreground read
+  // finishes. Otherwise an editor opened on the old DOM is aborted by the
+  // replacement account read. Background refreshes must not freeze other pages.
+  if (!background) root.inert = page === 'account-management';
   const [title, help] = pageInfo[page];
   $("#title").textContent = title;
   $("#help").textContent = help;
@@ -263,6 +268,7 @@ async function render({ background = false, restoreValues = true } = {}) {
       bindPage(root);
     }
   } finally {
+    if (!background && renderVersion === state.renderVersion) root.inert = false;
     if (!background) foregroundBusy--;
     if (renderVersion === state.renderVersion) root.removeAttribute('aria-busy');
   }

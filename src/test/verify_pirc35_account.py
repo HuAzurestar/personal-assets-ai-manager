@@ -102,8 +102,50 @@ def run():
                     form.locator('[type="submit"]').click()
                     expect(form.locator("[data-impact]")).to_contain_text("跨个人变更")
                     expect(form.locator('[data-impact]')).to_contain_text('Mock person A / Mock set A maintained → Mock person B / Mock set B')
+                    # Hold the actual list response after a successful move. The
+                    # old table must not open an editor that the pending render
+                    # immediately aborts. No mocked financial result is used.
+                    page.evaluate('''() => {
+                        const original = window.fetch;
+                        let held = false;
+                        window.fetch = async (...args) => {
+                            const response = await original(...args);
+                            if (!held && String(args[0]).includes('/account-ref/list?')) {
+                                held = true;
+                                await new Promise(resolve => window.releaseAccountList = resolve);
+                            }
+                            return response;
+                        };
+                    }''')
                     form.locator("[data-confirm]").click()
                     expect(page.locator("dialog[open]")).to_have_count(0)
+                    page.wait_for_function('typeof window.releaseAccountList === "function"')
+                    expect(page.locator('#page-content')).to_have_attribute('aria-busy', 'true')
+                    assert page.locator('#page-content').evaluate('node => node.inert'), 'stale account table remains interactive during reload'
+                    page.evaluate('setTimeout(() => window.releaseAccountList(), 300)')
+                    # A real pointer click waits for the refreshed, actionable
+                    # table rather than losing the user's editor to a late read.
+                    page.locator('[data-account-edit="ref"]').click()
+                    expect(form.locator('[name="status"]')).to_have_value('ACTIVE')
+                    page.keyboard.press('Escape')
+                    expect(page.locator('#page-content')).not_to_have_attribute('aria-busy', 'true')
+                    assert not page.locator('#page-content').evaluate('node => node.inert')
+                    # A failed foreground read restores interaction on the
+                    # retained table, not a permanently inert error state.
+                    # First canonicalize the filter URL; only the second,
+                    # unchanged submission is a same-page retained read.
+                    page.locator('[data-account-filter] [type="submit"]').click()
+                    expect(page.locator('#page-content')).not_to_have_attribute('aria-busy', 'true')
+                    expect(page.locator('[data-account-filter]')).to_be_visible()
+                    def fail_list(route):
+                        route.fulfill(status=503, content_type='application/json',
+                            body='{"status":503,"message":"synthetic read failure","body":{"code":"LIST_UNAVAILABLE"}}')
+                    page.route('**/paam/ledger/v1/account-ref/list?**', fail_list)
+                    page.locator('[data-account-filter] [type="submit"]').click()
+                    expect(page.locator('[data-refresh-error]')).to_contain_text('synthetic read failure')
+                    expect(page.locator('#page-content')).not_to_have_attribute('aria-busy', 'true')
+                    assert not page.locator('#page-content').evaluate('node => node.inert')
+                    page.unroute('**/paam/ledger/v1/account-ref/list?**', fail_list)
                     page.goto(base + "/#workbench/account")
                     page.locator('[data-account-edit="ref"]').click()
                     form.locator('[name="status"]').select_option("CLOSED")
