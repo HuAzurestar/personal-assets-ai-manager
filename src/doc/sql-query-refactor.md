@@ -65,6 +65,8 @@
 
 保留Candidate默认`occurred_time DESC,id ASC`和全部覆盖/原默认/关系完整性检查。新增实测索引`ix_transaction_fact_time_desc_id_asc(occurred_time DESC,id ASC)`；旧双升序索引仍服务升序和既有时间窗路径，反扫它得到双降序，不能消除默认同时间组的右侧排序。SQL资产和Entity方向一致，使用新名称让既有二十表副本的`IF NOT EXISTS`升级能够创建它；离线十四表迁移复用同一资产和带方向的schema profile，不增加schema版本或业务回执。
 
+Entity索引表达式绑定实际`occurred_time`列，不使用只有文本标签的`desc("occurred_time")`：后者可以生成正确DDL却遗漏ORM索引列集合。既有全二十表schema parity断言保持，新方向测试同时检查ORM列集合和SQLite实际建库方向，避免只验证物理DDL而漏掉元数据。
+
 `test_candidate_query_plan.py`使用实际HTTP产生的SQL计划检查20/100条列表和搜索、同时间/两年分布的默认排序无`ORDER BY`临时树；`count(DISTINCT)`仍可有独立临时结构，不能声称所有临时树已消除。原排序和有效覆盖、空批、筛选、替代排序、深游标条件绑定保持；5万条合法虚构原默认链比较同一页SQL在原索引与新索引下的VM工作量及完整输出，不以机器耗时阈值代替稳定反例。实体建库、现有二十表副本幂等加索引和旧十四表一致性备份迁移均检查`index_xinfo`方向及业务manifest，原源库不改写。所有升级测试只用新虚构库，不修改或重新启动现有试用卷。
 
 新物理profile与旧READY报告的schema指纹不同，旧报告不能冒充新候选的验证结果；须按新固定候选重新验证。千/万/五万/十万规模的端到端重复采样、默认搜索及深游标需要另存固定SHA证据；本节不声明生产p95、全部22项关闭或终局通过。

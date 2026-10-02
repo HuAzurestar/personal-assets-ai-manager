@@ -116,6 +116,10 @@ def test_default_and_alternate_order_keep_deep_cursor_and_empty_batches(distribu
 
 
 def test_asset_and_entity_index_directions_match(tmp_path):
+    mixed = next(index for index in TransactionFact.__table__.indexes if index.name == MIXED_INDEX)
+    # A textual DESC label can compile correct SQLite DDL while failing to
+    # register the underlying column in ORM metadata. Both are contracts.
+    assert tuple(column.name for column in mixed.columns) == ("occurred_time", "id")
     target_database.ensure_target_schema()
     with closing(target_database.engine.raw_connection()) as connection:
         assert index_keys(connection, MIXED_INDEX) == [("occurred_time",1),("id",0)]
