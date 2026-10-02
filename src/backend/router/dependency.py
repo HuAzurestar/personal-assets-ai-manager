@@ -1,8 +1,9 @@
 """Dependencies shared by PAAM HTTP routers."""
 
 from collections.abc import Collection, Generator
+from typing import Annotated
 
-from fastapi import Request
+from fastapi import Path, Request
 from sqlalchemy.orm import Session
 
 from backend.core import (
@@ -11,6 +12,12 @@ from backend.core import (
     target_database,
 )
 from backend.error import ListQueryError
+from backend.schema.identifier import SQLITE_ID_MAX
+
+
+# URL segments are text, so HTTP parsing converts them to integers before the
+# bounds check. JSON command IDs retain their stricter no-coercion contract.
+ResourceId = Annotated[int, Path(ge=1, le=SQLITE_ID_MAX)]
 
 
 def get_db() -> Generator[Session, None, None]:

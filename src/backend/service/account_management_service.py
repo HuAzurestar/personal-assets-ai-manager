@@ -8,6 +8,7 @@ from backend.error import TargetEconomicError, ListQueryError
 from backend.mapper.account_management_mapper import AccountManagementMapper
 from backend.mapper.trusted_relation_mapper import TrustedRelationMapper
 from backend.schema.list_query import iter_filter_fields, validate_list_capabilities
+from backend.schema.identifier import SQLITE_ID_MAX
 
 
 def reject(code, message, status=409):
@@ -80,7 +81,7 @@ class AccountManagementService:
             if expression.key == "status":
                 valid = value in ("ACTIVE", "CLOSED")
             else:
-                valid = type(value) is int and value >= (0 if expression.key == "account_id" else 1)
+                valid = type(value) is int and (0 if expression.key == "account_id" else 1) <= value <= SQLITE_ID_MAX
             if not valid:
                 raise ListQueryError("invalid metadata filter value", code="LIST_FILTER_VALUE_INVALID")
         self.relations.read_snapshot()

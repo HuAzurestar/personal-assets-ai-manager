@@ -3,8 +3,9 @@ from datetime import datetime, timezone
 from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictBool, model_validator
 from backend.schema.list_query import ListRequest
+from backend.schema.identifier import PositiveId, NonnegativeId
 
-Positive = Annotated[StrictInt, Field(gt=0, le=2**63 - 1)]
+Positive = PositiveId
 
 
 class ImportInput(BaseModel):
@@ -19,7 +20,7 @@ class RowIdentity(ImportInput):
 class RowChoice(RowIdentity):
     decision: Literal["ACCEPT", "SKIP"]
     recheck: StrictBool = False
-    account_ref_id: Annotated[StrictInt, Field(ge=0, le=2**63 - 1)] | None = None
+    account_ref_id: NonnegativeId | None = None
 
 
 class PreviewExpected(ImportInput):

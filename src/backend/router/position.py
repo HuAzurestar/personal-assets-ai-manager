@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from backend.router.dependency import get_db
+from backend.router.dependency import ResourceId, get_db
 from backend.router.bounded_query import bounded_list_dependency, bounded_search_dependency
 from backend.router.error import DomainErrorRoute
 from backend.schema.review_command import PositionDraft
@@ -37,15 +37,15 @@ def position_create(payload: PositionDraft, db: Session = Depends(get_db)):
 
 
 @router.put("/{position_id}/metadata", response_model=PositionResponse)
-def position_metadata(position_id: int, payload: PositionMetadata, db: Session = Depends(get_db)):
+def position_metadata(position_id: ResourceId, payload: PositionMetadata, db: Session = Depends(get_db)):
     return PositionResponse(status=200, message="ok", body=PositionService(db).update(position_id, payload))
 
 
 @router.get("/{position_id}/leg/list", response_model=PositionLegListResponse)
-def position_legs(position_id: int, request: PositionLegListRequest = Depends(position_leg_list_request), db: Session = Depends(get_db)):
+def position_legs(position_id: ResourceId, request: PositionLegListRequest = Depends(position_leg_list_request), db: Session = Depends(get_db)):
     return PositionLegListResponse(status=200, message="ok", body=PositionService(db).legs(position_id, request))
 
 
 @router.get("/{position_id}", response_model=PositionResponse)
-def position_detail(position_id: int, db: Session = Depends(get_db)):
+def position_detail(position_id: ResourceId, db: Session = Depends(get_db)):
     return PositionResponse(status=200, message="ok", body=PositionService(db).get(position_id))

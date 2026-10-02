@@ -10,6 +10,7 @@ from backend.mapper.trusted_relation_mapper import TrustedRelationMapper
 from backend.mapper.bounded_query_mapper import query_budget, canonical
 from backend.schema.list_query import iter_filter_fields, validate_list_capabilities
 from backend.schema.review_command import UsageScenario
+from backend.schema.identifier import SQLITE_ID_MAX
 from backend.service.review_command_service import review_po
 
 
@@ -54,7 +55,7 @@ class PositionService:
         values = {"type": ("ASSET", "LIABILITY"), "status": ("ACTIVE", "ARCHIVED", "SETTLED"),
                   "usage_scenario": get_args(UsageScenario)}
         for expr in iter_filter_fields(request.filter):
-            valid = type(expr.val) is int and expr.val > 0 if expr.key == "party_id" else isinstance(expr.val, str) and expr.val in values[expr.key]
+            valid = type(expr.val) is int and 0 < expr.val <= SQLITE_ID_MAX if expr.key == "party_id" else isinstance(expr.val, str) and expr.val in values[expr.key]
             if not valid:
                 raise ListQueryError("invalid Position filter value", code="LIST_FILTER_INVALID")
 

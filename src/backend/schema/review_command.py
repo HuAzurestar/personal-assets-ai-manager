@@ -5,15 +5,14 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 
 from backend.core.unit import unit_definition
+from backend.schema.identifier import PositiveId, NonnegativeId
 
 
 class Intent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-PositiveId = Annotated[StrictInt, Field(gt=0)]
 Amount = Annotated[StrictInt, Field(gt=0, le=9_000_000_000_000)]
-NonnegativeId = Annotated[StrictInt, Field(ge=0)]
 EconomicType = Literal["TRANSACTION", "ACCOUNT_TRANSFER", "ASSET_LIABILITY", "DUPLICATE"]
 UsageScenario = Literal["GENERAL", "PERSONAL-LENDING", "SHARED-SETTLEMENT", "STORED-VALUE",
                         "DEPOSIT-PLEDGE", "REIMBURSEMENT", "CREDIT-CARD", "FORMAL-LOAN", "INVESTMENT"]

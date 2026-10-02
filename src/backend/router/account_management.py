@@ -1,7 +1,7 @@
 """Three-layer account metadata routes, separate from immutable Ledger bindings."""
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
-from backend.router.dependency import get_db, validate_query_parameter_names
+from backend.router.dependency import ResourceId, get_db, validate_query_parameter_names
 from backend.router.error import DomainErrorRoute
 from backend.schema.account_management import (
     PartyCreate, PartyUpdate, AccountCreate, AccountUpdate, RefCreate, RefUpdate,
@@ -54,40 +54,40 @@ def ref_create(payload: RefCreate, db: Session = Depends(get_db)):
 
 
 @router.get("/account-party/{entity_id}", response_model=PartyResponse)
-def party_get(entity_id: int, db: Session = Depends(get_db)):
+def party_get(entity_id: ResourceId, db: Session = Depends(get_db)):
     return envelope(AccountManagementService(db).get("party", entity_id))
 
 
 @router.get("/account/{entity_id}", response_model=AccountResponse)
-def account_get(entity_id: int, db: Session = Depends(get_db)):
+def account_get(entity_id: ResourceId, db: Session = Depends(get_db)):
     return envelope(AccountManagementService(db).get("account", entity_id))
 
 
 @router.get("/account-ref/{entity_id}", response_model=RefResponse)
-def ref_get(entity_id: int, db: Session = Depends(get_db)):
+def ref_get(entity_id: ResourceId, db: Session = Depends(get_db)):
     return envelope(AccountManagementService(db).get("ref", entity_id))
 
 
 @router.put("/account-party/{entity_id}/metadata", response_model=PartyResponse)
-def party_update(entity_id: int, payload: PartyUpdate, db: Session = Depends(get_db)):
+def party_update(entity_id: ResourceId, payload: PartyUpdate, db: Session = Depends(get_db)):
     return envelope(AccountManagementService(db).update("party", entity_id, payload))
 
 
 @router.put("/account/{entity_id}/metadata", response_model=AccountResponse)
-def account_update(entity_id: int, payload: AccountUpdate, db: Session = Depends(get_db)):
+def account_update(entity_id: ResourceId, payload: AccountUpdate, db: Session = Depends(get_db)):
     return envelope(AccountManagementService(db).update("account", entity_id, payload))
 
 
 @router.put("/account-ref/{entity_id}/metadata", response_model=RefResponse)
-def ref_update(entity_id: int, payload: RefUpdate, db: Session = Depends(get_db)):
+def ref_update(entity_id: ResourceId, payload: RefUpdate, db: Session = Depends(get_db)):
     return envelope(AccountManagementService(db).update("ref", entity_id, payload))
 
 
 @router.post("/account-ref/{entity_id}/move-preview", response_model=MovePreviewResponse)
-def ref_move_preview(entity_id: int, payload: RefMove, db: Session = Depends(get_db)):
+def ref_move_preview(entity_id: ResourceId, payload: RefMove, db: Session = Depends(get_db)):
     return envelope(AccountManagementService(db).move_preview(entity_id, payload))
 
 
 @router.post("/account-ref/{entity_id}/move-command", response_model=RefResponse)
-def ref_move_command(entity_id: int, payload: RefMoveCommand, db: Session = Depends(get_db)):
+def ref_move_command(entity_id: ResourceId, payload: RefMoveCommand, db: Session = Depends(get_db)):
     return envelope(AccountManagementService(db).move_command(entity_id, payload))
