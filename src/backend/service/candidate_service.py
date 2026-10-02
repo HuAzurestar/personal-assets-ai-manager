@@ -6,6 +6,7 @@ from backend.mapper.bounded_query_mapper import query_budget
 from backend.mapper.trusted_relation_mapper import TrustedRelationMapper
 from backend.schema.list_query import iter_filter_fields, validate_list_capabilities
 from backend.service.position_service import response_size
+from backend.service.review_command_service import review_po
 
 
 class CandidateService:
@@ -56,7 +57,7 @@ class CandidateService:
                 raise ListQueryError("invalid candidate filter value", code="LIST_FILTER_INVALID")
 
     @staticmethod
-    def po(row):
+    def po(row, current_reviews):
         if row["allocated_cash_amount"] > row["cash_amount"] or row["allocated_cash_amount"] < 0:
             raise TargetEconomicError(409, "candidate coverage is inconsistent", code="RELATION_BROKEN")
         result = {key: row[key] for key in ("occurred_time", "cash_direction", "cash_amount", "cash_currency_code", "account_ref_id")}
@@ -67,7 +68,16 @@ class CandidateService:
             remaining_cash_amount=row["cash_amount"] - row["allocated_cash_amount"],
             default_identity_state="KNOWN" if row["default_count"] == 1 else "MISSING" if row["default_count"] == 0 else "AMBIGUOUS",
             account_identity_state="MULTIPLE" if row["ref_count"] > 1 else "KNOWN" if row["account_ref_id"] else "UNKNOWN")
+        result['current_reviews'] = current_reviews
         return result
+
+    def _items(self, rows):
+        summaries = {row['id']: [] for row in rows}
+        for current in self.mapper.current_reviews(rows):
+            summaries[current['transaction_id']].append(review_po(current) | dict(
+                title=masked_summary(current['title']),member_count=current['member_count'],
+                allocated_cash_amount=current['allocated_cash_amount']))
+        return [self.po(row,summaries[row['id']]) for row in rows]
 
     def page(self, request):
         self._validate(request)
@@ -75,8 +85,21 @@ class CandidateService:
             self.relations.read_snapshot()
             self.relations.validate()
             rows, total = self.mapper.page(request)
-            return response_size(dict(items=[self.po(row) for row in rows], total=total,
+            return response_size(dict(items=self._items(rows), total=total,
                 page_index=request.page_index, page_size=request.page_size))
+
+    def review_page(self, review_id, request):
+        self._validate(request)
+        if type(review_id) is not int or not 1 <= review_id <= 2**63 - 1:
+            raise TargetEconomicError(422,'invalid Review identity',code='LIST_FILTER_VALUE_INVALID')
+        with query_budget(self.mapper.db):
+            self.relations.read_snapshot()
+            self.relations.validate()
+            if not self.mapper.review_exists(review_id):
+                raise TargetEconomicError(404,'Review not found',code='REVIEW_NOT_FOUND')
+            rows, total = self.mapper.page(request,review_id=review_id)
+            return response_size(dict(items=self._items(rows),total=total,
+                page_index=request.page_index,page_size=request.page_size))
 
     def search(self, request):
         self._validate(request, search=True)
@@ -84,5 +107,5 @@ class CandidateService:
             self.relations.read_snapshot()
             self.relations.validate()
             result = self.mapper.search(request)
-            result["items"] = [self.po(row) for row in result["items"]]
+            result["items"] = self._items(result['items'])
             return response_size(result)

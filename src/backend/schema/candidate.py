@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Literal
-from backend.schema.review_read import PO
+from backend.schema.review_read import PO, ReviewPO
 from backend.schema.response import SuccessResponse
 from backend.schema.list_query import ListRequest
 from backend.schema.bounded_search import SearchRequest
@@ -27,6 +27,12 @@ class CandidateCoveragePO(PO):
     account_identity_state: Literal["UNKNOWN", "KNOWN", "MULTIPLE"]
 
 
+class CurrentReviewPO(ReviewPO):
+    """Read-only current membership, not another content history."""
+    member_count: int
+    allocated_cash_amount: int
+
+
 class CandidatePO(PO):
     transaction_id: int
     default_review: DefaultReviewPO | None
@@ -37,6 +43,7 @@ class CandidatePO(PO):
     summary: str
     coverage: CandidateCoveragePO
     account_ref_id: int
+    current_reviews: list[CurrentReviewPO]
 
 
 class CandidateListPO(PO):
@@ -58,6 +65,10 @@ class CandidateSearchPO(PO):
 
 class CandidateListResponse(SuccessResponse[CandidateListPO]):
     pass
+
+
+class ReviewFactListResponse(CandidateListResponse):
+    """Distinct original Fact members with their current candidate projection."""
 
 
 class CandidateSearchResponse(SuccessResponse[CandidateSearchPO]):

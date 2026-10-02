@@ -17,6 +17,8 @@ from backend.service.target_economic_service import TargetEconomicService
 from backend.schema.review_command import ReviewChangeInput, ReviewCommandInput
 from backend.schema.review_read import ReviewCommandResponse, ReviewPreviewResponse, ReviewReadResponse
 from backend.service.review_command_service import ReviewCommandService
+from backend.schema.candidate import ReviewFactListResponse
+from backend.service.candidate_service import CandidateService
 
 
 router = APIRouter(
@@ -104,6 +106,12 @@ def search_reviews(request: ReviewSearchRequest = Depends(bounded_search_depende
 def review_allocations(review_id: int = Path(ge=1, le=2**63 - 1),
     request: ReviewRelationRequest = Depends(bounded_list_dependency(ReviewRelationRequest)), db: Session = Depends(get_db)):
     return ReviewAllocationListResponse(status=200, message="ok", body=ReviewReadService(db).relation_page(review_id, "allocation", request))
+
+
+@router.get('/review/{review_id}/fact/list',response_model=ReviewFactListResponse)
+def review_facts(review_id: int = Path(ge=1,le=2**63 - 1),
+    request: ReviewRelationRequest = Depends(bounded_list_dependency(ReviewRelationRequest)),db: Session = Depends(get_db)):
+    return ReviewFactListResponse(status=200,message='ok',body=CandidateService(db).review_page(review_id,request))
 
 
 @router.get("/review/{review_id}/flow/list", response_model=ReviewFlowListResponse)
