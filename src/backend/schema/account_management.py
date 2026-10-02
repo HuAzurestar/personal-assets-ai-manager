@@ -1,12 +1,39 @@
 """Account metadata commands: identity is immutable and money is never moved."""
 from datetime import datetime, timezone
-from typing import Annotated, Literal
+from typing import Annotated, Generic, Literal, TypeVar
 
 from pydantic import Field, StrictInt, field_validator
 from backend.schema.review_command import Intent, PositiveId, NonnegativeId
+from backend.schema.list_query import ListRequest
+from backend.schema.bounded_search import SearchRequest
+from backend.schema.response import SuccessResponse
 
 AccountStatus = Literal["ACTIVE", "CLOSED"]
 Interval = Annotated[StrictInt, Field(ge=0, le=120)]
+
+
+class PartyListRequest(ListRequest):
+    pass
+
+
+class AccountListRequest(ListRequest):
+    pass
+
+
+class RefListRequest(ListRequest):
+    pass
+
+
+class PartySearchRequest(SearchRequest):
+    pass
+
+
+class AccountSearchRequest(SearchRequest):
+    pass
+
+
+class RefSearchRequest(SearchRequest):
+    pass
 
 
 class PartyCreate(Intent):
@@ -70,6 +97,7 @@ class RefMoveCommand(RefMove):
 class PartyPO(Intent):
     id: PositiveId
     name: str
+    display_label: str
     status: AccountStatus
     created_time: datetime
     updated_time: datetime
@@ -77,6 +105,7 @@ class PartyPO(Intent):
 
 class AccountPO(PartyPO):
     party_id: PositiveId
+    party_name: str
     statement_interval_months: int
     snapshot_interval_months: int
 
@@ -84,6 +113,10 @@ class AccountPO(PartyPO):
 class AccountRefPO(Intent):
     id: PositiveId
     account_id: NonnegativeId
+    account_name: str
+    party_id: NonnegativeId
+    party_name: str
+    display_label: str
     name: str
     institution: str
     reference: str
@@ -168,3 +201,28 @@ class RefListResponse(Intent):
     status: int
     message: str
     body: RefListPO
+
+
+MetadataItem = TypeVar("MetadataItem")
+
+
+class MetadataSearchPO(Intent, Generic[MetadataItem]):
+    items: list[MetadataItem]
+    total: None = None
+    page_size: int
+    next_cursor: str | None
+    has_more: bool
+    scanned_count: int
+    elapsed_ms: float
+
+
+class PartySearchResponse(SuccessResponse[MetadataSearchPO[PartyPO]]):
+    pass
+
+
+class AccountSearchResponse(SuccessResponse[MetadataSearchPO[AccountPO]]):
+    pass
+
+
+class RefSearchResponse(SuccessResponse[MetadataSearchPO[AccountRefPO]]):
+    pass

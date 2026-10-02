@@ -21,15 +21,9 @@ from backend.parser.file_import import (
     _stringify,
 )
 from backend.core.money import amount_from_decimal
+from backend.core.source_provider import PROVIDER_LABELS as LABELS
 from backend.parser.provider_template import PROVIDER_TEMPLATES, normalise_header
 
-LABELS = {
-    "alipay": "支付宝",
-    "wechat": "微信",
-    "ccb": "建设银行",
-    "abc": "农业银行",
-    "cmb": "招商银行",
-}
 BANKS = {"ccb", "abc", "cmb"}
 EMPTY = {"", "/", "--", "-", "无"}
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024

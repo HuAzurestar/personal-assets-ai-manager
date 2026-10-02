@@ -10,6 +10,7 @@ import httpx
 import uvicorn
 from playwright.sync_api import expect, sync_playwright
 from serve_m2_ui import prepare_app
+from browser_artifact import viewport_evidence
 
 
 def run():
@@ -54,6 +55,7 @@ def run():
                         page.set_viewport_size({"width": width, "height": 900})
                         assert max(rows.evaluate_all("nodes => nodes.map(node => node.getBoundingClientRect().height)")) <= 110
                         assert rows.first.locator(".import-batch-main").bounding_box()["width"] >= 200
+                        viewport_evidence(page, f"fix-batch2-import-{width}")
                     for width in (820, 390):
                         page.set_viewport_size({"width": width, "height": 900})
                         assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
@@ -81,11 +83,23 @@ def run():
                     rows.first.locator("[data-row-account]").click()
                     picker = page.locator("dialog[open] [data-picker-items]")
                     expect(picker.locator(".picker-list-row")).to_have_count(1)
+                    expect(picker).to_contain_text("建设银行")
+                    expect(picker).to_contain_text("****1234")
+                    expect(picker).to_contain_text("未分组")
+                    picker_host = page.locator("dialog[open] [data-ref-picker]")
+                    expect(picker_host.locator("[data-picker-word]")).to_be_enabled()
+                    picker_host.locator("[data-picker-word]").fill("建设银行")
+                    picker_host.locator("[data-picker-search]").click()
+                    expect(picker_host.locator("[data-picker-count]")).to_contain_text("扫描")
+                    expect(picker.locator(".picker-list-row")).to_have_count(1)
                     candidate = picker.locator(".picker-list-row").first
                     assert candidate.locator("span").bounding_box()["width"] > candidate.bounding_box()["width"] * .65
                     assert candidate.locator("button").bounding_box()["width"] < 140
                     assert candidate.bounding_box()["height"] <= 70
-                    page.locator("dialog[open] [data-ref-auto]").click()
+                    viewport_evidence(page, "fix-batch2-source-picker")
+                    candidate.locator("button").click()
+                    expect(rows.first.locator("[data-row-ref]")).to_contain_text("建设银行")
+                    expect(rows.first.locator("[data-row-ref]")).to_contain_text("****1234")
                     page.locator("[data-batch-select-page]").click()
                     page.locator("[data-batch-save]").click()
                     expect(page.locator("[data-batch-confirm]")).to_be_enabled()

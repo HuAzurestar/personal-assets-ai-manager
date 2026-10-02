@@ -78,7 +78,19 @@ class PositionMapper(ReviewCommandMapper):
         columns = {column.name: column for column in PositionLeg.__table__.columns}
         rows, total = page_rows(self.db, select(PositionLeg.__table__), request, columns,
             condition=PositionLeg.position_id == position_id, default=(("occurred_time", "asc"), ("id", "asc")))
+        links, reviews = self.leg_relations(rows)
+        return rows, total, links, reviews
+
+    def leg_search(self, position_id, request):
+        columns = {column.name: column for column in PositionLeg.__table__.columns}
+        result = scan_rows(self.db, select(PositionLeg.__table__), request, columns,
+            scope=f"local:financial-v1:position:{position_id}:leg", condition=PositionLeg.position_id == position_id,
+            default=(("occurred_time", "asc"), ("id", "asc")))
+        links, reviews = self.leg_relations(result["items"])
+        return result, links, reviews
+
+    def leg_relations(self, rows):
         ids = [row["id"] for row in rows]
         links = self.rows(ReviewLedgerPositionLegAllocation, ReviewLedgerPositionLegAllocation.position_leg_id, ids, limit=4000)
         reviews = self.named_rows("reviews", [row["review_id"] for row in rows])
-        return rows, total, links, reviews
+        return links, reviews

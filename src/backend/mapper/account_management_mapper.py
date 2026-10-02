@@ -1,12 +1,12 @@
 """Set-oriented metadata persistence; no Ledger or Fact update operations."""
 from datetime import timedelta
-from sqlalchemy import and_, or_, not_, select, func, update
+from sqlalchemy import and_, or_, select, func, update
 
 from backend.entity import (LedgerAccountParty, LedgerAccount, LedgerAccountRef,
                             LedgerEntry, ReviewAllocation, TransactionFact, TransactionImportRow)
 from backend.entity.base import utc_now
 from backend.mapper.review_command_mapper import ReviewCommandMapper, chunks
-from backend.schema.list_query import FilterFieldExpression
+from backend.mapper.bounded_query_mapper import page_rows, scan_rows
 
 
 class AccountManagementMapper(ReviewCommandMapper):
@@ -14,6 +14,25 @@ class AccountManagementMapper(ReviewCommandMapper):
 
     def get(self, kind, entity_id):
         return self.db.execute(select(self.entities[kind].__table__).where(
+            self.entities[kind].id == entity_id)).mappings().one_or_none()
+
+    def public_statement(self, kind):
+        """Light current ownership names in one bounded query; no raw evidence."""
+        entity = self.entities[kind]
+        statement = select(entity.__table__)
+        if kind == "account":
+            return statement.add_columns(func.coalesce(LedgerAccountParty.name, "").label("party_name")).outerjoin(
+                LedgerAccountParty, LedgerAccountParty.id == LedgerAccount.party_id)
+        if kind == "ref":
+            return statement.add_columns(func.coalesce(LedgerAccount.name, "").label("account_name"),
+                func.coalesce(LedgerAccount.party_id, 0).label("party_id"),
+                func.coalesce(LedgerAccountParty.name, "").label("party_name")).outerjoin(
+                LedgerAccount, LedgerAccount.id == LedgerAccountRef.account_id).outerjoin(
+                LedgerAccountParty, LedgerAccountParty.id == LedgerAccount.party_id)
+        return statement
+
+    def public_get(self, kind, entity_id):
+        return self.db.execute(self.public_statement(kind).where(
             self.entities[kind].id == entity_id)).mappings().one_or_none()
 
     def create(self, kind, values):
@@ -30,23 +49,14 @@ class AccountManagementMapper(ReviewCommandMapper):
 
     def page(self, kind, request):
         entity = self.entities[kind]
-        def predicate(expr):
-            if expr is None:
-                return True
-            if isinstance(expr, FilterFieldExpression):
-                column = getattr(entity, expr.key)
-                return column == expr.val if expr.op == "=" else column != expr.val
-            children = [predicate(child) for child in expr.expression]
-            return {"AND": and_, "OR": or_, "NOT": lambda x: not_(x)}[expr.op](*children)
-        condition = predicate(request.filter)
-        sorts = [(item.key, item.direction) for item in request.sorter] or [("id", "asc")]
-        if not any(key == "id" for key, _ in sorts):
-            sorts.append(("id", "asc"))
-        order = [getattr(getattr(entity, key), direction)() for key, direction in sorts]
-        total = self.db.scalar(select(func.count()).select_from(entity).where(condition))
-        rows = self.db.execute(select(entity.__table__).where(condition).order_by(*order).offset(
-            (request.page_index - 1) * request.page_size).limit(request.page_size)).mappings()
-        return [dict(row) for row in rows], total
+        return page_rows(self.db, self.public_statement(kind), request,
+            {column.name: column for column in entity.__table__.columns})
+
+    def search(self, kind, request, project):
+        entity = self.entities[kind]
+        return scan_rows(self.db, self.public_statement(kind), request,
+            {column.name: column for column in entity.__table__.columns},
+            scope=f"local:ledger-v1:metadata:{kind}", project=project)
 
     def ledger_effect(self, ref_id):
         return self.db.execute(select(func.count(LedgerEntry.id).label("count"),

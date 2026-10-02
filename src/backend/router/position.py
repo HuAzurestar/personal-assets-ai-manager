@@ -6,7 +6,8 @@ from backend.router.error import DomainErrorRoute
 from backend.schema.review_command import PositionDraft
 from backend.schema.position_read import (PositionMetadata, PositionResponse, PositionListResponse,
                                          PositionSearchResponse, PositionLegListResponse,
-                                         PositionListRequest, PositionSearchRequest, PositionLegListRequest)
+                                         PositionListRequest, PositionSearchRequest, PositionLegListRequest,
+                                         PositionLegSearchRequest, PositionLegSearchResponse)
 from backend.service.position_service import PositionService
 
 router = APIRouter(
@@ -44,6 +45,12 @@ def position_metadata(position_id: ResourceId, payload: PositionMetadata, db: Se
 @router.get("/{position_id}/leg/list", response_model=PositionLegListResponse)
 def position_legs(position_id: ResourceId, request: PositionLegListRequest = Depends(position_leg_list_request), db: Session = Depends(get_db)):
     return PositionLegListResponse(status=200, message="ok", body=PositionService(db).legs(position_id, request))
+
+
+@router.get("/{position_id}/leg/search", response_model=PositionLegSearchResponse)
+def position_leg_search(position_id: ResourceId,
+    request: PositionLegSearchRequest = Depends(bounded_search_dependency(PositionLegSearchRequest)), db: Session = Depends(get_db)):
+    return PositionLegSearchResponse(status=200, message="ok", body=PositionService(db).leg_search(position_id, request))
 
 
 @router.get("/{position_id}", response_model=PositionResponse)

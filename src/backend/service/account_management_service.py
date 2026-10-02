@@ -9,6 +9,8 @@ from backend.mapper.account_management_mapper import AccountManagementMapper
 from backend.mapper.trusted_relation_mapper import TrustedRelationMapper
 from backend.schema.list_query import iter_filter_fields, validate_list_capabilities
 from backend.schema.identifier import SQLITE_ID_MAX
+from backend.mapper.bounded_query_mapper import canonical, query_budget
+from backend.core.source_provider import PROVIDER_LABELS
 
 
 def reject(code, message, status=409):
@@ -52,29 +54,45 @@ class AccountManagementService:
         return dict(account), dict(party)
 
     def _po(self, kind, row, source_times=None):
-        if kind != "ref":
-            return dict(row)
         result = dict(row)
-        result["reference"] = mask(result["reference"])
-        result["source_identity"] = mask(result["source_identity"])
-        result["identity_strength"] = {0: "UNKNOWN", 1: "RELIABLE", 2: "WEAK"}[row["identity_strength"]]
-        result["latest_source_time"] = (source_times or {}).get(row["id"])
+        parts = [result["name"]]
+        if kind == "account":
+            parts += [result["party_name"]]
+        elif kind == "ref":
+            result["reference"] = mask(result["reference"])
+            result["source_identity"] = mask(result["source_identity"])
+            result["identity_strength"] = {0: "UNKNOWN", 1: "RELIABLE", 2: "WEAK"}[row["identity_strength"]]
+            result["latest_source_time"] = (source_times or {}).get(row["id"])
+            provider = result["source_namespace"].split(":", 1)[0]
+            parts = [result["institution"] or PROVIDER_LABELS.get(provider, result["source_namespace"] or "来源未知")]
+            parts += [result["name"], result["reference"], result["source_identity"]]
+            parts += [result["party_name"], result["account_name"]] if result["account_id"] else ["未分组"]
+            parts += [{"RELIABLE": "可靠来源", "WEAK": "弱来源", "UNKNOWN": "身份未知"}[result["identity_strength"]]]
+        result["display_label"] = " · ".join(dict.fromkeys(part for part in parts if part))
         return result
 
     def get(self, kind, entity_id):
-        self.relations.read_snapshot()
-        self.relations.validate()
-        row = self._get(kind, entity_id)
-        times = self.mapper.source_times([entity_id]) if kind == "ref" else None
-        return self._po(kind, row, times)
+        with query_budget(self.mapper.db):
+            self.relations.read_snapshot()
+            self.relations.validate()
+            row = self.mapper.public_get(kind, entity_id)
+            if row is None:
+                reject("ACCOUNT_NOT_FOUND", "metadata object not found", 404)
+            times = self.mapper.source_times([entity_id]) if kind == "ref" else None
+            return self._po(kind, row, times)
 
-    def page(self, kind, request):
+    def _validate_query(self, kind, request, *, search=False):
         fields = {"id": ("=", "!="), "status": ("=", "!=")}
         if kind == "account":
             fields["party_id"] = ("=", "!=")
         if kind == "ref":
             fields["account_id"] = ("=", "!=")
-        validate_list_capabilities(request, query_fields=(), filter_operators=fields,
+        text_fields = ("name", "display_label")
+        if kind == "account":
+            text_fields += ("party_name",)
+        elif kind == "ref":
+            text_fields += ("institution", "reference", "source_namespace", "source_identity", "account_name", "party_name")
+        validate_list_capabilities(request, query_fields=text_fields if search else (), filter_operators=fields,
             sorter_fields=("id", "created_time", "updated_time"), logical_operators=("AND", "OR", "NOT"), max_sorters=3)
         for expression in iter_filter_fields(request.filter):
             value = expression.val
@@ -84,12 +102,33 @@ class AccountManagementService:
                 valid = type(value) is int and (0 if expression.key == "account_id" else 1) <= value <= SQLITE_ID_MAX
             if not valid:
                 raise ListQueryError("invalid metadata filter value", code="LIST_FILTER_VALUE_INVALID")
-        self.relations.read_snapshot()
-        self.relations.validate()
-        rows, total = self.mapper.page(kind, request)
-        times = self.mapper.source_times([row["id"] for row in rows]) if kind == "ref" else None
-        return dict(items=[self._po(kind, row, times) for row in rows], total=total,
-                    page_index=request.page_index, page_size=request.page_size)
+    def _response_size(self, result):
+        if len(canonical(result).encode()) > 2 * 1024 * 1024:
+            reject("DETAIL_LIMIT", "metadata page exceeds two MiB; reduce page size", 413)
+        return result
+
+    def page(self, kind, request):
+        self._validate_query(kind, request)
+        with query_budget(self.mapper.db):
+            self.relations.read_snapshot()
+            self.relations.validate()
+            rows, total = self.mapper.page(kind, request)
+            times = self.mapper.source_times([row["id"] for row in rows]) if kind == "ref" else None
+            return self._response_size(dict(items=[self._po(kind, row, times) for row in rows], total=total,
+                        page_index=request.page_index, page_size=request.page_size))
+
+    def search(self, kind, request):
+        self._validate_query(kind, request, search=True)
+        with query_budget(self.mapper.db):
+            self.relations.read_snapshot()
+            self.relations.validate()
+            # Match the public projection, never the hidden identity prefix.
+            result = self.mapper.search(kind, request, lambda row: self._po(kind, row))
+            if kind == "ref":
+                times = self.mapper.source_times([row["id"] for row in result["items"]])
+                for row in result["items"]:
+                    row["latest_source_time"] = times.get(row["id"])
+            return self._response_size(result)
 
     def _write(self, operation):
         commit_started = False
@@ -98,7 +137,8 @@ class AccountManagementService:
             self.relations.validate()
             kind, row = operation()
             self.relations.validate()
-            result = self._po(kind, row, self.mapper.source_times([row["id"]]) if kind == "ref" else None)
+            result = self._po(kind, self.mapper.public_get(kind, row["id"]),
+                self.mapper.source_times([row["id"]]) if kind == "ref" else None)
             self.mapper.end_write()
             commit_started = True
             self.mapper.db.commit()

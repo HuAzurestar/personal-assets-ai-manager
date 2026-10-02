@@ -49,6 +49,32 @@ def opening(pid, amount=40000):
                    occurred_time="2024-01-01T00:00:00Z", source=0, basis="Fictional opening evidence")])
 
 
+def test_leg_search_is_scoped_bounded_and_keeps_empty_continuation(client):
+    row = create(client)
+    other = create(client, title="Mock unrelated note")
+    reviews = [opening(row["id"], 100) for _ in range(21)] + [opening(other["id"], 100)]
+    reviews[20]["legs"][0]["basis"] = "Mock needle %? evidence"
+    reviews[21]["legs"][0]["basis"] = "Mock needle other Position"
+    command(client, new_reviews=reviews)
+    query = json.dumps([dict(key="basis", word="NEEDLE")])
+    path = BASE + f"/{row['id']}/leg/search"
+    first_response = client.get(path, params=dict(query=query, page_size=20))
+    assert first_response.status_code == 200, first_response.text
+    first = first_response.json()["body"]
+    assert first["items"] == [] and first["scanned_count"] == 20 and first["has_more"]
+    last_response = client.get(path, params=dict(query=query, page_size=20, cursor=first["next_cursor"]))
+    assert last_response.status_code == 200, last_response.text
+    last = last_response.json()["body"]
+    assert len(last["items"]) == 1 and not last["has_more"] and last["total"] is None
+    assert last["items"][0]["position_id"] == row["id"] and last["items"][0]["unit_code"] == "CNY"
+    assert last["items"][0]["review"]["status"] == "CONFIRMED"
+    assert last["items"][0]["position_allocations"] == []
+    moved = client.get(BASE + f"/{other['id']}/leg/search", params=dict(query=query, page_size=20, cursor=first["next_cursor"]))
+    assert moved.status_code == 422 and moved.json()["body"]["code"] == "LIST_CURSOR_INVALID"
+    literal = client.get(path, params=dict(query=json.dumps([dict(key="basis", word="%?")]), page_size=100))
+    assert len(literal.json()["body"]["items"]) == 1
+
+
 def settle(pid, source, amount=30000):
     return dict(case_code="POS_POSITION_SETTLE", new_positions=[], allocations=[], position_allocations=[],
         legs=[dict(existing_position_id=pid, type="MOVEMENT", leg_amount=amount, leg_direction="OUT",

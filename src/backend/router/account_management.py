@@ -1,13 +1,16 @@
 """Three-layer account metadata routes, separate from immutable Ledger bindings."""
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from backend.router.dependency import ResourceId, get_db, validate_query_parameter_names
+from backend.router.dependency import ResourceId, get_db
 from backend.router.error import DomainErrorRoute
 from backend.schema.account_management import (
     PartyCreate, PartyUpdate, AccountCreate, AccountUpdate, RefCreate, RefUpdate,
     RefMove, RefMoveCommand, PartyResponse, AccountResponse, RefResponse,
-    PartyListResponse, AccountListResponse, RefListResponse, MovePreviewResponse)
-from backend.schema.list_query import ListRequest, parse_list_request
+    PartyListResponse, AccountListResponse, RefListResponse, MovePreviewResponse,
+    PartyListRequest, AccountListRequest, RefListRequest,
+    PartySearchRequest, AccountSearchRequest, RefSearchRequest,
+    PartySearchResponse, AccountSearchResponse, RefSearchResponse)
+from backend.router.bounded_query import bounded_list_dependency, bounded_search_dependency
 from backend.service.account_management_service import AccountManagementService
 
 router = APIRouter(prefix="/paam/ledger/v1", tags=["account-management"], route_class=DomainErrorRoute)
@@ -17,25 +20,34 @@ def envelope(body):
     return dict(status=200, message="ok", body=body)
 
 
-def metadata_request(http_request: Request, page_index: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100), filter: str | None = None, sorter: str | None = None):
-    validate_query_parameter_names(http_request, {"page_index", "page_size", "filter", "sorter"})
-    return parse_list_request(ListRequest, page_index=page_index, page_size=page_size, filter=filter, sorter=sorter)
-
-
 @router.get("/account-party/list", response_model=PartyListResponse)
-def party_list(request: ListRequest = Depends(metadata_request), db: Session = Depends(get_db)):
+def party_list(request: PartyListRequest = Depends(bounded_list_dependency(PartyListRequest)), db: Session = Depends(get_db)):
     return envelope(AccountManagementService(db).page("party", request))
 
 
 @router.get("/account/list", response_model=AccountListResponse)
-def account_list(request: ListRequest = Depends(metadata_request), db: Session = Depends(get_db)):
+def account_list(request: AccountListRequest = Depends(bounded_list_dependency(AccountListRequest)), db: Session = Depends(get_db)):
     return envelope(AccountManagementService(db).page("account", request))
 
 
 @router.get("/account-ref/list", response_model=RefListResponse)
-def ref_list(request: ListRequest = Depends(metadata_request), db: Session = Depends(get_db)):
+def ref_list(request: RefListRequest = Depends(bounded_list_dependency(RefListRequest)), db: Session = Depends(get_db)):
     return envelope(AccountManagementService(db).page("ref", request))
+
+
+@router.get("/account-party/search", response_model=PartySearchResponse)
+def party_search(request: PartySearchRequest = Depends(bounded_search_dependency(PartySearchRequest)), db: Session = Depends(get_db)):
+    return PartySearchResponse(status=200, message="ok", body=AccountManagementService(db).search("party", request))
+
+
+@router.get("/account/search", response_model=AccountSearchResponse)
+def account_search(request: AccountSearchRequest = Depends(bounded_search_dependency(AccountSearchRequest)), db: Session = Depends(get_db)):
+    return AccountSearchResponse(status=200, message="ok", body=AccountManagementService(db).search("account", request))
+
+
+@router.get("/account-ref/search", response_model=RefSearchResponse)
+def ref_search(request: RefSearchRequest = Depends(bounded_search_dependency(RefSearchRequest)), db: Session = Depends(get_db)):
+    return RefSearchResponse(status=200, message="ok", body=AccountManagementService(db).search("ref", request))
 
 
 @router.post("/account-party", response_model=PartyResponse)

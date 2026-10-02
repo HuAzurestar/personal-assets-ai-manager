@@ -1,6 +1,6 @@
 import { request, jsonRequest, isUnknownWrite } from "../api/client.js";
 import { esc, money, date, resourceId } from "../util/core.js";
-import { mountPicker, workbenchDialog } from "../component/workbench.js";
+import { mountPicker, workbenchDialog, metadataLabel } from "../component/workbench.js";
 
 const pendingKey = "paam.import.pending.v1";
 const contexts = new Map();
@@ -72,12 +72,14 @@ export async function mountImportBatch(host, initial, changed) {
       find("[data-batch-rows]").innerHTML = next.items.map(row => {
         const selected = context.selected.get(identity(row));
         const choice = selected?.choice || row.choice || { decision: "ACCEPT", recheck: false, account_ref_id: null };
+        const refText = choice.account_ref_id == null ? "可靠来源自动匹配／否则待绑定"
+          : choice.account_ref_id === 0 ? "明确待绑定" : selected?.refLabel || `#${choice.account_ref_id}`;
         const processed = row.classification === "PROCESSED";
         return `<article class="import-batch-row" data-batch-row="${identity(row)}">
           <label class="import-batch-select"><input type="checkbox" data-row-select aria-label="选择文件 #${row.file_id} 第 ${row.source_row_number} 行" ${selected ? "checked" : ""} ${processed ? "data-batch-processed disabled" : ""}></label>
           <div class="import-batch-main"><strong>${esc(row.parsed.summary || "摘要未知")}</strong><small>${esc(row.parsed.cash_direction || "方向未知")} · ${esc(row.parsed.occurred_time ? date(row.parsed.occurred_time) : "时间未知")} · 文件 #${row.file_id} 第 ${row.source_row_number} 行${row.existing_transaction_id ? ` · Fact #${row.existing_transaction_id}` : ""}</small></div>
           <div class="import-batch-amount"><strong>${esc(row.parsed.amount == null ? "金额未知" : money(row.parsed))}</strong><small>${esc(classifications[row.classification])}</small></div>
-          <div class="import-batch-source"><span data-row-ref>来源卡：${choice.account_ref_id == null ? "可靠来源自动匹配／否则待绑定" : choice.account_ref_id === 0 ? "明确待绑定" : `#${choice.account_ref_id}`}</span>${row.classification === "NEW" ? '<button type="button" data-row-account>选择来源卡</button>' : ""}</div>
+          <div class="import-batch-source"><span data-row-ref>来源卡：${esc(refText)}</span>${row.classification === "NEW" ? '<button type="button" data-row-account>选择来源卡</button>' : ""}</div>
           <div class="import-batch-decision"><label><span class="visually-hidden">本行决定</span><select data-row-decision aria-label="文件 #${row.file_id} 第 ${row.source_row_number} 行决定" ${processed ? "data-batch-processed disabled" : ""}><option value="ACCEPT" ${choice.decision === "ACCEPT" ? "selected" : ""}>接受</option><option value="SKIP" ${choice.decision === "SKIP" ? "selected" : ""}>跳过（问题行保留INVALID）</option></select></label>${[2, 3].includes(row.persisted_row_status) ? `<label class="import-batch-recheck"><input type="checkbox" data-row-recheck ${choice.recheck ? "checked" : ""}>重新检查未接受行（旧状态：${statusNames[row.persisted_row_status]}）</label>` : ""}</div>
           ${row.issue_codes.length ? `<p class="import-batch-issue" role="note">行问题：${esc(row.issue_codes.join("、"))}</p>` : ""}</article>`;
       }).join("") || "<p>当前筛选无行。</p>";
@@ -87,7 +89,7 @@ export async function mountImportBatch(host, initial, changed) {
           const previous = context.selected.get(identity(row));
           if (node.querySelector("[data-row-select]").checked) {
             if (!previous && context.selected.size >= 1000) { node.querySelector("[data-row-select]").checked = false; status("一批最多1000行；请先完成当前批。"); return; }
-            context.selected.set(identity(row), { row, choice: { file_id: row.file_id, source_row_number: row.source_row_number,
+            context.selected.set(identity(row), { row, refLabel: previous?.refLabel, choice: { file_id: row.file_id, source_row_number: row.source_row_number,
               decision: node.querySelector("[data-row-decision]").value, recheck: !!node.querySelector("[data-row-recheck]")?.checked,
               account_ref_id: previous?.choice.account_ref_id ?? row.choice?.account_ref_id ?? null } });
           } else context.selected.delete(identity(row));
@@ -101,17 +103,18 @@ export async function mountImportBatch(host, initial, changed) {
           save();
           if (!context.selected.has(identity(row))) return;
           const dialog = workbenchDialog("选择来源卡（不修改Fact原身份）", '<div class="actions"><button type="button" data-ref-auto>使用可靠来源自动匹配</button><button type="button" data-ref-zero>明确待绑定0</button></div><div data-ref-picker></div>');
-          const choose = id => {
+          const choose = (id, ref) => {
             if (!context.selected.has(identity(row))) { dialog.close(); return; }
             context.selected.get(identity(row)).choice.account_ref_id = id;
-            node.querySelector("[data-row-ref]").textContent = id == null ? "来源卡：自动" : `来源卡：#${id}`;
+            node.querySelector("[data-row-ref]").textContent = id == null ? "来源卡：自动" : ref ? `来源卡：${metadataLabel(ref)}` : "来源卡：明确待绑定";
+            context.selected.get(identity(row)).refLabel = ref ? metadataLabel(ref) : null;
             context.dirty = true;
             dialog.close();
             update();
           };
           dialog.querySelector("[data-ref-auto]").onclick = () => choose(null);
           dialog.querySelector("[data-ref-zero]").onclick = () => choose(0);
-          mountPicker(dialog.querySelector("[data-ref-picker]"), { url: "/paam/ledger/v1/account-ref", describe: ref => `#${ref.id} ${ref.name} ${ref.reference} ${ref.status}`, choose: ref => choose(ref.id), signal });
+          mountPicker(dialog.querySelector("[data-ref-picker]"), { url: "/paam/ledger/v1/account-ref", searchKeys: ["display_label"], describe: metadataLabel, choose: ref => choose(ref.id, ref), signal });
         };
       });
     } catch (error) { if (live() && error.name !== "AbortError") status(`${error.code || "读取失败"}：${error.message}；刷新当前预览后重新选择。`); }

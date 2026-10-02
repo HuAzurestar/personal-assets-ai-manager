@@ -62,7 +62,8 @@ class FlowReadService:
         manager = AccountManagementService(self.mapper.db)
         times = manager.mapper.source_times([ref_id])
         return FlowAccountOwnership(state="ASSIGNED" if account else "UNASSIGNED",
-            ref=manager._po("ref", ref, times), account=account, party=party)
+            ref=manager._po("ref", ref, times), account=manager._po("account", account) if account else None,
+            party=manager._po("party", party) if party else None)
 
     def _tags(self, ledger, rows):
         if any(row["tag_id"] is None or row["view_id"] is None for row in rows):

@@ -1,6 +1,6 @@
 import { request, jsonRequest } from "../api/client.js";
 import { esc, date, money, quantityDecimal, quantityAmount, typeNames, reviewTypeNames, resourceId } from "../util/core.js";
-import { input, select, workbenchDialog, writeFailure, mountPicker } from "../component/workbench.js";
+import { input, select, workbenchDialog, writeFailure, mountPicker, metadataLabel } from "../component/workbench.js";
 import { positionFields, bindPartyPicker } from "./position.js";
 import { mountTagImpact } from "../component/tag-impact.js";
 
@@ -168,8 +168,8 @@ const row = article(cashRoot, "cashRow", `<h3>现金拆分行 ${index} · Fact #
       ${input("cash_amount", "分配金额", quantityDecimal(amount, fact.cash_currency_code), 'inputmode="decimal" required')}${input("account_ref_id", "具体本方来源卡 ID（0 表示未知）", fact.account_ref_id, 'type="number" min="0" required')}<button type="button" data-pick-ref>分页选择来源卡</button>`);
     row.querySelector("[data-pick-ref]").onclick = () => {
       const node = workbenchDialog("选择具体来源卡", '<div data-ref-picker></div>');
-      mountPicker(node.querySelector("[data-ref-picker]"), { url: "/paam/ledger/v1/account-ref", signal,
-        describe: item => `#${item.id} ${item.name} ${item.reference} / ${item.source_identity} / ${item.status}`,
+      mountPicker(node.querySelector("[data-ref-picker]"), { url: "/paam/ledger/v1/account-ref", searchKeys: ["display_label"], signal,
+        describe: metadataLabel,
         choose: item => { row.querySelector('[name="account_ref_id"]').value = item.id; invalidate(); node.close(); },
       });
     };
@@ -246,8 +246,8 @@ const row = article(cashRoot, "cashRow", `<h3>现金拆分行 ${index} · Fact #
       let id;
       try { id = resourceId(target.split(":")[1]); } catch (error) { return fail(error); }
       const node = workbenchDialog(`对象 #${id} 的原始来源腿`, '<div data-source-picker></div>');
-      mountPicker(node.querySelector("[data-source-picker]"), { url: `/paam/financial/v1/position/${id}/leg`, signal,
-        describe: leg => `Leg #${leg.id} / ${leg.leg_direction} ${quantityDecimal(leg.leg_amount, leg.unit_code)} ${leg.unit_code} / Review #${leg.review_id} ${leg.review.status} / ${date(leg.occurred_time)}`,
+      mountPicker(node.querySelector("[data-source-picker]"), { url: `/paam/financial/v1/position/${id}/leg`, searchKeys: ["basis"], signal,
+        describe: leg => `${leg.basis || "依据未填写"} / ${leg.leg_direction} ${quantityDecimal(leg.leg_amount, leg.unit_code)} ${leg.unit_code} / ${date(leg.occurred_time)} / Review #${leg.review_id} ${leg.review.status} / Leg #${leg.id}`,
         choose: leg => {
           if (leg.leg_direction !== "IN" || leg.review.status !== "CONFIRMED") return fail(new Error("只能选择该对象当前有效的原始 IN 来源腿"));
           row.querySelector('[name="source"]').value = leg.id; invalidate(); node.close();

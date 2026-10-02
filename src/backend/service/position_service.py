@@ -45,7 +45,7 @@ class PositionService:
         if leg:
             fields = {}
         try:
-            validate_list_capabilities(request, query_fields=("title", "description", "counterparty") if search else (),
+            validate_list_capabilities(request, query_fields=(("basis",) if leg else ("title", "description", "counterparty")) if search else (),
                 filter_operators=fields, sorter_fields=("id", "created_time", "updated_time", "occurred_time") if leg
                 else ("id", "created_time", "updated_time"), logical_operators=("AND", "OR", "NOT"), max_sorters=3)
         except ListQueryError as error:
@@ -88,13 +88,27 @@ class PositionService:
             self.relations.validate()
             position = self._get(position_id)
             rows, total, links, reviews = self.mapper.leg_page(position_id, request)
-            by_leg = defaultdict(list)
-            for link in links:
-                by_leg[link["position_leg_id"]].append(link)
-            by_review = {row["id"]: review_po(row) for row in reviews}
-            items = [row | dict(unit_code=position["unit_code"], position_allocations=by_leg[row["id"]],
-                               review=by_review[row["review_id"]]) for row in rows]
+            items = self._leg_items(rows, position, links, reviews)
             return response_size(dict(items=items, total=total, page_index=request.page_index, page_size=request.page_size))
+
+    def leg_search(self, position_id, request):
+        self._validate_query(request, search=True, leg=True)
+        with query_budget(self.mapper.db):
+            self.relations.read_snapshot()
+            self.relations.validate()
+            position = self._get(position_id)
+            result, links, reviews = self.mapper.leg_search(position_id, request)
+            result["items"] = self._leg_items(result["items"], position, links, reviews)
+            return response_size(result)
+
+    @staticmethod
+    def _leg_items(rows, position, links, reviews):
+        by_leg = defaultdict(list)
+        for link in links:
+            by_leg[link["position_leg_id"]].append(link)
+        by_review = {row["id"]: review_po(row) for row in reviews}
+        return [row | dict(unit_code=position["unit_code"], position_allocations=by_leg[row["id"]],
+                           review=by_review[row["review_id"]]) for row in rows]
 
     def _write(self, operation):
         commit_started = False

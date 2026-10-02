@@ -10,6 +10,7 @@ import httpx
 import uvicorn
 from playwright.sync_api import expect, sync_playwright
 from serve_m2_ui import prepare_app
+from browser_artifact import viewport_evidence
 
 
 def run():
@@ -61,7 +62,15 @@ def run():
                     page.locator("[data-position-create]").click()
                     form = page.locator("dialog[open] form")
                     form.locator('[name="title"]').fill("Mock loan position")
-                    form.locator('[name="party_id"]').fill(str(party_id))
+                    form.locator('[data-pick-party]').click()
+                    party_picker = page.locator("dialog[open] [data-party-picker]")
+                    expect(party_picker.locator("[data-picker-word]")).to_be_enabled()
+                    party_picker.locator("[data-picker-word]").fill("Mock person")
+                    party_picker.locator("[data-picker-search]").click()
+                    expect(party_picker.locator("[data-picker-count]")).to_contain_text("扫描")
+                    viewport_evidence(page, "fix-batch2-party-picker")
+                    party_picker.locator("[data-picker-id]").first.click()
+                    expect(form.locator('[name="party_id"]')).to_have_value(str(party_id))
                     form.locator('[name="usage_scenario"]').select_option("PERSONAL-LENDING")
                     form.locator('[type="submit"]').click()
                     expect(page.locator("dialog[open]")).to_have_count(0)
@@ -93,7 +102,15 @@ def run():
                     expect(review.locator("[data-position-choices]")).to_contain_text("Mock loan position")
                     review.locator("[data-add-leg]").click()
                     leg.locator('[name="leg_amount"]').fill("300")
-                    leg.locator('[name="source"]').fill(str(source_id))
+                    leg.locator('[data-find-source]').click()
+                    source_picker = page.locator("dialog[open] [data-source-picker]")
+                    expect(source_picker.locator("[data-picker-word]")).to_be_enabled()
+                    source_picker.locator("[data-picker-word]").fill("corrected opening")
+                    source_picker.locator("[data-picker-search]").click()
+                    expect(source_picker.locator("[data-picker-count]")).to_contain_text("扫描")
+                    viewport_evidence(page, "fix-batch2-leg-picker")
+                    source_picker.locator("[data-picker-id]").first.click()
+                    expect(leg.locator('[name="source"]')).to_have_value(str(source_id))
                     leg.locator('[name="occurred_time"]').fill("2024-01-02T00:00:00Z")
                     review.locator("[data-review-preview]").click()
                     expect(review.locator("[data-review-command]")).to_be_enabled()

@@ -21,6 +21,10 @@ class PositionLegListRequest(ListRequest):
     pass
 
 
+class PositionLegSearchRequest(SearchRequest):
+    pass
+
+
 class PositionMetadata(ExpectedMetadata):
     title: str = Field(min_length=1, max_length=160)
     description: str = Field(default="", max_length=2000)
@@ -71,6 +75,16 @@ class PositionLegListPO(PO):
     page_size: int
 
 
+class PositionLegSearchPO(PO):
+    items: list[PositionLegReadPO]
+    total: None = None
+    page_size: int
+    next_cursor: str | None
+    has_more: bool
+    scanned_count: int
+    elapsed_ms: float
+
+
 class PositionResponse(SuccessResponse[PositionDetailPO]):
     pass
 
@@ -84,4 +98,8 @@ class PositionSearchResponse(SuccessResponse[PositionSearchPO]):
 
 
 class PositionLegListResponse(SuccessResponse[PositionLegListPO]):
+    pass
+
+
+class PositionLegSearchResponse(SuccessResponse[PositionLegSearchPO]):
     pass

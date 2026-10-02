@@ -1,7 +1,7 @@
 import { request, jsonRequest } from "../api/client.js";
 import { esc, date, quantityDecimal, money, resourceId } from "../util/core.js";
 import { table } from "../component/table.js";
-import { input, select, workbenchDialog, writeFailure, mountPicker } from "../component/workbench.js";
+import { input, select, workbenchDialog, writeFailure, mountPicker, metadataLabel } from "../component/workbench.js";
 
 const base = "/paam/financial/v1/position";
 export const usages = ["GENERAL", "PERSONAL-LENDING", "SHARED-SETTLEMENT", "STORED-VALUE", "DEPOSIT-PLEDGE", "REIMBURSEMENT", "CREDIT-CARD", "FORMAL-LOAN", "INVESTMENT"];
@@ -24,8 +24,8 @@ export function bindPartyPicker(form, signal) {
   form.querySelector("[data-pick-party]")?.addEventListener("click", () => {
     const node = workbenchDialog("选择本方个人", '<div data-party-picker></div>');
     mountPicker(node.querySelector("[data-party-picker]"), {
-      url: "/paam/ledger/v1/account-party", signal,
-      describe: row => `#${row.id} ${row.name} · ${row.status}`,
+      url: "/paam/ledger/v1/account-party", searchKeys: ["display_label"], signal,
+      describe: metadataLabel,
       choose: row => { form.querySelector('[name="party_id"]').value = row.id; form.dispatchEvent(new Event("input", { bubbles: true })); node.close(); },
     });
   });

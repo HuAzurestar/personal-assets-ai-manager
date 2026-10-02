@@ -102,9 +102,9 @@ class FlowReadMapper:
         if not ref_id:
             return None, None, None
         manager = AccountManagementMapper(self.db)
-        ref = dict(manager.get("ref", ref_id))
-        account = dict(manager.get("account", ref["account_id"])) if ref["account_id"] else None
-        party = dict(manager.get("party", account["party_id"])) if account else None
+        ref = dict(manager.public_get("ref", ref_id))
+        account = dict(manager.public_get("account", ref["account_id"])) if ref["account_id"] else None
+        party = dict(manager.public_get("party", account["party_id"])) if account else None
         return ref, account, party
 
     @staticmethod
