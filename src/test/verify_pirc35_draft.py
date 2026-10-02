@@ -12,6 +12,7 @@ import uvicorn
 from playwright.sync_api import expect, sync_playwright
 from serve_m2_ui import prepare_app
 from browser_artifact import viewport_evidence
+from browser_choice import choose_local, verify_local_choice_capacity
 
 
 def run():
@@ -80,7 +81,7 @@ def run():
                 def leg(basis):
                     form.locator('[data-add-leg]').click()
                     node = form.locator('[data-leg-row]').last
-                    node.locator('[name="target"]').select_option(target)
+                    choose_local(page, node, 'target', target)
                     node.locator('[name="leg_amount"]').fill('200')
                     node.locator('[name="occurred_time_timezone"]').select_option('Asia/Hong_Kong')
                     node.locator('[name="occurred_time"]').fill('2024-01-01T08:00:03')
@@ -91,8 +92,8 @@ def run():
                 for cash_id, leg_id in [(cash_a_id, leg_a_id), (cash_b_id, leg_b_id)]:
                     form.locator('[data-add-link]').click()
                     link = form.locator('[data-link-row]').last
-                    link.locator('[name="allocation_ref"]').select_option(cash_id)
-                    link.locator('[name="leg_ref"]').select_option(leg_id)
+                    choose_local(page, link, 'allocation_ref', cash_id)
+                    choose_local(page, link, 'leg_ref', leg_id)
                     link.locator('[name="cash_amount"]').fill('200')
                 # Removing an earlier unrelated object must not retarget B to
                 # the vanished old array index. Reordering retains all links.
@@ -113,7 +114,7 @@ def run():
                 expect(form.locator('[data-review-status]')).to_contain_text('请选择数量腿')
                 assert not previews
                 leg_c_id = leg('Mock quantity C')
-                form.locator('[data-link-row]').first.locator('[name="leg_ref"]').select_option(leg_c_id)
+                choose_local(page, form.locator('[data-link-row]').first, 'leg_ref', leg_c_id)
                 latest_leg = form.locator(f'[data-leg-row][data-draft-id="{leg_c_id}"]')
                 latest_leg.locator('[name="occurred_time_timezone"]').select_option('America/New_York')
                 latest_leg.locator('[name="occurred_time"]').fill('2024-11-03T01:30')
@@ -138,6 +139,8 @@ def run():
                 principal.locator('[data-remove]').click()
                 form.locator('[data-review-preview]').click()
                 expect(form.locator('[data-review-status]')).to_contain_text('请选择明确的数量对象')
+                assert len(previews) == 1
+                verify_local_choice_capacity(page)
                 assert len(previews) == 1
                 assert not errors and not commands, (errors, commands)
                 browser.close()

@@ -12,6 +12,7 @@ import httpx
 import uvicorn
 from playwright.sync_api import expect, sync_playwright
 from serve_m2_ui import prepare_app
+from browser_choice import choose_local
 
 
 def run():
@@ -159,7 +160,7 @@ def run():
                     for excluded, kept, ref in [(63, 64, 1), (64, 63, 2)]:
                         review.locator("[data-add-duplicate]").click()
                         duplicate = review.locator("[data-duplicate-row]").last
-                        duplicate.locator('[name="transaction_id"]').select_option(str(excluded))
+                        choose_local(page, duplicate, 'transaction_id', str(excluded))
                         duplicate.locator('[data-pick-kept]').click()
                         keeper_picker = page.locator('dialog[open] [data-kept-picker]')
                         keeper_picker.locator('[data-picker-word]').fill(f'Mock audit cash {kept}')

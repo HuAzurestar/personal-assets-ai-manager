@@ -11,6 +11,7 @@ import uvicorn
 from playwright.sync_api import expect, sync_playwright
 from serve_m2_ui import prepare_app
 from browser_artifact import viewport_evidence
+from browser_choice import choose_local
 
 
 def run():
@@ -145,8 +146,8 @@ def run():
                     def add_link(amount):
                         review.locator("[data-add-link]").click()
                         link = review.locator('[data-link-row]').last
-                        link.locator('[name="allocation_ref"]').select_option(review.locator('[data-cash-row]').first.get_attribute('data-draft-id'))
-                        link.locator('[name="leg_ref"]').select_option(review.locator('[data-leg-row]').first.get_attribute('data-draft-id'))
+                        choose_local(page, link, 'allocation_ref', review.locator('[data-cash-row]').first.get_attribute('data-draft-id'))
+                        choose_local(page, link, 'leg_ref', review.locator('[data-leg-row]').first.get_attribute('data-draft-id'))
                         review.locator('[data-link-row] [name="cash_amount"]').fill(amount)
                     def publish():
                         review.locator("[data-review-preview]").click()
