@@ -7,6 +7,8 @@ import { positionTarget, linkTarget } from '../util/draft-reference.js';
 import { dateTimeField, dateTimeValue } from '../component/date-time-field.js';
 import { localChoiceMap } from '../component/local-choice.js';
 import { reviewScene, incompatibleSceneInputs } from '../util/review-scene.js';
+import { currentReviewLabel } from '../util/review-member.js';
+import { openCurrentReviews, openReviewMembers } from '../component/review-member.js';
 
 const base = "/paam/ledger/v1/review";
 const cases = [["NORMAL", "普通收支"], ["REFUND", "退款"], ["SHARED_PAYMENT", "共同费用 / AA"], ["INTERNAL_TRANSFER", "真实内部转账"], ["BORROW_REPAY", "借出、借入、收回、偿还"], ["DUPLICATE", "同一交易的重复证据"], ["POS_OPENING", "对象期初数量"], ["POS_POSITION_OPEN", "对象增加（可无现金）"], ["POS_POSITION_SETTLE", "对象减少（显式来源）"], ["POS_CREDIT_PURCHASE", "信用消费"], ["POS_CREDIT_REPAY", "信用还本"]];
@@ -145,7 +147,7 @@ export async function mountReviewWorkbench(root, params, completed) {
   host.innerHTML = `<section class="panel review-scene-shell"><h1>不可变账务审查</h1><p>Fact 不可改；每个所选 Fact 必须完整解释。现金与对象数量分区，停用保留原始内容，不造剩余默认项、不按同名猜债。</p>
     <div class="review-scene-links"><a href="#workbench/position">查询对象与显式来源腿</a> · <a href="#workbench/account">查询来源卡</a></div>
     <form class="stack review-scene-form" data-immutable-review>
-      <section data-review-step="select"><h2>1. 选择完整事实</h2><details data-scene-cash-selection open><summary data-scene-selection-summary>选择或调整完整事实</summary><div data-fact-picker></div><p data-selected-facts>未选择现金 Fact（纯数量场景允许为空）。</p></details><p data-scene-no-cash hidden>本场景只登记有据数量，不新增现金事实。</p></section>
+      <section data-review-step="select"><h2>1. 选择完整事实</h2><details data-scene-cash-selection open><summary data-scene-selection-summary>选择或调整完整事实</summary><div data-fact-picker></div><p data-selected-facts>未选择现金 Fact（纯数量场景允许为空）。</p></details><div data-current-review-selection></div><p data-scene-no-cash hidden>本场景只登记有据数量，不新增现金事实。</p></section>
       <section data-review-step="edit"><h2>2. 配置业务解释</h2><div class="review-scene-head">${select("case_code", "业务场景", cases, sceneCode)}${input("title", "审查说明", "", 'maxlength="160"')}</div><p data-scene-hint></p>
       <div data-scene-phase hidden>${select("phase", "共同费用阶段（只用于 AA）", [["ADVANCE_OUT", "我垫付：资产增加 / 现金流出"], ["COLLECT_IN", "我收回：资产减少 / 现金流入"], ["RECEIVE_IN", "他人垫付：负债增加 / 现金流入"], ["PAY_OUT", "我偿还：负债减少 / 现金流出"]], "ADVANCE_OUT")}</div>
       <details data-scene-cash><summary data-scene-cash-summary>现金分配与来源 · 展开改绑或拆分</summary><div data-cash-rows></div><button type="button" data-add-cash>增加现金拆分</button></details>
@@ -159,7 +161,7 @@ export async function mountReviewWorkbench(root, params, completed) {
   const value = (node, name) => node.querySelector(`[name="${name}"]`).value;
   const nodes = (node, selector) => [...node.querySelectorAll(selector)];
   const fail = error => { form.querySelector("[data-review-status]").textContent = `${error.code || "输入错误"}：${error.message}`; };
-  let draftSerial = 0;
+  let draftSerial = 0, selectingGroup = false, currentGroupSignature = '';
   const refReads = new Map();
   const readRef = id => {
     if (!refReads.has(String(id))) refReads.set(String(id), request(`/paam/ledger/v1/account-ref/${id}`, {signal})
@@ -170,6 +172,7 @@ export async function mountReviewWorkbench(root, params, completed) {
   const positionOptions = () => [...positions.values()].map(row => [`existing:${row.id}`, `${row.title} · ${row.unit_code} · #${row.id}`])
     .concat(nodes(draftRoot, '[data-position-draft]').map(row => [`new:${row.dataset.draftId}`, `新对象 ${value(row, 'title') || '未命名'} · ${value(row, 'unit_code')}`]));
   const refreshReferences = () => {
+    if (selectingGroup) return;
     targetChoices = localChoiceMap(positionOptions());
     nodes(legRoot, '[data-leg-row]').forEach((row, index) => {
       row.querySelector('h3').textContent = `数量腿 ${index + 1}`;
@@ -200,6 +203,22 @@ export async function mountReviewWorkbench(root, params, completed) {
     }
     form.querySelector('[data-scene-cash-summary]').textContent = `现金分配与来源 · ${cashRoot.children.length} 项拆分 · 展开改绑或拆分`;
     form.querySelector('[data-scene-duplicate] summary').textContent = `高级：明确重复证据 B → 保留 A（${duplicateRoot.children.length} 项）`;
+    const groups = new Map();
+    for (const id of selected) for (const review of facts.get(id).current_reviews || [])
+      if (review.type !== 'NORMAL_TRANSACTION') groups.set(review.id,review);
+    // Editing unrelated inputs must not replace a button between pointerdown
+    // and click when the focused field dispatches its blur/change event.
+    const signature = JSON.stringify([...groups.values()]);
+    if (signature === currentGroupSignature) return;
+    currentGroupSignature = signature;
+    const currentHost = form.querySelector('[data-current-review-selection]');
+    currentHost.replaceChildren();
+    for (const review of groups.values()) {
+      const button = document.createElement('button'); button.type = 'button';
+      button.dataset.currentReview = review.id; button.dataset.previewReadonly = '';
+      button.textContent = `当前事项：${currentReviewLabel(review)} · 查看原成员`;
+      button.onclick = () => openReviewMembers(review,groupOptions()); currentHost.append(button);
+    }
   };
   const article = (parent, kind, content) => {
     const node = document.createElement("article"); node.className = "panel stack"; node.dataset[kind] = ""; node.dataset.draftId = `draft-${++draftSerial}`;
@@ -344,16 +363,44 @@ const row = article(cashRoot, "cashRow", `<h3>现金拆分行 ${index} · Fact #
     try { id = resourceId(fact.transaction_id); } catch (error) { return fail(error); }
     if (selected.has(id)) {
       selected.delete(id); nodes(cashRoot, "[data-cash-row]").filter(row => resourceId(value(row, "transaction_id")) === id).forEach(row => row.remove());
-    } else { facts.set(id, fact); selected.add(id); addCash(fact); }
+    } else {
+      if (selected.size >= 2000) return fail(new Error('本次最多选择2000个完整事实，请明确缩小范围。'));
+      facts.set(id, fact); selected.add(id); addCash(fact);
+    }
     form.querySelector("[data-selected-facts]").textContent = `选择 ${selected.size} 个完整 Fact：${ids([...selected])}`; refreshReferences(); invalidate();
   };
+  function groupOptions() {
+    return {signal,canSelect:() => host.isConnected && route === location.hash && !signal.aborted
+      && reviewScene(sceneCode).cash && !form.querySelector('[data-review-preview]').disabled,
+      select:members => {
+        const union = new Set([...selected,...members.map(fact => resourceId(fact.transaction_id))]);
+        if (union.size > 2000) throw new Error('加入整组后超过2000个事实，选择未改变；请先明确缩小范围。');
+        // Preflight every value used by cash construction before applying the
+        // first member. Invalid legacy units/IDs must not leave half a group.
+        for (const fact of members) {
+          resourceId(fact.account_ref_id,{allowZero:true});
+          if (fact.cash_amount <= 0) throw new Error('事项包含无效现金金额，选择未改变。');
+          quantityDecimal(fact.cash_amount,fact.cash_currency_code);
+        }
+        selectingGroup = true;
+        try {
+          for (const fact of members) {
+            const id = resourceId(fact.transaction_id); facts.set(id,fact);
+            if (!selected.has(id)) {selected.add(id); addCash(fact);}
+          }
+        } finally {selectingGroup = false;}
+        form.querySelector('[data-selected-facts]').textContent = `选择 ${selected.size} 个完整 Fact：${ids([...selected])}`;
+        refreshReferences(); invalidate();
+      }};
+  }
   let pickerMounted = false;
   const ensureFactPicker = async () => {
     if (pickerMounted || !reviewScene(sceneCode).cash) return;
     pickerMounted = true;
     await mountPicker(form.querySelector("[data-fact-picker]"), { url: "/paam/ledger/v1/candidate", searchKeys: ["summary"], signal,
-    describe: fact => `Fact #${fact.transaction_id} ${fact.summary} / ${money(fact)} ${fact.cash_direction} / 当前覆盖 ${fact.coverage.state} / 默认身份 ${fact.coverage.default_identity_state}`,
+    describe: fact => `Fact #${fact.transaction_id} ${fact.summary} / ${money(fact)} ${fact.cash_direction} / 当前覆盖 ${fact.coverage.state} / 原默认身份 ${fact.coverage.default_identity_state} / ${fact.current_reviews.length === 1 ? `当前事项：${currentReviewLabel(fact.current_reviews[0])}` : `当前有效事项 ${fact.current_reviews.length} 个`}`,
     selected: fact => selected.has(fact.transaction_id), choose,
+    actions: fact => fact.current_reviews.length ? [{label:`查看当前事项（${fact.current_reviews.length}）`,choose:row => openCurrentReviews(row,groupOptions())}] : [],
     });
   };
   function draftCounts() {

@@ -378,8 +378,12 @@ function listSignature() {
   return `${context.pageLabel}|${context.rows.map((row) => `${row.kind}:${row.id}`).join(",")}`;
 }
 
-export async function openInspection(kind, id, bindActions) {
-  if (current?.dialog.isConnected && current.dialog.open) return current.navigate(kind, Number(id), true, true);
+export async function openInspection(kind, id, bindActions, {readOnly = false, signal} = {}) {
+  if (signal?.aborted) return;
+  if (current?.dialog.isConnected && current.dialog.open) {
+    if (current.readOnly === readOnly) return current.navigate(kind, Number(id), true, true);
+    current.dialog.close();
+  }
   const opener = document.activeElement;
   let listContext = readListContext();
   let rail = listContext.rows;
@@ -464,8 +468,8 @@ export async function openInspection(kind, id, bindActions) {
         dialog.querySelector("[data-inspect-subtitle]").textContent = view.subtitle;
         dialog.querySelector("[data-inspect-hero]").textContent = view.hero;
         const actions = dialog.querySelector("[data-inspect-actions]");
-        actions.innerHTML = view.actions;
-        bindActions(actions);
+        actions.innerHTML = readOnly ? '<span>原事项及关联证据只读；关闭返回草稿，不修改已发布内容。</span>' : view.actions;
+        if (!readOnly) bindActions(actions);
         body.innerHTML = view.body;
         view.presentation.mount(body);
         if (view.kind === "file") mountFileRows(body, data.rows, bindActions);
@@ -509,13 +513,16 @@ export async function openInspection(kind, id, bindActions) {
   }
   renderRail();
   syncLayout();
-  current = { dialog, navigate };
+  current = { dialog, navigate, readOnly };
   const closeOnRoute = () => { if (!listPaging) dialog.close(); };
+  const closeOnAbort = () => {if (dialog.open) dialog.close();};
+  signal?.addEventListener('abort',closeOnAbort,{once:true});
   const resize = () => syncLayout();
   dialog.addEventListener("close", () => {
     version++;
     window.removeEventListener("hashchange", closeOnRoute);
     window.removeEventListener("resize", resize);
+    signal?.removeEventListener('abort',closeOnAbort);
     dialog.remove();
     if (current?.dialog === dialog) current = null;
     if (!document.querySelector(".inspection-workspace[open]")) {

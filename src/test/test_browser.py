@@ -25,6 +25,7 @@ import pytest
     "verify_pirc35_unit.py",
     "verify_pirc35_filter.py",
     "verify_pirc35_scene.py",
+    "verify_pirc35_member.py",
 ])
 def test_browser_scenario(scenario):
     source = Path(__file__).parent / scenario

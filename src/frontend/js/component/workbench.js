@@ -100,7 +100,7 @@ export function writeFailure(host, error) {
 
 // List pages stay explicit; text search uses the same serial, cancellable
 // automatic scan as Fact/Flow/Review, including zero-hit candidate batches.
-export function mountPicker(host, { url, searchKeys = [], describe, selected = () => false, choose, signal, filter }) {
+export function mountPicker(host, { url, searchKeys = [], describe, selected = () => false, choose, signal, filter, actions = () => [] }) {
   let page = 1, result, controller, busy = false, generation = 0;
   const identity = row => row.id ?? row.transaction_id;
   const scan = candidateScan(url, 'picker', identity, { signal });
@@ -119,13 +119,21 @@ export function mountPicker(host, { url, searchKeys = [], describe, selected = (
   }
   function paint(next, searching) {
     result = next;
-    host.querySelector("[data-picker-items]").innerHTML = next.items.map(row => `<article class="picker-list-row"><span>${esc(describe(row))}</span><button type="button" data-picker-id="${identity(row)}">${selected(row) ? "移除选择" : "选择"}</button></article>`).join("")
+    const extra = next.items.map(actions);
+    host.querySelector("[data-picker-items]").innerHTML = next.items.map((row,index) => `<article class="picker-list-row"><span>${esc(describe(row))}</span><div class="picker-row-actions"><button type="button" data-picker-id="${identity(row)}">${selected(row) ? "移除选择" : "选择"}</button>${extra[index].map((action,key) => `<button type="button" data-picker-action="${index}:${key}">${esc(action.label)}</button>`).join('')}</div></article>`).join("")
       || `<p>${searching && next.has_more ? '尚无命中；空批次不代表扫描结束。' : '没有匹配项。'}</p>`;
     host.querySelector("[data-picker-count]").textContent = searching ? '' : `第 ${next.page_index} 页，共 ${next.total} 项`;
     host.querySelectorAll("[data-picker-id]").forEach(button => {
       button.onclick = () => {
         const row = next.items.find(row => String(identity(row)) === button.dataset.pickerId);
         choose(row); button.textContent = selected(row) ? "移除选择" : "选择";
+      };
+    });
+    host.querySelectorAll('[data-picker-action]').forEach(button => {
+      button.onclick = () => {
+        if (!host.isConnected || signal?.aborted) return;
+        const [index,key] = button.dataset.pickerAction.split(':').map(Number);
+        extra[index][key].choose(next.items[index]);
       };
     });
     host.querySelector('[data-picker-scan]').innerHTML = searching ? scanControls('picker', next) : '';

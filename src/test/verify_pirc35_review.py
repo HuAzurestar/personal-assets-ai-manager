@@ -107,7 +107,9 @@ def run():
                     candidate = review.locator("[data-fact-picker] [data-picker-items] article").first
                     assert candidate.get_attribute("class") == "picker-list-row"
                     assert candidate.locator("span").bounding_box()["width"] > candidate.bounding_box()["width"] * .65
-                    assert candidate.locator("button").bounding_box()["width"] < 140
+                    expect(candidate.locator("button")).to_have_count(2)
+                    for button in candidate.locator("button").all():
+                        assert button.bounding_box()["width"] < 140
                     assert candidate.bounding_box()["height"] <= 80
                     review.locator('[data-scene-selection-summary]').click()
                     review.locator('[name="title"]').fill("Mock complete 60-Fact impact")

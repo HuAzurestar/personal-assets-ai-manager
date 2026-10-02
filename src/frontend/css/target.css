@@ -1443,7 +1443,13 @@
 [data-picker-items] { display:grid; gap:0; }
 .picker-list-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:12px; min-height:48px; padding:6px 10px; border-bottom:1px solid var(--row-line); background:var(--subtle); }
 .picker-list-row > span { min-width:0; overflow-wrap:anywhere; font-size:13px; line-height:1.5; }
-.picker-list-row > button { justify-self:end; width:auto; min-height:34px; padding:5px 10px; font-size:12px; white-space:nowrap; }
+.picker-row-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px; max-width:240px; }
+.picker-row-actions > button { width:auto; min-height:34px; padding:5px 10px; font-size:12px; white-space:nowrap; }
+.review-member-row { display:grid; gap:3px; padding:8px 10px; border-bottom:1px solid var(--row-line); font-size:13px; overflow-wrap:anywhere; }
+.review-member-row > span { font-size:12px; color:var(--muted); }
+.review-member-tools { position:sticky; top:0; padding:8px 0; background:var(--surface); z-index:1; }
+[data-current-review-selection], [data-current-groups] { display:flex; flex-wrap:wrap; gap:6px; }
+[data-current-review-selection] > button { min-height:34px; padding:5px 10px; font-size:12px; }
 .import-batch-row { display:grid; grid-template-columns:24px minmax(200px,1fr) 120px minmax(170px,.7fr) 170px; grid-template-areas:"select main amount source decision" "issue issue issue issue issue"; align-items:center; gap:0 12px; padding:8px 10px; border-bottom:1px solid var(--row-line); background:var(--subtle); font-size:12px; line-height:1.45; }
 .import-batch-row > * { min-width:0; }
 .import-batch-row label { margin:0; gap:0; font-size:12px; }
@@ -1464,6 +1470,12 @@
 }
 @media(max-width:560px) {
   .picker-list-row { gap:8px; padding:6px; }
+  .picker-list-row:has([data-picker-action]) { grid-template-columns:minmax(0,1fr); }
+  .picker-list-row:has([data-picker-action]) .picker-row-actions { max-width:none; justify-content:flex-start; }
+  .review-member-tools { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; }
+  .review-member-tools > [data-member-count] { order:-1; grid-column:1 / -1; font-size:12px; }
+  .review-member-tools > button { min-width:0; min-height:44px; padding:5px 6px; font-size:12px; white-space:normal; }
+  .review-member-tools > [data-select-review-group] { grid-column:span 2; }
   .import-batch-row { grid-template-columns:24px minmax(0,1fr); grid-template-areas:"select main" ". amount" ". source" ". decision" "issue issue"; }
   .import-batch-amount { text-align:left; }
 }

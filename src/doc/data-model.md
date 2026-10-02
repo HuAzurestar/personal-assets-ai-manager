@@ -69,7 +69,9 @@ v1共用规范PO。标准列表 `{items,total,page_index,page_size}`、页≤100
 
 CandidatePO增加只读`current_reviews`：当前有效ReviewPO及`member_count`、`allocated_cash_amount`（本Fact在该Review内的完整现金分配量，单位沿候选cash_currency_code）。原`default_review`仍定位历史原系统默认，不冒充当前人工解释。先取本页≤100 Fact，再一次联读当前摘要；成员数按该Review全部不同Fact计算，不按当前页/筛选计数，不逐Fact SQL。同Review多个拆分合并为一项，遗留多Review分配逐项披露，新写仍要求每Review完整覆盖所选Fact。摘要标题脱敏；本页摘要组超过4000或响应超过2MiB明确DETAIL_LIMIT，建议减小页量，不返回截断当前归属。
 
-只读`GET /paam/ledger/v1/review/{review_id}/fact/list`返回该不可变Review的全部不同原Fact成员，条目复用CandidatePO并附当前归属，不加载原payload/Review历史；停用后原成员仍可分页查看。标准四键、默认Fact ID升序、页≤100，Filter仅id等于/不等于、Sorter仅id、不支持非空Query。原成员与当前解释须分开理解，不能因新归属变化删除旧成员。COUNT/PAGE/摘要同快照、可信引用及30秒SQL/Python预算共用；接口不建立新财务表/状态/版本或写口。R08前端完整事项入口及整组操作仍须实际浏览器验收，单接口通过不等于闭环完成。
+只读`GET /paam/ledger/v1/review/{review_id}/fact/list`返回该不可变Review的全部不同原Fact成员，条目复用CandidatePO并附当前归属，不加载原payload/Review历史；停用后原成员仍可分页查看。标准四键、默认Fact ID升序、页≤100，Filter仅id等于/不等于、Sorter仅id、不支持非空Query。原成员与当前解释须分开理解，不能因新归属变化删除旧成员。COUNT/PAGE/摘要同快照、可信引用及30秒SQL/Python预算共用；接口不建立新财务表/状态/版本或写口。
+
+R08前端候选及已选人工事项提供原成员入口，多个遗留有效组全部可达。查看不改草稿，原现金/数量复用只读Inspection及既有超大关系分页。显式整组选择串行读取≤100条原成员页，开始/结束重验Review状态和updated_time、逐成员当前归属；最多2000成员及累计2MiB/30秒，失败/取消/变化/超限不部分应用，合并所选仍限2000。成功保留已有现金草稿及稳定引用，仅新增缺少成员，旧预览失效；发布仍受独立扩展Review组预算，不因为可读大组而放宽。前端/接口定向证据不能替代固定最终SHA的22项回归和用户验收。
 
 标签沿既有三表。停用Review保留旧关系，新解释仅唯一完整等义输出继承活动标签；拆分/合并/类型或数量语义变化默认待核对。DUPLICATE排除自动分析；归档不冒充活动值。仅唯一且当前一致的已批准请求可证明AUTO_RULE，否则UNKNOWN，不凭值伪称MANUAL。
 
