@@ -6,6 +6,7 @@ import { mountTagImpact } from "../component/tag-impact.js";
 import { positionTarget, linkTarget } from '../util/draft-reference.js';
 import { dateTimeField, dateTimeValue } from '../component/date-time-field.js';
 import { localChoiceMap } from '../component/local-choice.js';
+import { reviewScene, incompatibleSceneInputs } from '../util/review-scene.js';
 
 const base = "/paam/ledger/v1/review";
 const cases = [["NORMAL", "普通收支"], ["REFUND", "退款"], ["SHARED_PAYMENT", "共同费用 / AA"], ["INTERNAL_TRANSFER", "真实内部转账"], ["BORROW_REPAY", "借出、借入、收回、偿还"], ["DUPLICATE", "同一交易的重复证据"], ["POS_OPENING", "对象期初数量"], ["POS_POSITION_OPEN", "对象增加（可无现金）"], ["POS_POSITION_SETTLE", "对象减少（显式来源）"], ["POS_CREDIT_PURCHASE", "信用消费"], ["POS_CREDIT_REPAY", "信用还本"]];
@@ -49,9 +50,15 @@ function bindPublication(form, build, facts, completed, positions = new Map(), l
   };
   form.addEventListener("input", invalidate);
   form.addEventListener("change", invalidate);
-  const setEditing = disabled => form.querySelectorAll("input, textarea, select, button").forEach(node => {
-    if (!node.hasAttribute?.("data-preview-readonly")) node.disabled = disabled;
-  });
+  let disabledBeforeWrite = new Set();
+  const setEditing = disabled => {
+    if (disabled) disabledBeforeWrite = new Set();
+    form.querySelectorAll("input, textarea, select, button").forEach(node => {
+      if (node.hasAttribute?.("data-preview-readonly")) return;
+      if (disabled && node.disabled) disabledBeforeWrite.add(node);
+      node.disabled = disabled || disabledBeforeWrite.has(node);
+    });
+  };
   previewButton.onclick = async () => {
     if (writing || uncertain || previewing) return;
     const issued = ++generation; plan = null; submit.disabled = true; previewing = true; previewButton.disabled = true;
@@ -64,6 +71,9 @@ function bindPublication(form, build, facts, completed, positions = new Map(), l
       if (next.tag_effect.mappings?.length) mountTagImpact(form.querySelector("[data-tag-impact]"), next.tag_effect);
       status.textContent = next.blocking_issues.length ? "有阻塞问题，不能提交。" : "请核对现金、数量、整体冲突和默认恢复后确认。";
       submit.disabled = !!next.blocking_issues.length;
+      // Scene pages keep narrow-screen actions within reach; bring the actual
+      // complete server impact into view before the user can confirm it.
+      form.querySelector('[data-review-step="preview"]')?.scrollIntoView({block:'start'});
     } catch (error) { if (form.isConnected && issued === generation) status.textContent = `${error.code || "预览失败"}：${error.message}`; }
     finally { previewing = false; if (form.isConnected) previewButton.disabled = uncertain; }
   };
@@ -127,18 +137,24 @@ export async function mountReviewWorkbench(root, params, completed) {
   const signal = controller.signal, route = location.hash;
   const host = root.querySelector("[data-review-workflow]");
   if (!host) return;
+  let sceneCode = params.get('case_code') || 'NORMAL';
+  reviewScene(sceneCode);
+  const preselected = new Set((params.get("facts") || "").split(",").filter(Boolean).map(id => resourceId(id)));
+  if (preselected.size && !reviewScene(sceneCode).cash) throw new Error('期初数量场景不能携带现金事实，请移除 facts 条件');
   const facts = new Map(), selected = new Set(), positions = new Map();
-  host.innerHTML = `<section class="panel"><h1>不可变账务审查</h1><p>Fact 不可改；每个所选 Fact 必须完整解释。现金与对象数量分区，停用保留原始内容，不造剩余默认项、不按同名猜债。</p>
-    <a href="#workbench/position">查询对象与显式来源腿</a> · <a href="#workbench/account">查询来源卡</a>
-    <form class="stack" data-immutable-review>${select("case_code", "业务场景", cases, params.get("case_code") || "NORMAL")}${input("title", "审查说明", "", 'maxlength="160"')}
-      ${select("phase", "共同费用阶段（只用于 AA）", [["ADVANCE_OUT", "我垫付：资产增加 / 现金流出"], ["COLLECT_IN", "我收回：资产减少 / 现金流入"], ["RECEIVE_IN", "他人垫付：负债增加 / 现金流入"], ["PAY_OUT", "我偿还：负债减少 / 现金流出"]], "ADVANCE_OUT")}
-      <h2>1. 现金事实与完整分配</h2><div data-fact-picker></div><p data-selected-facts>未选择现金 Fact（纯数量场景允许为空）。</p><div data-cash-rows></div><button type="button" data-add-cash>增加现金拆分</button>
-      <h2>2. 独立对象与数量</h2><p>可选已有对象，或在本次发布中创建新对象。OUT 必须指定该对象原始 IN 来源腿；不会自动 FIFO。</p>
+  host.innerHTML = `<section class="panel review-scene-shell"><h1>不可变账务审查</h1><p>Fact 不可改；每个所选 Fact 必须完整解释。现金与对象数量分区，停用保留原始内容，不造剩余默认项、不按同名猜债。</p>
+    <div class="review-scene-links"><a href="#workbench/position">查询对象与显式来源腿</a> · <a href="#workbench/account">查询来源卡</a></div>
+    <form class="stack review-scene-form" data-immutable-review>
+      <section data-review-step="select"><h2>1. 选择完整事实</h2><details data-scene-cash-selection open><summary data-scene-selection-summary>选择或调整完整事实</summary><div data-fact-picker></div><p data-selected-facts>未选择现金 Fact（纯数量场景允许为空）。</p></details><p data-scene-no-cash hidden>本场景只登记有据数量，不新增现金事实。</p></section>
+      <section data-review-step="edit"><h2>2. 配置业务解释</h2><div class="review-scene-head">${select("case_code", "业务场景", cases, sceneCode)}${input("title", "审查说明", "", 'maxlength="160"')}</div><p data-scene-hint></p>
+      <div data-scene-phase hidden>${select("phase", "共同费用阶段（只用于 AA）", [["ADVANCE_OUT", "我垫付：资产增加 / 现金流出"], ["COLLECT_IN", "我收回：资产减少 / 现金流入"], ["RECEIVE_IN", "他人垫付：负债增加 / 现金流入"], ["PAY_OUT", "我偿还：负债减少 / 现金流出"]], "ADVANCE_OUT")}</div>
+      <details data-scene-cash><summary data-scene-cash-summary>现金分配与来源 · 展开改绑或拆分</summary><div data-cash-rows></div><button type="button" data-add-cash>增加现金拆分</button></details>
+      <section data-scene-quantity hidden><h3>独立对象与有据数量</h3><p>可选已有对象，或在本次发布中创建新对象。OUT 必须指定该对象原始 IN 来源腿；不会自动 FIFO。</p>
       <div class="actions"><button type="button" data-find-position>查找已有对象</button><button type="button" data-new-position>本次发布新建对象</button></div>
-      <div data-position-choices></div><div data-position-drafts></div><div data-leg-rows></div><button type="button" data-add-leg>增加数量腿</button>
-      <h2>3. 现金 → 数量腿的款项归因</h2><p>必须显式选择现金拆分行和数量腿。金额来自现金币种；第二段不新增现金。</p><div data-link-rows></div><button type="button" data-add-link>增加款项归因</button>
-      <h2>4. 重复证据（仅显式 A / B）</h2><p>B 不再计现金，原始证据保留；A 与 B 必须已核对不同来源卡、同金额、币种、方向和时间。</p><div data-duplicate-rows></div><button type="button" data-add-duplicate>增加重复证据 B → 保留 A</button>
-      <p role="status" data-review-status></p><div data-review-impact></div><div class="actions"><button type="button" data-review-preview>服务端预览完整变更</button><button type="submit" data-review-command disabled>确认当前预览并发布</button></div></form></section>`;
+      <div data-position-choices></div><div data-position-drafts></div><div data-leg-rows></div><button type="button" data-add-leg>增加数量腿</button></section>
+      <section data-scene-link hidden><h3>现金 → 数量腿的款项归因</h3><p>必须显式选择现金拆分行和数量腿。金额来自现金币种；第二段不新增现金。</p><div data-link-rows></div><button type="button" data-add-link>增加款项归因</button></section>
+      <details data-scene-duplicate hidden><summary>高级：明确重复证据 B → 保留 A</summary><p>B 不再计现金，原始证据保留；A 与 B 必须已核对不同来源卡、同金额、币种、方向和时间。</p><div data-duplicate-rows></div><button type="button" data-add-duplicate>增加重复证据 B → 保留 A</button></details>
+      </section><section data-review-step="preview"><h2>3. 核对整体影响并发布</h2><p role="status" data-review-status></p><div data-review-impact></div><div class="actions"><button type="button" data-review-preview>服务端预览完整变更</button><button type="submit" data-review-command disabled>确认当前预览并发布</button></div></section></form></section>`;
   const form = host.querySelector("form"), cashRoot = form.querySelector("[data-cash-rows]"), legRoot = form.querySelector("[data-leg-rows]"), draftRoot = form.querySelector("[data-position-drafts]"), linkRoot = form.querySelector("[data-link-rows]"), duplicateRoot = form.querySelector("[data-duplicate-rows]");
   const value = (node, name) => node.querySelector(`[name="${name}"]`).value;
   const nodes = (node, selector) => [...node.querySelectorAll(selector)];
@@ -177,6 +193,13 @@ export async function mountReviewWorkbench(root, params, completed) {
       if (refreshLocalChoice(row, 'transaction_id', factChoices, '选择本次排除的事实'))
         setNamedChoice(row, 'account_ref_id', '', '请重新选择 B 的可靠来源卡', false);
     });
+    form.querySelector('[data-scene-selection-summary]').textContent = `已选 ${selected.size} 个完整事实 · 展开调整范围`;
+    if (selected.size === 1) {
+      const fact = facts.get([...selected][0]);
+      form.querySelector('[data-scene-selection-summary]').textContent += ` · ${fact.summary} · ${money(fact)} ${fact.cash_direction}`;
+    }
+    form.querySelector('[data-scene-cash-summary]').textContent = `现金分配与来源 · ${cashRoot.children.length} 项拆分 · 展开改绑或拆分`;
+    form.querySelector('[data-scene-duplicate] summary').textContent = `高级：明确重复证据 B → 保留 A（${duplicateRoot.children.length} 项）`;
   };
   const article = (parent, kind, content) => {
     const node = document.createElement("article"); node.className = "panel stack"; node.dataset[kind] = ""; node.dataset.draftId = `draft-${++draftSerial}`;
@@ -195,9 +218,11 @@ export async function mountReviewWorkbench(root, params, completed) {
   };
   const addCash = (fact, amount = fact.cash_amount) => {
     const index = nodes(cashRoot, "[data-cash-row]").length + 1;
-    const defaultType = ["BORROW_REPAY", "SHARED_PAYMENT", "POS_CREDIT_REPAY"].includes(form.elements.case_code.value) ? "ASSET_LIABILITY" : form.elements.case_code.value === "INTERNAL_TRANSFER" ? "ACCOUNT_TRANSFER" : form.elements.case_code.value === "DUPLICATE" ? "DUPLICATE" : "TRANSACTION";
+    const scene = reviewScene(sceneCode);
+    if (!scene.cash) return fail(new Error('本场景不接受现金事实或拆分'));
+    const defaultType = scene.defaultType;
 const row = article(cashRoot, "cashRow", `<h3>现金拆分行 ${index} · Fact #${fact.transaction_id}</h3><p>${esc(fact.summary)} · ${esc(fact.cash_direction)} · ${esc(date(fact.occurred_time))} · ${esc(fact.cash_currency_code)}（方向／币种／时间不可改）</p>
-      <input type="hidden" name="transaction_id" value="${fact.transaction_id}">${select("economic_type", "经济分类", Object.keys(typeNames).filter(key => ["TRANSACTION", "ACCOUNT_TRANSFER", "ASSET_LIABILITY", "DUPLICATE"].includes(key)).map(key => [key, typeNames[key]]), defaultType)}
+      <input type="hidden" name="transaction_id" value="${fact.transaction_id}">${select("economic_type", "经济分类", scene.economicTypes.map(key => [key, typeNames[key]]), defaultType)}
       ${input("cash_amount", "分配金额", quantityDecimal(amount, fact.cash_currency_code), 'inputmode="decimal" required')}${namedChoice('account_ref_id', '具体本方来源卡', {value: fact.account_ref_id, text: fact.account_ref_id ? '正在读取来源名称…' : '来源未识别', pickAttribute: 'data-pick-ref', clear: '明确来源未知'})}`);
     bindNamedChoice(row, 'account_ref_id', {url: '/paam/ledger/v1/account-ref', title: '选择具体来源卡', signal,
       allowZero: true, zeroLabel: '来源未识别', pickerAttribute: 'data-ref-picker', load: readRef});
@@ -210,6 +235,8 @@ const row = article(cashRoot, "cashRow", `<h3>现金拆分行 ${index} · Fact #
     positions.set(row.id, row); refreshPositionChoices(); invalidate(); return row;
   };
   const build = () => {
+    if (form.elements.case_code.value !== sceneCode) throw new Error('请先完成场景切换，再预览');
+    if (Object.keys(incompatibleSceneInputs(sceneCode, draftCounts())).length) throw new Error('存在不适用于当前场景的输入，请重新核对');
     const cashRows = nodes(cashRoot, '[data-cash-row]'), draftRows = nodes(draftRoot, '[data-position-draft]'), legRows = nodes(legRoot, '[data-leg-row]');
     const allocations = cashRows.map(row => {
       const transaction_id = resourceId(value(row, "transaction_id")), fact = facts.get(transaction_id);
@@ -254,6 +281,7 @@ const row = article(cashRoot, "cashRow", `<h3>现金拆分行 ${index} · Fact #
     };
   };
   form.querySelector("[data-find-position]").onclick = () => {
+    if (!reviewScene(sceneCode).quantity) return fail(new Error('本场景不接受数量对象'));
     const node = workbenchDialog("分页选择对象", '<div data-position-picker></div>');
     mountPicker(node.querySelector("[data-position-picker]"), { url: "/paam/financial/v1/position", searchKeys: ["title"], signal,
       describe: row => `#${row.id} ${row.title} / ${row.type} / ${row.unit_code} / ${row.status}`,
@@ -261,10 +289,12 @@ const row = article(cashRoot, "cashRow", `<h3>现金拆分行 ${index} · Fact #
     });
   };
   form.querySelector("[data-new-position]").onclick = () => {
+    if (!reviewScene(sceneCode).quantity) return fail(new Error('本场景不接受数量对象'));
     const row = article(draftRoot, "positionDraft", `<h3>本次新对象 ${nodes(draftRoot, "[data-position-draft]").length + 1}</h3>${positionFields()}`);
     bindPartyPicker(row, signal); refreshReferences();
   };
   form.querySelector("[data-add-leg]").onclick = () => {
+    if (!reviewScene(sceneCode).quantity) return fail(new Error('本场景不接受数量腿'));
     const targets = positionOptions();
     if (!targets.length) return fail(new Error("先读取已有对象或填写本次新对象"));
     const opening = form.elements.case_code.value === "POS_OPENING";
@@ -291,12 +321,14 @@ const row = article(cashRoot, "cashRow", `<h3>现金拆分行 ${index} · Fact #
     refreshReferences();
   };
   form.querySelector("[data-add-link]").onclick = () => {
+    if (!reviewScene(sceneCode).link) return fail(new Error('本场景不接受款项归因'));
     const row = article(linkRoot, "linkRow", `${namedChoice('allocation_ref', '明确现金拆分项', {pick: '选择现金拆分项'})}${namedChoice('leg_ref', '明确数量腿', {pick: '选择数量腿'})}${input("cash_amount", "归因现金金额（币种取自现金行）", "", 'inputmode="decimal" required')}`);
     bindLocalChoice(row, 'allocation_ref', {title: '选择当前草稿现金拆分项', choices: () => cashChoices, signal});
     bindLocalChoice(row, 'leg_ref', {title: '选择当前草稿数量腿', choices: () => legChoices, signal});
     refreshReferences();
   };
   form.querySelector("[data-add-duplicate]").onclick = () => {
+    if (!reviewScene(sceneCode).duplicate) return fail(new Error('本场景不接受重复证据'));
     const row = article(duplicateRoot, 'duplicateRow', `${namedChoice('transaction_id', '重复证据 B（本次所选事实）', {pick: '选择本次排除的事实'})}${namedChoice('kept_transaction_id', '保留计现金 A', {pick: '查找保留交易', pickAttribute: 'data-pick-kept'})}${namedChoice('account_ref_id', '明确 B 来源卡', {pick: '查找 B 来源卡', pickAttribute: 'data-pick-duplicate-ref'})}`);
     bindLocalChoice(row, 'transaction_id', {title: '选择当前草稿排除的事实', choices: () => factChoices, signal});
     bindNamedChoice(row, 'kept_transaction_id', {url: '/paam/ledger/v1/candidate', title: '明确保留的真实交易', signal,
@@ -306,8 +338,8 @@ const row = article(cashRoot, "cashRow", `<h3>现金拆分行 ${index} · Fact #
     row.querySelector('[name="transaction_id"]').onchange = () => setNamedChoice(row, 'account_ref_id', '', '请重新选择 B 来源卡');
     refreshReferences();
   };
-  const preselected = new Set((params.get("facts") || "").split(",").filter(Boolean).map(id => resourceId(id)));
   const choose = fact => {
+    if (!reviewScene(sceneCode).cash) return fail(new Error('本场景不接受现金事实'));
     let id;
     try { id = resourceId(fact.transaction_id); } catch (error) { return fail(error); }
     if (selected.has(id)) {
@@ -315,14 +347,66 @@ const row = article(cashRoot, "cashRow", `<h3>现金拆分行 ${index} · Fact #
     } else { facts.set(id, fact); selected.add(id); addCash(fact); }
     form.querySelector("[data-selected-facts]").textContent = `选择 ${selected.size} 个完整 Fact：${ids([...selected])}`; refreshReferences(); invalidate();
   };
-  await mountPicker(form.querySelector("[data-fact-picker]"), { url: "/paam/ledger/v1/candidate", searchKeys: ["summary"], signal,
+  let pickerMounted = false;
+  const ensureFactPicker = async () => {
+    if (pickerMounted || !reviewScene(sceneCode).cash) return;
+    pickerMounted = true;
+    await mountPicker(form.querySelector("[data-fact-picker]"), { url: "/paam/ledger/v1/candidate", searchKeys: ["summary"], signal,
     describe: fact => `Fact #${fact.transaction_id} ${fact.summary} / ${money(fact)} ${fact.cash_direction} / 当前覆盖 ${fact.coverage.state} / 默认身份 ${fact.coverage.default_identity_state}`,
     selected: fact => selected.has(fact.transaction_id), choose,
-  });
+    });
+  };
+  function draftCounts() {
+    return {facts:selected.size, cash:cashRoot.children.length, drafts:draftRoot.children.length,
+      legs:legRoot.children.length, links:linkRoot.children.length, duplicates:duplicateRoot.children.length};
+  }
+  function applyScene(code) {
+    const previousDefault = reviewScene(sceneCode).defaultType;
+    const scene = reviewScene(code), discarded = incompatibleSceneInputs(code, draftCounts());
+    if (discarded.facts) selected.clear();
+    for (const [key, area] of Object.entries({cash:cashRoot, drafts:draftRoot, legs:legRoot, links:linkRoot, duplicates:duplicateRoot}))
+      if (discarded[key]) area.replaceChildren();
+    sceneCode = code;
+    for (const key of ['cash', 'quantity', 'link', 'phase', 'duplicate']) form.querySelector(`[data-scene-${key}]`).hidden = !scene[key];
+    form.querySelector('[data-scene-cash]').open = scene.quantity;
+    form.querySelector('[data-scene-cash-selection]').hidden = !scene.cash;
+    if (!selected.size) form.querySelector('[data-scene-cash-selection]').open = true;
+    form.querySelector('[data-scene-no-cash]').hidden = scene.cash;
+    form.querySelector('[data-scene-duplicate]').open = code === 'DUPLICATE' || duplicateRoot.children.length > 0;
+    form.elements.phase.disabled = !scene.phase;
+    if (!scene.phase) form.elements.phase.value = 'ADVANCE_OUT';
+    form.querySelector('[data-scene-hint]').textContent = scene.hint;
+    nodes(cashRoot, '[name="economic_type"]').forEach(field => {
+      const current = field.value !== previousDefault && scene.economicTypes.includes(field.value) ? field.value : scene.defaultType;
+      field.replaceChildren(...scene.economicTypes.map(key => new Option(typeNames[key], key, false, key === current)));
+    });
+    form.querySelector('[data-selected-facts]').textContent = `选择 ${selected.size} 个完整 Fact：${ids([...selected])}`;
+    refreshReferences(); invalidate();
+    form.querySelector('[data-review-impact]').replaceChildren();
+  }
+  form.elements.case_code.onchange = () => {
+    const next = form.elements.case_code.value, discarded = incompatibleSceneInputs(next, draftCounts());
+    const apply = () => {applyScene(next); ensureFactPicker().catch(fail);};
+    if (!Object.keys(discarded).length) return apply();
+    const names = {facts:'个完整事实', cash:'个现金拆分', drafts:'个新对象', legs:'条数量腿', links:'条款项归因', duplicates:'条重复证据'};
+    const node = workbenchDialog('确认业务场景切换', `<div data-scene-switch><p>新场景不适用的草稿将移除：${Object.entries(discarded).map(([key,count]) => `${count} ${names[key]}`).join('、')}。尚未发布，不改持久账务；旧预览已经失效。</p><button type="button" data-scene-cancel>保留原场景和输入</button><button type="button" data-scene-apply>移除不适用输入并切换</button></div>`);
+    let accepted = false;
+    const abort = () => {if (node.open) node.close();};
+    signal.addEventListener('abort', abort, {once:true});
+    node.addEventListener('close', () => {
+      signal.removeEventListener('abort', abort);
+      if (!accepted) form.elements.case_code.value = sceneCode;
+    }, {once:true});
+    node.querySelector('[data-scene-cancel]').onclick = () => node.close();
+    node.querySelector('[data-scene-apply]').onclick = () => {accepted = true; apply(); node.close();};
+  };
+  applyScene(sceneCode);
+  await ensureFactPicker();
   for (const id of preselected) {
     const page = await request(`/paam/ledger/v1/candidate/list?${new URLSearchParams({ page_size: "20", filter: JSON.stringify({ key: "id", op: "=", val: id }) })}`, { signal });
     if (!host.isConnected || route !== location.hash) return;
     if (page.items[0]) choose(page.items[0]);
   }
+  if (preselected.size && selected.size) form.querySelector('[data-scene-cash-selection]').open = false;
   if (params.get("position")) await readPosition(params.get("position"));
 }

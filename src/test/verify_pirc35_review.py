@@ -103,11 +103,13 @@ def run():
                     review = page.locator("[data-immutable-review]")
                     expect(review.locator("[data-cash-row]")).to_have_count(60, timeout=30000)
                     # R02: the shared Fact picker gives the summary the main width.
+                    review.locator('[data-scene-selection-summary]').click()
                     candidate = review.locator("[data-fact-picker] [data-picker-items] article").first
                     assert candidate.get_attribute("class") == "picker-list-row"
                     assert candidate.locator("span").bounding_box()["width"] > candidate.bounding_box()["width"] * .65
                     assert candidate.locator("button").bounding_box()["width"] < 140
                     assert candidate.bounding_box()["height"] <= 80
+                    review.locator('[data-scene-selection-summary]').click()
                     review.locator('[name="title"]').fill("Mock complete 60-Fact impact")
                     with page.expect_response("**/paam/ledger/v1/review/preview") as response:
                         review.locator("[data-review-preview]").click()
@@ -147,6 +149,9 @@ def run():
                     assert counts() == before
                     expect(review.locator("[data-review-status]")).to_contain_text("本次未提交")
                     expect(review.locator('[name="title"]')).to_have_value("Mock complete 60-Fact impact")
+                    # Known rollback restores existing disabled controls too;
+                    # irrelevant AA fields must not be enabled in NORMAL.
+                    expect(review.locator('[name="phase"]')).to_be_disabled()
                     expect(review.locator("[data-review-preview]")).to_be_enabled()
                     expect(review.locator("[data-review-command]")).to_be_disabled()
                     review.locator("[data-review-preview]").click()

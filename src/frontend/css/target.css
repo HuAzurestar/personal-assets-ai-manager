@@ -1884,6 +1884,40 @@
 /* Account metadata remains three identities, but only source cards are the
    primary list. Directories live in bounded, searchable dialogs. */
 .account-workspace { display:grid; grid-template-columns:230px minmax(0,1fr); gap:16px; align-items:start; }
+/* Scenes use three ordered sections, not every possible financial structure
+   as mandatory input. Preserve complete text and keyboard access. */
+.review-scene-shell > h1 { margin:0 0 8px; font-size:22px; }
+.review-scene-shell > p,.review-scene-links { margin:8px 0; font-size:12px; line-height:1.6; }
+.target-shell .review-scene-form { gap:10px; }
+.review-scene-head > label { margin:0; font-size:12px; }
+.review-scene-form [data-review-status] { margin:8px 0; font-size:12px; }
+.review-scene-form [data-review-step="preview"] > .actions { gap:8px; }
+.review-scene-form [data-review-step="preview"] > .actions button { min-height:36px; padding:6px 10px; font-size:12px; }
+.review-scene-form > [data-review-step] { min-width:0; border-top:1px solid var(--line); padding-top:12px; }
+.review-scene-form [data-review-step] > h2 { font-size:18px; margin:0 0 12px; }
+.review-scene-form [data-scene-cash-selection] > summary { cursor:pointer; padding:8px 0; font-size:13px; color:var(--accent); }
+.review-scene-form [data-scene-cash] > summary { cursor:pointer; padding:8px 0; font-size:13px; }
+.review-scene-head { display:grid; grid-template-columns:minmax(220px,.7fr) minmax(0,1fr); gap:12px; }
+.review-scene-form [data-scene-hint] { color:var(--muted); font-size:12px; line-height:1.6; }
+.review-scene-form [data-cash-rows] { display:grid; gap:8px; }
+.review-scene-form [data-cash-row] { display:grid; grid-template-columns:minmax(100px,.6fr) minmax(110px,.6fr) minmax(0,1fr); gap:8px 12px; padding:12px; margin:0; }
+.review-scene-form [data-cash-row] > :is(h3,p,.actions) { grid-column:1/-1; margin:0; overflow-wrap:anywhere; }
+.review-scene-form [data-cash-row] h3 { font-size:13px; }
+.review-scene-form [data-cash-row] p { font-size:12px; color:var(--muted); }
+.review-scene-form [data-cash-row] label,.review-scene-form [data-cash-row] [data-named-choice] { font-size:12px; min-width:0; }
+.review-scene-form [data-cash-row] [data-choice-label] { overflow-wrap:anywhere; }
+.review-scene-form [data-cash-row] button { min-height:32px; padding:5px 9px; font-size:12px; }
+.review-scene-form [data-scene-duplicate] { padding:12px; border:1px solid var(--line); border-radius:8px; }
+.review-scene-form [data-scene-duplicate] summary { cursor:pointer; font-size:13px; }
+@media(max-width:700px) {
+  .review-scene-shell { padding:16px 16px 100px; }
+  .review-scene-head,.review-scene-form [data-cash-row] { grid-template-columns:minmax(0,1fr); }
+  .review-scene-form [data-review-step="preview"] > .actions {
+    position:fixed; bottom:8px; left:12px; right:12px; z-index:15;
+    display:flex; flex-wrap:wrap; padding:10px; border:1px solid var(--line);
+    border-radius:10px; background:var(--surface); box-shadow:0 3px 16px #0003;
+  }
+}
 .account-workspace > .panel { min-width:0; margin:0; }
 .account-metadata-scope { padding:16px; }
 .account-metadata-scope summary { font-size:17px; font-weight:700; cursor:pointer; }
