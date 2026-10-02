@@ -1,6 +1,7 @@
 import { request, isUnknownWrite } from "../api/client.js";
 import { esc } from "../util/core.js";
 import { candidateScan, scanControls } from "../util/candidate-scan.js";
+import { mountLocalPicker } from './local-choice.js';
 
 // The API label is derived from masked public identity and current ownership.
 // Keep stable IDs and status as secondary disambiguators, never infer a merge.
@@ -21,6 +22,28 @@ export function setNamedChoice(host, name, value, text, notify = true) {
   field.querySelector('input').value = value;
   field.querySelector('[data-choice-label]').textContent = text;
   if (notify) field.querySelector('input').dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+export function refreshLocalChoice(host, name, choices, placeholder) {
+  const previous = host.querySelector(`[name="${name}"]`).value;
+  const valid = choices.has(previous);
+  setNamedChoice(host, name, valid ? previous : '', valid ? choices.get(previous) : previous ? '引用已移除，请重新选择' : placeholder, false);
+  return !!previous && !valid;
+}
+
+export function bindLocalChoice(host, name, { choices, title, signal }) {
+  host.querySelector(`[data-named-choice="${name}"] [data-choice-pick]`).onclick = () => {
+    if (!host.isConnected || signal?.aborted) return;
+    const dialog = workbenchDialog(title, '<div data-local-picker></div>');
+    const abort = () => {if (dialog.open) dialog.close();};
+    signal?.addEventListener('abort', abort, {once: true});
+    dialog.addEventListener('close', () => signal?.removeEventListener('abort', abort), {once: true});
+    mountLocalPicker(dialog.querySelector('[data-local-picker]'), {choices, signal,
+      choose: (id, label) => {
+        if (host.isConnected && !signal?.aborted) setNamedChoice(host, name, id, label);
+        dialog.close();
+      }});
+  };
 }
 
 // Public masked metadata selection. IDs remain transport values, not editable

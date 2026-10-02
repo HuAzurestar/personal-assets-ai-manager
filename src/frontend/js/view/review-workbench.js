@@ -1,10 +1,11 @@
 import { request, jsonRequest } from "../api/client.js";
 import { esc, date, money, quantityDecimal, quantityAmount, typeNames, reviewTypeNames, resourceId } from "../util/core.js";
-import { input, select, workbenchDialog, writeFailure, mountPicker, namedChoice, bindNamedChoice, setNamedChoice } from "../component/workbench.js";
+import { input, select, workbenchDialog, writeFailure, mountPicker, namedChoice, bindNamedChoice, setNamedChoice, bindLocalChoice, refreshLocalChoice } from "../component/workbench.js";
 import { positionFields, bindPartyPicker } from "./position.js";
 import { mountTagImpact } from "../component/tag-impact.js";
 import { positionTarget, linkTarget } from '../util/draft-reference.js';
 import { dateTimeField, dateTimeValue } from '../component/date-time-field.js';
+import { localChoiceMap } from '../component/local-choice.js';
 
 const base = "/paam/ledger/v1/review";
 const cases = [["NORMAL", "普通收支"], ["REFUND", "退款"], ["SHARED_PAYMENT", "共同费用 / AA"], ["INTERNAL_TRANSFER", "真实内部转账"], ["BORROW_REPAY", "借出、借入、收回、偿还"], ["DUPLICATE", "同一交易的重复证据"], ["POS_OPENING", "对象期初数量"], ["POS_POSITION_OPEN", "对象增加（可无现金）"], ["POS_POSITION_SETTLE", "对象减少（显式来源）"], ["POS_CREDIT_PURCHASE", "信用消费"], ["POS_CREDIT_REPAY", "信用还本"]];
@@ -149,35 +150,31 @@ export async function mountReviewWorkbench(root, params, completed) {
       .catch(error => {refReads.delete(String(id)); throw error;}));
     return refReads.get(String(id));
   };
-  const refreshSelect = (field, choices, placeholder) => {
-    const previous = field.value, valid = choices.some(([id]) => String(id) === previous);
-    field.innerHTML = `<option value="">${previous && !valid ? '引用已移除，请重新选择' : esc(placeholder)}</option>`
-      + choices.map(([id, text]) => `<option value="${esc(id)}">${esc(text)}</option>`).join('');
-    field.value = valid ? previous : '';
-    return previous !== field.value;
-  };
+  let targetChoices = new Map(), cashChoices = new Map(), legChoices = new Map(), factChoices = new Map();
   const positionOptions = () => [...positions.values()].map(row => [`existing:${row.id}`, `${row.title} · ${row.unit_code} · #${row.id}`])
     .concat(nodes(draftRoot, '[data-position-draft]').map(row => [`new:${row.dataset.draftId}`, `新对象 ${value(row, 'title') || '未命名'} · ${value(row, 'unit_code')}`]));
   const refreshReferences = () => {
+    targetChoices = localChoiceMap(positionOptions());
     nodes(legRoot, '[data-leg-row]').forEach((row, index) => {
       row.querySelector('h3').textContent = `数量腿 ${index + 1}`;
       row.querySelector('[data-named-choice="source"]').hidden = value(row, 'leg_direction') === 'IN';
-      if (refreshSelect(row.querySelector('[name="target"]'), positionOptions(), '选择数量对象'))
+      if (refreshLocalChoice(row, 'target', targetChoices, '选择数量对象'))
         setNamedChoice(row, 'source', 0, '对象已改变，请重新选择原始来源（IN 无需来源）', false);
     });
-    const cashOptions = nodes(cashRoot, '[data-cash-row]').map((row, index) => {
+    cashChoices = localChoiceMap(nodes(cashRoot, '[data-cash-row]').map((row, index) => {
       const fact = facts.get(resourceId(value(row, 'transaction_id')));
       row.querySelector('h3').textContent = `现金拆分 ${index + 1} · ${fact.summary || '未填写摘要'} · Fact #${fact.transaction_id}`;
       return [row.dataset.draftId, `现金 ${index + 1} · ${fact.summary} · ${fact.cash_direction} ${value(row, 'cash_amount')} ${fact.cash_currency_code}`];
-    });
-    const legOptions = nodes(legRoot, '[data-leg-row]').map((row, index) => [row.dataset.draftId,
-      `数量腿 ${index + 1} · ${row.querySelector('[name="target"]').selectedOptions[0]?.textContent} · ${value(row, 'leg_direction')} ${value(row, 'leg_amount') || '未填数量'}`]);
+    }));
+    legChoices = localChoiceMap(nodes(legRoot, '[data-leg-row]').map((row, index) => [row.dataset.draftId,
+      `数量腿 ${index + 1} · ${targetChoices.get(value(row, 'target')) || '尚未选择对象'} · ${value(row, 'leg_direction')} ${value(row, 'leg_amount') || '未填数量'}`]));
     nodes(linkRoot, '[data-link-row]').forEach(row => {
-      refreshSelect(row.querySelector('[name="allocation_ref"]'), cashOptions, '选择现金拆分项');
-      refreshSelect(row.querySelector('[name="leg_ref"]'), legOptions, '选择数量腿');
+      refreshLocalChoice(row, 'allocation_ref', cashChoices, '选择现金拆分项');
+      refreshLocalChoice(row, 'leg_ref', legChoices, '选择数量腿');
     });
+    factChoices = localChoiceMap([...selected].map(id => [id, `${facts.get(id).summary} · ${money(facts.get(id))} · Fact #${id}`]));
     nodes(duplicateRoot, '[data-duplicate-row]').forEach(row => {
-      if (refreshSelect(row.querySelector('[name="transaction_id"]'), [...selected].map(id => [id, `${facts.get(id).summary} · ${money(facts.get(id))} · Fact #${id}`]), '选择本次排除的事实'))
+      if (refreshLocalChoice(row, 'transaction_id', factChoices, '选择本次排除的事实'))
         setNamedChoice(row, 'account_ref_id', '', '请重新选择 B 的可靠来源卡', false);
     });
   };
@@ -271,11 +268,12 @@ const row = article(cashRoot, "cashRow", `<h3>现金拆分行 ${index} · Fact #
     const targets = positionOptions();
     if (!targets.length) return fail(new Error("先读取已有对象或填写本次新对象"));
     const opening = form.elements.case_code.value === "POS_OPENING";
-    const row = article(legRoot, "legRow", `<h3>数量腿 ${nodes(legRoot, "[data-leg-row]").length + 1}</h3>${select("target", "明确对象", [['', '选择数量对象'], ...targets], targets.length === 1 ? targets[0][0] : '')}${select("type", "数量证据类型", ["MOVEMENT", "OPENING"], opening ? "OPENING" : "MOVEMENT")}${select("leg_direction", "数量方向", ["IN", "OUT"], form.elements.case_code.value.includes("SETTLE") || form.elements.case_code.value === "POS_CREDIT_REPAY" ? "OUT" : "IN")}
+    const row = article(legRoot, "legRow", `<h3>数量腿 ${nodes(legRoot, "[data-leg-row]").length + 1}</h3>${namedChoice('target', '明确对象', {value: targets.length === 1 ? targets[0][0] : '', text: targets.length === 1 ? targets[0][1] : '尚未选择数量对象', pick: '选择数量对象'})}${select("type", "数量证据类型", ["MOVEMENT", "OPENING"], opening ? "OPENING" : "MOVEMENT")}${select("leg_direction", "数量方向", ["IN", "OUT"], form.elements.case_code.value.includes("SETTLE") || form.elements.case_code.value === "POS_CREDIT_REPAY" ? "OUT" : "IN")}
       ${input("leg_amount", "精确数量（按对象单位）", "", 'inputmode="decimal" required')}${dateTimeField('occurred_time', '数量发生时间')}${namedChoice('source', '原始 IN 数量证据（OUT 必须明确选择）', {value: 0, text: 'IN 无需来源；OUT 请查找该对象有效的原始 IN 腿', pickAttribute: 'data-find-source', pick: '查找原始来源腿'})}${input("basis", "数量依据 / 第三人代还说明", "", 'maxlength="2000"')}`);
     const resetSource = () => {setNamedChoice(row, 'source', 0, 'IN 无需来源；OUT 请重新选择原始来源', false); invalidate();};
     row.querySelector('[name="target"]').onchange = resetSource;
     row.querySelector('[name="leg_direction"]').onchange = resetSource;
+    bindLocalChoice(row, 'target', {title: '选择当前草稿数量对象', choices: () => targetChoices, signal});
     row.querySelector("[data-find-source]").onclick = () => {
       const target = value(row, "target");
       if (!target.startsWith("existing:")) return fail(new Error("新对象没有已发布来源腿；OUT 需选择已有对象"));
@@ -293,11 +291,14 @@ const row = article(cashRoot, "cashRow", `<h3>现金拆分行 ${index} · Fact #
     refreshReferences();
   };
   form.querySelector("[data-add-link]").onclick = () => {
-    article(linkRoot, "linkRow", `${select('allocation_ref', '明确现金拆分项', [['', '选择现金拆分项']])}${select('leg_ref', '明确数量腿', [['', '选择数量腿']])}${input("cash_amount", "归因现金金额（币种取自现金行）", "", 'inputmode="decimal" required')}`);
+    const row = article(linkRoot, "linkRow", `${namedChoice('allocation_ref', '明确现金拆分项', {pick: '选择现金拆分项'})}${namedChoice('leg_ref', '明确数量腿', {pick: '选择数量腿'})}${input("cash_amount", "归因现金金额（币种取自现金行）", "", 'inputmode="decimal" required')}`);
+    bindLocalChoice(row, 'allocation_ref', {title: '选择当前草稿现金拆分项', choices: () => cashChoices, signal});
+    bindLocalChoice(row, 'leg_ref', {title: '选择当前草稿数量腿', choices: () => legChoices, signal});
     refreshReferences();
   };
   form.querySelector("[data-add-duplicate]").onclick = () => {
-    const row = article(duplicateRoot, 'duplicateRow', `${select('transaction_id', '重复证据 B（本次所选事实）', [['', '选择本次排除的事实']])}${namedChoice('kept_transaction_id', '保留计现金 A', {pick: '查找保留交易', pickAttribute: 'data-pick-kept'})}${namedChoice('account_ref_id', '明确 B 来源卡', {pick: '查找 B 来源卡', pickAttribute: 'data-pick-duplicate-ref'})}`);
+    const row = article(duplicateRoot, 'duplicateRow', `${namedChoice('transaction_id', '重复证据 B（本次所选事实）', {pick: '选择本次排除的事实'})}${namedChoice('kept_transaction_id', '保留计现金 A', {pick: '查找保留交易', pickAttribute: 'data-pick-kept'})}${namedChoice('account_ref_id', '明确 B 来源卡', {pick: '查找 B 来源卡', pickAttribute: 'data-pick-duplicate-ref'})}`);
+    bindLocalChoice(row, 'transaction_id', {title: '选择当前草稿排除的事实', choices: () => factChoices, signal});
     bindNamedChoice(row, 'kept_transaction_id', {url: '/paam/ledger/v1/candidate', title: '明确保留的真实交易', signal,
       initialize: false, searchKeys: ['summary'], pickerAttribute: 'data-kept-picker',
       describe: fact => `${fact.summary} · ${money(fact)} · ${fact.cash_direction} · ${date(fact.occurred_time)} · Fact #${fact.transaction_id}`});
