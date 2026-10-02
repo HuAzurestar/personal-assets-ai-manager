@@ -53,6 +53,8 @@ Position.type=ASSET/LIABILITY；usage_scenario为GENERAL、PERSONAL-LENDING、SH
 
 现金/数量为整数+单位，单值≤9,000,000,000,000；不浮点/跨币净额/隐式换算。CNY=0.01、CNY_4=0.0001、JPY/KRW=1、KG_3=0.001kg、PCS=1件，白名单见 `backend/core/unit.py`。
 
+前端单位元数据由只读 `GET /paam/ledger/v1/unit` 取得，成功 body 为 `{items}`，每项含 `code/label/dimension/quantum/precision/is_default`。这是完整的有限代码字典，不是数据库 PO 列表；不接受分页、Query、Filter 或 Sorter，也不提供写口。最多128项、32KiB，超限明确 `UNIT_DICTIONARY_LIMIT`，不截断。当前70个现金单位和2个数量单位沿用既有注册规则，不增加单位表。前端金额/数量格式化、币种筛选、披露配置和对象单位选择共用此字典；首次读取失败可由用户重新加载，只读重试不重发金融写入。现金选项排除数量单位，配置容量仍为最多64个金额区间单位，不等于支持单位数。
+
 ## 导入、读取、标签
 
 先落PENDING、事务外限时解析，再明确选择≤1000行同事务确认；Raw不改，只改状态/Fact关联。上限20MiB/20,000行/100文件。ACCEPTED=1、SKIPPED=2、INVALID=3、UNKNOWN=0，未处理=total−前三者之和；完成不等于全有效。相同来源只补证据，不按商户/金额猜相同Fact，不恢复Review。

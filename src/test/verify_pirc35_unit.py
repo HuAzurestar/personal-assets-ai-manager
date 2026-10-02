@@ -44,7 +44,7 @@ def run():
             with target_database.SessionLocal() as db:
                 rows = [TransactionFact(fact_key=f'mock-unit-{code}',
                     occurred_time=datetime(2026, 9, 1, tzinfo=timezone.utc), cash_direction=1,
-                    amount=12345, currency_code=code, summary=f'Mock unit {code}') for code in ['KRW', 'KRW_4']]
+                    amount=12345, currency_code=code, account_code='', summary=f'Mock unit {code}') for code in ['KRW', 'KRW_4']]
                 db.add_all(rows)
                 db.flush()
                 ReviewCommandMapper(db).create_initial_defaults([row.id for row in rows])
@@ -78,7 +78,9 @@ def run():
                 expect(page.locator('[data-action="fact-detail"]')).to_have_count(1)
                 expect(page.locator('.fact-amount')).to_contain_text('12,345 KRW')
                 page.locator('[name="currency_code"]').select_option('KRW_4')
-                expect(page.locator('.fact-amount')).to_contain_text('1.2345 KRW_4')
+                expect(page.locator('[name="currency_code"]')).to_have_value('KRW_4')
+                # Display is in the base currency; the filter retains exact unit.
+                expect(page.locator('.fact-amount')).to_contain_text('1.2345 KRW')
                 viewport_evidence(page, 'fix-r13-fact-unit')
                 page.evaluate("location.hash = '#details/ledger'")
                 flow_form = page.locator('[data-form="economic-filter"]')
@@ -106,7 +108,7 @@ def run():
                 for code, value in [('KRW', '400'), ('KRW_4', '0.0001')]:
                     choices.select_option(code)
                     form.locator('[data-add-currency]').click()
-                    row = form.locator('[data-currency-row]').filter(has=form.locator(f'[data-band-currency][value="{code}"]'))
+                    row = form.locator('[data-currency-row]').filter(has_text=f'{code} 区间')
                     row.locator('[data-add-boundary]').click()
                     row.locator('[data-boundary]').nth(1).fill(value)
                 viewport_evidence(page, 'fix-r13-disclosure-unit')
@@ -123,7 +125,7 @@ def run():
                 assert len(reads) == 3
                 page.locator('[data-action="disclosure-edit"]').click()
                 form = page.locator('[data-disclosure-form]')
-                krw = form.locator('[data-currency-row]').filter(has=form.locator('[data-band-currency][value="KRW"]'))
+                krw = form.locator('[data-currency-row]').filter(has_text='KRW 区间')
                 expect(krw.locator('[data-boundary]').nth(1)).to_have_value('400')
                 with target_database.SessionLocal() as db:
                     assert counts == [db.scalar(select(func.count()).select_from(entity))
