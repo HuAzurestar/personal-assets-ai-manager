@@ -20,8 +20,8 @@ export function candidateScan(base, name, identity = row => row.id, options = {}
     current.result = { ...current.result, scan_state: state, scan_reason: reason, scan_error: '' };
     if (paint) publish(current);
   }
-  function stop() {
-    if (current && ['ready', 'running'].includes(current.result.scan_state)) interrupt('paused', '页面读取已停止，结果和游标保留', false);
+  function stop(paint = false) {
+    if (current && ['ready', 'running'].includes(current.result.scan_state)) interrupt('paused', '页面读取已停止，结果和游标保留', paint);
     else { generation++; controller?.abort(); if (current) current.busy = false; }
     if (current && current.route !== location.hash) current = null;
   }

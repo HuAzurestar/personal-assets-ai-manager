@@ -129,6 +129,22 @@ const query = word => new URLSearchParams({ page_size: '2', query: JSON.stringif
   assert.deepEqual(ui.latest().items.map(row => row.id), [4]);
 
   let cancelled;
+  // Foreground refresh may preserve the mounted DOM. Its visible stop must
+  // publish a resumable state, reject a late response and retain the cursor.
+  let refreshed;
+  fixture([batch([{id:1}], 'one'), () => new Promise(resolve => {refreshed = resolve;}), batch([{id:2}], null)]);
+  scan = candidateScan('/mock', 'test'); await scan.read(query('retained-refresh'), location.hash);
+  ui = view(scan); await until(() => !!refreshed);
+  scan.stop(true);
+  assert.equal(ui.latest().scan_state, 'paused');
+  assert.equal(ui.latest().next_cursor, 'one');
+  assert.equal(ui.controls['[data-test-continue]'].disabled, false);
+  refreshed(batch([{id:999}], null)); await tick();
+  assert.deepEqual(ui.latest().items.map(row => row.id), [1]);
+  await ui.controls['[data-test-continue]'].onclick();
+  assert.ok(calls[2].url.includes('cursor=one'));
+  assert.deepEqual(ui.latest().items.map(row => row.id), [1,2]);
+
   fixture([batch([], 'one'), () => new Promise(resolve => { cancelled = resolve; }), batch([{ id: 8 }], null)]);
   scan = candidateScan('/mock', 'test'); await scan.read(query('cancel'), location.hash);
   ui = view(scan); await until(() => !!cancelled);

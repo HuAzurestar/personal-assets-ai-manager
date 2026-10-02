@@ -65,7 +65,8 @@ export function bindNamedChoice(host, name, { url, title, signal, describe = met
     mountPicker(dialog.querySelector(`[${pickerAttribute}]`), { url, searchKeys, signal, describe, filter,
       choose: row => { apply(row.id ?? row.transaction_id, describe(row), row); dialog.close(); } });
   };
-  field.querySelector('[data-choice-clear]')?.addEventListener('click', () => apply(allowZero ? 0 : '', zeroLabel, null));
+  const clear = field.querySelector('[data-choice-clear]');
+  if (clear) clear.onclick = () => apply(allowZero ? 0 : '', zeroLabel, null);
   const initial = field.querySelector('input').value;
   if (initialize && initial && initial !== '0') load(initial).then(row => {
     if (host.isConnected && !signal?.aborted && field.querySelector('input').value === initial)

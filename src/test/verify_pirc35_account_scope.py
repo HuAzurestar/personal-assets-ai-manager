@@ -94,6 +94,54 @@ def run():
                     root.locator('[data-account-clear-search]').click()
                     expect(rows).to_have_count(20)
 
+                    # Keep a real continuation response in flight, then fail
+                    # an unchanged foreground search refresh. The mounted hits
+                    # and cursor must survive independently of the failed read.
+                    page.evaluate('''() => {
+                        const original = window.fetch;
+                        let held = false;
+                        window.fetch = async (...args) => {
+                            const response = await original(...args);
+                            const url = new URL(String(args[0]), location.origin);
+                            if (!held && url.pathname.endsWith('/account-ref/search') && url.searchParams.has('cursor')) {
+                                held = true;
+                                window.heldAccountCursor = url.searchParams.get('cursor');
+                                await new Promise(resolve => window.releaseAccountCursor = resolve);
+                            }
+                            return response;
+                        };
+                    }''')
+                    form.locator('[name="word"]').fill('Mock A card')
+                    form.locator('[type="submit"]').click()
+                    page.wait_for_function('typeof window.releaseAccountCursor === "function"')
+                    expect(rows).to_have_count(20)
+                    def fail_search_refresh(route):
+                        from urllib.parse import urlparse, parse_qs
+                        if 'cursor' in parse_qs(urlparse(route.request.url).query):
+                            route.continue_()
+                        else:
+                            route.fulfill(status=503, content_type='application/json',
+                                body='{"status":503,"message":"retained search read failure","body":{"code":"LIST_UNAVAILABLE"}}')
+                    page.route('**/paam/ledger/v1/account-ref/search?**', fail_search_refresh)
+                    form.locator('[type="submit"]').click()
+                    expect(page.locator('[data-refresh-error]')).to_contain_text('retained search read failure')
+                    expect(root.locator('[data-account-scan-status]')).to_contain_text('游标保留')
+                    expect(rows).to_have_count(20)
+                    expect(root.locator('[data-account-continue]')).to_be_enabled()
+                    page.unroute('**/paam/ledger/v1/account-ref/search?**', fail_search_refresh)
+                    page.evaluate('window.releaseAccountCursor()')
+                    root.locator('[data-account-continue]').click()
+                    expect(root.locator('[data-account-scan-status]')).to_contain_text('本次扫描结束')
+                    expect(rows).to_have_count(21)
+                    from urllib.parse import urlparse, parse_qs
+                    held_cursor = page.evaluate('window.heldAccountCursor')
+                    continuation_urls = [url for url in reads if '/account-ref/search?' in url
+                        and parse_qs(urlparse(url).query).get('cursor') == [held_cursor]]
+                    assert len(continuation_urls) == 2, continuation_urls
+                    viewport_evidence(page, 'fix-r11-retained-search-recovery')
+                    root.locator('[data-account-clear-search]').click()
+                    expect(rows).to_have_count(20)
+
                     def choose_scope(kind, word):
                         root.locator(f'[data-named-choice="{kind}"] [data-choice-pick]').click()
                         picker = page.locator("dialog[open] [data-choice-picker]")

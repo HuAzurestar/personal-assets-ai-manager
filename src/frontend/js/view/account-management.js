@@ -7,9 +7,30 @@ import { candidateScan, scanControls } from '../util/candidate-scan.js';
 const base = "/paam/ledger/v1";
 const endpoint = { party: "account-party", account: "account", ref: "account-ref" };
 const labels = { party: "个人", account: "管理集合", ref: "具体来源卡" };
-let readController, refScan;
+let readController, refScan, mountedHost, mountedScan, mountedRoute;
 
-export function stopAccountRead() { readController?.abort(); refScan?.reset(); }
+export function stopAccountRead() {
+  readController?.abort();
+  refScan?.stop(true);
+  if (mountedScan !== refScan) mountedScan?.stop(true);
+  if (mountedHost && mountedRoute !== location.hash) {
+    mountedScan?.reset();
+    mountedHost = mountedScan = mountedRoute = undefined;
+  }
+}
+
+// A failed same-route read leaves the last rendered scope and results intact.
+// Rebind its controls to a live lifetime, not the cancelled page request. The
+// mounted scan retains its cursor; a failed replacement read cannot replace it.
+export function restoreAccountManagement(root, reload) {
+  const host = root.querySelector('[data-account-management]');
+  if (!host || host !== mountedHost) return;
+  stopAccountRead();
+  if (refScan !== mountedScan) refScan?.reset();
+  readController = new AbortController();
+  refScan = mountedScan;
+  bindAccountManagement(root, reload);
+}
 
 const input = (name, label, value = "", extra = "") => `<label>${label}<input name="${name}" value="${esc(value)}" ${extra}></label>`;
 
@@ -78,7 +99,10 @@ export async function accountManagementPage(params) {
   const query = new URLSearchParams({page_size: scope.pageSize});
   const predicate = accountRefFilter(scope);
   if (predicate) query.set('filter', JSON.stringify(predicate));
-  refScan = candidateScan(`${base}/account-ref`, 'account', row => row.id, {signal});
+  // Page GET cancellation is separate from the last mounted search lifetime.
+  // stopAccountRead stops both scans explicitly; successful mounting retires
+  // the old scan. This permits retrying a retained cursor after a read failure.
+  refScan = candidateScan(`${base}/account-ref`, 'account', row => row.id);
   if (scope.word) query.set('query', JSON.stringify([{key:'display_label', word:scope.word}]));
   else query.set('page_index', scope.page);
   const result = scope.word ? await refScan.read(query, route) : await request(`${base}/account-ref/list?${query}`, {signal});
@@ -231,6 +255,10 @@ async function openAccountCommand(host, reload, kind, rawId, moving = false) {
 export function bindAccountManagement(root, reload) {
   const host = root.querySelector('[data-account-management]');
   if (!host) return;
+  if (mountedScan !== refScan) mountedScan?.reset();
+  mountedHost = host;
+  mountedScan = refScan;
+  mountedRoute = location.hash;
   const params = new URLSearchParams(host.dataset.accountParams);
   const party = resourceId(host.dataset.party, {allowZero:true});
   const navigate = changes => {

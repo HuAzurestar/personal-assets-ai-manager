@@ -1,5 +1,5 @@
 import { checkConnection, request, jsonRequest } from "../api/client.js";
-import { accountManagementPage, bindAccountManagement, stopAccountRead } from "./account-management.js";
+import { accountManagementPage, bindAccountManagement, restoreAccountManagement, stopAccountRead } from "./account-management.js";
 import { positionPage, bindPosition, stopPositionRead } from "./position.js";
 import { mountReviewWorkbench, transitionReview, stopReviewRead } from "./review-workbench.js";
 import { mountImportBatch, stopImportRead } from "./import-batch.js";
@@ -258,6 +258,7 @@ async function render({ background = false, restoreValues = true } = {}) {
   } catch (error) {
     if (renderVersion !== state.renderVersion || page !== state.page || routeKey !== location.hash) return;
     if (samePage) {
+      if (page === 'account-management') restoreAccountManagement(root, render);
       let errorSlot = root.querySelector('[data-refresh-error]');
       if (!errorSlot) { errorSlot = document.createElement('p'); errorSlot.dataset.refreshError = ''; errorSlot.setAttribute('role', 'status'); root.append(errorSlot); }
       errorSlot.textContent = `刷新失败，保留上次内容：${error.message}`;
