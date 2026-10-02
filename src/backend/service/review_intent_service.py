@@ -29,7 +29,8 @@ def raw_draft(intent):
                 duplicate_transactions=[row.model_dump() for row in intent.duplicate_transactions])
 
 
-def expand(raw, facts, positions, refs, parties, sources, source_reviews, default_refs):
+def expand(raw, facts, positions, refs, parties, sources, source_reviews, default_refs,
+           *, defer_duplicate_source=False):
     draft = {**raw, "allocations": [dict(row) for row in raw["allocations"]]}
     code = draft["case_code"]
     bindings = {row["transaction_id"]: row["account_ref_id"] for row in draft["account_bindings"]}
@@ -61,7 +62,7 @@ def expand(raw, facts, positions, refs, parties, sources, source_reviews, defaul
             reject("INVALID_DUPLICATE", "two accepted Facts and explicit B binding are required")
         excluded, kept = facts[fact_id], facts[kept_id]
         kept_ref = default_refs.get(kept_id, 0)
-        if not kept_ref or bindings[fact_id] == kept_ref:
+        if not defer_duplicate_source and (not kept_ref or bindings[fact_id] == kept_ref):
             reject("INVALID_DUPLICATE", "unknown or same source cannot be marked cross-source duplicate")
         if any(excluded[key] != kept[key] for key in ("amount", "currency_code", "cash_direction", "occurred_time")):
             reject("INVALID_DUPLICATE", "duplicate evidence does not match kept Fact")
@@ -188,3 +189,29 @@ def expand(raw, facts, positions, refs, parties, sources, source_reviews, defaul
                for index, split in enumerate(draft["allocations"])):
             reject("INVALID_PRINCIPAL", "principal cash cannot have an unexplained residual")
     return draft
+
+
+def validate_duplicate_keepers(decisions, final_outputs, facts):
+    """Validate the complete final cash set, not each draft's initial state.
+
+    Every explicit B must remain fully excluded while its A is fully covered
+    by real cash on a different known source. This rejects cycles and supports
+    an explicit atomic swap, without persisting a receipt or inferred relation.
+    """
+    for decision in decisions:
+        excluded_id, kept_id = decision["transaction_id"], decision["kept_transaction_id"]
+        if excluded_id == kept_id or excluded_id not in facts or kept_id not in facts:
+            reject("INVALID_DUPLICATE", "two different accepted Facts are required")
+        excluded, kept = facts[excluded_id], facts[kept_id]
+        if any(excluded[key] != kept[key] for key in ("amount", "currency_code", "cash_direction", "occurred_time")):
+            reject("INVALID_DUPLICATE", "duplicate evidence does not match kept Fact")
+        b_rows, a_rows = final_outputs[excluded_id], final_outputs[kept_id]
+        if (not b_rows or any(row["entry_type"] != 3 for row in b_rows)
+            or sum(row["cash_amount"] for row in b_rows) != excluded["amount"]
+            or not a_rows or any(row["entry_type"] == 3 for row in a_rows)
+            or sum(row["cash_amount"] for row in a_rows) != kept["amount"]):
+            reject("INVALID_DUPLICATE", "kept Fact must retain complete non-duplicate cash after this whole change")
+        b_refs = {row["account_ref_id"] for row in b_rows}
+        a_refs = {row["account_ref_id"] for row in a_rows}
+        if len(a_refs) != 1 or len(b_refs) != 1 or 0 in a_refs | b_refs or a_refs == b_refs:
+            reject("INVALID_DUPLICATE", "final A and B require different, unambiguous known sources")

@@ -127,6 +127,9 @@ class ReviewChangeInput(Intent):
     activate_review_ids: list[PositiveId] = Field(default_factory=list, max_length=100)
     new_reviews: list[ReviewInput] = Field(default_factory=list, max_length=100)
     expected_reviews: list[ExpectedReview] = Field(default_factory=list, max_length=100)
+    # Historical immutable cash rows do not store a guessed duplicate anchor.
+    # Reactivation therefore needs a fresh explicit decision, never inference.
+    activation_duplicates: list[DuplicateTransaction] = Field(default_factory=list, max_length=2000)
 
     @model_validator(mode="after")
     def unambiguous(self):
@@ -136,6 +139,9 @@ class ReviewChangeInput(Intent):
                 raise ValueError("duplicate Review ID")
         if set(self.deactivate_review_ids) & set(self.activate_review_ids):
             raise ValueError("contradictory activation")
+        ids = [row.transaction_id for row in self.activation_duplicates]
+        if len(ids) != len(set(ids)):
+            raise ValueError("duplicate activation evidence selection")
         if not (self.deactivate_review_ids or self.activate_review_ids or self.new_reviews):
             raise ValueError("empty Review change")
         return self

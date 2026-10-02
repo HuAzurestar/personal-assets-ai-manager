@@ -259,6 +259,122 @@ def test_explicit_duplicate_keeps_coverage_but_excludes_cash_and_restores_origin
     assert invalid["blocking_issues"][0]["code"] == "INVALID_DUPLICATE"
 
 
+def seed_duplicate_pair(db):
+    from backend.entity import LedgerAccountRef
+    db.add_all([LedgerAccountRef(id=i, account_id=0, name=f"Mock source {i}",
+        source_namespace=f"mock-{i}", source_identity=f"mock-own-{i}",
+        identity_strength=1, status="ACTIVE") for i in (1, 2)])
+    db.add(TransactionFact(id=5, fact_key="mock-second-evidence", amount=40000,
+        currency_code="CNY", cash_direction=2, account_code="",
+        occurred_time=datetime(2024, 1, 1, tzinfo=timezone.utc)))
+    db.get(LedgerEntry, 1).account_ref_id = 1
+    db.flush()
+    ReviewCommandMapper(db).create_initial_defaults([5], account_refs={5: 2})
+    db.commit()
+
+
+def duplicate(excluded, kept, ref):
+    return dict(case_code="DUPLICATE", parameters=dict(transaction_ids=[excluded]),
+        account_bindings=[dict(transaction_id=excluded, account_ref_id=ref)],
+        duplicate_transactions=[dict(transaction_id=excluded, kept_transaction_id=kept)])
+
+
+def assert_duplicate_rejected_without_write(db, change):
+    before = counts(db)
+    service = ReviewCommandService(db)
+    plan = service.preview(ReviewChangeInput(**change))
+    assert plan["blocking_issues"][0]["code"] == "INVALID_DUPLICATE", plan
+    with pytest.raises(TargetEconomicError) as error:
+        service.command(ReviewCommandInput(**change, preview_digest="0" * 64))
+    assert error.value.code == "INVALID_DUPLICATE"
+    assert counts(db) == before
+
+
+@pytest.mark.parametrize("separate_groups", [False, True])
+def test_mutual_duplicate_cycle_rejects_complete_publication(db, separate_groups):
+    seed_duplicate_pair(db)
+    drafts = [duplicate(1, 5, 1), duplicate(5, 1, 2)]
+    if not separate_groups:
+        drafts = [dict(case_code="DUPLICATE", parameters=dict(transaction_ids=[1, 5]),
+            account_bindings=drafts[0]["account_bindings"] + drafts[1]["account_bindings"],
+            duplicate_transactions=drafts[0]["duplicate_transactions"] + drafts[1]["duplicate_transactions"])]
+    assert_duplicate_rejected_without_write(db, dict(new_reviews=drafts))
+    assert db.get(ReviewCase, 1).status == 0
+
+
+def test_sequential_duplicate_cycle_rejects_already_excluded_keeper(db):
+    seed_duplicate_pair(db)
+    execute(db, new_reviews=[duplicate(5, 1, 2)])
+    assert_duplicate_rejected_without_write(db, dict(new_reviews=[duplicate(1, 5, 1)]))
+    assert db.get(ReviewCase, 1).status == 0
+
+
+def test_explicit_atomic_duplicate_swap_uses_final_not_initial_keeper(db):
+    seed_duplicate_pair(db)
+    old = execute(db, new_reviews=[duplicate(5, 1, 2)])["created_reviews"][0]["id"]
+    keeper = normal(5)
+    keeper["account_bindings"] = [dict(transaction_id=5, account_ref_id=2)]
+    result = execute(db, new_reviews=[keeper, duplicate(1, 5, 1)])
+    assert len(result["created_reviews"]) == 2
+    assert db.get(ReviewCase, old).status == 1
+    entries = [row for review in result["created_reviews"] for row in ReviewCommandService(db).detail(review["id"])["ledger_entries"]]
+    assert sorted((row["economic_type"], row["cash_amount"]) for row in entries) == [
+        ("DUPLICATE", 40000), ("TRANSACTION", 40000)]
+
+
+def test_duplicate_source_check_uses_keeper_final_binding(db):
+    seed_duplicate_pair(db)
+    keeper = normal(1)
+    keeper["account_bindings"] = [dict(transaction_id=1, account_ref_id=2)]
+    assert_duplicate_rejected_without_write(db, dict(new_reviews=[keeper, duplicate(5, 1, 2)]))
+
+
+def test_duplicate_keeper_can_be_original_default_restored_by_same_command(db):
+    seed_duplicate_pair(db)
+    manual = execute(db, new_reviews=[normal(1, 2)])["created_reviews"][0]["id"]
+    result = execute(db, deactivate_review_ids=[manual], new_reviews=[duplicate(5, 1, 2)])
+    assert db.get(ReviewCase, 1).status == 0
+    assert result["created_reviews"]
+
+
+def test_duplicate_reactivation_requires_explicit_final_keeper(db):
+    seed_duplicate_pair(db)
+    rid = execute(db, new_reviews=[duplicate(5, 1, 2)])["created_reviews"][0]["id"]
+    original = ReviewCommandService(db).detail(rid)
+    execute(db, deactivate_review_ids=[rid])
+    assert_duplicate_rejected_without_write(db, dict(activate_review_ids=[rid]))
+    execute(db, activate_review_ids=[rid], activation_duplicates=[dict(transaction_id=5, kept_transaction_id=1)])
+    after = ReviewCommandService(db).detail(rid)
+    for key in ("allocations", "ledger_entries", "position_legs", "position_allocations"):
+        assert after[key] == original[key]
+
+
+def test_reactivation_cannot_keep_current_duplicate_but_atomic_restore_is_allowed(db):
+    seed_duplicate_pair(db)
+    first = execute(db, new_reviews=[duplicate(5, 1, 2)])["created_reviews"][0]["id"]
+    execute(db, deactivate_review_ids=[first])
+    second = execute(db, new_reviews=[duplicate(1, 5, 1)])["created_reviews"][0]["id"]
+    activation = dict(activate_review_ids=[first], activation_duplicates=[dict(transaction_id=5, kept_transaction_id=1)])
+    assert_duplicate_rejected_without_write(db, activation)
+    execute(db, **activation, deactivate_review_ids=[second])
+    assert db.get(ReviewCase, 1).status == 0
+
+
+def test_keeper_change_after_preview_invalidates_digest_without_publication(db):
+    seed_duplicate_pair(db)
+    service = ReviewCommandService(db)
+    change = dict(new_reviews=[duplicate(5, 1, 2)])
+    plan = service.preview(ReviewChangeInput(**change))
+    assert plan["blocking_issues"] == []
+    execute(db, new_reviews=[normal(1)])
+    before = counts(db)
+    with pytest.raises(TargetEconomicError) as error:
+        service.command(ReviewCommandInput(**change, expected_reviews=plan["expected_reviews"],
+            preview_digest=plan["preview_digest"]))
+    assert error.value.code == "ENTITY_CHANGED"
+    assert counts(db) == before
+
+
 def test_credit_purchase_and_principal_repay_use_same_liability_position(db):
     service = ReviewCommandService(db)
     opening = dict(case_code="POS_CREDIT_PURCHASE", title="Mock credit purchase", new_positions=[dict(

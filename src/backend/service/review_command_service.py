@@ -16,7 +16,7 @@ from backend.mapper.review_command_mapper import ReviewCommandMapper, chunks
 from backend.mapper.tag_assignment_request_mapper import TagAssignmentRequestMapper
 from backend.mapper.trusted_relation_mapper import TrustedRelationMapper
 from backend.schema.review_command import ReviewChangeInput, ReviewCommandInput
-from backend.service.review_intent_service import expand, raw_draft, reject
+from backend.service.review_intent_service import expand, raw_draft, reject, validate_duplicate_keepers
 from backend.service.target_tag_projection_service import TargetTagProjectionService
 
 
@@ -97,6 +97,13 @@ class ReviewCommandService:
         incoming = {row["transaction_id"] for row in selected_bundle["allocations"]
                     if row["review_id"] in intent.activate_review_ids}
         raw_ids = set()
+        activation_duplicates = [row.model_dump() for row in intent.activation_duplicates]
+        activated_duplicate_ledgers = {row["id"] for row in selected_bundle["ledger_entries"] if row["entry_type"] == 3}
+        activated_duplicate_facts = {row["transaction_id"] for row in selected_bundle["allocations"]
+            if row["review_id"] in intent.activate_review_ids and row["ledger_id"] in activated_duplicate_ledgers}
+        if {row["transaction_id"] for row in activation_duplicates} != activated_duplicate_facts:
+            reject("INVALID_DUPLICATE", "reactivation requires exactly one explicit kept Fact for each duplicate Fact")
+        raw_ids.update(row["kept_transaction_id"] for row in activation_duplicates)
         for draft in raw:
             incoming.update(draft["transaction_ids"])
             incoming.update(row["transaction_id"] for row in draft["allocations"])
@@ -139,7 +146,8 @@ class ReviewCommandService:
             default_by_fact[fact_id] = allocation["review_id"]
             default_refs[fact_id] = ledger["account_ref_id"]
         current = self.mapper.allocations_for_facts(affected | raw_ids, active=True)
-        current_ledgers = self.mapper.bundle({row["review_id"] for row in current})["ledger_entries"]
+        current_bundle = self.mapper.bundle({row["review_id"] for row in current})
+        current_ledgers = current_bundle["ledger_entries"]
         refs_by_fact = defaultdict(set)
         allocation_fact = {row["ledger_id"]: row["transaction_id"] for row in current}
         for row in current_ledgers:
@@ -160,6 +168,7 @@ class ReviewCommandService:
             ref_ids.update(default_refs.get(fact_id, 0) for fact_id in draft["transaction_ids"])
             party_ids.update(row["party_id"] for row in draft["new_positions"])
         ref_ids.discard(0)
+        ref_ids.update(row["account_ref_id"] for row in current_ledgers if row["account_ref_id"])
         ref_ids.update(row["account_ref_id"] for row in full["ledger_entries"] if row["account_ref_id"])
         positions = {row["id"]: row for row in self.mapper.named_rows("positions", position_ids)}
         refs = {row["id"]: row for row in self.mapper.named_rows("refs", ref_ids)}
@@ -170,7 +179,8 @@ class ReviewCommandService:
         source_reviews = {row["id"]: row for row in self.mapper.named_rows("reviews", [row["review_id"] for row in sources.values()])}
         if any(row["review_id"] in closing for row in sources.values()):
             reject("POSITION_SOURCE_INVALID", "this command would deactivate a new leg's source", status=409)
-        drafts = [expand(draft, facts, positions, refs, parties, sources, source_reviews, default_refs) for draft in raw]
+        drafts = [expand(draft, facts, positions, refs, parties, sources, source_reviews, default_refs,
+                         defer_duplicate_source=True) for draft in raw]
         if sum(len(d["allocations"]) + len(d["legs"]) for d in drafts) > 4000 or sum(len(d["position_allocations"]) for d in drafts) > 4000:
             reject("REVIEW_CHANGE_LIMIT", "output publication budget exceeded", status=413)
         incoming_counts = Counter()
@@ -211,6 +221,20 @@ class ReviewCommandService:
                 final_coverage[row["transaction_id"]] += row["cash_amount"]
         if any(final_coverage[fact_id] != facts[fact_id]["amount"] for fact_id in affected):
             reject("LEGACY_COVERAGE_REVIEW_REQUIRED", "whole-group change cannot restore exact coverage without another explicit decision", status=409)
+        final_outputs = defaultdict(list)
+        current_ledger_rows = {row["id"]: row for row in current_ledgers}
+        for row in current:
+            if states.get(row["review_id"], 0) == 0:
+                final_outputs[row["transaction_id"]].append(current_ledger_rows[row["ledger_id"]])
+        for review_id, status in states.items():
+            if status == 0 and review_id not in current_ids:
+                for row in by_review[review_id]:
+                    final_outputs[row["transaction_id"]].append(ledger_rows[row["ledger_id"]])
+        for draft in drafts:
+            for row in draft["allocations"]:
+                final_outputs[row["transaction_id"]].append(row)
+        duplicate_decisions = activation_duplicates + [row for draft in drafts for row in draft["duplicate_transactions"]]
+        validate_duplicate_keepers(duplicate_decisions, final_outputs, facts)
         # Source-bound reductions are exact integers; never infer FIFO or transfer an old leg.
         source_premises = self.mapper.source_consumption(sources, states)
         source_consumption = Counter({row["source_id"]: row["amount"] for row in source_premises})
@@ -286,7 +310,8 @@ class ReviewCommandService:
                 tag_ledger_ids=affected_ledgers), blocking_issues=[], expected_reviews=expected,
             tag_effect=effect)
         premises = dict(intent=intent.model_dump(exclude={"expected_reviews", "preview_digest"}), preview=preview,
-            facts=list(facts.values()), originals=full, current=current, positions=list(positions.values()), refs=list(refs.values()),
+            facts=list(facts.values()), originals=full, current=current, current_outputs=current_bundle,
+            positions=list(positions.values()), refs=list(refs.values()),
             accounts=accounts, parties=list(parties.values()), sources=list(sources.values()), source_reviews=list(source_reviews.values()),
             source_consumption=source_premises,
             quantity_before=quantity_before, quantity_after=quantity_after,

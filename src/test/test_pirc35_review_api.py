@@ -56,6 +56,49 @@ def test_new_openapi_does_not_accept_published_cash_rows():
     assert schemas["ReviewPO"]["properties"]["type"]["enum"] == ["NORMAL_TRANSACTION", "BORROW_AND_REPAY", "CREDIT_CARD", "SHARED_SETTLEMENT", "OTHER_MANUAL"]
 
 
+@pytest.mark.parametrize("sequential", [False, True])
+def test_public_duplicate_cycles_rejected_and_real_cash_retained(sequential):
+    from backend.entity import LedgerAccountRef, ReviewAllocation
+    with TestClient(app) as client:
+        with target_database.SessionLocal() as db:
+            db.add_all([LedgerAccountRef(id=i, account_id=0, name=f"Mock source {i}",
+                source_namespace=f"mock-api-{i}", source_identity=f"mock-own-{i}",
+                identity_strength=1, status="ACTIVE") for i in (1, 2)])
+            db.add_all([TransactionFact(id=i, fact_key=f"mock-api-duplicate-{i}", amount=10000,
+                currency_code="CNY", cash_direction=2, account_code="",
+                occurred_time=datetime(2024, 2, 1, tzinfo=timezone.utc)) for i in (1, 2)])
+            db.flush()
+            ReviewCommandMapper(db).create_initial_defaults([1, 2], account_refs={1: 1, 2: 2})
+            db.commit()
+
+        def duplicate(excluded, kept):
+            return dict(case_code="DUPLICATE", parameters=dict(transaction_ids=[excluded]),
+                account_bindings=[dict(transaction_id=excluded, account_ref_id=excluded)],
+                duplicate_transactions=[dict(transaction_id=excluded, kept_transaction_id=kept)])
+
+        if sequential:
+            first = dict(new_reviews=[duplicate(2, 1)])
+            response = client.post("/paam/ledger/v1/review/preview", json=first)
+            plan = response.json()["body"]
+            assert plan["blocking_issues"] == []
+            response = client.post("/paam/ledger/v1/review/command", json=first | dict(
+                expected_reviews=plan["expected_reviews"], preview_digest=plan["preview_digest"]))
+            assert response.status_code == 200, response.text
+        change = dict(new_reviews=[duplicate(1, 2)] + ([] if sequential else [duplicate(2, 1)]))
+        response = client.post("/paam/ledger/v1/review/preview", json=change)
+        assert response.status_code == 200, response.text
+        assert response.json()["body"]["blocking_issues"][0]["code"] == "INVALID_DUPLICATE"
+        response = client.post("/paam/ledger/v1/review/command", json=change | dict(preview_digest="0" * 64))
+        assert response.status_code == 422, response.text
+        assert response.json()["body"]["code"] == "INVALID_DUPLICATE"
+        with target_database.SessionLocal() as db:
+            cash = db.scalar(select(func.sum(LedgerEntry.cash_amount)).join(
+                ReviewAllocation, ReviewAllocation.ledger_id == LedgerEntry.id).join(
+                ReviewCase, ReviewCase.id == ReviewAllocation.review_id).where(
+                ReviewCase.status == 0, LedgerEntry.entry_type != 3))
+            assert cash == (10000 if sequential else 20000)
+
+
 @pytest.mark.parametrize("endpoint", ["preview", "command"])
 @pytest.mark.parametrize("mutation,code", [("type", "INVALID_REVIEW_TYPE"),
     ("case", "INVALID_CASE_CODE"), ("usage", "INVALID_USAGE_SCENARIO")])

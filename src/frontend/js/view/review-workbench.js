@@ -81,10 +81,38 @@ function bindPublication(form, build, facts, completed, positions = new Map()) {
 
 export async function transitionReview(id, activate, reload) {
   const row = await request(`${base}/${id}`);
-  const node = workbenchDialog(`${activate ? "激活" : "停用"}原 Review #${id}`, `<form class="stack"><p>仅改变原组状态；原现金、数量腿和关系 ID 保留。服务端将核对全部直接冲突、原始默认恢复和来源依赖。</p><p role="status" data-review-status></p><div data-review-impact></div><button type="button" data-review-preview>预览整体影响</button><button type="submit" data-review-command disabled>确认当前预览</button></form>`);
-  bindPublication(node.querySelector("form"), () => ({
-    [activate ? "activate_review_ids" : "deactivate_review_ids"]: [Number(id)],
-  }), new Map(), async () => { node.close(); await reload(); }, new Map(row.positions.map(position => [position.id, position])));
+  const duplicateLedgerIds = new Set(row.ledger_entries.filter(flow => flow.economic_type === "DUPLICATE").map(flow => flow.id));
+  const duplicates = activate ? row.allocations.filter(allocation => duplicateLedgerIds.has(allocation.ledger_id)) : [];
+  const excluded = [...new Map(duplicates.map(allocation => [allocation.transaction_id, allocation])).values()];
+  const kept = new Map();
+  const node = workbenchDialog(`${activate ? "激活" : "停用"}原 Review #${id}`, `<form class="stack"><p>仅改变原组状态；原现金、数量腿和关系 ID 保留。服务端将核对全部直接冲突、原始默认恢复和来源依赖。</p>
+    ${excluded.length ? `<section><h3>重新核对重复证据的保留对象</h3><p>旧输出未保存可推断的保留关系。请为每份重复证据明确选择仍计量的交易；不按同额自动选择。</p>
+      ${excluded.map(allocation => `<p>重复 Fact #${allocation.transaction_id} · ${esc(money(allocation))} → <span data-activation-kept="${allocation.transaction_id}">尚未选择保留对象</span> <button type="button" data-activation-pick="${allocation.transaction_id}">查找保留交易</button></p>`).join("")}</section>` : ""}
+    <p role="status" data-review-status></p><div data-review-impact></div><button type="button" data-review-preview>预览整体影响</button><button type="submit" data-review-command disabled>确认当前预览</button></form>`);
+  const form = node.querySelector("form");
+  const invalidate = bindPublication(form, () => {
+    if (kept.size !== excluded.length) throw new Error("请先为每份重复证据选择保留交易，再预览最终现金状态。");
+    return {
+      [activate ? "activate_review_ids" : "deactivate_review_ids"]: [Number(id)],
+      activation_duplicates: excluded.map(allocation => ({ transaction_id: allocation.transaction_id,
+        kept_transaction_id: kept.get(allocation.transaction_id).transaction_id })),
+    };
+  }, new Map(), async () => { node.close(); await reload(); }, new Map(row.positions.map(position => [position.id, position])));
+  form.querySelectorAll("[data-activation-pick]").forEach(button => {
+    button.onclick = () => {
+      const factId = Number(button.dataset.activationPick);
+      const picker = workbenchDialog("明确保留的真实交易", '<div data-kept-picker></div>');
+      mountPicker(picker.querySelector("[data-kept-picker]"), {
+        url: "/paam/ledger/v1/review_candidate", searchKeys: ["summary"],
+        describe: fact => `${fact.summary} · ${money(fact)} · ${fact.cash_direction} · ${date(fact.occurred_time)} · Fact #${fact.transaction_id}`,
+        choose: fact => {
+          kept.set(factId, fact);
+          form.querySelector(`[data-activation-kept="${factId}"]`).textContent = `${fact.summary} · ${money(fact)} · Fact #${fact.transaction_id}`;
+          invalidate(); picker.close();
+        },
+      });
+    };
+  });
 }
 
 export async function mountReviewWorkbench(root, params, completed) {
