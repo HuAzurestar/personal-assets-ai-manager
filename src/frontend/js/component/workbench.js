@@ -1,5 +1,6 @@
 import { request, isUnknownWrite } from "../api/client.js";
 import { esc } from "../util/core.js";
+import { candidateScan, scanControls } from "../util/candidate-scan.js";
 
 // The API label is derived from masked public identity and current ownership.
 // Keep stable IDs and status as secondary disambiguators, never infer a merge.
@@ -32,58 +33,78 @@ export function writeFailure(host, error) {
   return unknown;
 }
 
-// Exactly one bounded read at a time. Search continuation scans candidates,
-// including an empty hit batch, and never invents a total or parallel-prefetches.
+// List pages stay explicit; text search uses the same serial, cancellable
+// automatic scan as Fact/Flow/Review, including zero-hit candidate batches.
 export function mountPicker(host, { url, searchKeys = [], describe, selected = () => false, choose, signal, filter }) {
-  let page = 1, cursor = null, result, busy = false, generation = 0;
-  host.innerHTML = `<div class="actions"><input data-picker-word maxlength="128" aria-label="字面搜索" placeholder="字面搜索（不支持通配符）"><button type="button" data-picker-search>重新查找</button></div><p role="status"></p><div data-picker-items></div><div class="actions"><button type="button" data-picker-prev>上一页</button><span data-picker-count></span><button type="button" data-picker-next>下一页 / 继续扫描</button></div>`;
+  let page = 1, result, controller, busy = false, generation = 0;
+  const identity = row => row.id ?? row.transaction_id;
+  const scan = candidateScan(url, 'picker', identity, { signal });
+  host.innerHTML = `<div class="actions"><input data-picker-word maxlength="128" aria-label="字面搜索" placeholder="字面搜索（不支持通配符）"><button type="button" data-picker-search>重新查找</button></div><p role="status"></p><div data-picker-items></div><div class="actions"><button type="button" data-picker-prev>上一页</button><span data-picker-count></span><button type="button" data-picker-next>下一页</button></div><div data-picker-scan></div>`;
   const word = host.querySelector("[data-picker-word]");
   word.disabled = !searchKeys.length;
+  function stop() { generation++; controller?.abort(); scan.reset(); busy = false; }
+  signal?.addEventListener('abort', stop, { once: true });
+  host.closest('dialog')?.addEventListener('close', stop, { once: true });
+  function controls(searching) {
+    host.querySelector('[data-picker-prev]').hidden = searching;
+    host.querySelector('[data-picker-next]').hidden = searching;
+    host.querySelector('[data-picker-prev]').disabled = busy || page <= 1;
+    host.querySelector('[data-picker-next]').disabled = busy || !result || result.page_index * result.page_size >= result.total;
+    host.querySelector('[data-picker-search]').disabled = busy;
+  }
+  function paint(next, searching) {
+    result = next;
+    host.querySelector("[data-picker-items]").innerHTML = next.items.map(row => `<article class="picker-list-row"><span>${esc(describe(row))}</span><button type="button" data-picker-id="${identity(row)}">${selected(row) ? "移除选择" : "选择"}</button></article>`).join("")
+      || `<p>${searching && next.has_more ? '尚无命中；空批次不代表扫描结束。' : '没有匹配项。'}</p>`;
+    host.querySelector("[data-picker-count]").textContent = searching ? '' : `第 ${next.page_index} 页，共 ${next.total} 项`;
+    host.querySelectorAll("[data-picker-id]").forEach(button => {
+      button.onclick = () => {
+        const row = next.items.find(row => String(identity(row)) === button.dataset.pickerId);
+        choose(row); button.textContent = selected(row) ? "移除选择" : "选择";
+      };
+    });
+    host.querySelector('[data-picker-scan]').innerHTML = searching ? scanControls('picker', next) : '';
+    controls(searching);
+    if (searching) scan.bind(host, value => paint(value, true));
+  }
   const read = async (restart = false, previous = false) => {
-    if (busy) return;
+    if (busy && !restart) return;
     const requestedPage = restart ? 1 : previous ? page - 1 : result ? page + 1 : page;
-    const requestedCursor = restart ? null : result?.next_cursor;
-    const issued = ++generation;
-    busy = true;
-    host.querySelectorAll("button").forEach(button => { button.disabled = true; });
+    stop(); controller = new AbortController();
+    const issued = generation;
+    busy = true; host.querySelector('[role=status]').textContent = '正在读取';
     const params = new URLSearchParams({ page_size: "20" });
     const searching = !!word.value.trim() && !!searchKeys.length;
+    controls(searching);
     if (searching) {
       params.set("query", JSON.stringify(searchKeys.map(key => ({ key, word: word.value.trim() }))));
       // Multiple query terms are AND; callers normally choose one field.
-      if (requestedCursor) params.set("cursor", requestedCursor);
     } else params.set("page_index", String(requestedPage));
     const predicate = typeof filter === "function" ? filter() : filter;
     if (predicate) params.set("filter", JSON.stringify(predicate));
     try {
-      const next = await request(`${url}/${searching ? "search" : "list"}?${params}`, { signal });
+      const next = searching ? await scan.read(params, location.hash)
+        : await request(`${url}/list?${params}`, { signal: controller.signal });
       if (!host.isConnected || signal?.aborted || issued !== generation) return;
-      result = next;
       page = requestedPage;
-      host.querySelector("[data-picker-items]").innerHTML = next.items.map(row => `<article class="picker-list-row"><span>${esc(describe(row))}</span><button type="button" data-picker-id="${row.id ?? row.transaction_id}">${selected(row) ? "移除选择" : "选择"}</button></article>`).join("") || "<p>本批没有匹配项。</p>";
-      host.querySelector("[data-picker-count]").textContent = searching
-        ? `本批扫描 ${next.scanned_count} 个候选，命中 ${next.items.length}，总数未知`
-        : `第 ${next.page_index} 页，共 ${next.total} 项`;
-      host.querySelectorAll("[data-picker-id]").forEach(button => {
-        button.onclick = () => {
-          choose(next.items.find(row => String(row.id ?? row.transaction_id) === button.dataset.pickerId));
-          button.textContent = selected(next.items.find(row => String(row.id ?? row.transaction_id) === button.dataset.pickerId)) ? "移除选择" : "选择";
-        };
-      });
+      paint(next, searching);
       host.querySelector("[role=status]").textContent = "";
     } catch (error) {
-      if (error.name !== "AbortError" && host.isConnected) host.querySelector("[role=status]").textContent = error.message;
+      if (issued === generation && error.name !== "AbortError" && host.isConnected && !signal?.aborted) host.querySelector("[role=status]").textContent = error.message;
     } finally {
-      busy = false;
-      if (host.isConnected) {
-        host.querySelectorAll("button").forEach(button => { button.disabled = false; });
-        host.querySelector("[data-picker-prev]").disabled = searching || page <= 1;
-        host.querySelector("[data-picker-next]").disabled = !result || (searching ? !result.has_more : result.page_index * result.page_size >= result.total);
-      }
+      if (issued === generation) { busy = false; if (host.isConnected && !signal?.aborted) controls(searching); }
     }
   };
-  // Editing a search condition invalidates the continuation until a fresh read.
-  word.oninput = () => { ++generation; result = null; cursor = null; host.querySelector("[data-picker-next]").disabled = true; };
+  // Editing aborts an in-flight read and removes its candidates. Selection is
+  // owned by the caller and survives; late responses cannot restore old hits.
+  word.oninput = () => {
+    stop(); result = null;
+    host.querySelector('[data-picker-items]').innerHTML = '';
+    host.querySelector('[data-picker-scan]').innerHTML = '';
+    host.querySelector('[data-picker-count]').textContent = '';
+    host.querySelector('[role=status]').textContent = '条件已改变，请重新查找';
+    controls(!!word.value.trim() && !!searchKeys.length);
+  };
   host.querySelector("[data-picker-search]").onclick = () => read(true);
   host.querySelector("[data-picker-prev]").onclick = () => read(false, true);
   host.querySelector("[data-picker-next]").onclick = () => read();

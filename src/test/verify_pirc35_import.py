@@ -90,7 +90,7 @@ def run():
                     expect(picker_host.locator("[data-picker-word]")).to_be_enabled()
                     picker_host.locator("[data-picker-word]").fill("建设银行")
                     picker_host.locator("[data-picker-search]").click()
-                    expect(picker_host.locator("[data-picker-count]")).to_contain_text("扫描")
+                    expect(picker_host.locator("[data-picker-scan-status]")).to_contain_text("本次扫描结束")
                     expect(picker.locator(".picker-list-row")).to_have_count(1)
                     candidate = picker.locator(".picker-list-row").first
                     assert candidate.locator("span").bounding_box()["width"] > candidate.bounding_box()["width"] * .65

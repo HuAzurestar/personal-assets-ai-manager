@@ -11,6 +11,7 @@ import httpx
 import uvicorn
 from playwright.sync_api import expect, sync_playwright
 from serve_m2_ui import prepare_app
+from browser_artifact import viewport_evidence
 
 
 def run():
@@ -36,12 +37,12 @@ def run():
                     raise RuntimeError("fictional app did not start")
             from backend.core import target_database
             from backend.entity import (TransactionFact, LedgerEntry, TargetTagView, TargetTag, LedgerEntryTag,
-                ReviewCase, TransactionImportFile, TransactionImportRow)
+                ReviewCase, TransactionImportFile, TransactionImportRow, LedgerAccountParty)
             from backend.mapper.review_command_mapper import ReviewCommandMapper
             from sqlalchemy import select, func
             with target_database.SessionLocal() as db:
                 first = (db.scalar(select(func.max(TransactionFact.id))) or 0) + 1
-                ids = list(range(first, first + 4))
+                ids = list(range(first, first + 44))
                 db.add_all([TransactionFact(id=i, fact_key=f"mock-flow-browser-{i}",
                     occurred_time=datetime(2026, 9, 1, tzinfo=timezone.utc), cash_direction=1 if i % 2 else 2,
                     amount=1000, currency_code="CNY", account_code="1234567890123456", summary=
@@ -53,7 +54,11 @@ def run():
                 db.add(TransactionImportFile(id=file_id,filename='Mock source.csv',sha256='f'*64,source_type=101,file_format=1,status=1))
                 db.add(TransactionImportRow(transaction_fact_id=first,transaction_import_file_id=file_id,
                     source_row_number=1,source_reference='1234567890123456',raw_payload='{"fictional":"explicit raw only"}',row_status=1))
+                db.add_all([LedgerAccountParty(name="Mock sparse person" if i == 44 else f"Mock other person {i}") for i in range(45)])
                 db.commit()
+                fact_total = db.scalar(select(func.count()).select_from(TransactionFact))
+                flow_total = db.scalar(select(func.count()).select_from(LedgerEntry))
+                review_total = db.scalar(select(func.count()).select_from(ReviewCase))
                 flow_id = db.scalar(select(LedgerEntry.id).where(LedgerEntry.amount == 1000,
                     LedgerEntry.id >= first).order_by(LedgerEntry.id))
             with sync_playwright() as playwright:
@@ -63,13 +68,101 @@ def run():
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 page.on("request", lambda request: writes.append(request.url) if request.method not in ("GET", "HEAD") else None)
                 page.goto(base + "/#details/ledger?sort_field=id&sort_order=desc&page_size=2&word=CAFÉ%20literal%20%25_&search_field=summary")
-                expect(page.locator('[data-flow-scan-status]')).to_contain_text("已扫描 2 个候选；找到 0 项；总数未知")
-                page.locator('[data-flow-continue]').click()
-                expect(page.locator('[data-flow-scan-status]')).to_contain_text("已扫描 4 个候选；找到 1 项")
+                # One user search automatically crosses many zero-hit batches.
+                expect(page.locator('[data-flow-scan-status]')).to_contain_text("本次扫描结束", timeout=15000)
+                expect(page.locator('[data-flow-scan-status]')).to_contain_text(f"已扫描 {flow_total} 个候选；找到 1 项")
                 expect(page.locator('[data-action="economic-detail"]')).to_have_count(1)
-                page.locator('[data-flow-continue]').click()
-                expect(page.locator('[data-flow-scan-status]')).to_contain_text("已扫描 6 个候选；找到 1 项")
-                expect(page.locator('[data-action="economic-detail"]')).to_have_count(1)
+                expect(page.locator('[data-flow-continue]')).to_be_disabled()
+                viewport_evidence(page, "fix-r20-flow-auto")
+                # Exercise the real common picker against 45 public metadata
+                # candidates: two empty batches then one named hit, no clicks
+                # on batch continuation and no synthetic search response.
+                page.evaluate("""async () => {
+                    const {mountPicker, metadataLabel} = await import('/static/js/component/workbench.js');
+                    const host = document.createElement('section'); host.id = 'scan-picker-test';
+                    document.body.append(host); window.pickerAbort = new AbortController();
+                    window.pickerChoice = null;
+                    await mountPicker(host, {url:'/paam/ledger/v1/account-party', searchKeys:['display_label'],
+                        describe:metadataLabel, signal:window.pickerAbort.signal,
+                        choose:row => {window.pickerChoice = row.id;}});
+                }""")
+                picker = page.locator('#scan-picker-test')
+                picker.locator('[data-picker-word]').fill('Mock sparse person')
+                picker.locator('[data-picker-search]').click()
+                expect(picker.locator('[data-picker-scan-status]')).to_contain_text('本次扫描结束')
+                expect(picker.locator('[data-picker-scan-status]')).to_contain_text('已扫描 45 个候选；找到 1 项')
+                expect(picker.locator('.picker-list-row')).to_have_count(1)
+                picker.locator('[data-picker-id]').click()
+                assert page.evaluate('window.pickerChoice > 0')
+                viewport_evidence(page, 'fix-r20-picker-auto')
+
+                # Fail only a continuation GET; its cursor is retained and a
+                # user retry continues serially without restarting batch one.
+                failed, search_urls = [], []
+                def fail_once(route):
+                    search_urls.append(route.request.url)
+                    if 'cursor=' in route.request.url and not failed:
+                        failed.append(route.request.url)
+                        route.fulfill(status=503, content_type='application/json',
+                            body='{"status":503,"message":"fictional read failure","body":{"code":"QUERY_TIMEOUT"}}')
+                    else:
+                        route.continue_()
+                page.route('**/paam/ledger/v1/account-party/search?**', fail_once)
+                picker.locator('[data-picker-word]').fill('Mock absent')
+                picker.locator('[data-picker-search]').click()
+                expect(picker.locator('[data-picker-scan-status]')).to_contain_text('读取失败')
+                expect(picker.locator('[data-picker-scan-status]')).to_contain_text('已扫描 20 个候选')
+                expect(picker.locator('[data-picker-continue]')).to_be_enabled()
+                picker.locator('[data-picker-continue]').click()
+                expect(picker.locator('[data-picker-scan-status]')).to_contain_text('本次扫描结束')
+                expect(picker.locator('[data-picker-scan-status]')).to_contain_text('已扫描 45 个候选；找到 0 项')
+                assert search_urls[1] == search_urls[2] == failed[0]
+                page.unroute('**/paam/ledger/v1/account-party/search?**', fail_once)
+
+                # Hold a continuation in the actual browser to make pause and
+                # cancellation deterministic, then release the aborted read.
+                held = []
+                def hold_once(route):
+                    if 'cursor=' in route.request.url and not held:
+                        held.append(route)
+                    else:
+                        route.continue_()
+                page.route('**/paam/ledger/v1/account-party/search?**', hold_once)
+                picker.locator('[data-picker-word]').fill('Mock sparse person')
+                picker.locator('[data-picker-search]').click()
+                expect(picker.locator('[data-picker-pause]')).to_be_enabled()
+                # Wait for the intercepted continuation, not merely ready UI.
+                for _ in range(100):
+                    if held:
+                        break
+                    page.wait_for_timeout(10)
+                assert held
+                picker.locator('[data-picker-pause]').click()
+                expect(picker.locator('[data-picker-scan-status]')).to_contain_text('已暂停')
+                held[0].abort()
+                picker.locator('[data-picker-continue]').click()
+                expect(picker.locator('[data-picker-scan-status]')).to_contain_text('本次扫描结束')
+                expect(picker.locator('.picker-list-row')).to_have_count(1)
+                held.clear()
+                picker.locator('[data-picker-word]').fill('Mock absent')
+                picker.locator('[data-picker-search]').click()
+                for _ in range(100):
+                    if held:
+                        break
+                    page.wait_for_timeout(10)
+                assert held
+                picker.locator('[data-picker-cancel]').click()
+                expect(picker.locator('[data-picker-scan-status]')).to_contain_text('已取消自动查找')
+                held[0].abort()
+                expect(picker.locator('[data-picker-scan-status]')).to_contain_text('已扫描 20 个候选')
+                # Editing a cancelled condition starts a fresh scan; it does
+                # not inherit its cursor, disabled buttons or previous hits.
+                picker.locator('[data-picker-word]').fill('Mock sparse person')
+                picker.locator('[data-picker-search]').click()
+                expect(picker.locator('[data-picker-scan-status]')).to_contain_text('本次扫描结束')
+                expect(picker.locator('[data-picker-scan-status]')).to_contain_text('已扫描 45 个候选；找到 1 项')
+                page.unroute('**/paam/ledger/v1/account-party/search?**', hold_once)
+                page.evaluate("window.pickerAbort.abort(); document.getElementById('scan-picker-test').remove()")
                 page.locator('[data-action="economic-detail"]').click()
                 drawer = page.locator('.inspection-workspace[open]')
                 expect(drawer).to_contain_text("Mock Café literal %_ ****3456")
@@ -101,11 +194,8 @@ def run():
                 expect(tags.locator('[data-rel-status]')).to_contain_text("第 1 页（仅本页）")
                 drawer.locator('[data-close]').click()
                 page.goto(base + "/#details/review?sort_field=id&sort_order=desc&page_size=2&word=CAFÉ%20review%20%25_")
-                expect(page.locator('[data-review-scan-status]')).to_contain_text("已扫描 2 个候选；找到 0 项")
-                page.locator('[data-review-continue]').click()
-                expect(page.locator('[data-review-scan-status]')).to_contain_text("已扫描 4 个候选；找到 1 项")
-                page.locator('[data-review-continue]').click()
-                expect(page.locator('[data-review-scan-status]')).to_contain_text("已扫描 6 个候选；找到 1 项")
+                expect(page.locator('[data-review-scan-status]')).to_contain_text("本次扫描结束", timeout=15000)
+                expect(page.locator('[data-review-scan-status]')).to_contain_text(f"已扫描 {review_total} 个候选；找到 1 项")
                 page.locator('[data-action="economic-review-detail"]').click()
                 expect(drawer).to_contain_text("Mock Café review %_ ****3456")
                 drawer.locator('[data-close]').click()
@@ -115,11 +205,8 @@ def run():
                 form.locator('[name="type"]').select_option('NORMAL_TRANSACTION')
                 expect(page.locator('[data-action="economic-review-detail"]')).to_have_count(2)
                 page.goto(base + '/#details/transaction-fact?sort_field=id&sort_order=desc&page_size=2&word=CAFÉ%20literal%20%25_')
-                expect(page.locator('[data-fact-scan-status]')).to_contain_text('已扫描 2 个候选；找到 0 项')
-                page.locator('[data-fact-continue]').click()
-                expect(page.locator('[data-fact-scan-status]')).to_contain_text('已扫描 4 个候选；找到 1 项')
-                page.locator('[data-fact-continue]').click()
-                expect(page.locator('[data-fact-scan-status]')).to_contain_text('已扫描 6 个候选；找到 1 项')
+                expect(page.locator('[data-fact-scan-status]')).to_contain_text('本次扫描结束', timeout=15000)
+                expect(page.locator('[data-fact-scan-status]')).to_contain_text(f'已扫描 {fact_total} 个候选；找到 1 项')
                 page.locator('[data-action="fact-detail"]').click()
                 expect(drawer).to_contain_text('尚未解释')
                 assert '1234567890123456' not in drawer.inner_text()
@@ -196,7 +283,7 @@ def run():
                 assert not errors, errors
                 assert not writes, writes
                 browser.close()
-                print("PASS canonical Flow/Review/Fact UI: empty batches, repeated continuation, masking, five Review types, grouped money sort, explicit single-row raw evidence and complete paged fallbacks; zero HTTP writes/providers")
+                print("PASS canonical Flow/Review/Fact UI: serial automatic empty-batch search, masking, five Review types, grouped money sort, explicit single-row raw evidence and complete paged fallbacks; zero HTTP writes/providers")
         finally:
             server.should_exit = True
             worker.join(timeout=10)

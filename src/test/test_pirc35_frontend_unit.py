@@ -14,6 +14,7 @@ import pytest
     "write_failure.cjs",
     "tag_impact.cjs",
     "resource_id.cjs",
+    "candidate_scan.cjs",
 ])
 def test_standalone_frontend_contract(script):
     """Keep the standalone CI contracts in the local full-test matrix too."""
@@ -65,7 +66,7 @@ globalThis.location = {{ hash: '#details/economy?word=Mock' }};
 let calls = [], pending;
 const replies = [
   {{items:[], total:null, scanned_count:2, has_more:true, next_cursor:'one'}},
-  {{items:[{{id:3}}], total:null, scanned_count:2, has_more:true, next_cursor:'two'}},
+  {{items:[], total:null, scanned_count:2, has_more:true, next_cursor:'two'}},
   {{items:[{{id:3}},{{id:4}}], total:null, scanned_count:2, has_more:false, next_cursor:null}},
 ];
 globalThis.fetch = async (url) => {{
@@ -77,15 +78,13 @@ const {{readFlowSearch,bindFlowSearch,stopFlowRead,flowReadBusy}} = await import
 const query = new URLSearchParams({{page_size:'2',query:'[{{"key":"summary","word":"Mock"}}]'}});
 const first = await readFlowSearch(query, location.hash);
 assert.equal(first.total, null); assert.equal(first.items.length, 0);
-const button = {{ disabled:false, isConnected:true }}, status = {{textContent:''}};
-const root = {{isConnected:true, querySelector:key => key === '[data-flow-continue]' ? button : status}};
+const button = {{ disabled:false, isConnected:true }};
+const root = {{isConnected:true, querySelector:key => key === '[data-flow-continue]' ? button : null}};
 let painted = [];
 bindFlowSearch(root, result => painted.push(result));
-await button.onclick();
-assert.equal(painted[0].scanned_count, 4); assert.equal(painted[0].next_cursor, 'two');
-await button.onclick();
-assert.deepEqual(painted[1].items.map(row => row.id), [3,4]);
-assert.equal(painted[1].scanned_count, 6); assert.equal(painted[1].has_more, false);
+for (let i=0; i<100 && painted.at(-1)?.scan_state !== 'complete'; i++) await new Promise(resolve => setTimeout(resolve, 0));
+assert.deepEqual(painted.at(-1).items.map(row => row.id), [3,4]);
+assert.equal(painted.at(-1).scanned_count, 6); assert.equal(painted.at(-1).has_more, false);
 assert.ok(calls[1].includes('cursor=one') && calls[2].includes('cursor=two'));
 await button.onclick(); assert.equal(calls.length, 3);
 // Start another scan, then cancel a pending continuation. Its late result must
@@ -95,13 +94,13 @@ location.hash = '#details/economy?word=Other';
 const other = new URLSearchParams({{page_size:'2',query:'[{{"key":"summary","word":"Other"}}]'}});
 await readFlowSearch(other, location.hash);
 bindFlowSearch(root, result => painted.push(result));
-const reading = button.onclick();
 await new Promise(resolve => setTimeout(resolve, 0));
 assert.equal(flowReadBusy(), true);
 const before = calls.length; await button.onclick(); assert.equal(calls.length,before);
+const paintCount = painted.length;
 stopFlowRead(); location.hash = '#workbench/position';
 pending({{items:[{{id:999}}],total:null,scanned_count:2,has_more:false,next_cursor:null}});
-await reading;
-assert.equal(painted.length,2); assert.equal(flowReadBusy(),false);
+await new Promise(resolve => setTimeout(resolve, 0));
+assert.equal(painted.length,paintCount); assert.equal(flowReadBusy(),false);
 ''', text=True, capture_output=True, encoding="utf-8", timeout=10)
     assert result.returncode == 0, result.stdout + result.stderr

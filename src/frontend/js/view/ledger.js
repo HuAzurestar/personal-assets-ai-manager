@@ -4,7 +4,7 @@ import { positionPage, bindPosition, stopPositionRead } from "./position.js";
 import { mountReviewWorkbench, transitionReview, stopReviewRead } from "./review-workbench.js";
 import { mountImportBatch, stopImportRead } from "./import-batch.js";
 import { readFlowSearch, bindFlowSearch, stopFlowRead, flowReadBusy, resetFlowSearch } from "./flow-search.js";
-import { candidateScan } from "../util/candidate-scan.js";
+import { candidateScan, scanControls } from "../util/candidate-scan.js";
 import { preserveView } from "../util/view_state.js?v=20260928.6";
 import { toast } from "../component/toast.js";
 import { table } from "../component/table.js";
@@ -426,7 +426,7 @@ function factRows(items, scanning = false) {
 }
 
 function factScanFooter(result) {
-  return `<div class="actions"><span data-fact-scan-status>已扫描 ${result.scanned_count} 个候选；找到 ${result.items.length} 项；总数未知。${result.has_more ? '可继续扫描' : '本次扫描结束'}</span><button data-fact-continue ${result.has_more ? '' : 'disabled'}>继续检索</button></div>`;
+  return scanControls('fact', result);
 }
 
 function paintFactSearch(root, result) {
@@ -485,7 +485,7 @@ function flowRows(items, scanning = false) {
 }
 
 function flowScanFooter(result) {
-  return `<div class="actions"><span data-flow-scan-status>已扫描 ${result.scanned_count} 个候选；找到 ${result.items.length} 项；总数未知。${result.has_more ? "空命中也可继续" : "本次扫描结束"}</span><button type="button" data-flow-continue ${result.has_more ? "" : "disabled"}>继续检索</button></div>`;
+  return scanControls('flow', result);
 }
 
 function paintFlowSearch(root, result) {
@@ -544,7 +544,7 @@ function reviewRows(items, scanning = false) {
 }
 
 function reviewScanFooter(result) {
-  return `<div class="actions"><span data-review-scan-status>已扫描 ${result.scanned_count} 个候选；找到 ${result.items.length} 项；总数未知。${result.has_more ? '可继续扫描' : '本次扫描结束'}</span><button data-review-continue ${result.has_more ? '' : 'disabled'}>继续检索</button></div>`;
+  return scanControls('review', result);
 }
 
 function paintReviewSearch(root, result) {
