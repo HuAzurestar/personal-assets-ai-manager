@@ -25,6 +25,10 @@ class PreviewFile(ImportProgress):
     filename: str
     parsed_row_count: int
     activity_range: ActivityRange
+    parse_status: Literal["READY", "EMPTY", "FAILED"]
+    parse_issue_code: str
+    parse_issue_message: str
+    parse_recovery: str
 
 
 class PreviewCounts(PO):

@@ -89,8 +89,37 @@ def test_empty_valid_header_not_parse_error_and_no_fabricated_currency(client):
     content = "建设银行个人交易明细\n账号：990000000000001234\n币种：人民币\n交易日期,交易金额,币别,摘要\n".encode()
     current = preview(client, content)
     assert current["files"][0]["parsed_row_count"] == 0 and current["issue_count"] == 0
+    assert current["files"][0]["parse_status"] == "EMPTY"
     file = client.get(BASE + f"/import_file/{current['files'][0]['file_id']}").json()["body"]
     assert file["file"]["status"] == 1 and file["progress"]["remaining"] == 0
+
+
+def test_failed_file_is_explicit_and_other_file_can_still_be_confirmed(client):
+    valid = (Path(__file__).parent / "fixtures" / "pirc35" / "ccb-2.csv").read_bytes()
+    response = client.post(BASE + "/preview", json=dict(files=[
+        dict(filename="Mock valid.csv", source_type="ccb", content_base64=base64.b64encode(valid).decode()),
+        dict(filename="Mock broken.csv", source_type="ccb", content_base64=base64.b64encode(b"not,a,statement").decode()),
+    ]))
+    assert response.status_code == 200, response.text
+    current = response.json()["body"]
+    files = {row["filename"]: row for row in current["files"]}
+    failed = files["Mock broken.csv"]
+    assert failed["parse_status"] == "FAILED"
+    assert failed["parse_issue_code"] == "HEADER_NOT_FOUND"
+    assert "表头" in failed["parse_issue_message"] and failed["parse_recovery"]
+    assert failed["invalid"] == failed["parsed_row_count"] == 0
+    assert files["Mock valid.csv"]["parse_status"] == "READY"
+    assert current["issue_count"] == 1
+    rows = page(client, current)["items"]
+    assert len(rows) == 20
+    result = accept(client, current, rows[:1])
+    assert result["new_fact_count"] == 1
+    response = client.get(BASE + f"/preview/{current['token']}")
+    assert response.status_code == 200, response.text
+    assert {row["filename"]: row for row in response.json()["body"]["files"]}["Mock broken.csv"]["parse_status"] == "FAILED"
+    valid_id = files["Mock valid.csv"]["file_id"]
+    file = client.get(BASE + f"/import_file/{valid_id}").json()["body"]
+    assert file["progress"]["accepted"] == 1 and file["progress"]["remaining"] == 23
 
 
 def test_source_read_literal_search_and_public_issue_projection_before_matching(client):

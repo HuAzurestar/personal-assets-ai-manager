@@ -8,6 +8,7 @@ import sys
 from threading import BoundedSemaphore
 from time import monotonic
 from backend.error import TargetIntakeError
+from backend.error.statement_parse import StatementParseError
 from backend.core.feature_observability import observed
 
 _parser_slot = BoundedSemaphore(1)
@@ -36,6 +37,8 @@ def parse_statement(content, filename, password=None, source=None, *, source_tim
         result = json.loads(output)
         if result.get("error") == "PARSE_LIMIT":
             raise TargetIntakeError(422, "parsed content exceeds safety budget", code="PARSE_LIMIT")
+        if result.get("error"):
+            raise StatementParseError(result["error"])
         if "document" not in result:
             raise ValueError("PARSE_ERROR")
         return result["document"]

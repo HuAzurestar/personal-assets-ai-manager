@@ -35,8 +35,13 @@ export async function mountImportBatch(host, initial, changed) {
   const update = () => {
     if (!live()) return;
     const plan = context.plan;
-    find("[data-batch-files]").innerHTML = plan.files.map(file => `<article class="preview-file-card"><strong>${esc(file.filename)} · #${file.file_id}</strong><p>已接受 ${file.accepted} · 跳过 ${file.skipped} · 问题 ${file.invalid} · 剩余 ${file.remaining}</p><small>解析 ${file.parsed_row_count} 行；活动范围 ${esc(file.activity_range.start || "未知")} 至 ${esc(file.activity_range.end || "未知")}（不是完整期间覆盖）</small></article>`).join("");
-    find("[data-batch-summary]").textContent = `新事实 ${plan.counts.new} · 仅补证据 ${plan.counts.existing} · 已接受 ${plan.counts.processed} · 问题 ${plan.issue_count}${plan.has_more_issues ? "（问题提示超过100条，请分页核对）" : ""}${plan.timed_out ? "；预览超时提示，确认仍会重新核验" : ""}`;
+    const failedFiles = plan.files.filter(file => file.parse_status === "FAILED").length;
+    find("[data-batch-files]").innerHTML = plan.files.map(file => `<article class="preview-file-card"><strong>${esc(file.filename)} · #${file.file_id}</strong>
+      ${file.parse_status === "FAILED" ? `<p class="error" role="alert" data-file-parse-error>解析失败 · ${esc(file.parse_issue_code)}：${esc(file.parse_issue_message)}</p><p>${esc(file.parse_recovery)}</p>`
+        : file.parse_status === "EMPTY" ? '<p data-file-parse-empty>解析成功；有效空文件，没有交易记录。未创建新事实。</p>' : `<p>解析成功：${file.parsed_row_count} 行。</p>`}
+      <p>已接受 ${file.accepted} · 跳过 ${file.skipped} · 无效记录 ${file.invalid} · 剩余 ${file.remaining}</p><small>活动范围 ${esc(file.activity_range.start || "未知")} 至 ${esc(file.activity_range.end || "未知")}（不是完整期间覆盖）</small></article>`).join("")
+      + ((plan.issues || []).some(issue => issue.source_row_number > 0) ? `<details data-batch-issues><summary>查看本次行问题提示</summary>${plan.issues.filter(issue => issue.source_row_number > 0).map(issue => `<p>文件 #${issue.file_id} · 第 ${issue.source_row_number} 行：${esc(issue.code)}</p>`).join("")}${plan.has_more_issues ? "<p>此处仅为有界提示；其余问题请按文件及分类分页核对，不能把本提示当作完整行列表。</p>" : ""}</details>` : "");
+    find("[data-batch-summary]").textContent = `新事实 ${plan.counts.new} · 仅补证据 ${plan.counts.existing} · 已接受 ${plan.counts.processed} · 文件解析失败 ${failedFiles} · 行问题 ${Math.max(0, plan.issue_count - failedFiles)} · 总问题 ${plan.issue_count}${plan.has_more_issues ? "（行问题请按分类分页核对；文件失败已全部显示）" : ""}${plan.timed_out ? "；预览超时提示，确认仍会重新核验" : ""}`;
     find("[data-batch-selection]").textContent = `本批明确选择 ${context.selected.size} 行${context.dirty ? "；选择已修改，须先保存核验" : "；使用服务器最新摘要"}`;
     host.querySelectorAll("button,input,select").forEach(node => { node.disabled = context.busy || context.unknown; });
     find("[data-batch-verify]").disabled = context.busy;

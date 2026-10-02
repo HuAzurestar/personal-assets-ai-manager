@@ -20,6 +20,7 @@ from backend.core.feature_observability import observed, observability
 from backend.entity.base import utc_now
 from backend.core.source_account_identity import reliable_source
 from backend.error import ListQueryError, TargetIntakeError
+from backend.error.statement_parse import PARSE_ISSUES, public_parse_code
 from backend.entity import TransactionImportFile
 from backend.mapper.import_batch_mapper import ImportBatchMapper, fail, fingerprint
 from backend.mapper.trusted_relation_mapper import TrustedRelationMapper
@@ -111,9 +112,9 @@ class ImportBatchService:
             try:
                 doc = parse_statement(content, item.filename, item.password, item.source_type,
                                       source_timezone=source_timezone, deadline=started + 30)
-            except (ValueError, TypeError):
+            except (ValueError, TypeError) as error:
                 # Raw parser exceptions may contain account numbers or content.
-                doc = dict(filename=PureWindowsPath(item.filename).name, sha256=sha, rows=[], error="PARSE_ERROR")
+                doc = dict(filename=PureWindowsPath(item.filename).name, sha256=sha, rows=[], error=public_parse_code(error))
             doc["file_id"] = files[sha]["id"]
             documents[sha] = doc
             row_count += len(doc["rows"])
@@ -163,6 +164,10 @@ class ImportBatchService:
         files = []
         for file in state.files:
             item = {key: value for key, value in file.items() if key != "error"}
+            code = file.get("error") or ""
+            item.update(parse_status="FAILED" if code else "READY" if file["parsed_row_count"] else "EMPTY",
+                parse_issue_code=code, parse_issue_message=PARSE_ISSUES.get(code, ("", ""))[0],
+                parse_recovery=PARSE_ISSUES.get(code, ("", ""))[1])
             item.update({key: progress[file["file_id"]][key] for key in ("accepted", "skipped", "invalid", "remaining")})
             # Genuine parsed activity extrema, not asserted statement coverage.
             info = stored_files[file["file_id"]]
