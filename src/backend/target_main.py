@@ -24,6 +24,7 @@ from backend.router.import_conflict import router as import_conflict_router
 from backend.router.import_file import router as import_file_router
 from backend.router.import_router import router as import_router
 from backend.router.ledger import router as ledger_router
+from backend.router.ledger_unit import router as ledger_unit_router
 from backend.router.ledger_account import router as ledger_account_router
 from backend.router.account_management import router as account_management_router
 from backend.router.position import router as position_router
@@ -106,6 +107,7 @@ app.include_router(auto_tag_rule_router)
 app.include_router(import_conflict_router)
 app.include_router(import_file_router)
 app.include_router(ledger_router)
+app.include_router(ledger_unit_router)
 app.include_router(ledger_review_router)
 app.include_router(ledger_review_candidate_router)
 app.include_router(ledger_transaction_fact_router)

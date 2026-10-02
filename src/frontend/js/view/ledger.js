@@ -5,6 +5,7 @@ import { mountReviewWorkbench, transitionReview, stopReviewRead } from "./review
 import { mountImportBatch, stopImportRead } from "./import-batch.js";
 import { readFlowSearch, bindFlowSearch, stopFlowRead, flowReadBusy, resetFlowSearch } from "./flow-search.js";
 import { candidateScan, scanControls } from "../util/candidate-scan.js";
+import { loadUnitDictionary, unitChoices, unitLabel } from "../util/unit-dictionary.js";
 import { preserveView } from "../util/view_state.js?v=20260928.6";
 import { toast } from "../component/toast.js";
 import { table } from "../component/table.js";
@@ -213,6 +214,7 @@ async function render({ background = false } = {}) {
   if (!samePage) root.innerHTML = '<div class="busy">正在加载…</div>';
   root.setAttribute('aria-busy', 'true');
   try {
+    await loadUnitDictionary();
     const content = await ({
       economy: economicPage,
       "account-management": () => accountManagementPage(state.params),
@@ -319,11 +321,12 @@ function filterBoundary(value, exclusiveEnd = false) {
   return zonedISOString(value, exclusiveEnd);
 }
 
-const commonCurrencies = ["CNY", "USD", "HKD", "EUR", "GBP", "JPY"];
-
 function currencySelect(selected) {
-  const currencies = [...new Set([selected, ...commonCurrencies].filter(Boolean))];
-  return `<select name="currency_code"><option value="">全部币种</option>${currencies.map((currency) => `<option value="${esc(currency)}" ${selected === currency ? "selected" : ""}>${esc(currency)}</option>`).join("")}</select>`;
+  if (selected) currencyPrecision(selected);
+  const currencies = unitChoices('CURRENCY');
+  const group = (defaults) => currencies.filter(item => item.is_default === defaults).map(item =>
+    `<option value="${esc(item.code)}" ${selected === item.code ? 'selected' : ''}>${esc(item.code)} · ${esc(unitLabel(item.code))}${defaults ? '' : ` · 最小单位 ${esc(item.quantum)}`}</option>`).join('');
+  return `<select name="currency_code"><option value="">全部币种</option><optgroup label="默认精度">${group(true)}</optgroup><optgroup label="其他精确单位">${group(false)}</optgroup></select>`;
 }
 
 function directionSelect(name, selected) {

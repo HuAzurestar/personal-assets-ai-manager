@@ -17,7 +17,7 @@ def test_complete_catalog_matches_authoritative_definitions_without_sql():
     statements = []
     def record(connection, cursor, statement, parameters, context, executemany):
         statements.append(statement)
-    # No application lifespan/schema creation: the dictionary needs no DB.
+    # Exclude application startup; the dictionary GET itself needs no SQL.
     event.listen(target_database.engine, 'before_cursor_execute', record)
     try:
         with TestClient(app) as client:
@@ -69,6 +69,15 @@ def test_catalog_capacity_failure_is_explicit_not_a_partial_dictionary(monkeypat
     import backend.service.unit_dictionary_service as service
     with TestClient(app) as client:
         monkeypatch.setattr(service, 'MAX_DICTIONARY_UNITS', 1)
+        response = client.get(URL)
+        assert response.status_code == 413, response.text
+        assert response.json()['body']['code'] == 'UNIT_DICTIONARY_LIMIT'
+
+
+def test_catalog_byte_capacity_failure_is_explicit(monkeypatch):
+    import backend.service.unit_dictionary_service as service
+    with TestClient(app) as client:
+        monkeypatch.setattr(service, 'MAX_DICTIONARY_BYTES', 1)
         response = client.get(URL)
         assert response.status_code == 413, response.text
         assert response.json()['body']['code'] == 'UNIT_DICTIONARY_LIMIT'

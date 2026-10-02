@@ -3,6 +3,7 @@ import { esc, date, quantityDecimal, money, resourceId } from "../util/core.js";
 import { table } from "../component/table.js";
 import { input, select, workbenchDialog, writeFailure, namedChoice, bindNamedChoice } from "../component/workbench.js";
 import { candidateScan, scanControls } from '../util/candidate-scan.js';
+import { unitChoices, unitLabel } from '../util/unit-dictionary.js';
 
 const base = "/paam/financial/v1/position";
 export const usages = ["GENERAL", "PERSONAL-LENDING", "SHARED-SETTLEMENT", "STORED-VALUE", "DEPOSIT-PLEDGE", "REIMBURSEMENT", "CREDIT-CARD", "FORMAL-LOAN", "INVESTMENT"];
@@ -18,7 +19,8 @@ export function positionFields(row = {}, metadata = false) {
       : select("type", "性质", [["ASSET", "资产／债权"], ["LIABILITY", "负债／债务"]], row.type || "ASSET")
         + namedChoice('party_id', '本方个人', {value: row.party_id || '', pickAttribute: 'data-pick-party', pick: '查找个人'})
         + input("counterparty", "对象对方（文字，不按同名合并）", row.counterparty || "", 'maxlength="200"')
-        + input("unit_code", "单位（CNY / USD / KRW / KG_3 / PCS 等）", row.unit_code || "CNY", 'required maxlength="12"'));
+        + select('unit_code', '精确单位（数量不等于估值）', unitChoices().map(item =>
+          [item.code, `${item.code} · ${unitLabel(item.code)} · 最小单位 ${item.quantum}`]), row.unit_code || 'CNY'));
 }
 
 export function bindPartyPicker(form, signal) {

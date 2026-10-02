@@ -1,3 +1,6 @@
+import { currencyPrecision, unitPrecision } from './unit-dictionary.js';
+export { currencyPrecision, unitPrecision };
+
 export const $ = (selector, root = document) => root.querySelector(selector);
 export const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
@@ -166,17 +169,6 @@ export const statusNames = {
   PARTIAL: "部分", CONFLICT: "冲突", ACTIVE: "启用中", ARCHIVED: "已归档",
 };
 
-const currencyPrecisions = {
-  CNY: 2, EUR: 2, GBP: 2, HKD: 2, JPY: 0, KRW: 0, USD: 2,
-};
-
-export function currencyPrecision(value) {
-  const code = String(value || "").trim().toUpperCase();
-  const match = code.match(/^([A-Z][A-Z0-9]{1,11}?)(?:_([0-8]))?$/);
-  if (!match || !(match[1] in currencyPrecisions)) throw new Error(`不支持的币种单位：${value}`);
-  return match[2] === undefined ? currencyPrecisions[match[1]] : Number(match[2]);
-}
-
 export function decimalAmount(value, currencyCode) {
   const text = String(value || "").trim();
   if (!text) return null;
@@ -207,10 +199,6 @@ export function money(item) {
   } catch {
     return `${value.toFixed(precision)} ${code}`;
   }
-}
-
-export function unitPrecision(code) {
-  return code === "KG_3" ? 3 : code === "PCS" ? 0 : currencyPrecision(code);
 }
 
 export function quantityDecimal(amount, code) {

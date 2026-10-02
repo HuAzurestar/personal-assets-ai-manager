@@ -4,6 +4,7 @@ const vm = require('node:vm');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const context = vm.createContext({ registerInspection: () => {} });
+require('./unit_fixture.cjs').installFixture(context);
 for (const name of ['disclosure', 'automation']) {
   const source = fs.readFileSync(path.join(__dirname, `../frontend/js/view/${name}.js`),'utf8').replace(/^import .*;\r?\n/gm,'').replace(/^export /gm,'');
   vm.runInContext(source,context);

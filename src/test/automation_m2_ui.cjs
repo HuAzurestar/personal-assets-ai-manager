@@ -9,6 +9,7 @@ const context = { AbortController, URLSearchParams, console,
   date: (value) => String(value || "—"),
 };
 vm.createContext(context);
+require('./unit_fixture.cjs').installFixture(context);
 for (const file of ["util/visible_poll.js", "view/disclosure.js", "view/automation_feedback.js"]) {
   vm.runInContext(fs.readFileSync(path.resolve(__dirname, `../frontend/js/${file}`), "utf8")
     .replace(/^import .*;\r?\n/gm, "").replace(/^export /gm, ""), context);

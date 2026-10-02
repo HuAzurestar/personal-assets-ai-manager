@@ -17,6 +17,7 @@ import pytest
     "candidate_scan.cjs",
     "draft_reference.cjs",
     "local_choice.cjs",
+    "unit_dictionary.cjs",
 ])
 def test_standalone_frontend_contract(script):
     """Keep the standalone CI contracts in the local full-test matrix too."""
@@ -35,9 +36,14 @@ def test_exact_frontend_units_and_canonical_money():
     if not node:
         pytest.skip("Node is required for frontend unit execution")
     core = (Path(__file__).parents[1] / "frontend/js/util/core.js").resolve().as_uri()
+    dictionary = (Path(__file__).parents[1] / "frontend/js/util/unit-dictionary.js").resolve().as_uri()
+    from backend.service.unit_dictionary_service import UnitDictionaryService
+    catalog = UnitDictionaryService().get().model_dump_json()
     result = subprocess.run([node, "--input-type=module"], input=f'''
 import {{ quantityAmount, quantityDecimal, decimalAmount, money, typeNames }} from {core!r};
 import assert from 'node:assert/strict';
+import {{ installUnitDictionary }} from {dictionary!r};
+installUnitDictionary(({catalog}).items);
 assert.equal(quantityAmount('0.001', 'KG_3'), 1);
 assert.equal(quantityAmount('400.00', 'CNY'), 40000);
 assert.equal(quantityDecimal(10000, 'CNY'), '100.00');
