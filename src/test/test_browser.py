@@ -16,6 +16,7 @@ import pytest
     "verify_automation_presentation.py",
     "verify_m2_ui.py",
     "verify_pirc35_account.py",
+    "verify_pirc35_account_scope.py",
     "verify_pirc35_position.py",
     "verify_pirc35_import.py",
     "verify_pirc35_flow.py",

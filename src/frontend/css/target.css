@@ -1880,3 +1880,60 @@
   .target-shell .automation-table .automation-actions { flex-wrap:wrap; }
   .target-shell .rule-table .rule-counts { min-width:0; }
 }
+
+/* Account metadata remains three identities, but only source cards are the
+   primary list. Directories live in bounded, searchable dialogs. */
+.account-workspace { display:grid; grid-template-columns:230px minmax(0,1fr); gap:16px; align-items:start; }
+.account-workspace > .panel { min-width:0; margin:0; }
+.account-metadata-scope { padding:16px; }
+.account-metadata-scope summary { font-size:17px; font-weight:700; cursor:pointer; }
+.account-metadata-scope summary span { display:block; margin-top:6px; font-size:12px; font-weight:400; overflow-wrap:anywhere; }
+.account-scope-fields { display:grid; gap:16px; margin-top:16px; }
+.account-metadata-scope [data-named-choice] { gap:6px; font-size:12px; }
+.account-metadata-scope [data-choice-label] { overflow-wrap:anywhere; line-height:1.5; }
+.account-metadata-scope .actions { gap:6px; flex-wrap:wrap; }
+.account-metadata-scope button,.account-list-pager button,.account-ref-table button { min-height:32px; padding:5px 8px; font-size:12px; }
+.account-metadata-scope small { color:var(--muted); line-height:1.6; }
+.account-card-surface { padding:0; overflow:hidden; }
+.account-card-head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:16px; }
+.account-card-head h1 { margin:0; font-size:21px; }
+.account-card-head p { margin:5px 0 0; color:var(--muted); font-size:12px; }
+.account-card-head > button { flex:none; min-height:34px; padding:6px 10px; font-size:12px; }
+.account-filter { display:flex; gap:10px; align-items:end; flex-wrap:wrap; padding:0 16px 14px; }
+.account-filter label { margin:0; font-size:12px; min-width:0; }
+.account-filter .account-word { flex:1 1 180px; }
+.account-filter input,.account-filter select { min-height:36px; padding:6px 8px; font-size:12px; }
+.account-filter > button { min-height:36px; padding:6px 10px; font-size:12px; }
+.account-ref-table table { min-width:0; table-layout:fixed; }
+.account-ref-table th:nth-child(1) { width:28%; }
+.account-ref-table th:nth-child(2) { width:19%; }
+.account-ref-table th:nth-child(3) { width:9%; }
+.account-ref-table th:nth-child(4) { width:22%; }
+.account-ref-table th:nth-child(5) { width:22%; }
+.account-ref-table td { padding:8px 10px; font-size:12px; white-space:normal; overflow-wrap:anywhere; vertical-align:middle; }
+.account-ref-table td strong,.account-ref-table td small { display:block; }
+.account-ref-table td small { margin-top:3px; font-size:11px; color:var(--muted); line-height:1.45; }
+.account-ref-table td .actions { gap:5px; flex-wrap:wrap; }
+.account-list-pager { justify-content:flex-end; padding:10px 16px; font-size:12px; }
+.account-ref-table > .actions { padding:10px 16px; font-size:12px; }
+.account-empty,.account-metadata-note { margin:0; padding:12px 16px; font-size:12px; color:var(--muted); line-height:1.6; }
+@media(max-width:1000px) {
+  .account-workspace { grid-template-columns:1fr; }
+  .account-scope-fields { grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+  .account-scope-fields > small { grid-column:1/-1; }
+}
+@media(max-width:600px) {
+  .account-metadata-scope { padding:12px; }
+  .account-scope-fields { gap:8px; }
+  .account-card-head { padding:12px; }
+  .account-filter { padding:0 12px 12px; gap:8px; }
+  .account-filter .account-word { flex-basis:100%; }
+  .account-ref-table .table-wrap { overflow:visible; }
+  .account-ref-table table,.account-ref-table tbody { display:block; width:100%; }
+  .account-ref-table thead { display:none; }
+  .account-ref-table tr { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); border-bottom:1px solid var(--line); padding:8px; }
+  .account-ref-table td { display:block; border:0; padding:5px; }
+  .account-ref-table td:first-child,.account-ref-table td:last-child { grid-column:1/-1; }
+  .account-ref-table td::before { content:attr(data-label); display:block; color:var(--muted); font-size:10px; margin-bottom:3px; }
+  .account-list-pager { justify-content:center; flex-wrap:wrap; }
+}

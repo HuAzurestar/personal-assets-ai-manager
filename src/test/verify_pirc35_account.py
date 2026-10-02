@@ -49,13 +49,37 @@ def run():
                     form.locator('[name="name"]').fill("Mock person A")
                     form.locator('[type="submit"]').click()
                     expect(page.locator("dialog[open]")).to_have_count(0)
-                    page.get_by_role("link", name="查看集合").click()
                     page.locator('[data-account-create="account"]').click()
+                    # A collection can be created before any card exists; its
+                    # owner is chosen by name, not supplied as an editable ID.
+                    form.locator('[data-named-choice="party_id"] [data-choice-pick]').click()
+                    picker = page.locator('dialog[open] [data-choice-picker]')
+                    expect(picker.locator('[data-picker-id]')).to_have_count(1)
+                    picker.locator('[data-picker-id]').click()
+                    expect(form.locator('[name="party_id"]')).to_have_attribute('type', 'hidden')
+                    expect(form.locator('[data-choice-label]')).to_contain_text('Mock person A')
                     form.locator('[name="name"]').fill("Mock set A")
                     form.locator('[type="submit"]').click()
                     expect(page.locator("dialog[open]")).to_have_count(0)
-                    page.get_by_role("link", name="查看具体卡").click()
+                    # Low-frequency maintenance must work for a collection
+                    # before it has any card, not depend on the main list.
+                    page.locator('[data-account-manage="account"]').click()
+                    page.locator('dialog[open] [data-directory-action]').select_option('edit')
+                    directory = page.locator('dialog[open] [data-account-directory]')
+                    expect(directory.locator('[data-picker-id]')).to_have_count(1)
+                    directory.locator('[data-picker-id]').click()
+                    expect(form.locator('[name="name"]')).to_have_value('Mock set A')
+                    form.locator('[name="name"]').fill('Mock set A maintained')
+                    form.locator('[type="submit"]').click()
+                    expect(page.locator('dialog[open]')).to_have_count(0)
+                    groups = client.get('/paam/ledger/v1/account/list').json()['body']
+                    assert groups['total'] == 1 and groups['items'][0]['name'] == 'Mock set A maintained'
                     page.locator('[data-account-create="ref"]').click()
+                    form.locator('[data-named-choice="account_id"] [data-choice-pick]').click()
+                    picker = page.locator('dialog[open] [data-choice-picker]')
+                    expect(picker.locator('[data-picker-id]')).to_have_count(1)
+                    picker.locator('[data-picker-id]').click()
+                    expect(form.locator('[data-choice-label]')).to_contain_text('Mock set A maintained')
                     form.locator('[name="name"]').fill("Mock card")
                     form.locator('[name="reference"]').fill("990000000000001234")
                     form.locator('[type="submit"]').click()
@@ -77,7 +101,7 @@ def run():
                     expect(form.locator('[name="account_id"]')).to_have_value(str(target['id']))
                     form.locator('[type="submit"]').click()
                     expect(form.locator("[data-impact]")).to_contain_text("跨个人变更")
-                    expect(form.locator('[data-impact]')).to_contain_text('Mock person A / Mock set A → Mock person B / Mock set B')
+                    expect(form.locator('[data-impact]')).to_contain_text('Mock person A / Mock set A maintained → Mock person B / Mock set B')
                     form.locator("[data-confirm]").click()
                     expect(page.locator("dialog[open]")).to_have_count(0)
                     page.goto(base + "/#workbench/account")
@@ -101,7 +125,14 @@ def run():
                     page.keyboard.press("Escape")
                     page.unroute("**/paam/ledger/v1/account-party", lose_response)
                     page.reload()
-                    expect(page.locator("[data-account-management]")).to_contain_text("Mock result unknown")
+                    expect(page.locator("[data-account-management]")).to_be_visible()
+                    page.locator('[data-account-manage="party"]').click()
+                    directory = page.locator('dialog[open] [data-account-directory]')
+                    expect(directory).to_contain_text("Mock result unknown")
+                    # The persisted creation is discoverable, without another POST.
+                    people = client.get('/paam/ledger/v1/account-party/list').json()['body']
+                    assert len([row for row in people['items'] if row['name'] == 'Mock result unknown']) == 1
+                    page.keyboard.press('Escape')
                     page.set_viewport_size({"width": 390, "height": 844})
                     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
                     assert errors == [], errors
