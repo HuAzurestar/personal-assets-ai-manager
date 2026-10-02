@@ -6,6 +6,22 @@ import subprocess
 import pytest
 
 
+@pytest.mark.parametrize("script", [
+    "automation_ui.cjs", "automation_m2_ui.cjs",
+    "automation_setting_form.cjs", "tag_assignment_ui.cjs",
+])
+def test_standalone_frontend_contract(script):
+    """Keep the standalone CI contracts in the local full-test matrix too."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node is required for frontend contract execution")
+    result = subprocess.run(
+        [node, str(Path(__file__).parent / script)],
+        text=True, capture_output=True, encoding="utf-8", timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_exact_frontend_units_and_canonical_money():
     node = shutil.which("node")
     if not node:

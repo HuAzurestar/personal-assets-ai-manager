@@ -7,7 +7,7 @@ const vm = require("node:vm");
 
 const code = fs.readFileSync(path.resolve(__dirname, "../frontend/js/view/ledger.js"), "utf8");
 const start = code.indexOf("function manualTagViewNames(form) {");
-const end = code.indexOf("async function submitLedgerAccount", start);
+const end = code.indexOf("function simpleDictionaryDialog", start);
 assert.ok(start > 0 && end > start);
 let sent;
 const context = {
