@@ -48,15 +48,21 @@ class AccountManagementMapper(ReviewCommandMapper):
         return dict(self.get(kind, row["id"]))
 
     def page(self, kind, request):
-        entity = self.entities[kind]
         return page_rows(self.db, self.public_statement(kind), request,
-            {column.name: column for column in entity.__table__.columns})
+            self.query_columns(kind))
 
     def search(self, kind, request, project):
-        entity = self.entities[kind]
         return scan_rows(self.db, self.public_statement(kind), request,
-            {column.name: column for column in entity.__table__.columns},
+            self.query_columns(kind),
             scope=f"local:ledger-v1:metadata:{kind}", project=project)
+
+    def query_columns(self, kind):
+        columns = {column.name: column for column in self.entities[kind].__table__.columns}
+        if kind == "ref":
+            # Match the public current-ownership projection, including the
+            # explicit zero of unassigned refs for the != comparison.
+            columns["party_id"] = func.coalesce(LedgerAccount.party_id, 0)
+        return columns
 
     def ledger_effect(self, ref_id):
         return self.db.execute(select(func.count(LedgerEntry.id).label("count"),

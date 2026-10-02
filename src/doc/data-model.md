@@ -49,6 +49,8 @@ Review物理类型0系统NORMAL_TRANSACTION、1 BORROW_AND_REPAY、2 CREDIT_CARD
 
 `party → account集合 → ref具体来源`。Ledger.account_ref_id=0为UNIDENTIFIED；正ref/account_id=0为UNASSIGNED；完整链为ASSIGNED。换组只改当前归属/筛选，不移动金融行。同名、尾号、订单号、对手账号不自动合并。仅已验收银行解析器的完整可靠本方身份允许精确namespace+identity复用/创建ref；identity_strength=1 RELIABLE有唯一索引，未知为0。账户状态ACTIVE/CLOSED。
 
+来源卡标准list/search支持当前归属`party_id`正整数等于/不等于，与`account_id`及状态条件按标准逻辑组合；真实链为ref→account→party，未分组仍由`account_id=0`显式选择。COUNT与本页同快照，搜索游标绑定个人/集合范围；过滤不能隐藏破损引用。账户工作台以紧凑来源卡列表为主，个人/集合具名筛选并按需打开有界管理选择器，不默认加载三张目录表；低频维护继续使用原元数据/归属预览写口，三类身份和金融历史不变。
+
 Position.type=ASSET/LIABILITY；usage_scenario为GENERAL、PERSONAL-LENDING、SHARED-SETTLEMENT、STORED-VALUE、DEPOSIT-PLEDGE、REIMBURSEMENT、CREDIT-CARD、FORMAL-LOAN、INVESTMENT之一。status=ACTIVE/ARCHIVED/SETTLED；归档不清量，SETTLED仅允许已知零且无失效来源。type/party/unit及原腿不改，回款/处置以新Review及明确来源腿关联。Leg.type=OPENING/MOVEMENT，direction=IN/OUT、正量，source=0为未指定来源。
 
 现金/数量为整数+单位，单值≤9,000,000,000,000；不浮点/跨币净额/隐式换算。CNY=0.01、CNY_4=0.0001、JPY/KRW=1、KG_3=0.001kg、PCS=1件，白名单见 `backend/core/unit.py`。

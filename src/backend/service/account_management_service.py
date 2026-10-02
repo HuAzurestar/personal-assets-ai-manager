@@ -87,6 +87,7 @@ class AccountManagementService:
             fields["party_id"] = ("=", "!=")
         if kind == "ref":
             fields["account_id"] = ("=", "!=")
+            fields["party_id"] = ("=", "!=")
         text_fields = ("name", "display_label")
         if kind == "account":
             text_fields += ("party_name",)
