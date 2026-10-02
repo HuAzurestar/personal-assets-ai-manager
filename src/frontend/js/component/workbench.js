@@ -56,7 +56,7 @@ export function mountPicker(host, { url, searchKeys = [], describe, selected = (
       if (!host.isConnected || signal?.aborted || issued !== generation) return;
       result = next;
       page = requestedPage;
-      host.querySelector("[data-picker-items]").innerHTML = next.items.map(row => `<article class="review-ledger-row"><span>${esc(describe(row))}</span><button type="button" data-picker-id="${row.id ?? row.transaction_id}">${selected(row) ? "移除选择" : "选择"}</button></article>`).join("") || "<p>本批没有匹配项。</p>";
+      host.querySelector("[data-picker-items]").innerHTML = next.items.map(row => `<article class="picker-list-row"><span>${esc(describe(row))}</span><button type="button" data-picker-id="${row.id ?? row.transaction_id}">${selected(row) ? "移除选择" : "选择"}</button></article>`).join("") || "<p>本批没有匹配项。</p>";
       host.querySelector("[data-picker-count]").textContent = searching
         ? `本批扫描 ${next.scanned_count} 个候选，命中 ${next.items.length}，总数未知`
         : `第 ${next.page_index} 页，共 ${next.total} 项`;

@@ -97,6 +97,12 @@ def run():
                     page.goto(base + "/#workbench/review?facts=" + facts)
                     review = page.locator("[data-immutable-review]")
                     expect(review.locator("[data-cash-row]")).to_have_count(60, timeout=30000)
+                    # R02: the shared Fact picker gives the summary the main width.
+                    candidate = review.locator("[data-fact-picker] [data-picker-items] article").first
+                    assert candidate.get_attribute("class") == "picker-list-row"
+                    assert candidate.locator("span").bounding_box()["width"] > candidate.bounding_box()["width"] * .65
+                    assert candidate.locator("button").bounding_box()["width"] < 140
+                    assert candidate.bounding_box()["height"] <= 80
                     review.locator('[name="title"]').fill("Mock complete 60-Fact impact")
                     with page.expect_response("**/paam/ledger/v1/review/preview") as response:
                         review.locator("[data-review-preview]").click()

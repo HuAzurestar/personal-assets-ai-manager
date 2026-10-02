@@ -1438,6 +1438,35 @@
 .review-ledger-row label { margin:0; font-size:10px; }
 .review-ledger-row select,.review-ledger-row input { min-height:38px; padding:7px 8px; font-size:11px; }
 .review-ledger-row button { min-height:38px; }
+/* Selectable results and import records are not cash-editor rows. Keep their
+   main text flexible and complete; only actual long content increases height. */
+[data-picker-items] { display:grid; gap:0; }
+.picker-list-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:12px; min-height:48px; padding:6px 10px; border-bottom:1px solid var(--row-line); background:var(--subtle); }
+.picker-list-row > span { min-width:0; overflow-wrap:anywhere; font-size:13px; line-height:1.5; }
+.picker-list-row > button { justify-self:end; width:auto; min-height:34px; padding:5px 10px; font-size:12px; white-space:nowrap; }
+.import-batch-row { display:grid; grid-template-columns:24px minmax(200px,1fr) 120px minmax(170px,.7fr) 170px; grid-template-areas:"select main amount source decision" "issue issue issue issue issue"; align-items:center; gap:0 12px; padding:8px 10px; border-bottom:1px solid var(--row-line); background:var(--subtle); font-size:12px; line-height:1.45; }
+.import-batch-row > * { min-width:0; }
+.import-batch-row label { margin:0; gap:0; font-size:12px; }
+.import-batch-select { grid-area:select; }
+.import-batch-main { grid-area:main; overflow-wrap:anywhere; }
+.import-batch-main strong,.import-batch-main small,.import-batch-amount strong,.import-batch-amount small { display:block; }
+.import-batch-main small,.import-batch-amount small { margin-top:3px; color:var(--muted); font-size:11px; }
+.import-batch-amount { grid-area:amount; font-variant-numeric:tabular-nums; text-align:right; }
+.import-batch-source { grid-area:source; display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; overflow-wrap:anywhere; }
+.import-batch-source button { min-height:32px; padding:4px 8px; font-size:12px; }
+.import-batch-decision { grid-area:decision; }
+.import-batch-decision select { width:100%; min-height:34px; padding:5px 7px; font-size:12px; }
+.import-batch-decision .import-batch-recheck { display:flex; align-items:center; gap:5px; margin-top:5px; }
+.import-batch-recheck input { flex:0 0 20px; }
+.import-batch-issue { grid-area:issue; margin:5px 0 0; color:var(--danger); overflow-wrap:anywhere; }
+@media(max-width:1000px) {
+  .import-batch-row { grid-template-columns:24px minmax(0,1fr) 170px; grid-template-areas:"select main amount" ". source decision" "issue issue issue"; row-gap:6px; }
+}
+@media(max-width:560px) {
+  .picker-list-row { gap:8px; padding:6px; }
+  .import-batch-row { grid-template-columns:24px minmax(0,1fr); grid-template-areas:"select main" ". amount" ". source" ". decision" "issue issue"; }
+  .import-batch-amount { text-align:left; }
+}
 .selected-review-facts { display:grid; gap:9px; }
 .selected-review-fact { display:grid; grid-template-columns:54px minmax(0,1fr) auto; gap:12px; align-items:center; padding:12px 14px; border:1px solid var(--row-line); border-radius:9px; background:var(--subtle); }
 .selected-review-fact > span { color:var(--accent); font-size:11px; font-weight:750; }

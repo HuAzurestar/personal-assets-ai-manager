@@ -48,6 +48,17 @@ def run():
                     upload.locator('[data-action="preview-import"]').click()
                     rows = page.locator("[data-batch-row]")
                     expect(rows).to_have_count(20, timeout=15000)
+                    # R02: compact import columns, not the five-column cash editor.
+                    assert rows.first.get_attribute("class") == "import-batch-row"
+                    for width in (1440, 1280):
+                        page.set_viewport_size({"width": width, "height": 900})
+                        assert max(rows.evaluate_all("nodes => nodes.map(node => node.getBoundingClientRect().height)")) <= 110
+                        assert rows.first.locator(".import-batch-main").bounding_box()["width"] >= 200
+                    for width in (820, 390):
+                        page.set_viewport_size({"width": width, "height": 900})
+                        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+                        expect(rows.first.locator("[data-row-decision]")).to_be_visible()
+                    page.set_viewport_size({"width": 1280, "height": 800})
                     expect(page.locator("[data-batch-confirm]")).to_be_disabled()
                     page.locator("[data-batch-select-page]").click()
                     expect(page.locator("[data-batch-selection]")).to_contain_text("20 行")
@@ -67,6 +78,14 @@ def run():
                     assert "version" not in confirmations[0]
                     page.locator("[data-batch-next]").click()
                     expect(rows).to_have_count(4)
+                    rows.first.locator("[data-row-account]").click()
+                    picker = page.locator("dialog[open] [data-picker-items]")
+                    expect(picker.locator(".picker-list-row")).to_have_count(1)
+                    candidate = picker.locator(".picker-list-row").first
+                    assert candidate.locator("span").bounding_box()["width"] > candidate.bounding_box()["width"] * .65
+                    assert candidate.locator("button").bounding_box()["width"] < 140
+                    assert candidate.bounding_box()["height"] <= 70
+                    page.locator("dialog[open] [data-ref-auto]").click()
                     page.locator("[data-batch-select-page]").click()
                     page.locator("[data-batch-save]").click()
                     expect(page.locator("[data-batch-confirm]")).to_be_enabled()
