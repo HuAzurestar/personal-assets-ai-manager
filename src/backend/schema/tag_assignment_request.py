@@ -38,8 +38,17 @@ class TagAssignmentRequestRead(BaseModel):
     updated_time: datetime
 
 
-class TagAssignmentRequestResponse(SuccessResponse[TagAssignmentRequestRead]):
-    body: TagAssignmentRequestRead
+class TagEligibility(BaseModel):
+    can_approve: bool
+    code: str
+
+
+class TagAssignmentRequestDetail(TagAssignmentRequestRead):
+    eligibility: TagEligibility
+
+
+class TagAssignmentRequestResponse(SuccessResponse[TagAssignmentRequestDetail]):
+    body: TagAssignmentRequestDetail
 
 
 class TagAssignmentRequestFilter(BaseModel):
@@ -101,19 +110,23 @@ class TagAssignmentBatchRequest(BaseModel):
 class TagAssignmentItemResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    request_id: int
-    result: Literal[
-        "APPROVED", "REJECTED", "ALREADY_APPROVED", "ALREADY_REJECTED",
+    id: int
+    code: Literal[
+        "APPROVED", "REJECTED", "ALREADY_APPROVED",
         "SCOPE_CONFLICT", "RULE_STALE", "LEDGER_INACTIVE", "MANUAL_TAG_CONFLICT",
-        "NOT_FOUND", "REQUEST_STATE_CONFLICT", "VIEW_INACTIVE", "TAG_INACTIVE",
+        "NOT_FOUND", "VIEW_INACTIVE", "TAG_INACTIVE",
         "COUNTER_EXHAUSTED",
+        "LEDGER_DUPLICATE", "SUGGESTION_STALE",
     ]
     status: Literal[1, 2, 3, 4, 5] | None = None
 
 
 class TagAssignmentBatchRead(BaseModel):
-    operation: Literal["APPROVE", "REJECT"]
-    items: list[TagAssignmentItemResult]
+    model_config = ConfigDict(extra="forbid")
+    results: list[TagAssignmentItemResult]
+    accepted: int = Field(ge=0)
+    rejected: int = Field(ge=0)
+    conflicts: int = Field(ge=0)
 
 
 class TagAssignmentBatchResponse(SuccessResponse[TagAssignmentBatchRead]):

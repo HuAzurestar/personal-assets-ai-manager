@@ -35,13 +35,11 @@ from backend.schema.tag_assignment_request import (
     TagAssignmentRequestFilter,
     TagAssignmentRequestSorter,
 )
+from backend.mapper.tag_write_mapper import TagWriteMapper
 
 
-class TagAssignmentRequestMapper:
+class TagAssignmentRequestMapper(TagWriteMapper):
     """Explicit-column persistence for automatic tag assignment requests."""
-
-    def __init__(self, db: Session):
-        self.db = db
 
     @staticmethod
     def _columns():
@@ -57,10 +55,6 @@ class TagAssignmentRequestMapper:
             TagAssignmentRequest.created_time,
             TagAssignmentRequest.updated_time,
         )
-
-    def begin_write(self) -> None:
-        if self.db.bind is not None and self.db.bind.dialect.name == "sqlite":
-            self.db.execute(text("BEGIN IMMEDIATE"))
 
     def get(self, request_id: int) -> dict[str, object] | None:
         row = self.db.execute(select(*self._columns()).where(
@@ -118,13 +112,13 @@ class TagAssignmentRequestMapper:
 
     @staticmethod
     def _read_statement():
-        return select(*TagAssignmentRequestMapper._read_columns()).join(
+        return select(*TagAssignmentRequestMapper._read_columns()).outerjoin(
             AutoTagRule,
             AutoTagRule.id == TagAssignmentRequest.rule_id,
-        ).join(
+        ).outerjoin(
             TargetTagView,
             TargetTagView.id == TagAssignmentRequest.view_id,
-        ).join(
+        ).outerjoin(
             TargetTag,
             TargetTag.id == TagAssignmentRequest.proposed_tag_id,
         ).outerjoin(
@@ -202,6 +196,7 @@ class TagAssignmentRequestMapper:
         ).where(
             ReviewAllocation.ledger_entry_id.in_(ledger_ids),
             ReviewCase.status == 0,
+            LedgerEntry.entry_type != 3,
         )).all())
 
     def active_dictionary_rows(
@@ -482,8 +477,6 @@ class TagAssignmentRequestMapper:
             updated_time=now,
         ))
 
-    def commit(self) -> None:
-        self.db.commit()
-
-    def rollback(self) -> None:
-        self.db.rollback()
+    def ledger_types(self, ids):
+        return dict(self.db.execute(select(LedgerEntry.id, LedgerEntry.entry_type).where(
+            LedgerEntry.id.in_(ids))).all()) if ids else {}

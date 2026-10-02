@@ -71,7 +71,9 @@ async function testMissingModelKeys() {
   assert.equal(writes, 0);
   assert.match(slot.innerHTML, /模型 #3 未配置服务端密钥/);
   const clientContext = vm.createContext({
-    fetch: async () => ({ ok: false, status: 422, json: async () => ({
+    fetch: async () => ({ ok: false, status: 422,
+      headers: new Headers({ 'X-PAAM-Trace-ID': 'fixture-trace' }),
+      json: async () => ({
       status: 422, message: 'enabled models require a configured secret',
       body: { code: 'MODEL_KEY_REQUIRED', details: { model_ids: [1] } },
     }) }),
@@ -82,6 +84,8 @@ async function testMissingModelKeys() {
   await assert.rejects(vm.runInContext('request("/fixture")', clientContext), (error) => {
     assert.equal(error.code, 'MODEL_KEY_REQUIRED');
     assert.equal(error.details.model_ids[0], 1);
+    assert.equal(error.traceId, 'fixture-trace');
+    assert.equal(error.status, 422);
     return true;
   });
   console.log('PASS exact currency units, model-key diagnostics, legacy/custom CRON roundtrip');

@@ -32,9 +32,9 @@ async function readResponse(url, options, includeEnvelope) {
   setConnectionState("connected");
   const payload = response.status === 204 ? null : await response.json().catch(() => null);
   if (!response.ok) {
-    const validationDetails = payload?.body?.code === "VALIDATION_ERROR"
-      && Array.isArray(payload?.body?.details)
-      ? payload.body.details.map((item) => item?.msg).filter(Boolean)
+    const validationDetails = ["VALIDATION_ERROR", "INVALID_REVIEW_TYPE", "INVALID_CASE_CODE", "INVALID_USAGE_SCENARIO"].includes(payload?.body?.code)
+      && Array.isArray(payload?.body?.details?.field)
+      ? payload.body.details.field.map((item) => item?.msg).filter(Boolean)
       : [];
     const detail = validationDetails.length
       ? validationDetails
@@ -45,6 +45,7 @@ async function readResponse(url, options, includeEnvelope) {
     const error = new Error(text);
     error.code = payload?.body?.code;
     error.details = payload?.body?.details;
+    error.traceId = payload?.body?.details?.trace_id || response.headers.get("X-PAAM-Trace-ID");
     error.status = response.status;
     throw error;
   }

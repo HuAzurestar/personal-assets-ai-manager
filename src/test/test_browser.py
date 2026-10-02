@@ -14,6 +14,11 @@ import pytest
     "verify_automation_repair.py",
     "verify_refresh_ui.py",
     "verify_automation_presentation.py",
+    "verify_m2_ui.py",
+    "verify_pirc35_account.py",
+    "verify_pirc35_position.py",
+    "verify_pirc35_import.py",
+    "verify_pirc35_flow.py",
 ])
 def test_browser_scenario(scenario):
     source = Path(__file__).parent / scenario

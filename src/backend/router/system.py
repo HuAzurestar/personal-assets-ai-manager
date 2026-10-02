@@ -12,6 +12,7 @@ from backend.core.config import (
     RESOURCE_DIR,
 )
 from backend.core.job_scheduler import job_scheduler
+from backend.core.feature_observability import observability
 from backend.router.dependency import validate_query_parameter_names
 from backend.router.error import DomainErrorRoute
 from backend.schema.list_query import parse_list_request
@@ -39,7 +40,8 @@ def home(request: Request):
 
 @router.get("/api/health")
 def health():
-    return {"status": "ok", "schema": "pirc-9-target"}
+    return {"status": "ok", "schema": "pirc-9-target",
+            "operational_log": "unavailable" if observability.storage_unavailable else "ok"}
 
 
 @router.get(

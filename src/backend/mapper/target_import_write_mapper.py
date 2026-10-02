@@ -34,6 +34,9 @@ from backend.entity import (
 from backend.entity.base import utc_now
 from backend.parser.statement_parser import digest
 from backend.smart_import import dump
+from backend.mapper.account_management_mapper import AccountManagementMapper
+from backend.core.source_account_identity import reliable_source
+from backend.error import TargetIntakeError
 
 
 _IMPORT_SOURCE_BY_NAME = {
@@ -315,6 +318,19 @@ class TargetImportWriteMapper:
             facts.append((row, fact))
         self.db.flush()
         new_targets = {row["match"]: fact.id for row, fact in facts}
+        account_mapper = AccountManagementMapper(self.db)
+        identities = {identity for row, _fact in facts if (identity := reliable_source(row)) is not None}
+        source_refs = account_mapper.create_reliable_refs(identities)
+        accounts = account_mapper.named_rows("accounts", [ref["account_id"] for ref in source_refs.values() if ref["account_id"]])
+        parties = account_mapper.named_rows("parties", [row["party_id"] for row in accounts])
+        if (any(ref["status"] != "ACTIVE" for ref in source_refs.values())
+            or any(row["status"] != "ACTIVE" for row in accounts + parties)):
+            raise TargetIntakeError(409, "来源账户已关闭，请核验后再导入", code="ACCOUNT_NOT_ACTIVE")
+        if ({ref["account_id"] for ref in source_refs.values() if ref["account_id"]} != {row["id"] for row in accounts}
+            or {row["party_id"] for row in accounts} != {row["id"] for row in parties}):
+            raise TargetIntakeError(409, "来源账户归属关系损坏", code="ACCOUNT_RELATION_BROKEN")
+        account_refs = {fact.id: source_refs[identity]["id"] for row, fact in facts
+                        if (identity := reliable_source(row)) is not None}
 
         import_files = []
         file_updates = []
@@ -414,6 +430,7 @@ class TargetImportWriteMapper:
             ],
             "transaction_fact_ids": sorted(new_targets.values()),
             "affected_fact_ids": affected_fact_ids,
+            "_account_refs": account_refs,
         }
 
     def commit(self) -> None:

@@ -30,19 +30,28 @@ def _client() -> TestClient:
     return TestClient(app)
 
 
+def _without_trace(response):
+    body = response.json()
+    trace = body["body"]["details"].pop("trace_id")
+    assert len(trace) == 32 and trace == response.headers["X-PAAM-Trace-ID"]
+    if not body["body"]["details"]:
+        del body["body"]["details"]
+    return body
+
+
 def test_business_router_uses_one_error_envelope():
     client = _client()
 
     domain = client.get("/domain")
     assert domain.status_code == 409
-    assert domain.json() == {
+    assert _without_trace(domain) == {
         "status": 409,
         "message": "review changed",
         "body": {"code": "REVIEW_ERROR"},
     }
     http = client.get("/http")
     assert http.status_code == 404
-    assert http.json() == {
+    assert _without_trace(http) == {
         "status": 404,
         "message": "resource missing",
         "body": {"code": "HTTP_404"},
@@ -57,7 +66,7 @@ def test_business_router_uses_one_error_envelope():
 
     unexpected = client.get("/unexpected")
     assert unexpected.status_code == 500
-    assert unexpected.json() == {
+    assert _without_trace(unexpected) == {
         "status": 500,
         "message": "Internal server error",
         "body": {"code": "INTERNAL_SERVER_ERROR"},
@@ -70,8 +79,16 @@ def test_application_handler_formats_unmatched_route():
 
     missing = client.get("/missing")
     assert missing.status_code == 404
-    assert missing.json() == {
+    assert _without_trace(missing) == {
         "status": 404,
         "message": "Not Found",
         "body": {"code": "HTTP_404"},
     }
+
+
+def test_internal_error_log_never_contains_exception_or_traceback(caplog):
+    response = _client().get("/unexpected")
+    assert response.status_code == 500
+    assert "INTERNAL_SERVER_ERROR" in caplog.text
+    assert "private implementation detail" not in caplog.text
+    assert all(record.exc_info is None for record in caplog.records)

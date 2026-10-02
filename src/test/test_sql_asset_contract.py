@@ -30,7 +30,7 @@ EXPECTED_TABLES = {
     "llm_prompt_audit",
     "ledger_entry",
     "ledger_entry_tag",
-    "review_allocation",
+    "review_transaction_ledger_allocation",
     "review_case",
     "review_revision",
     "setting",
@@ -40,6 +40,8 @@ EXPECTED_TABLES = {
     "transaction_fact",
     "transaction_import_file",
     "transaction_import_row",
+    "ledger_account_party", "ledger_account", "ledger_account_ref",
+    "position", "position_leg", "review_ledger_position_leg_allocation",
 }
 
 LEGACY_CHECK_FREE_TABLES = EXPECTED_TABLES - {
@@ -125,7 +127,7 @@ def test_sql_default_timestamps_use_the_shared_microsecond_format():
         connection.close()
 
 
-def test_target_schema_normalizes_legacy_millisecond_timestamps(tmp_path):
+def test_target_startup_rejects_legacy_time_without_mutating_business_rows(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'legacy-time.db'}")
     try:
         init_target_db(bind=engine)
@@ -136,15 +138,16 @@ def test_target_schema_normalizes_legacy_millisecond_timestamps(tmp_path):
                 "('Legacy', 'legacy', "
                 "'2026-09-21T12:34:56.123Z', '2026-09-21T12:34:56.947Z')"
             ))
-        init_target_db(bind=engine)
+        with pytest.raises(ValueError,match='TIMESTAMP_MIGRATION_REQUIRED'):
+            init_target_db(bind=engine)
         with engine.connect() as connection:
             row = connection.execute(text(
                 "SELECT created_time, updated_time FROM tag_view "
                 "WHERE system_name = 'legacy'"
             )).one()
         assert row == (
-            "2026-09-21T12:34:56.123000Z",
-            "2026-09-21T12:34:56.947000Z",
+            "2026-09-21T12:34:56.123Z",
+            "2026-09-21T12:34:56.947Z",
         )
     finally:
         engine.dispose()
@@ -183,8 +186,9 @@ def test_ledger_entry_is_confirmed_single_fact_cash_projection():
         assert {
             "entry_type",
             "entry_direction",
-            "amount",
-            "currency_code",
+            "cash_amount",
+            "cash_currency_code",
+            "account_ref_id",
             "account_code",
             "counterparty_account_ref",
             "occurred_time",
@@ -203,25 +207,25 @@ def test_ledger_entry_is_confirmed_single_fact_cash_projection():
         connection.execute(
             """
             INSERT INTO ledger_entry (
-                entry_type, entry_direction, amount, currency_code,
+                entry_type, entry_direction, cash_amount, cash_currency_code,
                 account_code, occurred_time
             ) VALUES (0, 2, 500000, 'CNY', 'cash', '2026-09-15T12:00:00Z')
             """
         )
         connection.execute(
             """
-            INSERT INTO review_allocation (
-                review_case_id, transaction_fact_id, ledger_entry_id,
-                amount, currency_code
+            INSERT INTO review_transaction_ledger_allocation (
+                review_id, transaction_id, ledger_id,
+                cash_amount, cash_currency_code
             ) VALUES (1, 1, 1, 500000, 'CNY')
             """
         )
         try:
             connection.execute(
                 """
-                INSERT INTO review_allocation (
-                    review_case_id, transaction_fact_id, ledger_entry_id,
-                    amount, currency_code
+                INSERT INTO review_transaction_ledger_allocation (
+                    review_id, transaction_id, ledger_id,
+                    cash_amount, cash_currency_code
                 ) VALUES (1, 2, 1, 500000, 'CNY')
                 """
             )
@@ -262,15 +266,15 @@ def test_review_allocation_only_stores_published_relationships():
     connection = _create_target_schema()
     try:
         columns = {
-            row[1] for row in connection.execute("PRAGMA table_info(review_allocation)")
+            row[1] for row in connection.execute("PRAGMA table_info(review_transaction_ledger_allocation)")
         }
         assert columns == {
             "id",
-            "review_case_id",
-            "transaction_fact_id",
-            "ledger_entry_id",
-            "amount",
-            "currency_code",
+            "review_id",
+            "transaction_id",
+            "ledger_id",
+            "cash_amount",
+            "cash_currency_code",
             "created_time",
             "updated_time",
         }

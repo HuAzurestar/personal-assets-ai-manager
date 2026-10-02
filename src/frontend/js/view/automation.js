@@ -4,7 +4,7 @@ import { openInspection, registerInspection } from "../component/inspection.js?v
 import { $, $$, esc, money, date } from "../util/core.js";
 import { startVisiblePoll } from "../util/visible_poll.js?v=20260928.6";
 import { openDisclosureEditor, openDisclosurePreview } from "./disclosure.js?v=20260928.6";
-import { helpTip, batchResults, batchResultMarkup, batchFailureMarkup, selectionConflict, ruleStatistics, runtimeMarkup, diagnosticsMarkup, executionResultNames } from "./automation_feedback.js?v=20260928.6";
+import { helpTip, batchResults, batchResultMarkup, batchFailureMarkup, selectionConflict, ruleStatistics, runtimeMarkup, diagnosticsMarkup, executionResultNames } from "./automation_feedback.js?v=20261001.1";
 import { ruleExecution, semanticRuleChange, ruleEditImpact, candidatePreviewMarkup, requestVersionCopy, scopeImpactMarkup } from "./automation_explain.js?v=20260928.6";
 
 let setting = null;
@@ -809,7 +809,8 @@ function requestDetailMarkup(item, ledger, rule, scope = null) {
   const currentTags = (ledger.ledger_entry.tags || []).filter((tag) => tag.view_system_name === item.view_system_name);
   const revisionChanged = rule.rule_revision !== item.rule_revision;
   const sourceNames = { MANUAL: "人工设置", AUTO_RULE: "自动建议" };
-  const blockedReason = revisionChanged ? "规则版本已过期" : !ledger.ledger_entry.active ? "账目已失效" : !scope ? "同范围建议未读取，请刷新核对" : "";
+  const blockedReason = item.eligibility && !item.eligibility.can_approve ? `服务端资格：${item.eligibility.code}（当前只读快照，提交仍将重验）`
+    : revisionChanged ? "规则版本已过期" : !ledger.ledger_entry.active ? "账目已失效" : !scope ? "同范围建议未读取，请刷新核对" : "";
   const currentLabel = currentTags.length ? currentTags.map((tag) => tag.tag_system_name === "unclassified" ? tag.tag_name : `${tag.tag_name}（${sourceNames[tag.source_type] || "来源未知"}）`).join("、") : "目标维度尚无标签";
   return `<div class="automation-detail stack">
     <section class="request-decision"><div class="automation-section-head"><div><h3>${esc(item.ledger_counterparty_name || facts[0]?.counterparty_name || "未记录交易对方")} · ${esc(money(ledger.ledger_entry))}</h3><p>${esc(ledger.ledger_entry.summary || item.ledger_summary || "无账目摘要")} · ${esc(displayTime(ledger.ledger_entry.occurred_time))}</p></div>${requestStatusPill(item.status)}</div>
@@ -969,7 +970,7 @@ export function startAutomationRefresh(root, { stale = false } = {}) {
   root.dataset.autoStale = String(stale);
   const route = location.hash;
   stopPolling = startVisiblePoll({
-    interval: () => root.dataset.autoStale === "true" ? 5000 : scheduleStatus?.tag_scan_guard === "DISABLED" ? 30000 : 5000,
+    interval: 5000,
     isAlive: () => page.isConnected && location.hash === route,
     canPoll: () => ![...document.querySelectorAll("dialog[open]")].some(dialog => !dialog.contains(root)) && root.dataset.commandPending !== "true"
       && !(root.contains(document.activeElement) && document.activeElement.matches("input:not([type='checkbox']), select, textarea")),

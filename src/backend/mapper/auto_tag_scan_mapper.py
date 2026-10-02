@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timedelta
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Literal
 
-from sqlalchemy import distinct, select, text, update
+from sqlalchemy import distinct, select
 from sqlalchemy.orm import Session
 
 from backend.entity import (
@@ -21,14 +21,10 @@ from backend.entity import (
     TransactionFact,
 )
 from backend.entity.auto_tag_rule import MAX_COUNTER_VALUE
-from backend.entity.base import utc_now
 from backend.mapper.auto_tag_rule_mapper import decode_method_config
 from backend.mapper.setting_mapper import SettingMapper
-from backend.mapper.tag_assignment_request_mapper import TagAssignmentRequestMapper
-from backend.schema.llm_analysis import LlmResolvedSuggestion
 
 ScanCommitStatus = Literal["COMMITTED", "STALE"]
-ScanCommitKind = Literal["SKIP", "NO_SUGGESTION", "ITEM_FAILURE", "SUGGESTED"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +56,8 @@ class ScanPage:
     active_tag_states: dict[int, tuple[str, ...]]
     existing_request_ids: frozenset[int]
     targets: tuple[ScanTarget, ...]
+    protected_sources: dict[int, "ProtectedScanSource"] = field(default_factory=dict)
+    invalid_ledger_ids: frozenset[int] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,10 +76,12 @@ class ProtectedScanSource:
     summary: str
     occurred_time: datetime | None = None
     payment_channel: str = ""
+    economic_type: str | None = None
+    synthetic_allowed: bool = False
 
 
 class AutoTagScanMapper:
-    """Read one candidate page and commit one analyzed item atomically."""
+    """Read one candidate page; writes belong to AutoTagScanBatchMapper."""
 
     def __init__(self, db: Session):
         self.db = db
@@ -158,9 +158,12 @@ class AutoTagScanMapper:
         ).join(
             ReviewCase,
             ReviewCase.id == ReviewAllocation.review_case_id,
+        ).join(
+            LedgerEntry, LedgerEntry.id == ReviewAllocation.ledger_entry_id,
         ).where(
             ReviewAllocation.ledger_entry_id.in_(ledger_ids),
             ReviewCase.status == 0,
+            LedgerEntry.entry_type != 3,
         )).all())
         tag_rows = self.db.execute(select(
             LedgerEntryTag.ledger_id,
@@ -227,6 +230,7 @@ class AutoTagScanMapper:
         ).where(
             ReviewAllocation.ledger_entry_id == ledger_id,
             ReviewCase.status == 0,
+            LedgerEntry.entry_type != 3,
             *(
                 (TransactionFact.fact_key.like("pirc24-gate-fictional-%"),)
                 if synthetic_only else ()
@@ -243,130 +247,6 @@ class AutoTagScanMapper:
             occurred_time=row["occurred_time"],
         )
 
-    def commit_item(
-        self,
-        token: ScanToken,
-        *,
-        ledger_id: int,
-        kind: ScanCommitKind,
-        suggestions: tuple[LlmResolvedSuggestion, ...] = (),
-    ) -> ScanCommitResult:
-        """Commit request rows, counters, and cursor in one write transaction."""
-
-        try:
-            self._begin_write()
-            rule = self.db.execute(select(
-                AutoTagRule.id,
-                AutoTagRule.view_id,
-                AutoTagRule.enabled,
-                AutoTagRule.rule_revision,
-                AutoTagRule.scan_epoch,
-                AutoTagRule.scan_after_ledger_id,
-                AutoTagRule.analyzed_count,
-                AutoTagRule.failed_count,
-                AutoTagRule.suggested_count,
-                AutoTagRule.updated_time,
-            ).where(AutoTagRule.id == token.rule_id)).mappings().one_or_none()
-            if not self._matches(rule, token):
-                self.db.rollback()
-                return ScanCommitResult("STALE", "RULE_TOKEN_CHANGED")
-            if ledger_id <= token.scan_after_ledger_id:
-                self.db.rollback()
-                return ScanCommitResult("STALE", "CURSOR_ALREADY_ADVANCED")
-
-            eligibility = self._eligibility(
-                rule_id=token.rule_id,
-                rule_revision=token.rule_revision,
-                ledger_id=ledger_id,
-                view_id=rule["view_id"],
-            )
-            if eligibility in {"VIEW_INACTIVE", "NO_ACTIVE_TARGETS"}:
-                self.db.rollback()
-                return ScanCommitResult("STALE", eligibility)
-            effective_kind = kind
-            reason = "ANALYSIS_COMMITTED"
-            if eligibility != "ELIGIBLE":
-                effective_kind = "SKIP"
-                suggestions = ()
-                reason = eligibility
-
-            active_targets = self._target_ids(rule["view_id"])
-            suggestion_ids = [item.tag_id for item in suggestions]
-            if (
-                effective_kind == "SUGGESTED"
-                and (
-                    not suggestion_ids
-                    or len(suggestion_ids) != len(set(suggestion_ids))
-                    or not set(suggestion_ids).issubset(active_targets)
-                    or any(
-                        not item.reason.strip() or len(item.reason) > 200
-                        for item in suggestions
-                    )
-                )
-            ):
-                effective_kind = "ITEM_FAILURE"
-                suggestions = ()
-                reason = "INVALID_SUGGESTION"
-
-            analyzed_delta = int(effective_kind != "SKIP")
-            failed_delta = int(effective_kind == "ITEM_FAILURE")
-            suggested_delta = (
-                len(suggestions) if effective_kind == "SUGGESTED" else 0
-            )
-            next_analyzed = self._counter(
-                rule["analyzed_count"], analyzed_delta, "analyzed_count"
-            )
-            next_failed = self._counter(
-                rule["failed_count"], failed_delta, "failed_count"
-            )
-            next_suggested = self._counter(
-                rule["suggested_count"], suggested_delta, "suggested_count"
-            )
-
-            if effective_kind == "SUGGESTED":
-                TagAssignmentRequestMapper(self.db).create_many([
-                    {
-                        "rule_id": token.rule_id,
-                        "rule_revision": token.rule_revision,
-                        "ledger_id": ledger_id,
-                        "view_id": rule["view_id"],
-                        "proposed_tag_id": suggestion.tag_id,
-                        "reason_summary": suggestion.reason,
-                    }
-                    for suggestion in suggestions
-                ], utc_now())
-
-            now = max(utc_now(), rule["updated_time"] + timedelta(microseconds=1))
-            result = self.db.execute(
-                update(AutoTagRule)
-                .where(
-                    AutoTagRule.id == token.rule_id,
-                    AutoTagRule.enabled == 1,
-                    AutoTagRule.rule_revision == token.rule_revision,
-                    AutoTagRule.scan_epoch == token.scan_epoch,
-                    AutoTagRule.scan_after_ledger_id == token.scan_after_ledger_id,
-                )
-                .values(
-                    scan_after_ledger_id=ledger_id,
-                    analyzed_count=next_analyzed,
-                    failed_count=next_failed,
-                    suggested_count=next_suggested,
-                    updated_time=now,
-                )
-            )
-            if result.rowcount != 1:
-                self.db.rollback()
-                return ScanCommitResult("STALE", "RULE_TOKEN_CHANGED")
-            self.db.commit()
-            return ScanCommitResult(
-                "COMMITTED",
-                reason,
-                request_count=suggested_delta,
-            )
-        except Exception:
-            self.db.rollback()
-            raise
-
     def _targets(self, view_id: int) -> tuple[ScanTarget, ...]:
         rows = self.db.execute(select(
             TargetTag.id,
@@ -378,72 +258,8 @@ class AutoTagScanMapper:
         ).order_by(TargetTag.id)).all()
         return tuple(ScanTarget(tag_id=tag_id, name=name) for tag_id, name in rows)
 
-    def _target_ids(self, view_id: int) -> set[int]:
-        return set(self.db.scalars(select(TargetTag.id).where(
-            TargetTag.view_id == view_id,
-            TargetTag.status == "ACTIVE",
-            TargetTag.system_name != "unclassified",
-        )).all())
-
-    def _eligibility(
-        self,
-        *,
-        rule_id: int,
-        rule_revision: int,
-        ledger_id: int,
-        view_id: int,
-    ) -> str:
-        view_status = self.db.scalar(select(TargetTagView.status).where(
-            TargetTagView.id == view_id,
-        ))
-        if view_status != "ACTIVE":
-            return "VIEW_INACTIVE"
-        active = self.db.scalar(select(ReviewAllocation.ledger_entry_id).join(
-            ReviewCase,
-            ReviewCase.id == ReviewAllocation.review_case_id,
-        ).where(
-            ReviewAllocation.ledger_entry_id == ledger_id,
-            ReviewCase.status == 0,
-        ).limit(1))
-        if active is None:
-            return "LEDGER_INACTIVE"
-        states = tuple(self.db.scalars(select(TargetTag.system_name).join(
-            LedgerEntryTag,
-            LedgerEntryTag.tag_id == TargetTag.id,
-        ).where(
-            LedgerEntryTag.ledger_id == ledger_id,
-            TargetTag.view_id == view_id,
-            TargetTag.status == "ACTIVE",
-        ).order_by(TargetTag.id)).all())
-        if states != ("unclassified",):
-            return "TARGET_NOT_UNCLASSIFIED"
-        existing = self.db.scalar(select(TagAssignmentRequest.id).where(
-            TagAssignmentRequest.rule_id == rule_id,
-            TagAssignmentRequest.rule_revision == rule_revision,
-            TagAssignmentRequest.ledger_id == ledger_id,
-        ).limit(1))
-        if existing is not None:
-            return "REQUEST_ALREADY_EXISTS"
-        if not self._target_ids(view_id):
-            return "NO_ACTIVE_TARGETS"
-        return "ELIGIBLE"
-
-    @staticmethod
-    def _matches(rule, token: ScanToken) -> bool:
-        return bool(
-            rule is not None
-            and rule["enabled"] == 1
-            and rule["rule_revision"] == token.rule_revision
-            and rule["scan_epoch"] == token.scan_epoch
-            and rule["scan_after_ledger_id"] == token.scan_after_ledger_id
-        )
-
     @staticmethod
     def _counter(current: int, delta: int, name: str) -> int:
         if current > MAX_COUNTER_VALUE - delta:
             raise OverflowError(f"automatic tag rule {name} is exhausted")
         return current + delta
-
-    def _begin_write(self) -> None:
-        if self.db.bind is not None and self.db.bind.dialect.name == "sqlite":
-            self.db.execute(text("BEGIN IMMEDIATE"))

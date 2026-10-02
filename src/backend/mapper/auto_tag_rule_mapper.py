@@ -218,6 +218,14 @@ class AutoTagRuleMapper:
         after_id: int,
         limit: int = 100,
     ) -> dict[str, object]:
+        from backend.mapper.trusted_relation_mapper import TrustedRelationMapper
+        from backend.mapper.target_tag_projection_mapper import TargetTagProjectionMapper
+
+        if not 1 <= limit <= 100:
+            raise ValueError("candidate page limit must be between 1 and 100")
+        TrustedRelationMapper(self.db).read_snapshot()
+        projection = TargetTagProjectionMapper(self.db)
+        dictionary = projection.active_dictionary()
         ledger_ids = list(self.db.scalars(select(
             LedgerEntry.id,
         ).where(
@@ -232,34 +240,24 @@ class AutoTagRuleMapper:
                 "active_target_count": 0,
             }
 
+        # Local preview is not allowed to hide orphan Fact/Review/Tag IDs.
+        current_states = projection.current_states(ledger_ids)
+
         active_ids = set(self.db.scalars(select(
             distinct(ReviewAllocation.ledger_entry_id),
         ).join(
             ReviewCase,
             ReviewCase.id == ReviewAllocation.review_case_id,
+        ).join(
+            LedgerEntry, LedgerEntry.id == ReviewAllocation.ledger_entry_id,
         ).where(
             ReviewAllocation.ledger_entry_id.in_(ledger_ids),
             ReviewCase.status == 0,
+            LedgerEntry.entry_type != 3,
         )).all())
-        tag_rows = self.db.execute(select(
-            LedgerEntryTag.ledger_id,
-            TargetTag.system_name,
-            TargetTag.status,
-        ).join(
-            TargetTag,
-            TargetTag.id == LedgerEntryTag.tag_id,
-        ).where(
-            LedgerEntryTag.ledger_id.in_(ledger_ids),
-            TargetTag.view_id == view_id,
-        ).order_by(
-            LedgerEntryTag.ledger_id,
-            TargetTag.id,
-        )).mappings().all()
-        tag_states: dict[int, list[tuple[str, str]]] = {}
-        for row in tag_rows:
-            tag_states.setdefault(row["ledger_id"], []).append(
-                (row["system_name"], row["status"])
-            )
+        view_name = next((tag.view_system_name for tag in dictionary if tag.view_id == view_id), None)
+        tag_states = {lid: [(values[view_name], "ACTIVE")] for lid, values in current_states.items()
+                      if view_name in values}
         request_ids = set(self.db.scalars(select(
             distinct(TagAssignmentRequest.ledger_id),
         ).where(

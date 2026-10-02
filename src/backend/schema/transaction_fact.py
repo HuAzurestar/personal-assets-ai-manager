@@ -55,7 +55,7 @@ class TransactionFactListRequest(ListRequest):
 class TransactionFactListItem(BaseModel):
     id: int
     occurred_time: datetime
-    cash_direction: int
+    cash_direction: Literal["IN", "OUT"]
     amount: int
     currency_code: str
     account_code: str

@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import select
 
 from backend.core.job_scheduler import JobRunContext, JobScheduler
-from backend.entity import AutoTagRule, TransactionFact
+from backend.entity import AutoTagRule, ReviewAllocation, TransactionFact
 from backend.error import LlmAdapterError, ProtectedSecretStoreError
 from backend.service.auto_tag_scan_service import AutoTagScanService, ScanRunReport
 from backend.service.auto_tag_schedule_service import AutoTagScheduleService
@@ -34,12 +34,16 @@ from test_llm_adapter import _payload, _profile
 def source_ledger(sessions, tag_id):
     ledger_id = _seed_ledger(sessions, tag_id)
     with sessions() as db:
-        db.add(TransactionFact(
-            id=ledger_id, fact_key=f"pirc24-gate-fictional-diagnostic-{ledger_id}",
-            occurred_time=NOW, cash_direction=1, amount=12300, currency_code="CNY",
-            account_code="fixture", counterparty_name="餐厅", counterparty_account_ref="",
-            summary="餐饮消费", created_time=NOW, updated_time=NOW,
+        # _seed_ledger already creates valid immutable source/default relations.
+        # Customize fictional source text only; do not insert another Fact or
+        # assume public Fact and Ledger IDs have the same meaning.
+        fact_id = db.scalar(select(ReviewAllocation.transaction_fact_id).where(
+            ReviewAllocation.ledger_entry_id == ledger_id,
         ))
+        fact = db.get(TransactionFact, fact_id)
+        assert fact is not None
+        fact.counterparty_name = "餐厅"
+        fact.summary = "餐饮消费"
         db.commit()
     return ledger_id
 

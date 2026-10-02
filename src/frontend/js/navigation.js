@@ -38,6 +38,8 @@ const secondaryMeta = {
   workbench: [
     ["import", "导入 / 上传", "预览并写入事实层"],
     ["reviews", "账单审查", "配置 Fact 与 Ledger"],
+    ["account-management", "个人与账户", "个人 → 集合 → 具体来源卡"],
+    ["position", "资产与负债对象", "独立数量与原始来源腿"],
     ["tag-review", "打标签审查", "建议确认与来源核对"],
   ],
   settings: [
@@ -54,6 +56,8 @@ const pageModules = {
   "auto-rules": "details",
   summary: "overview",
   reviews: "workbench",
+  "account-management": "workbench",
+  position: "workbench",
   import: "workbench",
   "import-history": "workbench",
   "tag-review": "workbench",
@@ -85,6 +89,8 @@ const pagePaths = {
   summary: "overview",
   import: "workbench/import",
   reviews: "workbench/review",
+  "account-management": "workbench/account",
+  position: "workbench/position",
   "import-history": "workbench/import/history",
   "tag-review": "workbench/tag-review",
   settings: "settings/automation",

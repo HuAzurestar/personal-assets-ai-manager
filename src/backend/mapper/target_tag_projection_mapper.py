@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import delete, select
+from sqlalchemy import and_, delete, insert, select
 from sqlalchemy.orm import Session
 
 from backend.entity import (
@@ -13,8 +13,10 @@ from backend.entity import (
     ReviewCase,
     TargetTag,
     TargetTagView,
+    TransactionFact,
 )
 from backend.entity.base import utc_now
+from backend.error import TargetEconomicError
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,14 +39,31 @@ class TargetTagProjectionMapper:
             TargetTagView.system_name.label("view_system_name"),
             TargetTag.id.label("tag_id"),
             TargetTag.system_name.label("tag_system_name"),
-        ).join(
+        ).outerjoin(
             TargetTag,
-            TargetTag.view_id == TargetTagView.id,
+            and_(TargetTag.view_id == TargetTagView.id, TargetTag.status == "ACTIVE"),
         ).where(
             TargetTagView.status == "ACTIVE",
-            TargetTag.status == "ACTIVE",
         ).order_by(TargetTagView.id, TargetTag.id)).mappings().all()
+        defaults = {row["view_id"] for row in rows if row["tag_system_name"] == "unclassified"}
+        if any(row["view_id"] not in defaults for row in rows):
+            raise TargetEconomicError(409, "active View requires an active default Tag", code="TAG_RELATION_BROKEN")
         return tuple(ActiveTagValue(**row) for row in rows)
+
+    def validate_ledgers(self, ledger_ids):
+        rows = self.db.execute(select(LedgerEntry.id, ReviewAllocation.id.label("allocation_id"),
+            ReviewCase.id.label("review_id"), TransactionFact.id.label("fact_id")
+        ).outerjoin(ReviewAllocation, ReviewAllocation.ledger_entry_id == LedgerEntry.id
+        ).outerjoin(ReviewCase, ReviewCase.id == ReviewAllocation.review_case_id
+        ).outerjoin(TransactionFact, TransactionFact.id == ReviewAllocation.transaction_fact_id
+        ).where(LedgerEntry.id.in_(ledger_ids))).mappings().all()
+        seen = set()
+        for row in rows:
+            if row["id"] in seen or any(row[key] is None for key in ("allocation_id", "review_id", "fact_id")):
+                raise TargetEconomicError(409, "Ledger tag source relation is damaged", code="TAG_RELATION_BROKEN")
+            seen.add(row["id"])
+        if seen != set(ledger_ids):
+            raise TargetEconomicError(409, "Ledger tag source relation is missing", code="TAG_RELATION_BROKEN")
 
     def active_ledger_ids(self) -> list[int]:
         return list(self.db.scalars(select(LedgerEntry.id).join(
@@ -63,20 +82,20 @@ class TargetTagProjectionMapper:
     ) -> dict[int, dict[str, str]]:
         if not ledger_ids:
             return {}
+        self.validate_ledgers(ledger_ids)
         rows = self.db.execute(select(
             LedgerEntryTag.ledger_id,
             TargetTagView.system_name.label("view_system_name"),
             TargetTag.system_name.label("tag_system_name"),
-        ).join(
+            TargetTagView.status.label("view_status"), TargetTag.status.label("tag_status"),
+        ).outerjoin(
             TargetTag,
             TargetTag.id == LedgerEntryTag.tag_id,
-        ).join(
+        ).outerjoin(
             TargetTagView,
             TargetTagView.id == TargetTag.view_id,
         ).where(
             LedgerEntryTag.ledger_id.in_(ledger_ids),
-            TargetTagView.status == "ACTIVE",
-            TargetTag.status == "ACTIVE",
         ).order_by(
             LedgerEntryTag.ledger_id,
             TargetTagView.id,
@@ -84,13 +103,14 @@ class TargetTagProjectionMapper:
         )).mappings().all()
         states: dict[int, dict[str, str]] = {}
         for row in rows:
+            if row["view_system_name"] is None or row["tag_system_name"] is None:
+                raise TargetEconomicError(409, "Tag or View relation is missing", code="TAG_RELATION_BROKEN")
+            if row["view_status"] != "ACTIVE" or row["tag_status"] != "ACTIVE":
+                continue
             state = states.setdefault(row["ledger_id"], {})
             view_name = row["view_system_name"]
             if view_name in state:
-                raise ValueError(
-                    f"ledger {row['ledger_id']} has multiple active tags in "
-                    f"view {view_name}"
-                )
+                raise TargetEconomicError(409, "multiple active Tags in one View", code="TAG_RELATION_BROKEN")
             state[view_name] = row["tag_system_name"]
         return states
 
@@ -125,9 +145,7 @@ class TargetTagProjectionMapper:
         if not changed:
             return
         changed_ids = set(changed)
-        self.db.execute(delete(LedgerEntryTag).where(
-            LedgerEntryTag.ledger_id.in_(changed)
-        ))
+        self.db.execute(delete(LedgerEntryTag).where(LedgerEntryTag.ledger_id.in_(changed)))
         current_time = utc_now()
         updated_times = {
             ledger_id: max(
@@ -136,15 +154,12 @@ class TargetTagProjectionMapper:
             ) if previous_updated_times[ledger_id] is not None else current_time
             for ledger_id in changed
         }
-        self.db.add_all([
-            LedgerEntryTag(
-                ledger_id=ledger_id,
-                tag_id=tag_id,
-                created_time=updated_times[ledger_id],
-                updated_time=updated_times[ledger_id],
-            )
+        records = [dict(ledger_id=ledger_id, tag_id=tag_id,
+                        created_time=updated_times[ledger_id], updated_time=updated_times[ledger_id])
             for ledger_id, tag_ids in ledger_tags.items()
             if ledger_id in changed_ids
             for tag_id in tag_ids
-        ])
+        ]
+        for offset in range(0, len(records), 400):
+            self.db.execute(insert(LedgerEntryTag.__table__), records[offset:offset + 400])
         self.db.flush()

@@ -1,10 +1,13 @@
 """Keep every test process away from the development SQLite file."""
 
 import pytest
+from collections import deque
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from backend.core import target_database
+from backend.core.import_preview_store import import_preview_store
+from backend.core.feature_observability import observability
 
 
 def pytest_addoption(parser):
@@ -25,6 +28,15 @@ def pytest_collection_modifyitems(config, items):
 
 @pytest.fixture(autouse=True)
 def isolate_default_database(tmp_path, monkeypatch):
+    import_preview_store.clear()
+    # Lifespan configures app-owned logs, but tests must never append to the
+    # developer's operational directory or share counters across test cases.
+    configure = observability.configure
+    monkeypatch.setattr(observability, "directory", tmp_path / "operational-logs")
+    monkeypatch.setattr(observability, "configure", lambda _: configure(tmp_path / "operational-logs"))
+    monkeypatch.setattr(observability, "_metrics", {})
+    monkeypatch.setattr(observability, "_events", deque(maxlen=100))
+    monkeypatch.setattr(observability, "storage_unavailable", False)
     path = tmp_path / "default-runtime.db"
     engine = create_engine(
         f"sqlite:///{path}",
@@ -40,4 +52,5 @@ def isolate_default_database(tmp_path, monkeypatch):
     try:
         yield
     finally:
+        import_preview_store.clear()
         engine.dispose()

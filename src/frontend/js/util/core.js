@@ -107,14 +107,15 @@ export function date(value) {
 }
 
 export const typeNames = {
-  0: "收入与支出", 1: "内部转账", 2: "资产与负债",
-  TRANSACTION: "收入与支出", ACCOUNT_TRANSFER: "内部转账", CLAIM: "资产与负债",
+  0: "收入与支出", 1: "内部转账", 2: "资产与负债", 3: "重复证据，不计金额",
+  TRANSACTION: "收入与支出", ACCOUNT_TRANSFER: "内部转账", ASSET_LIABILITY: "资产与负债", DUPLICATE: "重复证据，不计金额",
   INCOME_AND_EXPENSE: "收入与支出", INTERNAL_TRANSFER: "内部转账", ASSET_AND_LIABILITY: "资产与负债",
 };
 
 export const reviewTypeNames = {
   TRANSACTION: "事实交易",
   BORROW_AND_REPAY: "借款与还款",
+  NORMAL_TRANSACTION: "系统原始交易", CREDIT_CARD: "信用卡", SHARED_SETTLEMENT: "共同费用", OTHER_MANUAL: "人工解释",
   ACCOUNT: "账户修正",
   FACT_CONFLICT: "事实冲突",
 };
@@ -129,7 +130,7 @@ export const statusNames = {
 };
 
 const currencyPrecisions = {
-  CNY: 2, EUR: 2, GBP: 2, HKD: 2, JPY: 0, USD: 2,
+  CNY: 2, EUR: 2, GBP: 2, HKD: 2, JPY: 0, KRW: 0, USD: 2,
 };
 
 export function currencyPrecision(value) {
@@ -147,15 +148,17 @@ export function decimalAmount(value, currencyCode) {
   const [whole, decimal = ""] = text.split(".");
   if (decimal.length > precision) throw new Error(`${currencyCode} 金额最多允许 ${precision} 位小数`);
   const result = Number(`${whole}${decimal.padEnd(precision, "0")}`);
-  if (!Number.isSafeInteger(result) || result <= 0) throw new Error("金额超出可处理范围");
+  if (!Number.isSafeInteger(result) || result <= 0 || result > 9_000_000_000_000) throw new Error("金额超出可处理范围");
   return result;
 }
 
 export function money(item) {
   if (!item) return "—";
-  const code = String(item.currency_code || "").toUpperCase();
+  const amount = item.cash_amount ?? item.amount;
+  if (amount == null) return "—";
+  const code = String(item.cash_currency_code || item.currency_code || "").toUpperCase();
   const precision = currencyPrecision(code);
-  const value = Number(item.amount) / (10 ** precision);
+  const value = Number(amount) / (10 ** precision);
   const baseCurrency = code.split("_", 1)[0];
   try {
     return new Intl.NumberFormat("zh-CN", {
@@ -167,4 +170,26 @@ export function money(item) {
   } catch {
     return `${value.toFixed(precision)} ${code}`;
   }
+}
+
+export function unitPrecision(code) {
+  return code === "KG_3" ? 3 : code === "PCS" ? 0 : currencyPrecision(code);
+}
+
+export function quantityDecimal(amount, code) {
+  if (!Number.isSafeInteger(amount) || Math.abs(amount) > 9_000_000_000_000) throw new Error("数量超出精确范围");
+  const precision = unitPrecision(code);
+  const digits = String(Math.abs(amount)).padStart(precision + 1, "0");
+  return `${amount < 0 ? "−" : ""}${precision ? `${digits.slice(0, -precision)}.${digits.slice(-precision)}` : digits}`;
+}
+
+export function quantityAmount(value, code) {
+  const text = String(value ?? "").trim();
+  const precision = unitPrecision(code);
+  if (!/^\d+(\.\d+)?$/.test(text)) throw new Error("请填写精确正数量，不接受科学计数或非有限数");
+  const [whole, decimal = ""] = text.split(".");
+  if (decimal.length > precision) throw new Error(`${code} 超出单位精度`);
+  const result = Number(`${whole}${decimal.padEnd(precision, "0")}`);
+  if (!Number.isSafeInteger(result) || result <= 0 || result > 9_000_000_000_000) throw new Error("数量超出精确正量范围");
+  return result;
 }

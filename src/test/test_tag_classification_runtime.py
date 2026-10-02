@@ -16,6 +16,7 @@ from configure_tag_classification import install  # noqa: E402
 from test_auto_tag_scan import scan_runtime as scan_runtime  # noqa: E402, F401
 from test_live_tag_scan import _body, _install_runtime, _response, _set_enabled, _wait  # noqa: E402
 from backend import target_main  # noqa: E402
+from import_batch_helpers import confirm_api_batch
 
 
 @pytest.fixture(autouse=True)
@@ -63,7 +64,7 @@ def test_preset_is_idempotent_and_import_cron_review_remain_independent(scan_run
             "filename": "fictional-scenario.csv",
             "content_base64": base64.b64encode(stream.getvalue().encode()).decode(),
         }]}))
-        _body(client.post(f"/paam/import/v1/preview/{preview['token']}/confirm", json={"version": preview["version"]}))
+        _body(confirm_api_batch(client, preview))
         assert calls == []  # Import never invokes the model or a scan callback.
 
         for row in first["configuration"]:
@@ -76,14 +77,17 @@ def test_preset_is_idempotent_and_import_cron_review_remain_independent(scan_run
             items = _body(client.get("/paam/tag/v1/assignment_request/list"))["items"]
             return items if len(items) == 2 else None
         requests = _wait(finished)  # Natural shared CRON only; no callback/manual run.
-        assert len(calls) == 2
+        safe_events = _body(client.get("/paam/system/v1/schedule/event/list", params={"page_size": 100}))["items"]
+        if len(calls) != 2:
+            pytest.fail(f"Expected 2 provider calls, got {len(calls)}; safe events:\n" + "\n".join(
+                f"{item['task_key']} {item['code']} {item['phase']} ledger={item.get('ledger_id')} detail={item.get('detail_code')}" for item in safe_events))
         assert {row["proposed_tag_name"] for row in requests} == {"医疗", "网购"}
         assert all(row["status"] == 1 for row in requests)
         for row in first["configuration"]:
             _set_enabled(client, row["rule_id"], False)
         ledger_id = requests[0]["ledger_id"]
         def tags():
-            entry = _body(client.get(f"/paam/ledger/v1/flow/{ledger_id}"))["ledger_entry"]
+            entry = _body(client.get(f"/paam/ledger/v1/flow/{ledger_id}"))
             return {tag["view_system_name"]: tag["tag_system_name"] for tag in entry["tags"]}
         assert tags()["expense_purpose"] == tags()["purchase_channel"] == "unclassified"
         medical = next(row for row in requests if row["proposed_tag_name"] == "医疗")

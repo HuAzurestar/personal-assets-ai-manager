@@ -3,19 +3,21 @@ from __future__ import annotations
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from sqlalchemy.orm import Session
 
 from backend.router.dependency import get_db, validate_query_parameter_names
 from backend.router.error import DomainErrorRoute
 from backend.schema.list_query import parse_list_request
 from backend.schema.ledger_entry import (
-    LedgerEntryDetailResponse,
-    LedgerEntryListRequest,
-    LedgerEntryListResponse,
     LedgerEntrySummaryQuery,
     LedgerEntrySummaryResponse,
 )
+from backend.schema.flow_read import (FlowListRequest, FlowSearchRequest, FlowRelationRequest, FlowTagListRequest,
+    LedgerEntryListResponse, LedgerEntryDetailResponse, FlowSearchResponse,
+    FlowPositionRelationResponse, FlowTagListResponse, FlowSourceListRequest, FlowSourceRelationResponse)
+from backend.router.bounded_query import bounded_list_dependency, bounded_search_dependency
+from backend.service.flow_read_service import FlowReadService
 from backend.service.ledger_entry_service import LedgerEntryService
 
 
@@ -44,7 +46,7 @@ def list_ledger_entries(
         {"page_index", "page_size", "query", "filter", "sorter"},
     )
     request = parse_list_request(
-        LedgerEntryListRequest,
+        FlowListRequest,
         page_index=page_index,
         page_size=page_size,
         query=query,
@@ -54,17 +56,24 @@ def list_ledger_entries(
     return LedgerEntryListResponse(
         status=200,
         message="ok",
-        body=LedgerEntryService(db).page(request=request),
+        body=FlowReadService(db).page(request),
     )
 
 
 @router.get("/flow/summary", response_model=LedgerEntrySummaryResponse)
 def ledger_entry_summary(
+    http_request: Request,
     date_from: date | None = None,
     date_to: date | None = None,
     timezone_name: str = Query(default="Asia/Hong_Kong", alias="timezone"),
+    account_ref_id: int | None = Query(default=None, ge=0, le=2**63 - 1),
+    account_id: int | None = Query(default=None, ge=0, le=2**63 - 1),
+    party_id: int | None = Query(default=None, ge=1, le=2**63 - 1),
+    cash_currency_code: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
+    validate_query_parameter_names(http_request, {"date_from", "date_to", "timezone",
+        "account_ref_id", "account_id", "party_id", "cash_currency_code"})
     if date_from and date_to and date_from > date_to:
         raise HTTPException(status_code=422, detail="date_from must be before date_to")
     try:
@@ -90,15 +99,38 @@ def ledger_entry_summary(
             occurred_time_start=start,
             occurred_time_end=end,
             display_timezone=display_timezone,
+            account_ref_id=account_ref_id, account_id=account_id, party_id=party_id,
+            cash_currency_code=cash_currency_code,
         )),
     )
 
 
+@router.get("/flow/search", response_model=FlowSearchResponse)
+def search_flows(request: FlowSearchRequest = Depends(bounded_search_dependency(FlowSearchRequest)), db: Session = Depends(get_db)):
+    return FlowSearchResponse(status=200, message="ok", body=FlowReadService(db).search(request))
+
+
+@router.get("/flow/{ledger_id}/position_allocation/list", response_model=FlowPositionRelationResponse)
+def flow_position_relations(ledger_id: int = Path(ge=1, le=2**63 - 1),
+    request: FlowRelationRequest = Depends(bounded_list_dependency(FlowRelationRequest)), db: Session = Depends(get_db)):
+    return FlowPositionRelationResponse(status=200, message="ok", body=FlowReadService(db).position_page(ledger_id, request))
+
+
+@router.get("/flow/{ledger_id}/allocation/list", response_model=FlowSourceRelationResponse)
+def flow_source_relations(ledger_id: int = Path(ge=1, le=2**63 - 1),
+    request: FlowSourceListRequest = Depends(bounded_list_dependency(FlowSourceListRequest)), db: Session = Depends(get_db)):
+    return FlowSourceRelationResponse(status=200, message="ok", body=FlowReadService(db).source_page(ledger_id, request))
+
+
+@router.get("/flow/{ledger_id}/tag/list", response_model=FlowTagListResponse)
+def flow_tags(ledger_id: int = Path(ge=1, le=2**63 - 1),
+    request: FlowTagListRequest = Depends(bounded_list_dependency(FlowTagListRequest)), db: Session = Depends(get_db)):
+    return FlowTagListResponse(status=200, message="ok", body=FlowReadService(db).tag_page(ledger_id, request))
+
+
 @router.get("/flow/{ledger_id}", response_model=LedgerEntryDetailResponse)
-def ledger_entry_detail(ledger_id: int, db: Session = Depends(get_db)):
-    result = LedgerEntryService(db).detail(ledger_id)
-    if result is None:
-        raise HTTPException(status_code=404, detail="Ledger entry not found")
+def ledger_entry_detail(ledger_id: int = Path(ge=1, le=2**63 - 1), db: Session = Depends(get_db)):
+    result = FlowReadService(db).detail(ledger_id)
     return LedgerEntryDetailResponse(
         status=200,
         message="ok",

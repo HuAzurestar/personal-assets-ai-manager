@@ -29,13 +29,16 @@ assert.match(stats, /非模型准确率/);
 assert.match(context.ruleStatistics({ ...counters, execution_success_rate: null, acceptance_rate: null }), /暂无样本/);
 assert.equal(context.selectionConflict([{ ledger_id: 1, view_id: 1 }, { ledger_id: 1, view_id: 1 }]), true);
 assert.equal(context.selectionConflict([{ ledger_id: 1, view_id: 1 }, { ledger_id: 1, view_id: 2 }]), false);
-const results = context.batchResults({ items: [{ request_id: 1, result: "APPROVED" }, { request_id: 2, result: "RULE_STALE" }, { request_id: 3, result: "ALREADY_APPROVED" }] }, [1, 2, 3, 4], "approve");
+const results = context.batchResults({ results: [{ id: 1, code: "APPROVED" }, { id: 2, code: "RULE_STALE" }, { id: 3, code: "ALREADY_APPROVED" }] }, [1, 2, 3, 4], "approve");
 assert.equal(results.filter((item) => item.category === "success").length, 1);
 assert.equal(results[3].result, "UNKNOWN");
 const resultMarkup = context.batchResultMarkup(results);
 assert.match(resultMarkup, /成功 1 · 已处理 1 · 失败\/未知 2/);
 assert.match(resultMarkup, /Request #2：规则版本已变化/);
-assert.equal(context.batchResults({ items: [{ id: 7, status: 3 }] }, [7], "reject")[0].result, "REJECTED");
+assert.equal(context.batchResults({ results: [{ id: 7, status: 3, code: "REJECTED" }] }, [7], "reject")[0].result, "REJECTED");
+assert.equal(context.batchResults({ items: [{ request_id: 7, status: 3, result: "REJECTED" }] }, [7], "reject")[0].result, "UNKNOWN");
+assert.match(context.batchFailureMarkup({ status: 409, code: "SUGGESTION_STALE" }, [7]), /整批未提交/);
+assert.match(context.batchFailureMarkup({ status: 503, code: "RESULT_UNKNOWN" }, [7]), /提交结果未知/);
 for (const [code, status] of [["TAG_REQUEST_NOT_FOUND", 404], ["TAG_REQUEST_NOT_PENDING", 409], ["TAG_REQUEST_STALE", 409], ["TAG_REQUEST_SCOPE_CONFLICT", 409]]) {
   const failure = context.batchFailureMarkup({ code, status, message: "<script>private details</script>" }, [1, 2, 3]);
   assert.match(failure, /整批未提交/);

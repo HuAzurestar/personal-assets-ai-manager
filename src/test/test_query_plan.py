@@ -67,18 +67,18 @@ def test_review_lookup_from_fact_uses_implicit_id_index():
     engine = _target_engine()
     plan = _plan(
         engine,
-        "SELECT review_case_id FROM review_allocation "
-        "WHERE transaction_fact_id IN (1, 2, 3)",
+        "SELECT review_id FROM review_transaction_ledger_allocation "
+        "WHERE transaction_id IN (1, 2, 3)",
     )
-    assert "ix_review_allocation_fact_case" in plan
+    assert "ix_default_review_lookup" in plan or "ix_review_allocation_fact_case" in plan
 
 
 def test_review_lines_batch_lookup_uses_case_index():
     engine = _target_engine()
     plan = _plan(
         engine,
-        "SELECT id, review_case_id, transaction_fact_id FROM review_allocation "
-        "WHERE review_case_id IN (1, 2, 3) ORDER BY review_case_id, id",
+        "SELECT id, review_id, transaction_id FROM review_transaction_ledger_allocation "
+        "WHERE review_id IN (1, 2, 3) ORDER BY review_id, id",
     )
     assert "ix_review_allocation_case_id" in plan
 

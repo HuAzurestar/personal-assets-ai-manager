@@ -8,6 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from backend.core.config import DATABASE_URL, ensure_data_dir
+from backend.core.stored_timestamp import check_timestamps
 
 
 ensure_data_dir()
@@ -32,7 +33,7 @@ TARGET_TABLE_NAMES = (
     "transaction_import_row",
     "transaction_fact",
     "review_case",
-    "review_allocation",
+    "review_transaction_ledger_allocation",
     "review_revision",
     "ledger_entry",
     "tag_view",
@@ -42,6 +43,12 @@ TARGET_TABLE_NAMES = (
     "auto_tag_rule",
     "tag_assignment_request",
     "llm_prompt_audit",
+    "ledger_account_party",
+    "ledger_account",
+    "ledger_account_ref",
+    "position",
+    "position_leg",
+    "review_ledger_position_leg_allocation",
 )
 
 SQL_ASSET_DIR = Path(__file__).resolve().parents[2] / "asset" / "sql"
@@ -53,18 +60,7 @@ UTC_TIMESTAMP_COLUMNS = {
 }
 UTC_TIMESTAMP_COLUMNS["transaction_fact"] += ("occurred_time",)
 UTC_TIMESTAMP_COLUMNS["ledger_entry"] += ("occurred_time",)
-
-
-def _normalize_legacy_millisecond_timestamps(driver) -> None:
-    """Pad legacy `.sssZ` values so text comparison and lock tokens stay exact."""
-    for table_name, columns in UTC_TIMESTAMP_COLUMNS.items():
-        for column_name in columns:
-            driver.execute(
-                f'UPDATE "{table_name}" '
-                f'SET "{column_name}" = substr("{column_name}", 1, 23) || \'000Z\' '
-                f'WHERE length("{column_name}") = 24 '
-                f'AND substr("{column_name}", 24, 1) = \'Z\''
-            )
+UTC_TIMESTAMP_COLUMNS["position_leg"] += ("occurred_time",)
 
 
 def ensure_target_schema(bind=None) -> None:
@@ -76,11 +72,15 @@ def ensure_target_schema(bind=None) -> None:
     connection = target_bind.raw_connection()
     try:
         driver = getattr(connection, "driver_connection", connection)
+        if driver.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='review_allocation'").fetchone():
+            raise RuntimeError("SCHEMA_MIGRATION_REQUIRED: run the isolated PIRC-35 copy migration before opening this database")
         driver.execute("PRAGMA encoding = 'UTF-8'")
         for table_name in TARGET_TABLE_NAMES:
             path = SQL_ASSET_DIR / f"{table_name}.sql"
             driver.executescript(path.read_text(encoding="utf-8"))
-        _normalize_legacy_millisecond_timestamps(driver)
+        # Opening a target database cannot repair its immutable business times.
+        # The offline copy migration registers and proves equivalent padding.
+        check_timestamps(driver,TARGET_TABLE_NAMES)
         encoding = driver.execute("PRAGMA encoding").fetchone()[0]
         if encoding.upper().replace("-", "") != "UTF8":
             raise RuntimeError(f"SQLite database encoding is {encoding}, expected UTF-8")
