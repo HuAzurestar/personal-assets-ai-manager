@@ -1,4 +1,4 @@
-import { request, jsonRequest } from "../api/client.js";
+import { request, jsonRequest, isUnknownWrite } from "../api/client.js";
 import { esc, money, date } from "../util/core.js";
 import { mountPicker, workbenchDialog } from "../component/workbench.js";
 
@@ -220,10 +220,12 @@ export async function mountImportBatch(host, initial, changed) {
       context.busy = false;
       await refresh();
     } catch (error) {
-      context.unknown = !error.status || error.status >= 500 || error.code === "RESULT_UNKNOWN";
+      context.unknown = isUnknownWrite(error);
       context.dirty = true;
       if (!context.unknown) localStorage.removeItem(pendingKey);
-      status(context.unknown ? "提交结果未知。先核对所选行当前持久状态；禁止自动重发。" : `${error.code || "提交失败"}：${error.message}；读取最新预览后重新选择。`);
+      status(context.unknown ? "提交结果未知。先核对所选行当前持久状态；禁止自动重发。"
+        : error.code === "WRITE_BUSY" ? "本批未提交，选择已保留。稍后读取最新预览、保存核验选择后再确认；不会自动重发。"
+        : `${error.code || "提交失败"}：${error.message}；读取最新预览后重新选择。`);
     } finally { context.busy = false; update(); }
   };
   find("[data-batch-clear]").onclick = () => { context.selected.clear(); context.dirty = false; readPage(context.page); };

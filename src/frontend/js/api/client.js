@@ -4,6 +4,14 @@ const connectionCopy = {
   disconnected: "本地账本连接中断",
 };
 
+// WRITE_BUSY is emitted only after a known pre-commit failure/rollback. A
+// transport failure, explicit unknown outcome or unexplained 5xx stays unknown.
+export function isUnknownWrite(error) {
+  if (!error.status || error.code === "RESULT_UNKNOWN") return true;
+  if (error.code === "WRITE_BUSY" && [409, 503].includes(error.status)) return false;
+  return error.status >= 500;
+}
+
 function setConnectionState(state) {
   const indicator = document.querySelector("[data-connection-status]");
   if (!indicator) return;

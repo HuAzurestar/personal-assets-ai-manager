@@ -108,8 +108,10 @@ class AccountManagementService:
             self.mapper.db.rollback()
             if commit_started:
                 reject("RESULT_UNKNOWN", "commit outcome is unknown; query current metadata before another action", 503)
-            if isinstance(error, (IntegrityError, OperationalError)):
-                reject("WRITE_BUSY", "metadata write could not complete; no partial changes", 409)
+            if isinstance(error, OperationalError):
+                reject("WRITE_BUSY", "metadata write not committed; no partial changes", 503)
+            if isinstance(error, IntegrityError):
+                reject("RELATION_BROKEN", "metadata write not committed; no partial changes", 409)
             raise
 
     def create(self, kind, payload):

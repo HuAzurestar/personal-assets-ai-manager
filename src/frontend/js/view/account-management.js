@@ -1,4 +1,4 @@
-import { request, jsonRequest } from "../api/client.js";
+import { request, jsonRequest, isUnknownWrite } from "../api/client.js";
 import { esc, date } from "../util/core.js";
 import { table } from "../component/table.js";
 
@@ -66,9 +66,12 @@ function dialog(title, body) {
 }
 
 function writeError(node, error) {
-  const uncertain = !error.status || error.status >= 500 || error.code === "RESULT_UNKNOWN";
+  const uncertain = isUnknownWrite(error);
+  node.dataset.writeOutcome = uncertain ? "UNKNOWN" : "NOT_COMMITTED";
   node.querySelector("[role=status]").textContent = uncertain
-    ? "提交结果未知。先关闭窗口并查询当前对象 / 列表，不要重发创建或变更。" : `${error.code || "操作失败"}：${error.message}`;
+    ? "提交结果未知。先关闭窗口并查询当前对象 / 列表，不要重发创建或变更。"
+    : error.code === "WRITE_BUSY" ? "本次未提交，输入已保留。稍后重新读取或预览，再由你提交；不会自动重发。"
+    : `${error.code || "操作失败"}：${error.message}`;
   node.querySelectorAll("[type=submit]").forEach((button) => { button.disabled = uncertain; });
 }
 
@@ -108,7 +111,7 @@ export function bindAccountManagement(root, reload) {
           finally { submit.disabled = false; }
         };
         node.querySelector("[data-confirm]").onclick = async () => {
-          if (!plan) return;
+          if (!plan || node.dataset.writeOutcome === "UNKNOWN") return;
           node.querySelector("[data-confirm]").disabled = true;
           node.querySelector("[type=submit]").disabled = true;
           try {
@@ -126,6 +129,7 @@ export function bindAccountManagement(root, reload) {
       const node = dialog(`${id ? "维护" : "新建"}${labels[kind]}`, `<form class="stack">${fields}<p role="status"></p><button type="submit">保存</button></form>`);
       node.querySelector("form").onsubmit = async (event) => {
         event.preventDefault();
+        if (node.dataset.writeOutcome === "UNKNOWN") return;
         node.querySelector("[type=submit]").disabled = true;
         const values = Object.fromEntries(new FormData(event.target));
         if (kind === "account") {

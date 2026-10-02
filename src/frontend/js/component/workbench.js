@@ -1,4 +1,4 @@
-import { request } from "../api/client.js";
+import { request, isUnknownWrite } from "../api/client.js";
 import { esc } from "../util/core.js";
 
 export const input = (name, label, value = "", extra = "") => `<label>${esc(label)}<input name="${name}" value="${esc(value)}" ${extra}></label>`;
@@ -19,10 +19,12 @@ export function workbenchDialog(title, body) {
 }
 
 export function writeFailure(host, error) {
-  const unknown = !error.status || error.status >= 500 || error.code === "RESULT_UNKNOWN";
+  const unknown = isUnknownWrite(error);
   host.querySelector("[role=status]").textContent = unknown
     ? "提交结果未知。请查询当前对象和审查记录，不要重发命令。"
-    : `${error.code || "操作失败"}：${error.message}；重新读取并预览后再提交。`;
+    : error.code === "WRITE_BUSY"
+      ? "本次未提交，输入已保留。稍后重新预览，再由你确认提交；不会自动重发。"
+      : `${error.code || "操作失败"}：${error.message}；重新读取并预览后再提交。`;
   return unknown;
 }
 
