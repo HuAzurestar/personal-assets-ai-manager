@@ -63,6 +63,8 @@ v1共用规范PO。标准列表 `{items,total,page_index,page_size}`、页≤100
 
 标签沿既有三表。停用Review保留旧关系，新解释仅唯一完整等义输出继承活动标签；拆分/合并/类型或数量语义变化默认待核对。DUPLICATE排除自动分析；归档不冒充活动值。仅唯一且当前一致的已批准请求可证明AUTO_RULE，否则UNKNOWN，不凭值伪称MANUAL。
 
+流水条件的具名标签选择使用只读 `/paam/tag/v1/tag/list`、`/search`、`/{tag_id}`：平铺Tag及所属View名称/状态，不带全View标签或Ledger赋值。列表标准四键，页≤100、默认id升序；search用既有有界literal游标协议，Query仅name/view_name/display_label，Filter仅id/view_id/status/view_status的等于/不等于，Sorter为id/created_time/updated_time。归档项不隐式隐藏；名称读取不改变已选ID。读取在同快照先检查Tag→View引用与状态，破损不因用户筛选或空命中被隐藏；SQL及Python组装共用30秒预算，响应≤2MiB，超限明确拒绝。现有View管理写口不变，没有新表或新写语义。
+
 PIRC-24共享调度，模型调用在事务外；完整扫描前缀短事务复核资格/epoch/配置后落库，不回放未知提交。人工设值/Review启停/字典变化同事务失效旧建议。没有Ledger status、ledger view status或标签历史镜像表。
 
 ## 安全迁移

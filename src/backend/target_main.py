@@ -39,6 +39,7 @@ from backend.router.ledger_transaction_fact import (
 from backend.router.system import router as system_router
 from backend.router.system_setting import router as system_setting_router
 from backend.router.tag import router as tag_router
+from backend.router.tag_choice import router as tag_choice_router
 from backend.router.tag_assignment import router as tag_assignment_router
 from backend.router.tag_assignment_request import (
     router as tag_assignment_request_router,
@@ -116,6 +117,7 @@ app.include_router(account_management_router)
 app.include_router(position_router)
 app.include_router(candidate_router)
 app.include_router(tag_router)
+app.include_router(tag_choice_router)
 app.include_router(tag_assignment_router)
 app.include_router(tag_assignment_request_router)
 app.include_router(system_router)
