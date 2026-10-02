@@ -18,6 +18,7 @@ import pytest
     "draft_reference.cjs",
     "local_choice.cjs",
     "unit_dictionary.cjs",
+    "transaction_filter.cjs",
 ])
 def test_standalone_frontend_contract(script):
     """Keep the standalone CI contracts in the local full-test matrix too."""

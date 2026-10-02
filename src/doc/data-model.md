@@ -65,6 +65,8 @@ v1共用规范PO。标准列表 `{items,total,page_index,page_size}`、页≤100
 
 流水条件的具名标签选择使用只读 `/paam/tag/v1/tag/list`、`/search`、`/{tag_id}`：平铺Tag及所属View名称/状态，不带全View标签或Ledger赋值。列表标准四键，页≤100、默认id升序；search用既有有界literal游标协议，Query仅name/view_name/display_label，Filter仅id/view_id/status/view_status的等于/不等于，Sorter为id/created_time/updated_time。归档项不隐式隐藏；名称读取不改变已选ID。读取在同快照先检查Tag→View引用与状态，破损不因用户筛选或空命中被隐藏；SQL及Python组装共用30秒预算，响应≤2MiB，超限明确拒绝。现有View管理写口不变，没有新表或新写语义。
 
+Fact/Flow共用宽字面搜索、日期/方向主行和紧凑币种/排序，账户与标签用高级具名条件及可移除条件标签。来源ref=0明确“来源未识别”，集合=0明确“已识别未分组”，空值才是不限；名称读取失败保留所选范围。ID在金融读取前检查精确范围，日期继续按选定时区转UTC半开区间。显式相同条件查找或清空重新读取且重置扫描，不自动重发写入；未提交输入/打开高级区/正在读取名称时后台刷新不覆盖操作。Flow默认有效口径及历史行摘要属后续R19，不在此次筛选组件变更中偷偷调整。
+
 PIRC-24共享调度，模型调用在事务外；完整扫描前缀短事务复核资格/epoch/配置后落库，不回放未知提交。人工设值/Review启停/字典变化同事务失效旧建议。没有Ledger status、ledger view status或标签历史镜像表。
 
 ## 安全迁移

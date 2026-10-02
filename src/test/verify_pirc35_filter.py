@@ -1,11 +1,13 @@
 """Real page filters: density, named scopes, explicit zero, chips and navigation."""
 from datetime import datetime, timezone
+import json
 import os
 from pathlib import Path
 import socket
 import tempfile
 import threading
 import time
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import uvicorn
@@ -83,10 +85,32 @@ def run():
                 assert form.bounding_box()['height'] <= 150
                 assert form.locator('input[type="number"]').count() == 0
                 expect(form.locator('[data-filter-more]')).not_to_have_attribute('open', '')
+                assert form.locator('.transaction-filter-secondary > label').first.evaluate('(node) => getComputedStyle(node).whiteSpace') == 'nowrap'
+                page.set_viewport_size({'width': 1280, 'height': 800})
+                assert form.locator('[name="word"]').bounding_box()['width'] >= 300
+                assert form.bounding_box()['height'] <= 150
+                page.set_viewport_size({'width': 1440, 'height': 900})
+                form.locator('[data-filter-more-toggle]').focus()
+                form.locator('[data-filter-more-toggle]').press('Enter')
+                expect(form.locator('[data-filter-more]')).to_have_attribute('open', '')
+                form.locator('[data-filter-more-toggle]').press('Enter')
+                expect(form.locator('[data-filter-more]')).not_to_have_attribute('open', '')
+                # Observe the real five-second background timer while an
+                # unsubmitted input is blurred; it must not erase the query.
+                prior = len([url for url in reads if '/transaction_fact/list?' in url])
+                form.locator('[name="word"]').fill('Mock unsent query')
+                form.locator('[data-filter-more-toggle]').focus()
+                page.wait_for_timeout(5500)
+                expect(form.locator('[name="word"]')).to_have_value('Mock unsent query')
+                assert len([url for url in reads if '/transaction_fact/list?' in url]) == prior
+                with page.expect_request('**/paam/ledger/v1/transaction_fact/list?*'):
+                    form.locator('[data-action="detail-clear"]').click()
+                expect(page.locator('#page-content')).not_to_have_attribute('aria-busy', 'true')
+                expect(form.locator('[name="word"]')).to_have_value('')
 
                 def choose(name, word, identifier):
                     current = page.locator('[data-transaction-filter]')
-                    current.locator('[data-filter-more] > summary').click()
+                    current.locator('[data-filter-more-toggle]').click()
                     current.locator(f'[data-named-choice="{name}"] [data-choice-pick]').click()
                     picker = page.locator('dialog[open]')
                     picker.locator('[data-picker-word]').fill(word)
@@ -117,13 +141,16 @@ def run():
                 expect(page.locator('[data-filter-chip="account_ref_id"]')).to_contain_text('Mock filter card')
                 page.locator('[data-action="detail-clear"]').click()
                 expect(page.locator('[data-filter-chip]')).to_have_count(0)
+                with page.expect_request('**/paam/ledger/v1/transaction_fact/list?*'):
+                    page.locator('[data-action="detail-clear"]').click()
+                expect(page.locator('#page-content')).not_to_have_attribute('aria-busy', 'true')
                 current = page.locator('[data-transaction-filter]')
-                current.locator('[data-filter-more] > summary').click()
+                current.locator('[data-filter-more-toggle]').click()
                 current.locator('[data-filter-zero="account_ref_id"]').click()
                 expect(page.locator('[name="account_ref_id"]')).to_have_value('0')
                 expect(page.locator('[data-filter-chip="account_ref_id"]')).to_contain_text('来源未识别')
                 page.locator('[data-action="detail-clear"]').click()
-                current.locator('[data-filter-more] > summary').click()
+                current.locator('[data-filter-more-toggle]').click()
                 current.locator('[data-filter-zero="account_id"]').click()
                 expect(page.locator('[name="account_id"]')).to_have_value('0')
                 expect(page.locator('[data-action="fact-detail"]')).to_have_count(1)
@@ -131,17 +158,70 @@ def run():
                 current.locator('[name="word"]').fill('Mock filter')
                 current.locator('[name="word"]').press('Enter')
                 expect(page.locator('[data-action="fact-detail"]')).to_have_count(3)
-                expect(page.locator('[data-fact-read] [data-scan-progress="fact"]')).to_contain_text('扫描完成')
+                expect(page.locator('[data-fact-scan-status]')).to_contain_text('本次扫描结束')
                 prior = len([url for url in reads if '/fact/search?' in url])
                 with page.expect_request('**/paam/ledger/v1/fact/search?*'):
                     current.locator('button[type="submit"]').click()
-                expect(page.locator('#page-content')).to_have_attribute('aria-busy', 'false')
+                expect(page.locator('#page-content')).not_to_have_attribute('aria-busy', 'true')
                 assert len([url for url in reads if '/fact/search?' in url]) > prior
                 for width in (1280, 390):
                     page.set_viewport_size({'width': width, 'height': 900})
                     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
                 viewport_evidence(page, 'fix-r12-fact-mobile')
                 page.set_viewport_size({'width': 1440, 'height': 900})
+                # The actual calendar submits inclusive end-minute as a UTC
+                # exclusive boundary and keeps page size until explicit clear.
+                page.goto(base + '/#details/transaction-fact?date_from=2026-09-01T00%3A00&date_to=2026-09-01T23%3A59&page_size=50')
+                expect(page.locator('[data-action="fact-detail"]')).to_have_count(1)
+                page.locator('[data-action="range-open"]').click()
+                page.locator('[data-range-date="2026-09-02"]').click()
+                page.locator('[data-range-date="2026-09-02"]').click()
+                with page.expect_request('**/paam/ledger/v1/transaction_fact/list?*') as reading:
+                    page.locator('[data-range-apply]').click()
+                predicate = json.loads(parse_qs(urlsplit(reading.value.url).query)['filter'][0])
+                assert predicate == {'op': 'AND', 'expression': [
+                    {'key': 'occurred_time', 'op': '>=', 'val': '2026-09-01T16:00:00.000Z'},
+                    {'key': 'occurred_time', 'op': '<', 'val': '2026-09-02T16:00:00.000Z'}]}, predicate
+                expect(page.locator('[data-action="fact-detail"]')).to_have_count(1)
+                expect(page.locator('[data-action="fact-detail"]')).to_contain_text('Mock filter Reserve')
+                expect(page.locator('[data-action="detail-page-size"]')).to_have_value('50')
+                expect(page.locator('[data-filter-chip="date_range"]')).to_contain_text('2026-09-02')
+                page.locator('[data-filter-chip="date_range"]').click()
+                expect(page.locator('[data-filter-chip="date_range"]')).to_have_count(0)
+                expect(page.locator('[data-action="detail-page-size"]')).to_have_value('50')
+                page.locator('[data-action="detail-clear"]').click()
+                expect(page.locator('[data-action="detail-page-size"]')).to_have_value('20')
+                # A name read failure is not permission to clear the filter.
+                def fail_name(route):
+                    route.fulfill(status=503, content_type='application/json', body=
+                        '{"status":503,"message":"Mock name read busy","body":{"code":"QUERY_BUSY"}}')
+                name_pattern = f'**/paam/ledger/v1/account-party/{person_id}'
+                page.route(name_pattern, fail_name, times=1)
+                page.goto(base + f'/#details/transaction-fact?party_id={person_id}')
+                expect(page.locator('[data-filter-chip="party_id"]')).to_contain_text('名称读取失败')
+                expect(page.locator('[name="party_id"]')).to_have_value(str(person_id))
+                expect(page.locator('[data-action="fact-detail"]')).to_have_count(1)
+                page.reload()
+                expect(page.locator('[data-filter-chip="party_id"]')).to_contain_text('Mock filter Alice')
+                # Hold one name response across the real refresh interval.
+                # Polling must not repeatedly abort/restart pending hydration.
+                held = []
+                actual_name = httpx.get(base + f'/paam/ledger/v1/account-party/{person_id}', trust_env=False).json()
+                page.route(name_pattern, lambda route: held.append(route), times=1)
+                page.goto(base + f'/#details/transaction-fact?party_id={person_id}')
+                expect(page.locator('[data-filter-chip="party_id"]')).to_contain_text('正在读取名称')
+                expect(page.locator('[data-action="fact-detail"]')).to_have_count(1)
+                page.wait_for_timeout(5500)
+                expect(page.locator('[data-filter-chip="party_id"]')).to_contain_text('正在读取名称')
+                assert len(held) == 1
+                held[0].fulfill(status=200, content_type='application/json', body=json.dumps(actual_name))
+                expect(page.locator('[data-filter-chip="party_id"]')).to_contain_text('Mock filter Alice')
+                # Changing route aborts and closes the open scoped picker.
+                page.locator('[data-filter-more-toggle]').click()
+                page.locator('[data-named-choice="party_id"] [data-choice-pick]').click()
+                expect(page.locator('dialog[open]')).to_be_visible()
+                page.evaluate("location.hash = '#details/ledger'")
+                expect(page.locator('dialog[open]')).to_have_count(0)
                 page.goto(base + '/#details/ledger')
                 flow_form = page.locator('[data-form="economic-filter"]')
                 expect(flow_form).to_be_visible()
@@ -155,6 +235,12 @@ def run():
                 viewport_evidence(page, 'fix-r12-flow-named-tag')
                 page.locator('[data-action="detail-clear"]').click()
                 expect(page.locator('[data-filter-chip]')).to_have_count(0)
+                # Invalid deep links must not issue rounded identity/list reads.
+                expect(page.locator('#page-content')).not_to_have_attribute('aria-busy', 'true')
+                prior = len(reads)
+                page.goto(base + '/#details/ledger?party_id=9007199254740993')
+                expect(page.locator('#page-content')).to_contain_text('对象 ID')
+                assert not any('/flow/list?' in url or '/account-party/' in url for url in reads[prior:])
                 with target_database.SessionLocal() as db:
                     assert counts == [db.scalar(select(func.count()).select_from(entity))
                                       for entity in [TransactionFact, ReviewCase, LedgerEntry]]

@@ -6,6 +6,8 @@ import { mountImportBatch, stopImportRead } from "./import-batch.js";
 import { readFlowSearch, bindFlowSearch, stopFlowRead, flowReadBusy, resetFlowSearch } from "./flow-search.js";
 import { candidateScan, scanControls } from "../util/candidate-scan.js";
 import { loadUnitDictionary, unitChoices, unitLabel } from "../util/unit-dictionary.js";
+import { transactionFilter, bindTransactionFilter, stopTransactionFilterRead,
+  transactionScopeFilters, transactionFilterDirty, transactionFilterReadBusy } from '../component/transaction-filter.js';
 import { preserveView } from "../util/view_state.js?v=20260928.6";
 import { toast } from "../component/toast.js";
 import { table } from "../component/table.js";
@@ -14,7 +16,7 @@ import {
   detailList, detailPager,
 } from "../component/detail.js?v=20260917.10";
 import {
-  bindDateTimeRanges, dateTimeRangeControl,
+  bindDateTimeRanges,
 } from "../component/date-time-range.js?v=20260928.6";
 import { state } from "../state/ledger.js";
 import {
@@ -140,7 +142,7 @@ const validPages = new Set(Object.keys(pageInfo));
 function route(page, params = new URLSearchParams()) {
   location.hash = canonicalHash(page, params);
 }
-function readRoute() {
+function readRoute({ restoreValues = true } = {}) {
   const { page: nextPage, params } = parseHash(location.hash, validPages);
   const canonical = canonicalHash(nextPage, params);
   if (location.hash.slice(1) !== canonical) history.replaceState(null, "", `#${canonical}`);
@@ -150,7 +152,7 @@ function readRoute() {
   }
   state.page = nextPage;
   state.params = params;
-  render();
+  render({ restoreValues });
 }
 window.addEventListener("hashchange", readRoute);
 
@@ -172,6 +174,9 @@ function canRefreshPage() {
   return !document.hidden && !pendingCommands && !foregroundBusy && !flowReadBusy() && !reviewScan.busy() && !factScan.busy() && !document.querySelector('dialog[open]')
     && !document.activeElement?.matches('input, textarea, select, [contenteditable="true"]')
     && !document.querySelector('[data-range-popover]:not([hidden])')
+    && !document.querySelector('[data-filter-more][open]')
+    && !transactionFilterReadBusy()
+    && !transactionFilterDirty(document.querySelector('[data-transaction-filter]'), state.params)
     && !document.querySelector('[data-form="inline-tag"]:not([hidden])');
 }
 window.setInterval(async () => {
@@ -184,7 +189,8 @@ window.setInterval(async () => {
   } finally { backgroundBusy = false; }
 }, 5000);
 
-async function render({ background = false } = {}) {
+async function render({ background = false, restoreValues = true } = {}) {
+  stopTransactionFilterRead();
   stopAccountRead();
   stopPositionRead();
   stopReviewRead();
@@ -240,7 +246,7 @@ async function render({ background = false } = {}) {
       const history = $('[data-form="history-filter"]', root);
       if (samePage && history && historyPage) history.dataset.page = historyPage;
     };
-    if (samePage) preserveView(root, apply); else apply();
+    if (samePage) preserveView(root, apply, { restoreValues }); else apply();
     renderedRoute = routeKey;
     if (page === "import") renderImportPlan();
     if (page === "reviews") await mountEconomicReviewEditor(root);
@@ -401,9 +407,7 @@ async function ledgerPage() {
   const expressions = [];
   if (currency) expressions.push({ key: "currency_code", op: "=", val: currency });
   if (["IN", "OUT"].includes(direction)) expressions.push({ key: "cash_direction", op: "=", val: direction });
-  for (const key of ["account_ref_id", "account_id", "party_id"]) {
-    if (state.params.has(key)) expressions.push({ key, op: "=", val: Number(state.params.get(key)) });
-  }
+  expressions.push(...transactionScopeFilters(state.params));
   if (dateFrom) expressions.push({ key: "occurred_time", op: ">=", val: filterBoundary(dateFrom) });
   if (dateTo) expressions.push({ key: "occurred_time", op: "<", val: filterBoundary(dateTo, true) });
   const filter = expressions.length > 1 ? { op: "AND", expression: expressions } : expressions[0];
@@ -416,9 +420,8 @@ async function ledgerPage() {
 
   if (word) { query.delete('page_index'); query.set('query', JSON.stringify([{key: searchField, word}])); }
   const result = word ? await factScan.read(query, location.hash) : await request(`/paam/ledger/v1/transaction_fact/list?${query}`);
-  const toolbar = `<form class="detail-filter" data-form="fact-filter"><label>收支方向<select name="cash_direction"><option value="">全部方向</option>${['IN','OUT'].map(value => `<option ${value === direction ? 'selected' : ''}>${value}</option>`).join('')}</select></label><label>币种${currencySelect(currency)}</label>${dateTimeRangeControl(dateFrom, dateTo)}<label>排序${sortPresetSelect(sortField, sortOrder)}</label>
-    ${[["account_ref_id", "来源卡 ID（0 未识别）"], ["account_id", "账户 ID（0 已识别未分组）"], ["party_id", "个人 ID"]].map(([key, label]) => `<label>${label}<input type="number" name="${key}" min="${key.startsWith('account') ? 0 : 1}" step="1" value="${esc(state.params.get(key) || '')}"></label>`).join('')}
-    <label>字面搜索<select name="search_field"><option value="summary" ${searchField === 'summary' ? 'selected' : ''}>脱敏摘要</option><option value="counterparty_name" ${searchField === 'counterparty_name' ? 'selected' : ''}>脱敏交易对手</option></select><input name="word" maxlength="128" value="${esc(word)}" autocomplete="off"></label><button type="submit">查找</button><button type="button" class="quiet" data-action="detail-clear" data-page-id="ledger">清空</button></form><p>不可变来源事实；金额排序先按币种分组、不换汇。账户归属按当前有效解释筛选，不参与排序。解释覆盖不等于现金汇总。</p>`;
+  const toolbar = transactionFilter({params: state.params, currency: currencySelect(currency), sort: sortPresetSelect(sortField, sortOrder)})
+    + `<p>不可变来源事实；金额按币种分组、不换汇。账户按当前有效解释筛选；解释覆盖不等于现金汇总。</p>`;
   return `<div data-fact-read>${detailListView({ active: "ledger", toolbar, title: "Transaction Fact", description: "外部账单接受后的不可变事实 PO；来源原文仅在单条来源行详情显式查看。", total: result.total, headers: ["摘要", "交易对手", "本方账户", "金额", "发生时间", ""], rows: factRows(result.items, !!word), footer: word ? factScanFooter(result) : detailPager(result, "ledger") })}</div>`;
 }
 
@@ -448,7 +451,7 @@ async function economicPage() {
   const selectedType = state.params.get("economic_type") || "";
   const active = state.params.get("active") || "";
   const currency = (state.params.get("cash_currency_code") || "").trim().toUpperCase();
-  const direction = state.params.get("cash_direction") || "";
+  const direction = ({'1': 'IN', '2': 'OUT'})[state.params.get("cash_direction")] || state.params.get("cash_direction") || "";
   const word = state.params.get("word")?.trim() || "";
   const searchField = state.params.get("search_field") || "summary";
   const dateFrom = state.params.get("date_from") || "";
@@ -460,9 +463,7 @@ async function economicPage() {
   if (["true", "false"].includes(active)) expressions.push({ key: "active", op: "=", val: active === "true" });
   if (currency) expressions.push({ key: "cash_currency_code", op: "=", val: currency });
   if (["IN", "OUT"].includes(direction)) expressions.push({ key: "cash_direction", op: "=", val: direction });
-  for (const key of ["account_ref_id", "account_id", "party_id", "tag_id"]) {
-    if (state.params.has(key)) expressions.push({ key, op: "=", val: Number(state.params.get(key)) });
-  }
+  expressions.push(...transactionScopeFilters(state.params, true));
   if (dateFrom) expressions.push({ key: "occurred_time", op: ">=", val: filterBoundary(dateFrom) });
   if (dateTo) expressions.push({ key: "occurred_time", op: "<", val: filterBoundary(dateTo, true) });
   const filter = expressions.length > 1 ? { op: "AND", expression: expressions } : expressions[0];
@@ -477,9 +478,11 @@ async function economicPage() {
   const sortOptions = [["occurred_time.desc", "时间：最新优先"], ["occurred_time.asc", "时间：最早优先"],
     ["cash_amount.desc", "绝对金额：从高到低"], ["cash_amount.asc", "绝对金额：从低到高"],
     ["signed_cash_amount.desc", "带方向金额：从高到低"], ["signed_cash_amount.asc", "带方向金额：从低到高"]];
-  const toolbar = `<form class="detail-filter ledger-detail-filter" data-form="economic-filter"><label>账本类型<select name="economic_type"><option value="">全部类型</option>${Object.keys(entryTypeValues).map(value => `<option value="${value}" ${selectedType === value ? "selected" : ""}>${esc(typeNames[value] || value)}</option>`).join("")}</select></label><label>有效状态<select name="active"><option value="">全部状态</option><option value="true" ${active === "true" ? "selected" : ""}>有效</option><option value="false" ${active === "false" ? "selected" : ""}>已停用</option></select></label><label>收支方向<select name="cash_direction"><option value="">全部方向</option>${["IN", "OUT"].map(value => `<option ${value === direction ? "selected" : ""}>${value}</option>`).join("")}</select></label><label>币种${currencySelect(currency).replace('name="currency_code"', 'name="cash_currency_code"')}</label>${dateTimeRangeControl(dateFrom, dateTo)}<label>排序<select name="sort">${sortOptions.map(([value, label]) => `<option value="${value}" ${value === `${sortField}.${sortOrder}` ? "selected" : ""}>${esc(label)}</option>`).join("")}</select></label>
-    ${[["account_ref_id", "来源卡 ID（0 未识别）"], ["account_id", "账户 ID（0 已识别未分组）"], ["party_id", "个人 ID"], ["tag_id", "标签 ID"]].map(([key, label]) => `<label>${label}<input type="number" name="${key}" min="${key.startsWith("account") ? 0 : 1}" step="1" value="${esc(state.params.get(key) || "")}"></label>`).join("")}
-    <label>字面搜索<select name="search_field"><option value="summary" ${searchField === "summary" ? "selected" : ""}>脱敏摘要</option><option value="counterparty" ${searchField === "counterparty" ? "selected" : ""}>脱敏交易对手</option></select><input name="word" maxlength="128" value="${esc(word)}" autocomplete="off"></label><button type="submit">查找</button><button type="button" class="quiet" data-action="detail-clear" data-page-id="economy">清空</button></form><p>金额排序先按币种分组，不作汇率换算。账户只筛选，不参与排序。有效性、标签、脱敏摘要及数量关系请打开详情核对。</p>`;
+  const toolbar = transactionFilter({params: state.params, flow: true,
+    currency: currencySelect(currency).replace('name="currency_code"', 'name="cash_currency_code"'),
+    sort: `<select name="sort">${sortOptions.map(([value, label]) => `<option value="${value}" ${value === `${sortField}.${sortOrder}` ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select>`,
+    advanced: `<label>账本类型<select name="economic_type"><option value="">全部类型</option>${Object.keys(entryTypeValues).map(value => `<option value="${value}" ${selectedType === value ? 'selected' : ''}>${esc(typeNames[value] || value)}</option>`).join('')}</select></label><label>有效状态<select name="active"><option value="">全部状态</option><option value="true" ${active === 'true' ? 'selected' : ''}>有效</option><option value="false" ${active === 'false' ? 'selected' : ''}>已停用</option></select></label>`})
+    + `<p>金额按币种分组、不换汇。账户只筛选；完整来源、标签与数量证据可打开详情核对。</p>`;
   return `<div data-flow-read>${detailListView({ toolbar, headers: ["原始现金结果", "本方来源", "金额", "发生时间", ""], rows: flowRows(result.items, !!word), footer: word ? flowScanFooter(result) : detailPager(result, "economy") })}</div>`;
 }
 
@@ -1003,6 +1006,7 @@ function bindPage(root) {
   bindAccountManagement(root, render);
   bindPosition(root, render);
   bindAutomation(root, render, toast, route);
+  bindTransactionFilter(root);
   $$('button[data-page], a[data-page]', root).forEach((button) => button.onclick = () => {
     if (button.closest("dialog")) closeDialogs();
     route(button.dataset.page);
@@ -1038,12 +1042,19 @@ function bindPage(root) {
       if (formName === "economic-filter") resetFlowSearch();
       if (formName === "detail-review-filter") reviewScan.reset();
       if (formName === "fact-filter") factScan.reset();
-      route(pageId, params);
+      if (location.hash === `#${canonicalHash(pageId, params)}`) readRoute({ restoreValues: false });
+      else route(pageId, params);
     });
     $$('select', form).forEach((select) => select.addEventListener("change", () => form.requestSubmit()));
   });
   bindDateTimeRanges(root, (form) => form?.requestSubmit());
-  $$('[data-action="detail-clear"]', root).forEach((button) => button.onclick = () => route(button.dataset.pageId));
+  $$('[data-action="detail-clear"]', root).forEach((button) => button.onclick = () => {
+    if (button.dataset.pageId === 'ledger') factScan.reset();
+    if (button.dataset.pageId === 'economy') resetFlowSearch();
+    if (button.dataset.pageId === 'ledger-reviews') reviewScan.reset();
+    if (location.hash === `#${canonicalHash(button.dataset.pageId)}`) readRoute({ restoreValues: false });
+    else route(button.dataset.pageId);
+  });
   $$('[data-action="detail-page"]', root).forEach((button) => button.onclick = () => {
     const params = new URLSearchParams(state.params);
     params.set("page", button.dataset.value);

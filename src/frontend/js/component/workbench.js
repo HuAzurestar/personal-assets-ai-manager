@@ -57,7 +57,11 @@ export function bindNamedChoice(host, name, { url, title, signal, describe = met
     setNamedChoice(host, name, id, text); changed(row);
   };
   field.querySelector('[data-choice-pick]').onclick = () => {
+    if (!host.isConnected || signal?.aborted) return;
     const dialog = workbenchDialog(title, `<div ${pickerAttribute}></div>`);
+    const abort = () => {if (dialog.open) dialog.close();};
+    signal?.addEventListener('abort', abort, {once: true});
+    dialog.addEventListener('close', () => signal?.removeEventListener('abort', abort), {once: true});
     mountPicker(dialog.querySelector(`[${pickerAttribute}]`), { url, searchKeys, signal, describe,
       choose: row => { apply(row.id ?? row.transaction_id, describe(row), row); dialog.close(); } });
   };
