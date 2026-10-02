@@ -59,6 +59,7 @@ async function main() {
     .replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '');
   let writes = 0, unknown = false;
   const context = vm.createContext({ resourceId, writeFailure, esc, location: { hash: '#workbench/position' },
+    candidateScan: () => ({bind() {}, reset() {}, stop() {}}),
     input: () => '', select: () => '', namedChoice: () => '', FormData: class { [Symbol.iterator]() { return Object.entries(values)[Symbol.iterator](); } },
     workbenchDialog: () => ({ querySelector: () => form, close() {} }),
     jsonRequest: async () => { writes++; if (unknown) throw Object.assign(Error('Mock'), { status: 503, code: 'RESULT_UNKNOWN' }); return {}; },

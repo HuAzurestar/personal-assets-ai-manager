@@ -227,6 +227,94 @@ def run():
                     review.locator("[data-review-command]").click()
                     expect(review).to_have_count(0)
                     page.goto(base + "/#workbench/position?id=1")
+                    # Position main list must also use the shared serial scan,
+                    # not expose one manual action per twenty candidates.
+                    from backend.entity import Position
+                    with target_database.SessionLocal() as db:
+                        candidates = [Position(title='Mock sparse position' if i == 44 else f'Mock scan object {i}',
+                            type='ASSET', usage_scenario='GENERAL', party_id=party_id, unit_code='CNY')
+                            for i in range(45)]
+                        db.add_all(candidates)
+                        db.flush()
+                        sparse_id = candidates[-1].id
+                        db.commit()
+                    search_reads, search_writes = [], []
+                    def record_search(request):
+                        if '/position/search?' in request.url:
+                            search_reads.append(request.url)
+                        if request.method != 'GET' and '/paam/' in request.url:
+                            search_writes.append(request.url)
+                    page.on('request', record_search)
+                    page.goto(base + '/#workbench/position?word=Mock%20sparse%20position')
+                    progress = page.locator('[data-position-scan-status]')
+                    expect(progress).to_contain_text('本次扫描结束', timeout=10000)
+                    expect(progress).to_contain_text('已扫描 48 个候选；找到 1 项')
+                    assert len(search_reads) == 3, search_reads
+                    page.get_by_role('link', name=f'#{sparse_id} Mock sparse position', exact=True).click()
+                    expect(page.locator('[data-position-quantity]')).to_contain_text('UNKNOWN')
+                    expect(progress).to_contain_text('本次扫描结束')
+                    viewport_evidence(page, 'fix-r20-position-auto')
+                    # Dynamically painted rows retain metadata actions. A
+                    # successful write invalidates the cached search window.
+                    page.locator(f'[data-position-list] [data-position-edit="{sparse_id}"]').click()
+                    maintenance = page.locator('dialog[open] form')
+                    maintenance.locator('[name=title]').fill('Mock sparse position edited')
+                    maintenance.locator('[type=submit]').click()
+                    expect(page.locator('dialog[open]')).to_have_count(0)
+                    expect(progress).to_contain_text('本次扫描结束')
+                    expect(page.get_by_role('link', name=f'#{sparse_id} Mock sparse position edited', exact=True)).to_be_visible()
+                    assert search_writes == [base + f'/paam/financial/v1/position/{sparse_id}/metadata'], search_writes
+                    search_writes.clear()
+                    # Holding a real continuation lets pause/cancel interrupt
+                    # an in-flight GET without forwarding any financial write.
+                    held, capture = [], {'once': True}
+                    def hold_continuation(route):
+                        if 'cursor=' in route.request.url and capture['once']:
+                            capture['once'] = False
+                            held.append(route)
+                        else:
+                            route.continue_()
+                    page.route('**/paam/financial/v1/position/search?**', hold_continuation)
+                    page.goto(base + '/#workbench/position?word=Mock%20absent')
+                    def wait_held():
+                        for _ in range(100):
+                            if held:
+                                return
+                            page.wait_for_timeout(10)
+                        raise AssertionError('Position continuation did not start automatically')
+                    wait_held()
+                    page.locator('[data-position-pause]').click()
+                    expect(progress).to_contain_text('已暂停')
+                    expect(progress).to_contain_text('已扫描 20 个候选；找到 0 项')
+                    held.pop().abort()
+                    page.locator('[data-position-continue]').click()
+                    expect(progress).to_contain_text('本次扫描结束')
+                    expect(progress).to_contain_text('已扫描 48 个候选；找到 0 项')
+                    capture['once'] = True
+                    page.goto(base + '/#workbench/position?word=Mock%20absent%20again')
+                    wait_held()
+                    page.locator('[data-position-cancel]').click()
+                    expect(progress).to_contain_text('已取消自动查找')
+                    held.pop().abort()
+                    # Same-condition submit restarts, even if the hash itself
+                    # is unchanged; clearing returns explicit list paging.
+                    page.locator('[data-position-filter] [type=submit]').click()
+                    expect(progress).to_contain_text('本次扫描结束')
+                    expect(progress).to_contain_text('已扫描 48 个候选；找到 0 项')
+                    previous_reads, previous_hash = len(search_reads), page.evaluate('location.hash')
+                    page.locator('[data-position-filter] [type=submit]').click()
+                    expect(page.locator('#page-content[aria-busy]')).to_have_count(0)
+                    expect(progress).to_contain_text('本次扫描结束')
+                    assert page.evaluate('location.hash') == previous_hash
+                    assert len(search_reads) == previous_reads + 3, search_reads
+                    page.locator('[data-position-filter] [name=word]').fill('')
+                    page.locator('[data-position-filter] [type=submit]').click()
+                    expect(progress).to_have_count(0)
+                    expect(page.locator('[data-position-list] tbody tr')).to_have_count(20)
+                    expect(page.locator('[data-position-footer]')).to_contain_text('共 48 项')
+                    assert not search_writes, search_writes
+                    page.unroute('**/paam/financial/v1/position/search?**', hold_continuation)
+                    page.remove_listener('request', record_search)
                     page.set_viewport_size({"width": 390, "height": 844})
                     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
                     assert errors == [], errors

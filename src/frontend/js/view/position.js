@@ -2,11 +2,13 @@ import { request, jsonRequest } from "../api/client.js";
 import { esc, date, quantityDecimal, money, resourceId } from "../util/core.js";
 import { table } from "../component/table.js";
 import { input, select, workbenchDialog, writeFailure, namedChoice, bindNamedChoice } from "../component/workbench.js";
+import { candidateScan, scanControls } from '../util/candidate-scan.js';
 
 const base = "/paam/financial/v1/position";
 export const usages = ["GENERAL", "PERSONAL-LENDING", "SHARED-SETTLEMENT", "STORED-VALUE", "DEPOSIT-PLEDGE", "REIMBURSEMENT", "CREDIT-CARD", "FORMAL-LOAN", "INVESTMENT"];
 let controller;
-export function stopPositionRead() { controller?.abort(); }
+const positionScan = candidateScan(base, 'position');
+export function stopPositionRead() { controller?.abort(); positionScan.stop(); }
 
 export function positionFields(row = {}, metadata = false) {
   return input("title", "对象名称", row.title || "", 'required maxlength="160"')
@@ -38,8 +40,9 @@ export async function positionPage(params) {
     if (params.get("cursor")) query.set("cursor", params.get("cursor"));
   } else query.set("page_index", params.get("page") || "1");
   if (params.get("status")) query.set("filter", JSON.stringify({ key: "status", op: "=", val: params.get("status") }));
-  const result = await request(`${base}/${word ? "search" : "list"}?${query}`, { signal: controller.signal });
-  const rows = result.items.map(row => `<tr><td><a href="${esc(href(params, { id: row.id, leg_page: null }))}">#${row.id} ${esc(row.title)}</a></td><td>${esc(row.type)} · ${esc(row.usage_scenario)}</td><td>${esc(row.unit_code)}</td><td>${esc(row.status)}</td><td><button data-position-edit="${row.id}">维护元数据</button></td></tr>`);
+  const result = word ? await positionScan.read(query, location.hash)
+    : await request(`${base}/list?${query}`, { signal: controller.signal });
+  const rows = positionRows(result.items, params, !!word && result.has_more);
   let detail = "";
   if (params.get("id")) {
     const id = resourceId(params.get("id"));
@@ -57,9 +60,22 @@ export async function positionPage(params) {
   }
   return `<div data-position-workbench><section class="panel"><h1>资产与负债对象</h1><p>账户是现金来源；Position 是独立数量对象。创建元数据不生成现金或数量。</p><a href="#workbench/account">个人与账户来源</a> · <a href="#workbench/review">审查工作台</a>
     <button data-position-create>独立新建对象</button><form data-position-filter class="actions">${input("word", "名称字面搜索", word || "", 'maxlength="128"')}${select("status", "状态", [["", "全部"], "ACTIVE", "ARCHIVED", "SETTLED"], params.get("status") || "")}<button type="submit">重新查找</button></form>
-    ${table(["对象身份", "性质与用途", "单位", "状态", "操作"], rows)}
-    <div class="actions">${!word && result.page_index > 1 ? `<a href="${esc(href(params, { page: result.page_index - 1 }))}">上一页</a>` : ""}<span>${word ? `本批扫描 ${result.scanned_count} 个候选；命中 ${result.items.length}；总数未知` : `共 ${result.total} 项 · 第 ${result.page_index} 页`}</span>
-    ${word ? result.has_more ? `<a href="${esc(href(params, { cursor: result.next_cursor }))}">继续扫描（空命中也可推进）</a>` : "扫描结束" : result.page_index * result.page_size < result.total ? `<a href="${esc(href(params, { page: result.page_index + 1 }))}">下一页</a>` : ""}</div></section>${detail}</div>`;
+    <div data-position-list>${table(["对象身份", "性质与用途", "单位", "状态", "操作"], rows)}</div>
+    <div data-position-footer>${word ? scanControls('position', result) : `<div class="actions">${result.page_index > 1 ? `<a href="${esc(href(params, { page: result.page_index - 1 }))}">上一页</a>` : ""}<span>共 ${result.total} 项 · 第 ${result.page_index} 页</span>${result.page_index * result.page_size < result.total ? `<a href="${esc(href(params, { page: result.page_index + 1 }))}">下一页</a>` : ""}</div>`}</div></section>${detail}</div>`;
+}
+
+function positionRows(items, params, scanning = false) {
+  return items.length ? items.map(row => `<tr><td><a href="${esc(href(params, { id: row.id, leg_page: null }))}">#${row.id} ${esc(row.title)}</a></td><td>${esc(row.type)} · ${esc(row.usage_scenario)}</td><td>${esc(row.unit_code)}</td><td>${esc(row.status)}</td><td><button data-position-edit="${row.id}">维护元数据</button></td></tr>`)
+    : [`<tr><td colspan="5">${scanning ? '尚无命中；空批次不代表扫描结束。' : '没有匹配项。'}</td></tr>`];
+}
+
+function paintPositionSearch(host, result) {
+  if (!host.isConnected) return;
+  const params = new URLSearchParams(location.hash.split('?')[1] || '');
+  // Only the list is replaced: detail/evidence and metadata handlers survive.
+  host.querySelector('[data-position-list] tbody').innerHTML = positionRows(result.items, params, result.has_more).join('');
+  host.querySelector('[data-position-footer]').innerHTML = scanControls('position', result);
+  positionScan.bind(host, next => paintPositionSearch(host, next));
 }
 
 export function bindPosition(root, reload) {
@@ -67,8 +83,14 @@ export function bindPosition(root, reload) {
   if (!host) return;
   host.querySelector("[data-position-filter]").onsubmit = event => {
     event.preventDefault();
-    location.hash = href(new URLSearchParams(new FormData(event.target)), {});
+    positionScan.reset();
+    const route = href(new URLSearchParams(new FormData(event.target)), {});
+    // Normalize %20/+ without losing same-condition explicit refresh.
+    const current = new URLSearchParams(location.hash.split('?')[1] || '');
+    if (location.hash.startsWith('#workbench/position?') && current.toString() === route.split('?')[1]) reload();
+    else location.hash = route;
   };
+  positionScan.bind(host, next => paintPositionSearch(host, next));
   host.onclick = async event => {
     const button = event.target.closest("[data-position-create], [data-position-edit]");
     if (!button || button.disabled) return;
@@ -91,7 +113,8 @@ export function bindPosition(root, reload) {
           const payload = Object.fromEntries(new FormData(form));
           if (id) payload.expected_updated_time = row.updated_time;
           else { payload.party_id = resourceId(payload.party_id); payload.unit_code = payload.unit_code.trim().toUpperCase(); }
-          await jsonRequest(`${base}${id ? `/${id}/metadata` : ""}`, id ? "PUT" : "POST", payload); node.close(); await reload();
+          await jsonRequest(`${base}${id ? `/${id}/metadata` : ""}`, id ? "PUT" : "POST", payload);
+          node.close(); positionScan.reset(); await reload();
         } catch (error) { uncertain = writeFailure(form, error); submit.disabled = uncertain; }
         finally { writing = false; }
       };
