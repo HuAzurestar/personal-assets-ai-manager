@@ -53,6 +53,10 @@ Review物理类型0系统NORMAL_TRANSACTION、1 BORROW_AND_REPAY、2 CREDIT_CARD
 
 Position.type=ASSET/LIABILITY；usage_scenario为GENERAL、PERSONAL-LENDING、SHARED-SETTLEMENT、STORED-VALUE、DEPOSIT-PLEDGE、REIMBURSEMENT、CREDIT-CARD、FORMAL-LOAN、INVESTMENT之一。status=ACTIVE/ARCHIVED/SETTLED；归档不清量，SETTLED仅允许已知零且无失效来源。type/party/unit及原腿不改，回款/处置以新Review及明确来源腿关联。Leg.type=OPENING/MOVEMENT，direction=IN/OUT、正量，source=0为未指定来源。
 
+Position标准list/search的只读条目扩展为PositionListItem：原PositionPO加party_name及与详情相同的quantity_state/quantity/cost_state/source_token；不改共享Review关系的PositionPO，不加财务状态表或估值。当前页先取≤100个对象，再一次读取本页数量证据流和本方名称，COUNT与摘要在同一读快照。无腿为UNKNOWN/null；真实历史腿全部停用且无有效失效依赖时当前有据零为KNOWN/0；有效OUT来源停用为NEEDS_REVIEW/null，与详情同口径、同token。数量流每请求（单详情或列表本页）≤50,000贡献腿/2秒，超限AGGREGATION_LIMIT拒绝整页并建议减小page_size，不返回部分量或把超限伪装UNKNOWN；普通搜索无累计候选上限。前端列表直接显示本方/对方、有据量及精确单位，元数据状态与数量状态分开。
+
+上述共用数量读取若在Position元数据短写内发生503聚合预算失败，回滚完成且尚未进入commit时返回WRITE_BUSY（明确未提交）；413容量拒绝仍为AGGREGATION_LIMIT。commit边界之后发生任何异常优先RESULT_UNKNOWN，即使底层code来自已知读取分类也不能据此允许自动重发。
+
 现金/数量为整数+单位，单值≤9,000,000,000,000；不浮点/跨币净额/隐式换算。CNY=0.01、CNY_4=0.0001、JPY/KRW=1、KG_3=0.001kg、PCS=1件，白名单见 `backend/core/unit.py`。
 
 前端单位元数据由只读 `GET /paam/ledger/v1/unit` 取得，成功 body 为 `{items}`，每项含 `code/label/dimension/quantum/precision/is_default`。这是完整的有限代码字典，不是数据库 PO 列表；不接受分页、Query、Filter 或 Sorter，也不提供写口。最多128项、32KiB，超限明确 `UNIT_DICTIONARY_LIMIT`，不截断。当前70个现金单位和2个数量单位沿用既有注册规则，不增加单位表。前端金额/数量格式化、币种筛选、披露配置和对象单位选择共用此字典；首次读取失败可由用户重新加载，只读重试不重发金融写入。现金选项排除数量单位，配置容量仍为最多64个金额区间单位，不等于支持单位数。

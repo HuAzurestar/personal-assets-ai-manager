@@ -72,14 +72,23 @@ class PositionService:
             self.relations.read_snapshot()
             self.relations.validate()
             rows, total = self.mapper.page(request)
-            return response_size(dict(items=rows, total=total, page_index=request.page_index, page_size=request.page_size))
+            return response_size(dict(items=self._summary_items(rows), total=total, page_index=request.page_index, page_size=request.page_size))
 
     def search(self, request):
         self._validate_query(request, search=True)
         with query_budget(self.mapper.db):
             self.relations.read_snapshot()
             self.relations.validate()
-            return response_size(self.mapper.search(request))
+            result = self.mapper.search(request)
+            result["items"] = self._summary_items(result["items"])
+            return response_size(result)
+
+    def _summary_items(self, rows):
+        quantities = self.mapper.quantities(rows)
+        names = self.mapper.party_names(rows)
+        if any(row["party_id"] not in names for row in rows):
+            reject("RELATION_BROKEN", "Position managed person reference is broken")
+        return [row | quantities[row["id"]] | dict(party_name=names[row["party_id"]]) for row in rows]
 
     def legs(self, position_id, request):
         self._validate_query(request, leg=True)
@@ -129,6 +138,8 @@ class PositionService:
             self.mapper.db.rollback()
             if commit_started:
                 reject("RESULT_UNKNOWN", "commit outcome is unknown; query Position candidates, do not repeat POST", 503)
+            if isinstance(error, TargetEconomicError) and error.code == "AGGREGATION_LIMIT" and error.status_code == 503:
+                reject("WRITE_BUSY", "Position metadata computation did not finish; not committed", 503)
             if isinstance(error, (IntegrityError, OperationalError)):
                 reject("WRITE_BUSY", "Position metadata write not committed", 503)
             raise

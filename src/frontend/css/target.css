@@ -1922,6 +1922,21 @@
   .account-scope-fields { grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
   .account-scope-fields > small { grid-column:1/-1; }
 }
+
+/* Position summaries are evidence quantities, not valuation or account cash. */
+.position-list-surface [data-position-list] table { min-width:0; table-layout:fixed; }
+.position-list-surface [data-position-list] td { padding:8px 10px; font-size:12px; white-space:normal; overflow-wrap:anywhere; }
+.position-list-surface [data-position-list] td small { display:block; margin-top:4px; font-size:11px; color:var(--muted); }
+.position-list-surface [data-position-list] button { min-height:32px; padding:5px 8px; font-size:12px; }
+@media(max-width:600px) {
+  .position-list-surface [data-position-list] .table-wrap { overflow:visible; }
+  .position-list-surface [data-position-list] :is(table,tbody) { display:block; width:100%; }
+  .position-list-surface [data-position-list] thead { display:none; }
+  .position-list-surface [data-position-list] tr[data-position-row] { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); padding:8px; border-bottom:1px solid var(--line); }
+  .position-list-surface [data-position-list] td { display:block; padding:5px; border:0; }
+  .position-list-surface [data-position-list] td:first-child { grid-column:1/-1; }
+  .position-list-surface [data-position-list] td::before { content:attr(data-label); display:block; margin-bottom:3px; color:var(--muted); font-size:10px; }
+}
 @media(max-width:600px) {
   .account-metadata-scope { padding:12px; }
   .account-scope-fields { gap:8px; }

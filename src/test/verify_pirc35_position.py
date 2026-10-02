@@ -75,6 +75,9 @@ def run():
                     form.locator('[name="usage_scenario"]').select_option("PERSONAL-LENDING")
                     form.locator('[type="submit"]').click()
                     expect(page.locator("dialog[open]")).to_have_count(0)
+                    main_row = page.locator('[data-position-list] [data-position-row="1"]')
+                    expect(main_row).to_contain_text('Mock person')
+                    expect(main_row.locator('[data-position-row-quantity]')).to_contain_text('UNKNOWN')
                     page.get_by_role("link", name="#1 Mock loan position", exact=True).click()
                     expect(page.locator("[data-position-quantity]")).to_contain_text("UNKNOWN")
                     page.goto(base + "/#workbench/review?position=1&case_code=POS_OPENING")
@@ -98,6 +101,7 @@ def run():
                     expect(page.locator("[data-immutable-review]")).to_have_count(0)
                     page.goto(base + "/#workbench/position?id=1")
                     expect(page.locator("[data-position-quantity]")).to_contain_text("400.00 CNY")
+                    expect(main_row.locator('[data-position-row-quantity]')).to_contain_text('400.00 CNY')
                     details = client.get("/paam/financial/v1/position/1/leg/list").json()["body"]["items"]
                     source_id, opening_review_id = details[0]["id"], details[0]["review_id"]
                     page.goto(base + "/#workbench/review?position=1&case_code=POS_POSITION_SETTLE")
@@ -206,6 +210,9 @@ def run():
                     assert client.get("/paam/financial/v1/position/3").json()["body"]["quantity"] == 10100
                     page.goto(base + "/#workbench/position?id=1")
                     expect(page.locator("[data-position-quantity]")).to_contain_text("100.00 CNY")
+                    expect(main_row.locator('[data-position-row-quantity]')).to_contain_text('100.00 CNY')
+                    expect(page.locator('.toast')).to_have_count(0, timeout=6000)
+                    viewport_evidence(page, 'fix-r14-known-list')
                     # Review inspection is the canonical immutable content, not history/revisions.
                     page.goto(base + "/#details/review")
                     page.locator(f'[data-action="economic-review-detail"][data-id="{opening_review_id}"]').click()
@@ -218,6 +225,9 @@ def run():
                     expect(page.locator("dialog[open]")).to_have_count(0)
                     page.goto(base + "/#workbench/position?id=1")
                     expect(page.locator("[data-position-quantity]")).to_contain_text("NEEDS_REVIEW")
+                    expect(main_row.locator('[data-position-row-quantity]')).to_contain_text('NEEDS_REVIEW')
+                    expect(page.locator('.toast')).to_have_count(0, timeout=6000)
+                    viewport_evidence(page, 'fix-r14-needs-review-list')
                     # Cash-only replacement selects the FULL Fact, not an available residual.
                     page.goto(base + "/#workbench/review?facts=1")
                     expect(review.locator("[data-cash-row]")).to_have_count(1)
@@ -252,6 +262,7 @@ def run():
                     assert len(search_reads) == 3, search_reads
                     page.get_by_role('link', name=f'#{sparse_id} Mock sparse position', exact=True).click()
                     expect(page.locator('[data-position-quantity]')).to_contain_text('UNKNOWN')
+                    expect(page.locator(f'[data-position-row="{sparse_id}"] [data-position-row-quantity]')).to_contain_text('UNKNOWN')
                     expect(progress).to_contain_text('本次扫描结束')
                     viewport_evidence(page, 'fix-r20-position-auto')
                     # Dynamically painted rows retain metadata actions. A
@@ -316,7 +327,9 @@ def run():
                     page.unroute('**/paam/financial/v1/position/search?**', hold_continuation)
                     page.remove_listener('request', record_search)
                     page.set_viewport_size({"width": 390, "height": 844})
+                    expect(page.locator('.toast')).to_have_count(0, timeout=6000)
                     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+                    viewport_evidence(page, 'fix-r14-mobile-list')
                     assert errors == [], errors
                     assert retired == [], retired
                     browser.close()

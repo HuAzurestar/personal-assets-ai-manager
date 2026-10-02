@@ -46,15 +46,19 @@ class PositionDetailPO(PositionPO):
     source_token: str
 
 
+class PositionListItem(PositionDetailPO):
+    party_name: str
+
+
 class PositionListPO(PO):
-    items: list[PositionPO]
+    items: list[PositionListItem]
     total: int
     page_index: int
     page_size: int
 
 
 class PositionSearchPO(PO):
-    items: list[PositionPO]
+    items: list[PositionListItem]
     total: None = None
     page_size: int
     next_cursor: str | None
