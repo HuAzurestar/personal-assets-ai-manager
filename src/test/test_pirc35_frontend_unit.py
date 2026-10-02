@@ -46,6 +46,7 @@ import {{ installUnitDictionary }} from {dictionary!r};
 installUnitDictionary(({catalog}).items);
 assert.equal(quantityAmount('0.001', 'KG_3'), 1);
 assert.equal(quantityAmount('400.00', 'CNY'), 40000);
+assert.equal(quantityAmount('400.00', ' cny '), 40000);
 assert.equal(quantityDecimal(10000, 'CNY'), '100.00');
 assert.equal(quantityAmount('400', 'KRW'), 400);
 assert.equal(quantityAmount('1', 'PCS'), 1);

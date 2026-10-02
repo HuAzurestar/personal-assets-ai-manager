@@ -62,7 +62,10 @@ export function currencyPrecision(value) {
   return item.precision;
 }
 
-export function unitPrecision(code) { return unitDefinition(code).precision; }
+export function unitPrecision(code) {
+  // Quantity codes are exact; currencies retain the backend normalization rule.
+  return unitCatalog?.get(code)?.precision ?? currencyPrecision(code);
+}
 
 export function unitChoices(dimension) {
   if (!unitCatalog) throw unitCatalogError('单位字典尚未加载；请重新加载', 'UNIT_DICTIONARY_UNAVAILABLE');

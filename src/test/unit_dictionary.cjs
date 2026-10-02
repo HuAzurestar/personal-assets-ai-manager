@@ -37,6 +37,9 @@ async function main() {
     } else assert.throws(() => dictionary.currencyPrecision(unit.code), {code:'INVALID_CURRENCY'});
   }
   assert.equal(dictionary.currencyPrecision(' krw '), 0);
+  assert.equal(core.quantityAmount('1.00', ' cny '), 100, 'preserve backend currency normalization');
+  assert.equal(core.quantityDecimal(1, ' krw '), '1');
+  assert.throws(() => core.quantityAmount('1', 'pcs'), {code:'INVALID_CURRENCY'});
   assert.throws(() => dictionary.currencyPrecision('KRW_9'), {code:'INVALID_UNIT'});
   assert.throws(() => dictionary.installUnitDictionary([]));
   assert.throws(() => dictionary.installUnitDictionary(units.slice(0, -1)));

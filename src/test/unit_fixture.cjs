@@ -8,6 +8,9 @@ function unitFixture() {
   const program = `
 import os, sys, tempfile
 with tempfile.TemporaryDirectory(prefix='paam-unit-contract-') as directory:
+    for key in list(os.environ):
+        if key.startswith('PAAM_'):
+            del os.environ[key]
     os.environ['PAAM_DATA_DIR'] = directory
     os.environ['PAAM_SQL_WEB_ENABLED'] = '0'
     os.environ['PAAM_AUTOTAG_REAL_ANALYSIS'] = '0'
