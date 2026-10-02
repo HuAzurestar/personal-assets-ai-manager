@@ -104,6 +104,7 @@ def test_ledger_v1_exposes_only_confirmed_cash_entry_fields(economic_api):
     assert set(item) == {
         "id", "economic_type", "cash_direction", "cash_amount", "cash_currency_code",
         "account_ref_id", "occurred_time", "created_time", "updated_time",
+        "active", "summary", "transaction_id", "review", "account",
     }
     assert (item["economic_type"], item["cash_direction"]) == ("TRANSACTION", "OUT")
     assert (item["cash_amount"], item["cash_currency_code"]) == (12345, "CNY")
@@ -113,7 +114,9 @@ def test_ledger_v1_exposes_only_confirmed_cash_entry_fields(economic_api):
     assert detail["summary"] == ""
     assert detail["reviews"][0]["type"] == "NORMAL_TRANSACTION"
     assert "role" not in detail["allocations"][0]
-    assert detail["ledger_entry"] == item
+    assert detail["ledger_entry"] == {key: value for key, value in item.items()
+        if key not in {"active", "summary", "transaction_id", "review", "account"}}
+    assert item["active"] is True and item["summary"] == ""
     assert client.get("/paam/economy/v1/flow/list").status_code == 404
     assert client.get("/paam/economy/v1/flow/detail/1").status_code == 404
     assert client.get("/paam/economy/v1/summary").status_code == 404
@@ -181,7 +184,8 @@ def test_ledger_lists_accept_whitelisted_filter_and_sorter_objects(economic_api)
     ).json()["body"]
     assert page["total"] == 1
     assert page["items"][0]["cash_amount"] == 1000
-    assert "summary" not in page["items"][0]
+    assert page["items"][0]["summary"] == "fact"
+    assert page["items"][0]["active"] is True
     assert set(page) == {"items", "total", "page_index", "page_size"}
 
     rejected = client.get(
@@ -347,7 +351,7 @@ def test_review_candidate_list_is_paged_with_fixed_query_count(economic_api):
     assert page["page_index"] == 1
     assert page["page_size"] == 2
     assert len(page["items"]) == 2
-    assert len(statements) == 3  # snapshot guard + COUNT + PAGE
+    assert len(statements) == 4  # snapshot guard + COUNT + PAGE + R08 page-current summaries
 
     second = client.get(
         "/paam/ledger/v1/review_candidate/list?page_index=2&page_size=2"

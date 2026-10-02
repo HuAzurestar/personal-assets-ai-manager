@@ -1,7 +1,7 @@
 """Canonical cash readers: one Ledger identity, explicit immutable relations."""
 from sqlalchemy import case, func, or_, select
 
-from backend.entity import (AutoTagRule, LedgerEntry, LedgerEntryTag, ReviewAllocation, ReviewCase,
+from backend.entity import (AutoTagRule, LedgerEntry, LedgerAccountRef, LedgerEntryTag, ReviewAllocation, ReviewCase,
     TransactionFact,
     Position, PositionLeg, ReviewLedgerPositionLegAllocation, TagAssignmentRequest, TargetTag, TargetTagView)
 from backend.error import TargetEconomicError
@@ -46,19 +46,29 @@ class FlowReadMapper:
         self.statement = select(l.id, l.entry_type, l.entry_direction, l.amount.label("cash_amount"),
             l.currency_code.label("cash_currency_code"), l.account_ref_id, l.occurred_time, l.created_time, l.updated_time,
             signed.label("signed_cash_amount"), economic_type.label("economic_type"), direction.label("cash_direction"),
-            f.summary, f.counterparty_name.label("counterparty"), r.status.label("review_status"),
+            f.summary, f.counterparty_name.label("counterparty"), r.status.label("review_status"), r.title.label("review_title"),
             a.review_id.label("review_id"), a.transaction_id.label("transaction_id")).select_from(l).join(a, a.ledger_id == l.id).join(
             f, f.id == a.transaction_id).join(r, r.id == a.review_id)
 
     def page(self, request):
         statement = self.statement.with_only_columns(*[column for column in self.statement.selected_columns
-            if column.key not in ("summary", "counterparty")])
+            if column.key != "counterparty"])
         return page_rows(self.db, statement, amount_grouped_request(request), self.columns,
             default=(("occurred_time", "desc"), ("id", "asc")))
 
     def search(self, request, project):
         return scan_rows(self.db, self.statement, amount_grouped_request(request), self.columns,
             scope="local:ledger-v1:flow", default=(("occurred_time", "desc"), ("id", "asc")), project=project)
+
+    def account_rows(self, ref_ids):
+        # At most the current 100-item page. No history/time aggregation and
+        # no per-Ledger get/detail request; reuse the named ownership query.
+        ids = sorted(set(ref_ids) - {0})
+        if not ids:
+            return {}
+        manager = AccountManagementMapper(self.db)
+        return {row["id"]: dict(row) for row in self.db.execute(
+            manager.public_statement("ref").where(LedgerAccountRef.id.in_(ids))).mappings()}
 
     def get(self, ledger_id):
         row = self.db.execute(self.statement.where(LedgerEntry.id == ledger_id)).mappings().one_or_none()

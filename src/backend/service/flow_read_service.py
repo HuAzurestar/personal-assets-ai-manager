@@ -5,8 +5,7 @@ from backend.error import TargetEconomicError
 from backend.mapper.bounded_query_mapper import query_budget, canonical
 from backend.mapper.flow_read_mapper import FlowReadMapper
 from backend.mapper.trusted_relation_mapper import TrustedRelationMapper
-from backend.schema.flow_read import LedgerEntryListBody, LedgerEntryDetailRead, FlowAccountOwnership
-from backend.schema.review_read import FlowPO
+from backend.schema.flow_read import LedgerEntryListBody, LedgerEntryDetailRead, FlowAccountOwnership, FlowListItem
 from backend.service.account_management_service import AccountManagementService
 from backend.service.review_command_service import flow_po, review_po
 
@@ -39,8 +38,26 @@ class FlowReadService:
         with query_budget(self.mapper.db):
             self._snapshot()
             rows, total = self.mapper.page(request)
-            return limited(LedgerEntryListBody(items=[FlowPO(**flow_po(row)) for row in rows], total=total,
+            return limited(LedgerEntryListBody(items=self._items(rows), total=total,
                 page_index=request.page_index, page_size=request.page_size))
+
+    def _items(self, rows):
+        refs = self.mapper.account_rows([row["account_ref_id"] for row in rows])
+        manager = AccountManagementService(self.mapper.db)
+        accounts = {0: dict(state="UNIDENTIFIED", display_label="来源未识别")}
+        for ref_id, ref in refs.items():
+            accounts[ref_id] = dict(state="ASSIGNED" if ref["account_id"] else "UNASSIGNED",
+                display_label=manager._po("ref", ref)["display_label"])
+        result = []
+        for row in rows:
+            if row["account_ref_id"] not in accounts:
+                raise TargetEconomicError(409, "account ownership chain is broken", code="ACCOUNT_RELATION_BROKEN")
+            result.append(FlowListItem(**flow_po(row), active=row["review_status"] == 0,
+                summary=masked_summary(row["summary"]), transaction_id=row["transaction_id"],
+                review=dict(id=row["review_id"], title=masked_summary(row["review_title"]),
+                    status="CONFIRMED" if row["review_status"] == 0 else "REVOKED"),
+                account=accounts[row["account_ref_id"]]))
+        return result
 
     @staticmethod
     def _search_projection(row):
@@ -50,7 +67,7 @@ class FlowReadService:
         with query_budget(self.mapper.db):
             self._snapshot()
             result = self.mapper.search(request, self._search_projection)
-            result["items"] = [flow_po(row) for row in result["items"]]
+            result["items"] = [item.model_dump() for item in self._items(result["items"])]
             return limited(result)
 
     def _account(self, ref_id):

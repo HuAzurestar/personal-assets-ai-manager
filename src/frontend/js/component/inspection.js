@@ -468,7 +468,7 @@ export async function openInspection(kind, id, bindActions, {readOnly = false, s
         dialog.querySelector("[data-inspect-subtitle]").textContent = view.subtitle;
         dialog.querySelector("[data-inspect-hero]").textContent = view.hero;
         const actions = dialog.querySelector("[data-inspect-actions]");
-        actions.innerHTML = readOnly ? '<span>原事项及关联证据只读；关闭返回草稿，不修改已发布内容。</span>' : view.actions;
+        actions.innerHTML = readOnly ? '<span>原事项及关联证据只读；关闭返回原页面，不修改草稿或已发布内容。</span>' : view.actions;
         if (!readOnly) bindActions(actions);
         body.innerHTML = view.body;
         view.presentation.mount(body);

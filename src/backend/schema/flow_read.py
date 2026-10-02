@@ -101,17 +101,39 @@ class FlowSourceListRequest(ListRequest):
         return self
 
 
-class LedgerEntryListBody(ListBody[FlowPO]):
+class FlowReviewSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: int
+    title: str
+    status: Literal["CONFIRMED", "REVOKED"]
+
+
+class FlowAccountSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    state: Literal["UNIDENTIFIED", "UNASSIGNED", "ASSIGNED"]
+    display_label: str
+
+
+class FlowListItem(FlowPO):
+    """Read-only list context; never changes the immutable base cash PO."""
+    active: bool
+    summary: str
+    transaction_id: int
+    review: FlowReviewSummary
+    account: FlowAccountSummary
+
+
+class LedgerEntryListBody(ListBody[FlowListItem]):
     pass
 
 
-class LedgerEntryListResponse(ListResponse[FlowPO]):
+class LedgerEntryListResponse(ListResponse[FlowListItem]):
     body: LedgerEntryListBody
 
 
 class FlowSearchBatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    items: list[FlowPO]
+    items: list[FlowListItem]
     total: None
     page_size: int
     next_cursor: str | None

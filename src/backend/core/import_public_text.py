@@ -7,7 +7,10 @@ def masked_reference(value):
 
 
 def masked_summary(value):
-    value = re.sub(r"[\w.+-]+@[\w.-]+\.[\w-]+", "[已脱敏]", value)
+    # An email can only start at the beginning of its local-part character
+    # run. Retrying the same greedy run at every character is quadratic for
+    # long non-email source text and cannot be interrupted by SQLite's budget.
+    value = re.sub(r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[\w-]+", "[已脱敏]", value)
     return re.sub(r"[0-9]{7,}", lambda match: masked_reference(match.group()), value)
 
 

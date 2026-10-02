@@ -140,7 +140,8 @@ def test_flow_search_empty_batch_literal_unicode_masking_and_cursor_binding(econ
     first = body(client.get(f"{BASE}/search", params=conditions))
     assert not first["items"] and first["total"] is None and first["has_more"] and first["scanned_count"] == 2
     second = body(client.get(f"{BASE}/search", params=conditions | dict(cursor=first["next_cursor"])))
-    assert [row["id"] for row in second["items"]] == [ids[0]] and set(second["items"][0]) == PO
+    assert [row["id"] for row in second["items"]] == [ids[0]]
+    assert set(second["items"][0]) == PO | {"active", "summary", "transaction_id", "review", "account"}
     last = body(client.get(f"{BASE}/search", params=conditions | dict(cursor=second["next_cursor"])))
     assert not last["has_more"] and last["next_cursor"] is None and last["scanned_count"] == 0
     private = body(client.get(f"{BASE}/search", params=dict(query=json.dumps([dict(key="summary", word="1234567890123456")]))))
@@ -226,8 +227,10 @@ def test_flow_detail_byte_limit_returns_error_not_partial_evidence(economic_api)
         db.commit()
     response = client.get(f"{BASE}/{lid}")
     assert response.status_code == 413 and response.json()["body"]["code"] == "DETAIL_LIMIT"
-    # Cash list never selects or leaks huge source text.
-    assert body(client.get(f"{BASE}/list"))["total"] == 1
+    # R19 now includes a masked source summary, but never returns a truncated
+    # page as complete. The original base Flow PO remains unchanged in detail.
+    response = client.get(f"{BASE}/list")
+    assert response.status_code == 413 and response.json()["body"]["code"] == "DETAIL_LIMIT"
 
 
 def test_flow_detail_owner_move_during_read_stays_one_wal_snapshot(economic_api, monkeypatch):

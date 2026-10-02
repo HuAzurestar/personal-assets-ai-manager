@@ -1673,6 +1673,26 @@
 .detail-data-table .fact-amount.inflow { color:var(--danger); }
 .detail-data-table .fact-amount.outflow { color:var(--accent); }
 .detail-data-table .detail-arrow { width:38px; color:var(--accent); text-align:right; }
+.flow-source-label { display:-webkit-box; max-width:260px; overflow:hidden; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow-wrap:anywhere; }
+.flow-review-link { min-height:44px; max-width:190px; padding:4px 8px; text-align:left; }
+.flow-review-link > span,.flow-review-link > small { display:block; max-width:170px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.flow-review-link > small { margin-top:3px; color:var(--muted); font-size:10px; font-weight:500; }
+[data-flow-status="historical"] { color:var(--muted); text-decoration:underline dotted; }
+@media (max-width:767px) {
+  [data-flow-read] .detail-data-table { min-width:0; table-layout:fixed; }
+  [data-flow-read] .detail-data-table tbody { display:block; }
+  [data-flow-read] .flow-list-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:4px 12px; padding:10px 12px; border-top:1px solid var(--row-line); }
+  [data-flow-read] .flow-list-row td { display:block; min-width:0; height:auto; padding:0; border:0; }
+  [data-flow-read] .flow-list-row td:nth-child(-n+3) { grid-column:1/-1; }
+  [data-flow-read] .flow-list-row td:nth-child(-n+3)::before { display:none; }
+  [data-flow-read] .flow-list-row .detail-primary { min-height:44px; }
+  [data-flow-read] .flow-list-row .detail-primary strong,[data-flow-read] .flow-list-row .detail-primary small { max-width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  [data-flow-read] .flow-source-label { max-width:100%; }
+  [data-flow-read] .flow-review-link { display:flex; gap:10px; align-items:center; max-width:100%; width:100%; }
+  [data-flow-read] .flow-review-link > small { flex:1; min-width:0; max-width:none; margin:0; }
+  [data-flow-read] .flow-list-row .fact-amount { width:auto; text-align:left; }
+  [data-flow-read] .flow-list-row .detail-arrow { display:none; }
+}
 .ledger-row-open { min-width:30px; min-height:30px; padding:0; border:0; color:var(--accent); background:transparent; }
 .ledger-row-open:hover { background:var(--soft); }
 

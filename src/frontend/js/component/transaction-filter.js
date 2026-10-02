@@ -2,6 +2,7 @@ import { request } from '../api/client.js';
 import { esc, resourceId } from '../util/core.js';
 import { dateTimeRangeControl } from './date-time-range.js';
 import { namedChoice, bindNamedChoice, setNamedChoice, metadataLabel } from './workbench.js';
+import { flowVisibility } from '../util/flow-visibility.js';
 
 const scopes = [
   {name: 'party_id', label: '个人', url: '/paam/ledger/v1/account-party'},
@@ -22,7 +23,7 @@ export function transactionScopeFilters(params, flow = false) {
     .map(scope => ({key: scope.name, op: '=', val: resourceId(params.get(scope.name), {allowZero: !!scope.zero})}));
 }
 
-export function transactionFilter({params, flow = false, currency, sort, advanced = ''}) {
+export function transactionFilter({params, flow = false, currency, sort, advanced = '', secondary = ''}) {
   const word = params.get('word')?.trim() || '';
   const direction = ({'1': 'IN', '2': 'OUT'})[params.get('cash_direction')] || params.get('cash_direction') || '';
   const searchField = params.get('search_field') || 'summary';
@@ -39,7 +40,7 @@ export function transactionFilter({params, flow = false, currency, sort, advance
       <label>收支方向<select name="cash_direction"><option value="">全部方向</option>${[['IN','收入 / 流入'],['OUT','支出 / 流出']].map(([code, text]) => `<option value="${code}" ${direction === code ? 'selected' : ''}>${text}</option>`).join('')}</select></label>
       <div class="transaction-filter-actions"><button type="submit">查找</button><button type="button" class="quiet" data-action="detail-clear" data-page-id="${flow ? 'economy' : 'ledger'}">清空</button></div>
     </div>
-    <div class="transaction-filter-secondary"><label>币种${currency}</label><label>排序${sort}</label><button type="button" data-filter-more-toggle aria-expanded="false" aria-controls="transaction-filter-more">高级条件</button></div>
+    <div class="transaction-filter-secondary"><label>币种${currency}</label><label>排序${sort}</label>${secondary}<button type="button" data-filter-more-toggle aria-expanded="false" aria-controls="transaction-filter-more">高级条件</button></div>
     <details id="transaction-filter-more" data-filter-more><summary>账户、标签及其他条件</summary><div class="transaction-filter-advanced">${advanced}
       ${choices.map(scope => {
         const value = identifiers.find(item => item.key === scope.name)?.val ?? '';
@@ -58,7 +59,8 @@ export function transactionFilterDirty(form, params) {
   const data = new FormData(form);
   return [...data].some(([name, value]) => {
     const expected = name === 'sort' ? `${params.get('sort_field') || 'occurred_time'}.${params.get('sort_order') || 'desc'}`
-      : name === 'search_field' ? params.get(name) || 'summary' : params.get(name) || '';
+      : name === 'search_field' ? params.get(name) || 'summary'
+      : name === 'active' ? flowVisibility(params) : params.get(name) || '';
     const normalize = item => name === 'word' ? String(item).trim()
       : name.endsWith('currency_code') ? String(item).trim().toUpperCase()
       : name === 'cash_direction' ? ({'1': 'IN', '2': 'OUT'})[item] || item
@@ -96,7 +98,9 @@ export function bindTransactionFilter(root) {
     if (value('date_from') || value('date_to')) chips.push({name: 'date_range', text: `时间：${value('date_from') || '不限'} → ${value('date_to') || '不限'}`});
     if (value('sort') !== 'occurred_time.desc') add('sort', '排序', selectedText('sort'));
     add('economic_type', '账本类型', selectedText('economic_type'));
-    add('active', '有效状态', selectedText('active'));
+    // Current is the visible default, not a removable additional condition.
+    // Removing a history chip returns to current rather than broadening to all.
+    if (value('active') && value('active') !== 'true') add('active', '有效状态', selectedText('active'));
     for (const scope of scopes) {
       const label = form.querySelector(`[data-named-choice="${scope.name}"] [data-choice-label]`);
       if (label) add(scope.name, scope.label, label.textContent);
@@ -111,7 +115,7 @@ export function bindTransactionFilter(root) {
         form.elements.namedItem('date_to').value = '';
       } else if (form.querySelector(`[data-named-choice="${name}"]`)) {
         setNamedChoice(form, name, '', '不限', false);
-      } else form.elements.namedItem(name).value = name === 'sort' ? 'occurred_time.desc' : '';
+      } else form.elements.namedItem(name).value = name === 'sort' ? 'occurred_time.desc' : name === 'active' ? 'true' : '';
       form.requestSubmit();
     });
   }

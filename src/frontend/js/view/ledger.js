@@ -6,6 +6,7 @@ import { mountImportBatch, stopImportRead } from "./import-batch.js";
 import { readFlowSearch, bindFlowSearch, stopFlowRead, flowReadBusy, resetFlowSearch } from "./flow-search.js";
 import { candidateScan, scanControls } from "../util/candidate-scan.js";
 import { loadUnitDictionary, unitChoices, unitLabel } from "../util/unit-dictionary.js";
+import { flowVisibility } from '../util/flow-visibility.js';
 import { transactionFilter, bindTransactionFilter, stopTransactionFilterRead,
   transactionScopeFilters, transactionFilterDirty, transactionFilterReadBusy } from '../component/transaction-filter.js';
 import { preserveView } from "../util/view_state.js?v=20260928.6";
@@ -456,7 +457,7 @@ async function showFactDetail(id) {
 
 async function economicPage() {
   const selectedType = state.params.get("economic_type") || "";
-  const active = state.params.get("active") || "";
+  const active = flowVisibility(state.params);
   const currency = (state.params.get("cash_currency_code") || "").trim().toUpperCase();
   const direction = ({'1': 'IN', '2': 'OUT'})[state.params.get("cash_direction")] || state.params.get("cash_direction") || "";
   const word = state.params.get("word")?.trim() || "";
@@ -484,17 +485,23 @@ async function economicPage() {
   const result = word ? await readFlowSearch(query, location.hash) : await request(`/paam/ledger/v1/flow/list?${query}`);
   const sortOptions = [["occurred_time.desc", "时间：最新优先"], ["occurred_time.asc", "时间：最早优先"],
     ["cash_amount.desc", "绝对金额：从高到低"], ["cash_amount.asc", "绝对金额：从低到高"],
-    ["signed_cash_amount.desc", "带方向金额：从高到低"], ["signed_cash_amount.asc", "带方向金额：从低到高"]];
+    ["signed_cash_amount.desc", "带方向金额：从高到低"], ["signed_cash_amount.asc", "带方向金额：从低到高"],
+    ["id.desc", "编号：从新到旧"], ["id.asc", "编号：从旧到新"]];
   const toolbar = transactionFilter({params: state.params, flow: true,
     currency: currencySelect(currency).replace('name="currency_code"', 'name="cash_currency_code"'),
     sort: `<select name="sort">${sortOptions.map(([value, label]) => `<option value="${value}" ${value === `${sortField}.${sortOrder}` ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select>`,
-    advanced: `<label>账本类型<select name="economic_type"><option value="">全部类型</option>${Object.keys(entryTypeValues).map(value => `<option value="${value}" ${selectedType === value ? 'selected' : ''}>${esc(typeNames[value] || value)}</option>`).join('')}</select></label><label>有效状态<select name="active"><option value="">全部状态</option><option value="true" ${active === 'true' ? 'selected' : ''}>有效</option><option value="false" ${active === 'false' ? 'selected' : ''}>已停用</option></select></label>`})
-    + `<p>金额按币种分组、不换汇。账户只筛选；完整来源、标签与数量证据可打开详情核对。</p>`;
-  return `<div data-flow-read>${detailListView({ toolbar, headers: ["原始现金结果", "本方来源", "金额", "发生时间", ""], rows: flowRows(result.items, !!word), footer: word ? flowScanFooter(result) : detailPager(result, "economy") })}</div>`;
+    secondary: `<label>查看范围<select name="active"><option value="true" ${active === 'true' ? 'selected' : ''}>当前有效</option><option value="all" ${active === 'all' ? 'selected' : ''}>包含已停用历史</option><option value="false" ${active === 'false' ? 'selected' : ''}>仅已停用历史</option></select></label>`,
+    advanced: `<label>账本类型<select name="economic_type"><option value="">全部类型</option>${Object.keys(entryTypeValues).map(value => `<option value="${value}" ${selectedType === value ? 'selected' : ''}>${esc(typeNames[value] || value)}</option>`).join('')}</select></label>`})
+    + `<p>金额按币种分组、不换汇；历史只作证据，不计当前汇总。事项入口查看这笔流水所属原解释。</p>`;
+  return `<div data-flow-read>${detailListView({ toolbar, headers: ["摘要 / 状态", "本方来源", "所属事项", "金额", "发生时间", ""], rows: flowRows(result.items, !!word), footer: word ? flowScanFooter(result) : detailPager(result, "economy") })}</div>`;
 }
 
 function flowRows(items, scanning = false) {
-  return items.map(item => `<tr class="detail-click-row" tabindex="0" data-economic-row="${item.id}"><td data-label="原始现金结果"><button type="button" class="detail-primary" data-action="economic-detail" data-id="${item.id}" data-inspect-title="Ledger #${item.id}" data-inspect-amount="${esc(compactAmount(item, item.cash_direction))}"><strong>${esc(typeNames[item.economic_type] || item.economic_type)}</strong><small>Ledger #${item.id}${item.economic_type === "DUPLICATE" ? " · 仅证据，不计财务汇总" : ""}</small></button></td><td data-label="本方来源">${item.account_ref_id ? `来源卡 #${item.account_ref_id}（归属见详情）` : "来源未识别"}</td><td data-label="金额" class="fact-amount ${item.cash_direction === "IN" ? "inflow" : "outflow"}">${esc(compactAmount(item, item.cash_direction))}</td><td data-label="发生时间">${date(item.occurred_time)}</td><td class="detail-arrow">→</td></tr>`).join("") || (scanning ? '<tr><td colspan="5">尚未找到命中；扫描未结束时可继续推进。</td></tr>' : "");
+  return items.map(item => `<tr class="detail-click-row flow-list-row" tabindex="0" data-economic-row="${item.id}">
+    <td data-label="摘要 / 状态"><button type="button" class="detail-primary" data-action="economic-detail" data-id="${item.id}" data-inspect-title="${esc(item.summary || `Ledger #${item.id}`)}" data-inspect-amount="${esc(compactAmount(item, item.cash_direction))}" title="${esc(item.summary || '未填写摘要')}"><strong>${esc(item.summary || '未填写摘要')}</strong><small><span data-flow-status="${item.active ? 'current' : 'historical'}">${item.active ? '当前有效' : '已停用历史'}</span> · ${esc(typeNames[item.economic_type] || item.economic_type)} · Ledger #${item.id}${item.economic_type === 'DUPLICATE' ? ' · 仅证据，不计财务汇总' : ''}</small></button></td>
+    <td data-label="本方来源"><span class="flow-source-label" title="${esc(item.account.display_label)}">${esc(item.account.display_label)}</span></td>
+    <td data-label="所属事项"><button type="button" class="flow-review-link quiet" data-action="flow-review-inspect" data-id="${item.review.id}" title="${esc(item.review.title || `Review #${item.review.id}`)}"><span>${item.active ? '当前事项' : '原事项'} #${item.review.id}</span><small>${esc(item.review.title || '未填写标题')}</small></button></td>
+    <td data-label="金额" class="fact-amount ${item.cash_direction === 'IN' ? 'inflow' : 'outflow'}">${esc(compactAmount(item, item.cash_direction))}</td><td data-label="发生时间">${date(item.occurred_time)}</td><td class="detail-arrow">→</td></tr>`).join('') || (scanning ? '<tr><td colspan="6">尚未找到命中；扫描未结束时可继续推进。</td></tr>' : '');
 }
 
 function flowScanFooter(result) {
@@ -1085,6 +1092,8 @@ function bindPage(root) {
   $$('[data-action="fact-detail"]', root).forEach((button) => button.onclick = () => showFactDetail(button.dataset.id).catch((error) => toast(error.message, true)));
   $$('[data-action="import-file-detail"]', root).forEach((button) => button.onclick = () => showImportFileDetail(button.dataset.id).catch((error) => toast(error.message, true)));
   $$('[data-action="economic-detail"]', root).forEach((button) => button.onclick = () => showEconomicDetail(button.dataset.id).catch((error) => toast(error.message, true)));
+  $$('[data-action="flow-review-inspect"]', root).forEach((button) => button.onclick = () =>
+    openInspection('review', button.dataset.id, bindPage, {readOnly: true}).catch(error => toast(error.message, true)));
   $$('[data-action="economic-review-detail"]', root).forEach((button) => button.onclick = () => showEconomicReview(button.dataset.id).catch((error) => toast(error.message, true)));
   $$('[data-action="economic-review-transition"]', root).forEach((button) => button.onclick = () => transitionEconomicReview(button).catch((error) => toast(error.message, true)));
   $$('[data-summary-row],[data-fact-row],[data-economic-row],[data-review-row],[data-import-row],[data-import-file-row]', root).forEach((row) => {
@@ -1097,6 +1106,7 @@ function bindPage(root) {
       if (row.dataset.importFileRow) showImportFileDetail(row.dataset.importFileRow).catch((error) => toast(error.message, true));
     });
     row.addEventListener("keydown", (event) => {
+      if (event.target !== row) return;
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
       row.click();
