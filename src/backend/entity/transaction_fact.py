@@ -9,6 +9,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    desc,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -27,6 +28,11 @@ class TransactionFact(TargetTable, TargetBase):
         Index(
             "ix_transaction_fact_occurred_time_id",
             "occurred_time",
+            "id",
+        ),
+        Index(
+            "ix_transaction_fact_time_desc_id_asc",
+            desc("occurred_time"),
             "id",
         ),
     )
