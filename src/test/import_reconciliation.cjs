@@ -7,6 +7,7 @@ const {pathToFileURL}=require('node:url');
 (async()=>{
   const module=await import(pathToFileURL(path.join(__dirname,'../frontend/js/component/import-reconciliation.js')).href);
   const {readImportBinding}=await import(pathToFileURL(path.join(__dirname,'../frontend/js/component/import-binding.js')).href);
+  const {resourceId}=await import(pathToFileURL(path.join(__dirname,'../frontend/js/util/core.js')).href);
   const time='2026-10-03T01:02:03.123456Z';
   const row={file_id:1,source_row_number:2};
   const intent={...row,resolution:'DUPLICATE',decision:'ACCEPT',target:{kind:'FACT',transaction_id:11}};
@@ -53,7 +54,7 @@ const {pathToFileURL}=require('node:url');
   // failed recheck and explicit human acknowledgement; never replay confirm.
   const source=fs.readFileSync(path.join(__dirname,'../frontend/js/view/import-batch.js'),'utf8')
     .replace(/^import .*;\r?\n/gm,'').replace(/^export /gm,'');
-  for (const mode of ['CONFIRMING_BEFORE','CONFIRMING_AFTER','EXPIRED','UNRESOLVED','COMPLETE']) {
+  for (const mode of ['CONFIRMING_BEFORE','CONFIRMING_AFTER','EXPIRED','UNRESOLVED','COMPLETE','SERIAL_RELOAD']) {
     const nodes=new Map();
     const element=()=>({disabled:false,value:'',textContent:'',innerHTML:'',isConnected:true});
     const panel=element();panel.querySelector=selector=>{if(!nodes.has(selector))nodes.set(selector,element());return nodes.get(selector);};
@@ -66,11 +67,16 @@ const {pathToFileURL}=require('node:url');
     },querySelectorAll(selector){return selector === 'button,input,select' ? [...nodes.values()] : [];}};
     const readonlyPager=element();readonlyPager.closest=selector=>selector==='[data-batch-verification]'?panel:null;
     nodes.set('[data-reconcile-pager]',readonlyPager);
-    let stored=JSON.stringify(retained),leases=0,reads=0,writes=0,fail=false;
-    const plan={token:'mock-token',status:'PENDING',files:[],counts:{new:0,existing:0,processed:0},preview_digest:'a'.repeat(64)};
-    const sandbox=vm.createContext({AbortController,URLSearchParams,...module,readImportBinding,
+    const serial=mode==='SERIAL_RELOAD',remain={file_id:1,source_row_number:3,decision:'ACCEPT',resolution:'NEW',acknowledge_new_risk:true};
+    let stored=JSON.stringify({...retained,...(serial ? {serial:true} : {})}),remaining=serial ? JSON.stringify({token:retained.token,files:retained.files,choices:[intent,remain]}) : null;
+    let leases=0,reads=0,writes=0,fail=false;
+    const plan={token:serial ? 'new-token' : 'mock-token',status:'PENDING',files:serial ? [{...retained.files[0],filename:'Mock.csv',parse_status:'READY',parsed_row_count:2,
+      activity_range:{start:null,end:null},accepted:1,skipped:0,invalid:0,remaining:1}] : [],counts:{new:0,existing:0,processed:0},preview_digest:'a'.repeat(64)};
+    const sandbox=vm.createContext({AbortController,URLSearchParams,TextEncoder,resourceId,...module,readImportBinding,
       mountImportDraftRows:(node,rows)=>node.textContent=String(rows.length),esc:String,
-      localStorage:{getItem:()=>stored,removeItem:()=>{stored=null;}},
+      localStorage:{getItem:key=>key==='paam.import.remaining.v1' ? remaining : stored,
+        setItem:(key,value)=>{if(key==='paam.import.remaining.v1')remaining=value;else stored=value;},
+        removeItem:key=>{if(key==='paam.import.remaining.v1')remaining=null;else stored=null;}},
       jsonRequest:async()=>{writes++;throw Error('unexpected financial replay');},
       request:async(url,options={})=>{
         if(fail)throw Error('Mock read failed');
@@ -95,6 +101,12 @@ const {pathToFileURL}=require('node:url');
     fail=false;await host.querySelector('[data-batch-verify]').onclick();
     button=host.querySelector('[data-batch-observed]');assert.equal(button.disabled,false);
     await button.onclick();assert.equal(stored,null);assert.equal(writes,0);
+    if(serial){
+      assert.equal(JSON.parse(remaining).choices.length,1);assert.deepEqual(JSON.parse(remaining).choices[0],remain);
+      const actual=sandbox.testContexts.get(plan.token);
+      assert.equal(actual.selected.size,1);assert.equal(actual.dirty,true);assert.equal(actual.restoreRequired,true);
+      assert.equal(host.querySelector('[data-batch-execute]').disabled,true);
+    }
   }
   console.log('PASS exact complete target-aware current observation, no guessed targets, two CONFIRMING checks, failed reverify revokes, no replay, human acknowledgement only');
 })().catch(error=>{console.error(error);process.exitCode=1;});

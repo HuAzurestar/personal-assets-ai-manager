@@ -17,6 +17,7 @@ import pytest
     "import_binding.cjs",
     "import_pairing.cjs",
     "import_reconciliation.cjs",
+    "import_execution.cjs",
     "write_failure.cjs",
     "tag_impact.cjs",
     "resource_id.cjs",

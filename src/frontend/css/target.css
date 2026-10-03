@@ -1490,6 +1490,8 @@
 .import-batch-toolbar p { margin:0 0 4px; font-size:12px; overflow-wrap:anywhere; }
 .import-batch-toolbar small { display:block; margin-bottom:6px; font-size:11px; overflow-wrap:anywhere; }
 .import-batch-toolbar .actions { gap:6px; }
+.import-batch-toolbar .import-operation-consent { display:flex; align-items:flex-start; gap:8px; width:auto; margin:6px 0; font-size:12px; line-height:1.5; }
+.import-batch-toolbar .import-operation-consent input { width:auto; min-width:16px; margin:2px 0 0; }
 .import-batch-toolbar button { min-height:34px; padding:5px 8px; font-size:12px; }
 .import-batch-filter { margin-block:12px; }
 .import-batch-filter label { min-width:0; }
