@@ -19,6 +19,7 @@ import pytest
     "verify_pirc35_account_scope.py",
     "verify_pirc35_position.py",
     "verify_pirc35_import.py",
+    "verify_pirc35_import_plan.py",
     "verify_pirc35_flow.py",
     "verify_pirc35_review.py",
     "verify_pirc35_draft.py",

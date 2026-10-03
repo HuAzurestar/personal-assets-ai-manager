@@ -1,6 +1,8 @@
 import { request, jsonRequest, isUnknownWrite } from "../api/client.js";
 import { esc, money, date, resourceId } from "../util/core.js";
 import { mountPicker, workbenchDialog, metadataLabel } from "../component/workbench.js";
+import { mountImportPlan, validateImportPlan } from '../component/import-plan.js';
+import { completeImportScope } from '../util/import-scope.js';
 
 const pendingKey = "paam.import.pending.v1";
 const contexts = new Map();
@@ -32,6 +34,16 @@ export async function mountImportBatch(host, initial, changed) {
   const find = selector => host.querySelector(selector);
   const status = message => { if (host.isConnected) find("[data-batch-status]").textContent = message; };
   const live = () => host.isConnected && !signal.aborted;
+  // Full operation planning is read-only. Until informed serial execution is
+  // connected, the old financial action stays explicitly single-batch <=1000.
+  const actions = find('[data-batch-save]').parentElement;
+  actions?.insertAdjacentHTML('afterbegin', '<button type="button" data-batch-select-scope>选择当前筛选全部未接受行</button><button type="button" data-batch-plan>查看完整处理计划（不写入）</button>');
+  find('[data-batch-verification]').insertAdjacentHTML?.('beforebegin', '<div data-batch-operation></div>');
+  const invalidatePlan = () => {
+    context.disclosure = null;
+    const panel = find('[data-batch-operation]');
+    if (panel) panel.textContent = '';
+  };
   const update = () => {
     if (!live()) return;
     const plan = context.plan;
@@ -42,12 +54,16 @@ export async function mountImportBatch(host, initial, changed) {
       <p>已接受 ${file.accepted} · 跳过 ${file.skipped} · 无效记录 ${file.invalid} · 剩余 ${file.remaining}</p><small>活动范围 ${esc(file.activity_range.start || "未知")} 至 ${esc(file.activity_range.end || "未知")}（不是完整期间覆盖）</small></article>`).join("")
       + ((plan.issues || []).some(issue => issue.source_row_number > 0) ? `<details data-batch-issues><summary>查看本次行问题提示</summary>${plan.issues.filter(issue => issue.source_row_number > 0).map(issue => `<p>文件 #${issue.file_id} · 第 ${issue.source_row_number} 行：${esc(issue.code)}</p>`).join("")}${plan.has_more_issues ? "<p>此处仅为有界提示；其余问题请按文件及分类分页核对，不能把本提示当作完整行列表。</p>" : ""}</details>` : "");
     find("[data-batch-summary]").textContent = `新事实 ${plan.counts.new} · 仅补证据 ${plan.counts.existing} · 已接受 ${plan.counts.processed} · 文件解析失败 ${failedFiles} · 行问题 ${Math.max(0, plan.issue_count - failedFiles)} · 总问题 ${plan.issue_count}${plan.has_more_issues ? "（行问题请按分类分页核对；文件失败已全部显示）" : ""}${plan.timed_out ? "；预览超时提示，确认仍会重新核验" : ""}`;
-    find("[data-batch-selection]").textContent = `本批明确选择 ${context.selected.size} 行${context.dirty ? "；选择已修改，须先保存核验" : "；使用服务器最新摘要"}`;
-    host.querySelectorAll("button,input,select").forEach(node => { node.disabled = context.busy || context.unknown; });
+    find("[data-batch-selection]").textContent = `本次明确选择 ${context.selected.size} 行${context.dirty ? "；选择已修改，须先保存核验" : "；使用服务器最新摘要"}${context.selected.size > 1000 ? '；请查看完整拆批计划。串行执行尚未接通，不会把这些行塞入一个事务。' : ''}`;
+    host.querySelectorAll("button,input,select").forEach(node => {
+      if (!node.closest?.('[data-batch-operation]')) node.disabled = context.busy || context.unknown;
+    });
+    if (find('[data-batch-operation]')) find('[data-batch-operation]').inert = context.busy || context.unknown;
     find("[data-batch-verify]").disabled = context.busy;
     find("[data-batch-refresh]").disabled = context.busy;
     if (find("[data-batch-observed]")) find("[data-batch-observed]").disabled = context.busy || !context.verificationReady || plan.status === "CONFIRMING";
-    find("[data-batch-confirm]").disabled = context.busy || context.unknown || context.dirty || !context.selected.size || plan.status === "CONFIRMING";
+    find("[data-batch-confirm]").disabled = context.busy || context.unknown || context.dirty || !context.selected.size || context.selected.size > 1000 || plan.status === "CONFIRMING" || (context.disclosure && !context.disclosure.can_confirm);
+    if (find('[data-batch-plan]')) find('[data-batch-plan]').disabled = context.busy || context.unknown || context.dirty || !context.selected.size || plan.status === 'CONFIRMING';
     find("[data-batch-prev]").disabled ||= context.page <= 1;
     find("[data-batch-next]").disabled ||= !page || context.page * page.page_size >= page.total;
     host.querySelectorAll("[data-batch-processed]").forEach(node => { node.disabled = true; });
@@ -88,12 +104,16 @@ export async function mountImportBatch(host, initial, changed) {
         const save = () => {
           const previous = context.selected.get(identity(row));
           if (node.querySelector("[data-row-select]").checked) {
-            if (!previous && context.selected.size >= 1000) { node.querySelector("[data-row-select]").checked = false; status("一批最多1000行；请先完成当前批。"); return; }
-            context.selected.set(identity(row), { row, refLabel: previous?.refLabel, choice: { file_id: row.file_id, source_row_number: row.source_row_number,
+            if (!previous && context.selected.size >= 20000) { node.querySelector("[data-row-select]").checked = false; status("一次选择最多20000行；请缩小范围。"); return; }
+            const prior = previous?.choice || row.choice || {};
+            const decision = node.querySelector('[data-row-decision]').value;
+            const intent = decision === 'SKIP' ? {resolution:'AUTO', target:null, acknowledge_new_risk:false} : {};
+            context.selected.set(identity(row), { row, refLabel: previous?.refLabel, choice: { ...prior, ...intent, file_id: row.file_id, source_row_number: row.source_row_number,
               decision: node.querySelector("[data-row-decision]").value, recheck: !!node.querySelector("[data-row-recheck]")?.checked,
               account_ref_id: previous?.choice.account_ref_id ?? row.choice?.account_ref_id ?? null } });
           } else context.selected.delete(identity(row));
           context.dirty = true;
+          invalidatePlan();
           update();
         };
         node.querySelectorAll("input,select").forEach(input => { input.onchange = save; });
@@ -109,6 +129,7 @@ export async function mountImportBatch(host, initial, changed) {
             node.querySelector("[data-row-ref]").textContent = id == null ? "来源卡：自动" : ref ? `来源卡：${metadataLabel(ref)}` : "来源卡：明确待绑定";
             context.selected.get(identity(row)).refLabel = ref ? metadataLabel(ref) : null;
             context.dirty = true;
+            invalidatePlan();
             dialog.close();
             update();
           };
@@ -125,7 +146,7 @@ export async function mountImportBatch(host, initial, changed) {
     try {
       const plan = await request(`/paam/import/v1/preview/${context.plan.token}`, { signal });
       if (!live()) return;
-      if (plan.preview_digest !== context.plan.preview_digest) context.dirty = !!context.selected.size;
+      if (plan.preview_digest !== context.plan.preview_digest) { context.dirty = !!context.selected.size; invalidatePlan(); }
       context.plan = plan;
       changed(plan);
       await readPage(1);
@@ -194,23 +215,74 @@ export async function mountImportBatch(host, initial, changed) {
     } catch (error) { status(`无法核实：${error.message}。保持结果未知，不自动重发。`); }
     finally { context.busy = false; update(); }
   };
+  const scopeButton = find('[data-batch-select-scope]');
+  if (scopeButton) scopeButton.onclick = async () => {
+    if (context.busy || context.unknown || context.plan.status === 'CONFIRMING') return;
+    const digest = context.plan.preview_digest, issued = ++context.generation;
+    const params = new URLSearchParams({preview_digest:digest});
+    const filters = [];
+    if (find('[data-batch-file]').value) filters.push({key:'file_id',op:'=',val:resourceId(find('[data-batch-file]').value)});
+    if (find('[data-batch-classification]').value) filters.push({key:'classification',op:'=',val:find('[data-batch-classification]').value});
+    if (filters.length) params.set('filter',JSON.stringify(filters.length === 1 ? filters[0] : {op:'AND',expression:filters}));
+    context.busy = true; update();
+    try {
+      const rows = await completeImportScope(query => request(`/paam/import/v1/preview/${context.plan.token}/row/list?${query}`, {signal}), params,
+        {signal, valid:() => live() && issued === context.generation && context.plan.preview_digest === digest});
+      const selected = new Map(context.selected);
+      for (const row of rows) {
+        if (row.classification !== 'PROCESSED' && !selected.has(identity(row))) selected.set(identity(row),
+          {row, choice:{...(row.choice || {decision:'ACCEPT',recheck:false,account_ref_id:null}),file_id:row.file_id,source_row_number:row.source_row_number}});
+      }
+      if (selected.size > 20000) throw new Error('合并选择超过20000行；未部分加入，请缩小范围。');
+      if (!live() || issued !== context.generation || context.plan.preview_digest !== digest) return;
+      context.selected = selected; context.dirty = !!selected.size; invalidatePlan();
+      status(`当前筛选完整读取 ${rows.length} 行；已接受行不加入，新选择总计 ${selected.size} 行。未自动确认风险或写入账务。`);
+    } catch (error) { if (live() && error.name !== 'AbortError') status(`${error.code || '完整范围读取失败'}：${error.message}；原选择保留。`); }
+    finally { context.busy = false; update(); }
+    if (live()) await readPage(context.page);
+  };
+  const planButton = find('[data-batch-plan]');
+  if (planButton) planButton.onclick = async () => {
+    if (context.busy || context.unknown || context.dirty || !context.selected.size || context.plan.status === 'CONFIRMING') return;
+    const frozen = {token:context.plan.token,time:context.plan.updated_time,digest:context.plan.preview_digest};
+    const selected = [...context.selected.values()].map(item => ({file_id:item.row.file_id,source_row_number:item.row.source_row_number}));
+    context.busy = true; invalidatePlan(); update();
+    try {
+      const result = await request(`/paam/import/v1/preview/${frozen.token}/operation-preview`, {method:'POST', signal,
+        headers:{'Content-Type':'application/json'}, body:JSON.stringify({expected_updated_time:frozen.time,preview_digest:frozen.digest,selected_rows:selected})});
+      if (!live() || context.plan.updated_time !== frozen.time || context.plan.preview_digest !== frozen.digest) return;
+      if (result.source_preview_digest !== frozen.digest) throw new Error('处理计划来源摘要不一致；请重新核对。');
+      context.disclosure = validateImportPlan(result,selected);
+      mountImportPlan(find('[data-batch-operation]'),context.disclosure,{signal});
+      status(result.can_confirm ? '完整只读计划已展示；未发送金融确认。' : '完整计划有阻断或待核对事项，未提交且没有自动跳过。');
+    } catch (error) { if (live() && error.name !== 'AbortError') status(`${error.code || '处理计划读取失败'}：${error.message}；本次没有发送金融确认。`); }
+    finally { context.busy = false; update(); }
+  };
   find("[data-batch-save]").onclick = async () => {
     if (context.busy || context.unknown || !context.selected.size) return;
     context.busy = true;
     update();
     try {
-      const plan = await jsonRequest(`/paam/import/v1/preview/${context.plan.token}`, "PUT", {
-        expected_updated_time: context.plan.updated_time, choices: [...context.selected.values()].map(item => item.choice) });
-      if (!live()) return;
-      context.plan = plan;
+      invalidatePlan();
+      const choices = [...context.selected.values()].map(item => item.choice);
+      // PUT stores choices only, not accounting effects. Keep each request
+      // <=1000 and carry the exact returned time; a failure retains all choices
+      // as dirty and never automatically retries an already-sent request.
+      for (let offset = 0; offset < choices.length; offset += 1000) {
+        if (!live()) return;
+        const plan = await jsonRequest(`/paam/import/v1/preview/${context.plan.token}`, "PUT", {
+          expected_updated_time: context.plan.updated_time, choices: choices.slice(offset, offset + 1000) });
+        if (!live()) return;
+        context.plan = plan;
+        changed(plan);
+      }
       context.dirty = false;
-      changed(plan);
-      status("本批选择已保存并核验。确认仅处理这些行。");
+      status('本次完整选择已保存并核验；可查看完整处理计划。保存选择不写入账务。');
     } catch (error) { context.dirty = true; status(`${error.code || "保存失败"}：${error.message}。读取最新预览后重新选择。`); }
     finally { context.busy = false; update(); }
   };
   find("[data-batch-confirm]").onclick = async () => {
-    if (context.busy || context.unknown || context.dirty || !context.selected.size) return;
+    if (context.busy || context.unknown || context.dirty || !context.selected.size || context.selected.size > 1000 || (context.disclosure && !context.disclosure.can_confirm)) return;
     context.verificationReady = false;
     const selected = [...context.selected.values()].map(item => ({ file_id: item.row.file_id, source_row_number: item.row.source_row_number }));
     context.busy = true;
@@ -242,7 +314,7 @@ export async function mountImportBatch(host, initial, changed) {
         : `${error.code || "提交失败"}：${error.message}；读取最新预览后重新选择。`);
     } finally { context.busy = false; update(); }
   };
-  find("[data-batch-clear]").onclick = () => { context.selected.clear(); context.dirty = false; readPage(context.page); };
+  find("[data-batch-clear]").onclick = () => { context.selected.clear(); context.dirty = false; invalidatePlan(); readPage(context.page); };
   find("[data-batch-select-page]").onclick = () => { host.querySelectorAll("[data-row-select]:not([data-batch-processed])").forEach(input => { if (!input.checked) { input.checked = true; input.dispatchEvent(new Event("change")); } }); };
   find("[data-batch-cancel]").onclick = async () => {
     if (context.busy || context.unknown) return;

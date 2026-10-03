@@ -16,7 +16,7 @@ node src/test/tag_assignment_ui.cjs
 不要继承真实服务的数据库、凭据或调度配置。Docker 测试进程应指定独立
 `PAAM_DATA_DIR`、`PAAM_SQL_WEB_ENABLED=0`、`PAAM_AUTOTAG_REAL_ANALYSIS=1`，
 使用 `--network none`；测试通过夹具模拟模型。这些参数仅用于测试容器，
-不能用来覆盖正在运行的应用。默认 pytest 跳过九组 browser 用例。
+不能用来覆盖正在运行的应用。默认 pytest 跳过 `test_browser.py` 注册的 browser 用例，当前为十八组。
 
 ## CI 浏览器回归
 
@@ -31,15 +31,23 @@ Windows 场景使用本机 Edge。`test_browser.py` 按场景启动独立 Python
 不继承 `PAAM_*` 部署配置，每组使用临时 SQLite、虚构密钥及数据。默认禁止
 真实模型调用。失败通过 pytest 报告；浏览器 JUnit 由 CI 保存。
 
-九个场景保留独立入口：`verify_pr9_fix.py`、`verify_automation_repair.py`、
+十八个场景保留独立入口：`verify_pr9_fix.py`、`verify_automation_repair.py`、
 `verify_refresh_ui.py`、`verify_automation_presentation.py`、`verify_m2_ui.py`、
-`verify_pirc35_account.py`、`verify_pirc35_position.py`、`verify_pirc35_import.py`、
-`verify_pirc35_flow.py`（还覆盖Review/Fact/摘要回钻）。保留子进程是为了
+`verify_pirc35_account.py`、`verify_pirc35_account_scope.py`、`verify_pirc35_position.py`、
+`verify_pirc35_import.py`、`verify_pirc35_import_plan.py`、`verify_pirc35_flow.py`、
+`verify_pirc35_review.py`、`verify_pirc35_draft.py`、`verify_pirc35_unit.py`、
+`verify_pirc35_filter.py`、`verify_pirc35_scene.py`、`verify_pirc35_member.py`、
+`verify_pirc35_flow_state.py`。保留子进程是为了
 隔离模块加载时的全局数据库/调度状态，不把浏览器行为误称为纯单元测试。
 
 ## 扩展及人工验收
 
-以下是扩展/历史入口，不属于九组固定浏览器回归：
+`verify_pirc35_import_plan.py` 使用独立虚构库验证2500来源行完整选择、三次只保存意图的PUT、
+1000/1000/500完整只读计划、全部本地明细分页及未解决风险阻止旧单批确认；
+它不证明一次确认的串行金融执行已经完成。前端 `import_plan.cjs` 也由默认pytest执行，
+验证完整读取失败不部分加入、取消/迟到/总数变化拒绝、范围完整性及本地分页。
+
+以下是扩展/历史入口，不属于上述固定浏览器回归：
 
 - `verify_target_ui.py`：旧工作台流程，字段未按PIRC-35适配，不作为本期验收证据。
 - `verify_inspection_ui.py --matrix`：旧详情矩阵，字段未按PIRC-35适配；可显式指定

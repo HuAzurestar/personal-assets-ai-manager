@@ -1,19 +1,20 @@
 """Informed whole-operation previews against isolated fictional SQLite only."""
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 import pytest
 from pydantic import ValidationError
-from sqlalchemy import event
+from sqlalchemy import event, select, update
 
 from backend.core.import_preview_store import import_preview_store
-from backend.error import TargetIntakeError
+from backend.error import TargetEconomicError, TargetIntakeError
+from backend.entity import LedgerEntry, ReviewCase, TargetTag, TargetTagView, AutoTagRule
 from backend.schema.import_command import ImportOperationPreviewInput, ImportConfirmPreviewInput
 from backend.schema.import_batch_read import ImportOperationPreviewPO
 from backend.service.import_operation_service import row_ranges
 from test_pirc35_import_api import client, BASE
 from test_pirc35_import_service import service
 from test_pirc35_import_batch import prepare, row, accept
-from test_pirc35_import_confirm_preview import install, input_for, batch
+from test_pirc35_import_confirm_preview import install, input_for, batch, manual_fact
 from test_pirc35_import_duplicate import manifest, many_local_pairs, other_row, decision
 
 
@@ -210,3 +211,124 @@ def test_late_choice_change_invalidates_complete_operation_read(service, monkeyp
     with pytest.raises(TargetIntakeError, match="STALE_PREVIEW"):
         operation(service, current, list(rows))
     assert not service.db.in_transaction()
+
+
+def test_operation_cannot_omit_single_batch_relation_integrity_guard(service):
+    origin = prepare(service.mapper, [row(reference="previous-real")], sha="d" * 64)
+    accept(service.mapper, origin)
+    rows, current = independent(service, 2)
+    service.db.execute(update(LedgerEntry).values(account_ref_id=99999))
+    service.db.commit()
+    before = manifest(service)
+    for preview in (operation, batch):
+        with pytest.raises(TargetEconomicError) as error:
+            preview(service, current, list(rows))
+        assert error.value.code == "ACCOUNT_RELATION_BROKEN"
+        assert not service.db.in_transaction()
+        assert manifest(service) == before
+
+
+def test_operation_validates_relations_once_not_once_per_batch(service, monkeypatch):
+    from backend.mapper.trusted_relation_mapper import TrustedRelationMapper
+    rows, current = independent(service, 1001)
+    original, checks = TrustedRelationMapper.validate, []
+    def check(self):
+        checks.append(True)
+        return original(self)
+    monkeypatch.setattr(TrustedRelationMapper, "validate", check)
+    result = operation(service, current, list(rows))
+    assert result["can_confirm"] and len(result["batches"]) == 2
+    assert checks == [True]
+
+
+def test_whole_manual_group_projection_matches_standalone_child(service):
+    current, keys, _ids = manual_fact(service, group=True)
+    result = operation(service, current, keys)
+    child = result["batches"][0]["preview"]
+    assert result["can_confirm"] and child == batch(service, current, keys)
+    assert child["budget"]["facts"] == 2
+    assert child["budget"]["review_groups"] == 2
+    assert child["counts"]["evidence_only"] == 1
+    assert child["effects"]["new_original_defaults"] == []
+
+
+def test_operation_full_tags_and_disabled_rule_budget_matches_each_child(service):
+    service.db.add(TargetTagView(id=1, name="Mock purpose", system_name="mock-purpose", status="ACTIVE"))
+    service.db.add(TargetTag(id=1, view_id=1, name="Mock unclassified", system_name="unclassified", status="ACTIVE"))
+    service.db.add(AutoTagRule(id=1, name="Mock disabled rule", view_id=1, method=1,
+        method_config_json='{"schema_version":1,"model_id":9,"prompt":"Mock"}',
+        enabled=0, cron="", amount_mode=1, scan_after_ledger_id=100, scan_epoch=1, rule_revision=1))
+    service.db.commit()
+    rows, choices = many_local_pairs(service, 50)
+    current = install(service, rows, choices)
+    before = manifest(service)
+    result = operation(service, current, list(rows))
+    assert [item["preview"]["budget"]["tag_changes"] for item in result["batches"]] == [148, 4]
+    for item in result["batches"]:
+        keys = [(row["file_id"], row["source_row_number"]) for row in item["preview"]["selected_rows"]]
+        assert item["preview"] == batch(service, current, keys)
+        assert item["preview"]["effects"]["tag_effect"]["affected_rule_ids"] == [1]
+    assert manifest(service) == before
+    service.db.execute(update(TargetTag).where(TargetTag.id == 1).values(name="Mock changed default"))
+    service.db.commit()
+    changed = operation(service, current, list(rows))
+    assert changed["operation_preview_digest"] != result["operation_preview_digest"]
+    assert all(new["preview"]["batch_preview_digest"] != old["preview"]["batch_preview_digest"]
+        for old, new in zip(result["batches"], changed["batches"]))
+
+
+def test_operation_group_reads_share_one_wal_snapshot(service):
+    current, keys, _ids = manual_fact(service)
+    service.db.rollback()
+    with service.db.bind.connect() as connection:
+        connection.exec_driver_sql("PRAGMA journal_mode=WAL")
+    changed = []
+    def change_review(_connection, _cursor, statement, _parameters, _context, _many):
+        if not changed and "review_transaction_ledger_allocation" in statement and "review_case.behavior_type =" in statement:
+            changed.append(True)
+            with service.db.bind.begin() as concurrent:
+                concurrent.execute(update(ReviewCase).values(status=1))
+    event.listen(service.db.bind, "after_cursor_execute", change_review)
+    try:
+        result = operation(service, current, keys)
+    finally:
+        event.remove(service.db.bind, "after_cursor_execute", change_review)
+    child = result["batches"][0]["preview"]
+    assert changed and child["expected_reviews"][0]["status"] == "CONFIRMED"
+    assert child["effects"]["before_after_review_states"][0]["before"]["status"] == "CONFIRMED"
+    assert service.db.scalar(select(ReviewCase.status)) == 1
+    assert operation(service, current, keys)["operation_preview_digest"] != result["operation_preview_digest"]
+
+
+@pytest.mark.parametrize("guard", ["busy", "time", "digest", "missing"])
+def test_operation_rejects_invalid_preview_context_without_writes(service, guard):
+    from contextlib import nullcontext
+    rows, current = independent(service, 1)
+    payload = input_for(current, list(rows))
+    if guard == "time":
+        payload["expected_updated_time"] -= timedelta(microseconds=1)
+    elif guard == "digest":
+        payload["preview_digest"] = "0" * 64
+    elif guard == "missing":
+        payload["selected_rows"][0]["source_row_number"] += 1
+    before = manifest(service)
+    # get() returns an isolated copy, and derives CONFIRMING from a real claim;
+    # assigning status on that copy is not evidence of an in-flight operation.
+    ownership = service.store.claim(current["token"], current["updated_time"]) if guard == "busy" else nullcontext()
+    with ownership:
+        with pytest.raises(TargetIntakeError) as error:
+            service.operation_preview(current["token"], ImportOperationPreviewInput(**payload))
+    assert error.value.code == {"busy": "PREVIEW_BUSY", "time": "STALE_PREVIEW",
+        "digest": "STALE_PREVIEW", "missing": "PREVIEW_ROW_NOT_FOUND"}[guard]
+    assert manifest(service) == before
+
+
+def test_missing_choices_stay_visible_and_block_whole_operation(service):
+    rows = prepare(service.mapper, [row(n, reference=f"missing-{n}") for n in (1, 2)])
+    current = install(service, rows, {})
+    result = operation(service, current, list(rows))
+    assert not result["can_confirm"] and result["blocked"] == []
+    child = result["batches"][0]["preview"]
+    assert len(flatten(result)) == child["counts"]["unresolved"] == 2
+    assert {issue["code"] for issue in child["issues"]} == {"ROW_CHOICE_REQUIRED"}
+    assert child["effects"]["new_original_defaults"] == []

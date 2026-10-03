@@ -1465,10 +1465,16 @@
 .import-batch-decision .import-batch-recheck { display:flex; align-items:center; gap:5px; margin-top:5px; }
 .import-batch-recheck input { flex:0 0 20px; }
 .import-batch-issue { grid-area:issue; margin:5px 0 0; color:var(--danger); overflow-wrap:anywhere; }
+.import-plan-record { align-items:start; font-size:12px; line-height:1.45; }
+.import-plan-record > div { min-width:0; overflow-wrap:anywhere; }
+.import-plan-record p { margin:3px 0; }
+.import-plan-record > button { min-height:34px; padding:5px 8px; font-size:12px; }
 @media(max-width:1000px) {
   .import-batch-row { grid-template-columns:24px minmax(0,1fr) 170px; grid-template-areas:"select main amount" ". source decision" "issue issue issue"; row-gap:6px; }
 }
 @media(max-width:560px) {
+  .import-plan-record { grid-template-columns:minmax(0,1fr); }
+  .import-plan-record > button { justify-self:start; min-height:44px; }
   .picker-list-row { gap:8px; padding:6px; }
   .picker-list-row:has([data-picker-action]) { grid-template-columns:minmax(0,1fr); }
   .picker-list-row:has([data-picker-action]) .picker-row-actions { max-width:none; justify-content:flex-start; }
