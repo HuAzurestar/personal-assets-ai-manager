@@ -26,7 +26,7 @@ export function validateImportApproval(result, plan, current) {
 
 // A malformed successful financial response is still unknown, not a reason to
 // replay the child. Only a complete exact scope advances the serial executor.
-export function validateImportChild(result, batch, index, total, operation, previous) {
+export function validateImportChild(result, batch, index, total, operation, previous, proofs) {
   digest(result?.preview_digest);digest(result?.operation_preview_digest);
   if (result.operation_preview_digest !== operation || result.next_batch_index !== index + 1
       || result.complete !== (index + 1 === total)
@@ -63,9 +63,11 @@ export function validateImportChild(result, batch, index, total, operation, prev
     }
   }
   const files = new Set();
+  const hashes = proofs && new Map(proofs.map(file=>[file.file_id,file.sha256]));
   for (const file of result.files) {
     id(file.file_id);digest(file.sha256);time(file.updated_time);
-    if (files.has(file.file_id) || ![0,1,2,3].includes(file.status)) throw new Error('本批文件进度不完整');
+    if (files.has(file.file_id) || ![0,1,2,3].includes(file.status)
+        || (hashes && hashes.get(file.file_id) !== file.sha256)) throw new Error('本批文件进度或原文件校验定位不完整');
     files.add(file.file_id);
     for (const field of ['accepted','skipped','invalid','remaining']) if (!Number.isSafeInteger(file[field]) || file[field] < 0) throw new Error('本批文件进度不精确');
   }
@@ -133,7 +135,7 @@ export function createImportExecution({plan, current, approve, confirm, stop, pr
           selected_rows:batch.preview.selected_rows,batch_preview_digest:batch.preview.batch_preview_digest,
           operation_preview_digest:frozen.operation_preview_digest,batch_index:index}));
         stage='VALIDATE_FINANCIAL';
-        const result=validateImportChild(response,batch,index,frozen.batches.length,frozen.operation_preview_digest,guard);
+        const result=validateImportChild(response,batch,index,frozen.batches.length,frozen.operation_preview_digest,guard,initial.files);
         state.in_flight=false;state.completed_batches++;state.completed_rows+=batch.preview.selected_rows.length;
         state.remaining_rows-=batch.preview.selected_rows.length;
         guard={updated_time:result.preview_updated_time,preview_digest:result.preview_digest};

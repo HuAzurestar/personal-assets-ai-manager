@@ -195,6 +195,8 @@ def run():
                     expect(page.locator('[data-batch-selection]')).to_contain_text('1 行',timeout=35000)
                     expect(page.locator('[data-batch-save]')).to_be_enabled(timeout=35000)
                     assert len(writes)==6 and len(approvals)==4
+                    expect(page.locator('[data-batch-execution]')).to_contain_text('尚待处理 1 行')
+                    expect(page.locator('[data-batch-execution]')).not_to_contain_text('本批结果未知')
                     assert page.evaluate("localStorage.getItem('paam.import.pending.v1')") is None
                     assert page.evaluate("JSON.parse(localStorage.getItem('paam.import.remaining.v1')).choices.length") == 1
                     viewport_evidence(page,'fix-import-execution-unknown-reconciled-remaining-one')

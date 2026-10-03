@@ -12,7 +12,7 @@ async function run() {
   const plan={source_preview_digest:hash,operation_preview_digest:op,selected_rows:rows,selected_count:2500,can_confirm:true,
     cross_batch_atomic:false,execution_policy:policy,blocked:[],batches:[0,1000,2000].map((offset,index)=>({batch_index:index,
       preview:{selected_rows:rows.slice(offset,offset+1000),batch_preview_digest:String(index+1).repeat(64),can_confirm:true,budget:{selected_rows:Math.min(1000,2500-offset)}}}))};
-  const current={token:'mock',updated_time:stamp(1),preview_digest:hash};
+  const current={token:'mock',updated_time:stamp(1),preview_digest:hash,files:[{file_id:1,sha256:hash}]};
   const response=index=>({operation_preview_digest:op,next_batch_index:index+1,complete:index===2,preview_digest:'c'.repeat(64),preview_updated_time:stamp(index+3),
     processed_rows:plan.batches[index].preview.selected_rows.map(row=>({...row,row_id:row.source_row_number,row_status:1,transaction_id:row.source_row_number,
       created_review_id:row.source_row_number,created_ledger_id:row.source_row_number,resolution_effect:'NEW_REAL',effective_review_ids:[row.source_row_number],
@@ -36,8 +36,8 @@ async function run() {
   for (const mutate of [value=>value.processed_rows.pop(),value=>value.processed_rows[0]=value.processed_rows[1],value=>value.next_batch_index++,
     value=>value.complete=true,value=>value.new_fact_count++,value=>value.processed_rows[0].row_id=9007199254740992,
     value=>value.preview_updated_time=stamp(2),value=>value.processed_rows[0].transaction_id=0,value=>value.files=[],
-    value=>value.processed_rows[0].effective_ledger_ids=[],value=>value.files[0].remaining=-1]) {
-    const result=response(0);mutate(result);assert.throws(()=>validateImportChild(result,plan.batches[0],0,3,op,{updated_time:stamp(2)}));
+    value=>value.processed_rows[0].effective_ledger_ids=[],value=>value.files[0].remaining=-1,value=>value.files[0].sha256='d'.repeat(64)]) {
+    const result=response(0);mutate(result);assert.throws(()=>validateImportChild(result,plan.batches[0],0,3,op,{updated_time:stamp(2)},current.files));
     s=setup({confirm:async()=>result});state=await s.executor.run();
     assert.equal(state.phase,'UNKNOWN');assert.equal(state.completed_rows,0);assert.equal(s.prepared.length,1);assert.equal(s.stops.length,1);
     assert.equal(s.errors[0].state.unknown,true);

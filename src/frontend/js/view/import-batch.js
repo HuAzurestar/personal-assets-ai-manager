@@ -243,6 +243,8 @@ export async function mountImportBatch(host, initial, changed) {
         saved.choices=saved.choices.filter(choice=>!handled.has(identity(choice)));
         if (saved.choices.length) localStorage.setItem(remainingKey,JSON.stringify(saved));else localStorage.removeItem(remainingKey);
       } else retainRemaining();
+      context.executionProgress=null;
+      find('[data-batch-execution]').textContent=`本批 ${retained.rows.length} 行的当前持久状态已由你核对；尚待处理 ${context.selected.size} 行。不是首次命令回执，未重发请求；剩余须重新核验并批准。`;
     } else {context.selected.clear();context.dirty=false;}
     localStorage.removeItem(pendingKey);context.unknown=false;context.verificationReady=false;context.verificationMessage=null;
     invalidatePlan();await refresh();
