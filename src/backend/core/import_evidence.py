@@ -1,4 +1,4 @@
-"""Verify explicit same-source evidence pairs before publication.
+"""Verify explicit same/cross-source evidence pairs before publication.
 
 Only immutable parser sources and accepted origin proofs are inputs. Ledger
 cards, labels, amounts alone and user-selected account identities are not proof.
@@ -112,5 +112,69 @@ def plan_same_source_links(rows, files, candidates, choices, targets):
         per_file[(key[0], identity)].append(key)
         result[key] = dict(kind=kind, locator=locator, identity=identity, premise=premise)
     if any(len(keys) > 1 for keys in per_file.values()):
+        reject("IDENTITY_AMBIGUOUS")
+    return result
+
+
+def plan_cross_source_duplicates(rows, files, candidates, choices, targets):
+    """Prove new B/real A source pairs; financial final-set validation is shared.
+
+    IDs here are accepted Fact IDs or symbolic NEW identities, never invented
+    SQLite IDs. Every local anchor is selected and will retain real cash.
+    """
+    result, per_file, by_b = {}, defaultdict(set), {}
+    for key, choice in choices.items():
+        if choice.get("resolution") != "DUPLICATE":
+            continue
+        candidate = candidates.get(key)
+        if candidate is None or key not in rows or choice.get("decision") != "ACCEPT":
+            reject("INVALID_EVIDENCE_TARGET")
+        if candidate.get("stored") and candidate["stored"]["row_status"] == 1:
+            reject("ROWS_ALREADY_PROCESSED", 409)
+        if candidate.get("issue"):
+            reject(candidate["issue"])
+        if candidate.get("fact_id") or candidate.get("classification") != "NEW":
+            reject("INVALID_EVIDENCE_TARGET")
+        source = parsed_source(rows[key], files[key[0]])
+        kind, locator = target_locator(choice.get("target"))
+        if kind == "FACT":
+            target = targets.get(locator)
+            if target is None:
+                reject("INVALID_EVIDENCE_TARGET")
+            if target.get("issue"):
+                reject(target["issue"])
+            identity, premise = ("FACT", locator), target["premise"]
+        else:
+            anchor, anchor_choice = candidates.get(locator), choices.get(locator, {})
+            if (locator == key or locator not in rows or anchor is None or
+                    anchor_choice.get("decision") != "ACCEPT" or
+                    anchor_choice.get("resolution", "AUTO") not in {"AUTO", "NEW"} or
+                    anchor_choice.get("target") is not None or anchor.get("issue") or
+                    anchor.get("classification") != "NEW" or anchor.get("fact_id") or
+                    anchor.get("stored") and anchor["stored"]["row_status"] == 1):
+                reject("INVALID_EVIDENCE_TARGET")
+            target = parsed_source(rows[locator], files[locator[0]])
+            identity = ("NEW", target["values"]["fact_key"])
+            premise = dict(row=list(locator), source=target, choice=anchor_choice,
+                           candidate_premise=anchor["premise"])
+        if (source["source_type"], source["values"]["account_code"]) == (
+                target["source_type"], target["values"]["account_code"]):
+            reject("INVALID_DUPLICATE")
+        if any(source["values"][field] != target["values"][field]
+               for field in ("occurred_time", "amount", "currency_code", "cash_direction")):
+            reject("FACT_CONFLICT")
+        excluded = ("NEW", source["values"]["fact_key"])
+        if excluded in by_b and by_b[excluded] != identity:
+            reject("IDENTITY_AMBIGUOUS")
+        by_b[excluded] = identity
+        per_file[(key[0], identity)].add(excluded)
+        result[key] = dict(kind=kind, locator=locator, identity=identity, source=source, premise=premise)
+    # A reliable canonical B cannot simultaneously be a real local anchor.
+    for key, candidate in candidates.items():
+        values = candidate.get("values")
+        if (values and ("NEW", values["fact_key"]) in by_b and
+                choices.get(key, {}).get("decision") == "ACCEPT" and key not in result):
+            reject("INVALID_DUPLICATE")
+    if any(len(excluded) > 1 for excluded in per_file.values()):
         reject("IDENTITY_AMBIGUOUS")
     return result

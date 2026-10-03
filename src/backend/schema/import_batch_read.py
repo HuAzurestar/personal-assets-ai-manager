@@ -187,6 +187,26 @@ class ImportPlannedDefault(PO):
     occurred_time: datetime
     account_ref_id: int | None
     source_label_masked: str
+    after_status: Literal["CONFIRMED", "REVOKED"]
+
+
+class ImportPlannedDuplicateOutput(PO):
+    row: RowIdentity
+    output_index: int
+    kept_target: EvidenceTarget
+    economic_type: Literal["DUPLICATE"]
+    cash_direction: Literal["IN", "OUT"]
+    amount: int
+    currency_code: str
+    account_ref_id: int | None
+
+
+class ImportPlannedDuplicateReview(PO):
+    review_index: int
+    type: Literal["OTHER_MANUAL"]
+    case_code: Literal["DUPLICATE"]
+    allocations: list[ImportPlannedDuplicateOutput] = Field(max_length=1000)
+    revoke_original_defaults: list[RowIdentity] = Field(max_length=1000)
 
 
 class ImportDefaultTag(PO):
@@ -201,13 +221,14 @@ class ImportTagEffect(PO):
     affected_view_ids: list[int]
     default_assignments: list[ImportDefaultTag]
     projected_assignment_count: int
+    affected_rule_ids: list[int]
 
 
 class ImportBatchEffects(PO):
     by_currency: list[ImportCurrencyEffect]
     before_after_review_states: list[ImportReviewStateEffect] = Field(max_length=4000)
     new_original_defaults: list[ImportPlannedDefault] = Field(max_length=1000)
-    new_duplicate_reviews: list[dict] = Field(max_length=100)
+    new_duplicate_reviews: list[ImportPlannedDuplicateReview] = Field(max_length=100)
     tag_effect: ImportTagEffect
 
 

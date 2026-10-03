@@ -28,6 +28,7 @@ from backend.mapper.bounded_query_mapper import query_budget
 from backend.parser.bounded_statement import parse_statement
 from backend.schema.list_query import FilterFieldExpression
 from backend.service.import_confirmation_service import ImportConfirmationService
+from backend.service.import_duplicate_service import ImportDuplicateService
 
 
 class ImportBatchService:
@@ -268,7 +269,13 @@ class ImportBatchService:
                     batch = ImportConfirmationService(self.mapper).plan(state, order, current, payload.preview_digest)
                     if batch["batch_preview_digest"] != payload.batch_preview_digest or not batch["can_confirm"]:
                         fail("STALE_PREVIEW")
-                result = self.mapper.write_batch(current, choices, order, fault=fault)
+                duplicate = any(candidate.get("duplicate_plan") for candidate in current.values())
+                duplicate_service = ImportDuplicateService(self.mapper) if duplicate else None
+                before_context = duplicate_service.confirmation.target_context(
+                    duplicate_service.existing_ids(current, choices)) if duplicate else None
+                result = self.mapper.write_batch(current, choices, order, fault=fault, defer_duplicate=duplicate)
+                if duplicate:
+                    duplicate_service.publish(current, choices, order, result, batch, before_context, fault=fault)
                 if monotonic() - self.mapper.write_started > 2:
                     fail("WRITE_BUSY", 503)
                 if fault:

@@ -12,6 +12,7 @@ from backend.error import TargetIntakeError
 from backend.mapper.import_batch_mapper import fail, fingerprint
 from backend.mapper.trusted_relation_mapper import TrustedRelationMapper
 from backend.service.review_command_service import review_po, flow_po
+from backend.service.review_intent_service import validate_duplicate_keepers
 from backend.service.target_tag_projection_service import TargetTagProjectionService
 
 MAX_BATCH_PREVIEW_BYTES = 24 * 1024 * 1024
@@ -30,6 +31,10 @@ def group_rows(rows, key):
     for row in rows:
         result[row[key]].append(row)
     return result
+
+
+def planned_ref(account):
+    return account["ref_id"] or (tuple(account["auto_identity"]) if account["auto_identity"] else 0)
 
 
 class ImportConfirmationService:
@@ -57,6 +62,30 @@ class ImportConfirmationService:
         parties = self.mapper.named_rows("parties", {row["party_id"] for row in accounts})
         return dict(defaults=default_ids, facts=list(facts.values()), bundle=bundle, positions=positions,
                     sources=sources, source_reviews=source_reviews, refs=refs, accounts=accounts, parties=parties)
+
+    @staticmethod
+    def validate_duplicate_projection(new, duplicate, candidates, context):
+        """Reuse final keeper rules with symbolic identities, not fake IDs."""
+        facts = {("FACT", row["id"]): row for row in context["facts"]}
+        outputs = defaultdict(list)
+        bundle = context["bundle"]
+        active = {row["id"] for row in bundle["reviews"] if row["status"] == 0}
+        ledgers = {row["id"]: row for row in bundle["ledger_entries"]}
+        for allocation in bundle["allocations"]:
+            if allocation["review_id"] in active:
+                ledger = ledgers[allocation["ledger_id"]]
+                outputs[("FACT", allocation["transaction_id"])].append(dict(
+                    entry_type=ledger["entry_type"], cash_amount=ledger["cash_amount"], account_ref_id=ledger["account_ref_id"]))
+        for fact_key, key in new.items():
+            candidate = candidates[key]
+            identity = ("NEW", fact_key)
+            facts[identity] = candidate["values"]
+            outputs[identity].append(dict(entry_type=3 if fact_key in duplicate else 0,
+                cash_amount=candidate["values"]["amount"], account_ref_id=planned_ref(candidate["account"])))
+        decisions = [dict(transaction_id=("NEW", fact_key),
+                          kept_transaction_id=candidates[key]["duplicate_plan"]["identity"])
+                     for fact_key, key in duplicate.items()]
+        validate_duplicate_keepers(decisions, outputs, facts)
 
     @staticmethod
     def public_states(context):
@@ -100,31 +129,43 @@ class ImportConfirmationService:
                 evidence_only += 1
             else:
                 new[candidate["values"]["fact_key"]] = key
+        duplicate = {fact_key: key for fact_key, key in new.items() if candidates[key].get("duplicate_plan")}
         existing = {candidates[key]["fact_id"] for key in accepted if candidates[key]["fact_id"]}
+        existing.update(candidates[key]["duplicate_plan"]["locator"] for key in accepted
+                        if candidates[key].get("duplicate_plan", {}).get("kind") == "FACT")
         TrustedRelationMapper(self.mapper.db).validate()
         context = self.target_context(existing)
         bundle = context["bundle"]
-        outputs = len(new) + len(bundle["ledger_entries"]) + len(bundle["position_legs"])
-        link_count = len(new) + len(bundle["allocations"]) + len(bundle["position_allocations"])
+        if duplicate:
+            self.validate_duplicate_projection(new, duplicate, candidates, context)
+        outputs = len(new) + len(duplicate) + len(bundle["ledger_entries"]) + len(bundle["position_legs"])
+        link_count = len(new) + len(duplicate) + len(bundle["allocations"]) + len(bundle["position_allocations"])
+        review_count = len(new) + len(bundle["reviews"]) + bool(duplicate)
+        if duplicate and (review_count > 100 or len(new) + len(context["facts"]) > 2000 or
+                          outputs > 4000 or link_count > 4000):
+            fail("REVIEW_CHANGE_LIMIT", 413)
         if max(outputs, link_count, len(bundle["reviews"])) > 4000 or len(new) + len(context["facts"]) > 2000:
             fail("DETAIL_LIMIT", 413)
         dictionary, tag_rows = (), []
         if new:
             dictionary = TargetTagProjectionService(self.mapper.db).mapper.active_dictionary()
         default_tags = [item for item in dictionary if item.tag_system_name == "unclassified"]
-        tag_count = len(new) * len(default_tags)
+        tag_count = (len(new) + len(duplicate)) * len(default_tags)
         if tag_count > 50000:
             fail("TAG_IMPACT_LIMIT", 413)
         if new:
             default_tag_ids = {item.tag_id for item in default_tags}
             tag_rows = [row for row in self.mapper.tag_dictionary() if row["id"] in default_tag_ids]
+        rules = self.mapper.named_rows("rules", {item.view_id for item in default_tags}, "view_id") if duplicate else []
+        if tag_count + len(rules) > 50000:
+            fail("TAG_IMPACT_LIMIT", 413)
         tag_meta = {row["id"]: row for row in tag_rows}
-        tag_effect = dict(new_output_count=len(new), affected_view_ids=sorted(item.view_id for item in default_tags),
+        tag_effect = dict(new_output_count=len(new) + len(duplicate), affected_view_ids=sorted(item.view_id for item in default_tags),
             default_assignments=[dict(view_id=item.view_id, tag_id=item.tag_id,
                 view_name_masked=masked_summary(tag_meta[item.tag_id]["view_name"]),
                 tag_name_masked=masked_summary(tag_meta[item.tag_id]["tag_name"])) for item in default_tags],
-            projected_assignment_count=tag_count)
-        planned, currency = [], {}
+            projected_assignment_count=tag_count, affected_rule_ids=sorted(row["id"] for row in rules))
+        planned, excluded_outputs, currency = [], [], {}
         for index, key in enumerate(sorted(new.values())):
             candidate = candidates[key]
             values, account = candidate["values"], candidate["account"]
@@ -132,15 +173,22 @@ class ImportConfirmationService:
                 cash_direction="IN" if values["cash_direction"] == 1 else "OUT", amount=values["amount"],
                 currency_code=values["currency_code"], occurred_time=values["occurred_time"],
                 account_ref_id=account["ref_id"] or (None if account["auto_identity"] else 0),
-                source_label_masked=source_label(state.rows[key])))
+                source_label_masked=source_label(state.rows[key]),
+                after_status="REVOKED" if values["fact_key"] in duplicate else "CONFIRMED"))
             effect = currency.setdefault(values["currency_code"], dict(currency_code=values["currency_code"],
                 cash_in_amount=0, cash_out_amount=0, excluded_in_amount=0, excluded_out_amount=0))
-            effect["cash_in_amount" if values["cash_direction"] == 1 else "cash_out_amount"] += values["amount"]
+            prefix = "excluded" if values["fact_key"] in duplicate else "cash"
+            effect[f"{prefix}_{'in' if values['cash_direction'] == 1 else 'out'}_amount"] += values["amount"]
+            if values["fact_key"] in duplicate:
+                excluded_outputs.append(dict(row=row_locator(key), output_index=len(excluded_outputs),
+                    kept_target=choices[key]["target"], economic_type="DUPLICATE",
+                    cash_direction="IN" if values["cash_direction"] == 1 else "OUT", amount=values["amount"],
+                    currency_code=values["currency_code"], account_ref_id=planned[-1]["account_ref_id"]))
         pairs = []
         issue_by_key = {(issue["file_id"], issue["source_row_number"]): issue["code"] for issue in issues}
         for key in order:
             candidate, choice = candidates[key], choices.get(key, {})
-            values, link = candidate["values"], candidate.get("evidence_link")
+            values, link = candidate["values"], candidate.get("evidence_link") or candidate.get("duplicate_plan")
             target = choice.get("target") or (dict(kind="FACT", transaction_id=candidate["fact_id"]) if candidate["fact_id"] else None)
             labels = [source_label(state.rows[key])]
             if link:
@@ -163,16 +211,18 @@ class ImportConfirmationService:
         expected = [dict(review_id=row["id"], status="CONFIRMED" if row["status"] == 0 else "REVOKED",
                          updated_time=row["updated_time"]) for row in bundle["reviews"]]
         preview = dict(source_preview_digest=source_digest, selected_rows=[row_locator(key) for key in order],
-            expected_reviews=expected, counts=dict(new_real_fact=len(new), new_duplicate_fact=0, evidence_only=evidence_only,
+            expected_reviews=expected, counts=dict(new_real_fact=len(new) - len(duplicate), new_duplicate_fact=len(duplicate), evidence_only=evidence_only,
                 skipped=skipped, invalid=invalid, unresolved=len(issues)), pairs=pairs,
             effects=dict(by_currency=[currency[code] for code in sorted(currency)], before_after_review_states=states,
-                new_original_defaults=planned, new_duplicate_reviews=[], tag_effect=tag_effect),
-            budget=dict(selected_rows=len(order), review_groups=len(new) + len(bundle["reviews"]),
-                facts=len(new) + len(context["facts"]), outputs=outputs, position_links=link_count, tag_changes=tag_count),
+                new_original_defaults=planned, new_duplicate_reviews=[dict(review_index=0, type="OTHER_MANUAL",
+                    case_code="DUPLICATE", allocations=excluded_outputs,
+                    revoke_original_defaults=[row["row"] for row in excluded_outputs])] if duplicate else [], tag_effect=tag_effect),
+            budget=dict(selected_rows=len(order), review_groups=review_count,
+                facts=len(new) + len(context["facts"]), outputs=outputs, position_links=link_count, tag_changes=tag_count + len(rules)),
             can_confirm=not issues, issues=issues)
         premises = dict(source_digest=source_digest, selected=[dict(row=row_locator(key), choice=choices.get(key),
                         candidate=candidates[key]["premise_hash"]) for key in order],
-                        context=context, tag_dictionary=tag_rows, effects=preview)
+                        context=context, tag_dictionary=tag_rows, rules=rules, effects=preview)
         if len(canonical_json(premises).encode("utf-8")) > MAX_BATCH_PREVIEW_BYTES:
             fail("DETAIL_LIMIT", 413)
         preview["batch_preview_digest"] = fingerprint(premises)

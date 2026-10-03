@@ -15,7 +15,7 @@ from sqlalchemy.exc import OperationalError
 from backend.core.import_identity import (SOURCE_CODES, FORMAT_CODES, canonical_json,
     fact_key, fact_values, raw_evidence, same_fact, source_account_code)
 from backend.core.source_account_identity import reliable_source
-from backend.core.import_evidence import plan_same_source_links, target_locator
+from backend.core.import_evidence import plan_same_source_links, plan_cross_source_duplicates, target_locator
 from backend.entity import TransactionFact, TransactionImportFile, TransactionImportRow
 from backend.entity.base import utc_now
 from backend.error import TargetIntakeError
@@ -360,10 +360,10 @@ class ImportBatchMapper(ReviewCommandMapper):
 
     def _match(self, input_rows, choices):
         choices = {key: choices[key] for key in input_rows if key in choices}
-        if any(choice.get("resolution", "AUTO") not in {"AUTO", "NEW", "LINK_EXISTING"}
+        if any(choice.get("resolution", "AUTO") not in {"AUTO", "NEW", "LINK_EXISTING", "DUPLICATE"}
                for choice in choices.values()):
             fail("INVALID_EVIDENCE_TARGET", 422)
-        if any(choice.get("target") is not None and choice.get("resolution", "AUTO") != "LINK_EXISTING"
+        if any(choice.get("target") is not None and choice.get("resolution", "AUTO") not in {"LINK_EXISTING", "DUPLICATE"}
                or choice.get("decision") == "SKIP" and choice.get("resolution", "AUTO") != "AUTO"
                for choice in choices.values()):
             fail("INVALID_EVIDENCE_TARGET", 422)
@@ -438,9 +438,12 @@ class ImportBatchMapper(ReviewCommandMapper):
                 if conflict or len(selected_refs) > 1:
                     result[key].update(classification="INVALID", issue="FACT_CONFLICT" if conflict else "ACCOUNT_BINDING_CONFLICT")
         active_links = {key: choices[key] for key in link_keys if result[key]["classification"] != "PROCESSED"}
-        if active_links:
-            locators = [target_locator(choice.get("target")) for choice in active_links.values()]
+        active_duplicates = {key: choice for key, choice in choices.items()
+                             if choice.get("resolution") == "DUPLICATE" and result[key]["classification"] != "PROCESSED"}
+        if active_links or active_duplicates:
+            locators = [target_locator(choice.get("target")) for choice in (active_links | active_duplicates).values()]
             targets = self._evidence_targets([locator for kind, locator in locators if kind == "FACT"])
+        if active_links:
             plans = plan_same_source_links(input_rows, files, result,
                 choices if len(active_links) == len(link_keys) else
                 {key: choice for key, choice in choices.items() if key not in link_keys or key in active_links}, targets)
@@ -448,6 +451,13 @@ class ImportBatchMapper(ReviewCommandMapper):
                 result[key].update(classification="EXISTING", fact_id=plan["locator"] if plan["kind"] == "FACT" else 0,
                                    evidence_link=plan)
                 result[key]["premise"]["evidence_link"] = plan
+        if active_duplicates:
+            plans = plan_cross_source_duplicates(input_rows, files, result,
+                {key: choice for key, choice in choices.items()
+                 if choice.get("resolution") != "DUPLICATE" or key in active_duplicates}, targets)
+            for key, plan in plans.items():
+                result[key]["duplicate_plan"] = plan
+                result[key]["premise"]["duplicate_plan"] = plan
         for key, choice in choices.items():
             if choice.get("resolution") == "NEW" and result[key]["fact_id"] and result[key]["classification"] != "PROCESSED":
                 fail("INVALID_EVIDENCE_TARGET", 422)
@@ -476,8 +486,11 @@ class ImportBatchMapper(ReviewCommandMapper):
                 fail("ROW_INVALID" if code in {"NON_POSTED_EVIDENCE", "NEUTRAL_EVIDENCE"} else code,
                      409 if code.startswith("ACCOUNT_") else 422)
 
-    def write_batch(self, candidates, choices, order, *, fault=None):
+    def write_batch(self, candidates, choices, order, *, fault=None, defer_duplicate=False):
         self.validate_selection(candidates, choices)
+        compound = any(candidate.get("duplicate_plan") for candidate in candidates.values())
+        if compound and not defer_duplicate:
+            fail("IMPORT_REVIEW_REQUIRED", 422)
         now = utc_now()
         new_by_key, new_anchor = {}, {}
         for key in sorted(candidates):
@@ -553,8 +566,8 @@ class ImportBatchMapper(ReviewCommandMapper):
             result["effective_ledger_ids"] = sorted(output["ledgers"])
         if any(candidate.get("evidence_link") for candidate in candidates.values()):
             TrustedRelationMapper(self.db).validate()
-        files = self.progress([key[0] for key in order], persist=True)
-        if fault:
+        files = [] if compound else self.progress([key[0] for key in order], persist=True)
+        if fault and not compound:
             fault("file_counts")
         return dict(files=files, processed_rows=[outcomes[key] for key in order], new_fact_count=len(new),
             linked_existing_count=sum(choices[key]["decision"] == "ACCEPT" and bool(candidates[key]["fact_id"]) for key in order),
