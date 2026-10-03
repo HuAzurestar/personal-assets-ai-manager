@@ -306,6 +306,67 @@ class ReviewCommandService:
         return dict(preview=preview, drafts=drafts, facts=facts, states=states, review_rows=review_rows,
                     bundle=full, changed=changed, affected_ledgers=affected_ledgers, view_ids=view_ids)
 
+    def publish_in_transaction(self, plan, *, owner, fault=None):
+        """Publish a validated plan inside the caller's existing short write.
+
+        The caller builds/rechecks the complete plan after acquiring its write
+        slot, owns the original deadline, and commits or rolls back every stage.
+        Import may create real Fact/default IDs before building this plan. This
+        method never begins, ends, commits, or repairs a transaction, and cannot
+        be used with a read snapshot or another Session's write context.
+        """
+        driver = getattr(owner, "driver", None)
+        started = getattr(owner, "write_started", None)
+        if (owner.db is not self.db or driver is None or started is None or
+                not self.db.in_transaction() or not driver.in_transaction or
+                driver is not self.db.connection().connection.driver_connection):
+            reject("WRITE_CONTEXT_INVALID", "publication requires the caller's active write slot", status=409)
+        if monotonic() - started > 2:
+            reject("WRITE_BUSY", "Review write budget exceeded", status=503)
+        preview = plan["preview"]
+        reviews, positions, ledger_groups, _leg_groups = self.mapper.publish(plan["drafts"], plan["facts"],
+            plan["states"], plan["review_rows"], fault=fault)
+        new_ids = [row.id for group in ledger_groups for row in group]
+        active_old = [row["ledger_id"] for row in plan["bundle"]["allocations"]
+                      if row["review_id"] in plan["changed"] and plan["states"][row["review_id"]] == 0]
+        for batch in chunks(new_ids + active_old):
+            self.tags.sync_ledgers(batch)
+        inherited = defaultdict(list)
+        committed_mappings = []
+        for mapping in preview["tag_effect"]["mappings"]:
+            output = mapping["new_output"]
+            ledger_id = ledger_groups[output["review_index"]][output["allocation_index"]].id if output else None
+            committed_mappings.append({key: value for key, value in mapping.items() if key != "new_output"} |
+                                      dict(ledger_id=ledger_id))
+            if output:
+                inherited[ledger_id].append(mapping["tag_id"])
+        for batch in chunks(inherited):
+            self.tags.mapper.replace({lid: tuple(inherited[lid]) for lid in batch})
+        affected = sorted(set(plan["affected_ledgers"] + new_ids))
+        now = utc_now()
+        for batch in chunks(affected):
+            self.requests.retire_for_ledger_ids(batch, now=now)
+        for view_batch in chunks(plan["view_ids"]):
+            self.rules.rewind_for_ledger_ids(affected, now=now, view_ids=set(view_batch))
+        if fault:
+            fault("tags")
+        self.relations.validate()
+        result = dict(created_reviews=[review_po(dict(id=row.id, title=row.title, behavior_type=row.behavior_type,
+                       status=row.status, created_time=row.created_time, updated_time=row.updated_time)) for row in reviews],
+            created_positions=[dict(id=row.id, title=row.title, unit_code=row.unit_code) for group in positions for row in group],
+            review_states=[dict(review_id=row["id"], status="CONFIRMED" if row["status"] == 0 else "REVOKED",
+                                updated_time=row["updated_time"]) for row in self.mapper.named_rows("reviews", plan["states"])],
+            coverage=preview["coverage"], tag_effect=preview["tag_effect"] | dict(mappings=committed_mappings),
+            consumer_state=dict(affected_position_ids=sorted(set(preview["impact"]["affected_position_ids"] +
+                                    [row.id for group in positions for row in group])),
+                position_states=[dict(position_id=change.get("position_id") or
+                    positions[change["new_review_index"]][change["new_position_index"]].id, **change["after"])
+                    for change in preview["position_changes"]],
+                dependent_position_leg_ids=preview["impact"]["dependent_position_leg_ids"]))
+        if monotonic() - started > 2:
+            reject("WRITE_BUSY", "Review write budget exceeded", status=503)
+        return result
+
     @observed("PUBLISH", "publish_duration_ms")
     def command(self, intent: ReviewCommandInput, *, fault=None):
         commit_started = False
@@ -323,47 +384,7 @@ class ReviewCommandService:
                 reject("ENTITY_CHANGED", "complete expected Review states are required", status=409)
             if intent.preview_digest != preview["preview_digest"]:
                 reject("ENTITY_CHANGED", "preview premises changed; preview again", status=409)
-            reviews, positions, ledger_groups, leg_groups = self.mapper.publish(plan["drafts"], plan["facts"],
-                plan["states"], plan["review_rows"], fault=fault)
-            new_ids = [row.id for group in ledger_groups for row in group]
-            active_old = [row["ledger_id"] for row in plan["bundle"]["allocations"]
-                          if row["review_id"] in plan["changed"] and plan["states"][row["review_id"]] == 0]
-            for batch in chunks(new_ids + active_old):
-                self.tags.sync_ledgers(batch)
-            inherited = defaultdict(list)
-            committed_mappings = []
-            for mapping in preview["tag_effect"]["mappings"]:
-                output = mapping["new_output"]
-                ledger_id = ledger_groups[output["review_index"]][output["allocation_index"]].id if output else None
-                committed_mappings.append({key: value for key, value in mapping.items() if key != "new_output"} |
-                                          dict(ledger_id=ledger_id))
-                if output:
-                    inherited[ledger_id].append(mapping["tag_id"])
-            for batch in chunks(inherited):
-                self.tags.mapper.replace({lid: tuple(inherited[lid]) for lid in batch})
-            affected = sorted(set(plan["affected_ledgers"] + new_ids))
-            now = utc_now()
-            for batch in chunks(affected):
-                self.requests.retire_for_ledger_ids(batch, now=now)
-            for view_batch in chunks(plan["view_ids"]):
-                self.rules.rewind_for_ledger_ids(affected, now=now, view_ids=set(view_batch))
-            if fault:
-                fault("tags")
-            self.relations.validate()
-            result = dict(created_reviews=[review_po(dict(id=row.id, title=row.title, behavior_type=row.behavior_type,
-                           status=row.status, created_time=row.created_time, updated_time=row.updated_time)) for row in reviews],
-                created_positions=[dict(id=row.id, title=row.title, unit_code=row.unit_code) for group in positions for row in group],
-                review_states=[dict(review_id=row["id"], status="CONFIRMED" if row["status"] == 0 else "REVOKED",
-                                    updated_time=row["updated_time"]) for row in self.mapper.named_rows("reviews", plan["states"])],
-                coverage=preview["coverage"], tag_effect=preview["tag_effect"] | dict(mappings=committed_mappings),
-                consumer_state=dict(affected_position_ids=sorted(set(preview["impact"]["affected_position_ids"] +
-                                        [row.id for group in positions for row in group])),
-                    position_states=[dict(position_id=change.get("position_id") or
-                        positions[change["new_review_index"]][change["new_position_index"]].id, **change["after"])
-                        for change in preview["position_changes"]],
-                    dependent_position_leg_ids=preview["impact"]["dependent_position_leg_ids"]))
-            if monotonic() - self.mapper.write_started > 2:
-                reject("WRITE_BUSY", "Review write budget exceeded", status=503)
+            result = self.publish_in_transaction(plan, owner=self.mapper, fault=fault)
             self.mapper.end_write()
             commit_started = True
             self.db.commit()
@@ -371,7 +392,7 @@ class ReviewCommandService:
                 for row in plan["bundle"]["allocations"]
                 if row["review_id"] in plan["changed"] and plan["states"][row["review_id"]] == 1}))
             observability.metric("manual_mapping_ambiguous", "PUBLISH",
-                sum(mapping.get("disposition") == "REVIEW_REQUIRED" for mapping in committed_mappings))
+                sum(mapping.get("disposition") == "REVIEW_REQUIRED" for mapping in result["tag_effect"]["mappings"]))
             if fault:
                 fault("response")
             return result
