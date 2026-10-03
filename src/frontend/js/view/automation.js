@@ -671,6 +671,11 @@ async function submitRule(event) {
     if (existing) payload.expected_updated_time = existing.updated_time;
     else payload.view_id = Number(data.get("view_id"));
     const saved = await jsonRequest(existing ? `/paam/tag/v1/auto_rule/${id}` : "/paam/tag/v1/auto_rule", existing ? "PUT" : "POST", payload, true);
+    // Publish the authoritative saved row before re-edit becomes available.
+    // The list refresh may be slow; use its exact returned time for the next
+    // form, never synthesize a row from the submitted payload or insert a new
+    // rule into an unrelated filtered/paged list.
+    rules = rules.map((rule) => rule.id === saved.body.id ? saved.body : rule);
     form.closest("dialog").close();
     const warning = saved.warnings?.some((item) => item.code === "REGISTER_FAILED");
     window.dispatchEvent(new CustomEvent("paam:automation-saved", { detail: { createdRuleId: existing ? null : saved.body.id, message: warning ? "规则已保存，但调度注册失败；请查看诊断" : scheduleStatus?.tag_scan_guard === "DISABLED" ? "规则已保存；服务尚未开启扫描" : "规则已保存，请查看实际调度状态" } }));

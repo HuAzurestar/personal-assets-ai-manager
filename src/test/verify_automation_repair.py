@@ -118,15 +118,34 @@ def run():
                 form = page.locator('[data-form="automation-rule"]')
                 form.locator('[name="frequency"]').select_option('day')
                 form.locator('[name="daily_time"]').fill('09:30')
-                form.locator('button[type="submit"]').click()
-                expect(page.locator('dialog[open]')).to_have_count(0)
-                rule_id = page.locator('[data-rule-row]').first.get_attribute('data-rule-row')
-                saved_rule = page.request.get(base + f'/paam/tag/v1/auto_rule/{rule_id}').json()['body']
-                assert saved_rule['cron'] == '30 9 * * *'
-                page.locator('[data-action="rule-edit"]').first.click()
-                expect(page.locator('[name="frequency"]')).to_have_value('day')
-                expect(page.locator('[name="daily_time"]')).to_have_value('09:30')
-                page.locator('dialog[open] [data-close]').first.click()
+                # Hold the post-save list read: immediate re-edit must use the
+                # successful PUT's actual body, not await a background refresh.
+                held_rule_reads = []
+                rule_list_pattern = '**/paam/tag/v1/auto_rule/list?*'
+
+                def hold_rule_list(route):
+                    held_rule_reads.append(route)
+
+                page.route(rule_list_pattern, hold_rule_list)
+                try:
+                    form.locator('button[type="submit"]').click()
+                    expect(page.locator('dialog[open]')).to_have_count(0)
+                    rule_id = page.locator('[data-rule-row]').first.get_attribute('data-rule-row')
+                    saved_rule = page.request.get(base + f'/paam/tag/v1/auto_rule/{rule_id}').json()['body']
+                    assert saved_rule['cron'] == '30 9 * * *'
+                    page.locator('[data-action="rule-edit"]').first.click()
+                    expect(page.locator('[name="frequency"]')).to_have_value('day')
+                    expect(page.locator('[name="daily_time"]')).to_have_value('09:30')
+                    snapshot = page.locator('[data-form="automation-rule"]').evaluate('(el) => el.ruleSnapshot')
+                    assert snapshot['updated_time'] == saved_rule['updated_time']
+                    assert held_rule_reads, 'post-save refresh must actually be held'
+                    page.locator('dialog[open] [data-close]').first.click()
+                finally:
+                    # Complete each handler before unregistering it, including
+                    # on assertion failure; do not leave a pending test route.
+                    for pending in held_rule_reads:
+                        pending.continue_()
+                    page.unroute(rule_list_pattern, hold_rule_list)
 
                 # No table or modal may put the primary operations off-screen.
                 for width, height in [(390,844),(768,1024),(1440,900)]:
