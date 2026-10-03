@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 import socket
+import sqlite3
 import tempfile
 import threading
 import time
@@ -213,8 +214,100 @@ def run():
                     page.goto(base+'/#details/transaction-fact')
                     page.goto(base+'/#workbench/import')
                     assert len(writes)==6 and len(approvals)==4 and not errors, errors
+                    page.close()
+                    # These are actual backend failures, not invented HTTP
+                    # responses: change the frozen source metadata via its
+                    # public API or hold a separate SQLite writer after child
+                    # one commits but before its response reaches the browser.
+                    # Fresh browser contexts keep the reconciled unknown draft
+                    # above intact; all databases remain purely fictional.
+                    for code, offset in [('STALE_PREVIEW',7000),('WRITE_BUSY',9000)]:
+                        page=browser.new_page(viewport={'width':1280,'height':900})
+                        page.on('pageerror',lambda error: errors.append(error.stack or str(error)))
+                        page.on('request',track)
+                        page.goto(base+'/#workbench/import')
+                        next_plan('Mock'+code,offset)
+                        original=counts()
+                        write_start, approval_start=len(writes),len(approvals)
+                        failed_responses, locks, frozen=[] ,[],[]
+                        def database_snapshot():
+                            with target_database.SessionLocal() as db:
+                                return {name:[dict(row) for row in db.execute(select(table).order_by(table.c.id)).mappings()]
+                                    for name,table in target_database.TargetBase.metadata.tables.items()}
+                        def fail_second_child(route):
+                            response=route.fetch(timeout=35000)
+                            if route.request.post_data_json['batch_index']==0:
+                                assert response.status==200,response.text()
+                                assert response.json()['body']['new_fact_count']==1000
+                                if code=='STALE_PREVIEW':
+                                    refs=client.get('/paam/ledger/v1/account-ref/list',params={'page_size':100}).json()['body']['items']
+                                    assert len(refs)==1,refs
+                                    ref=refs[0]
+                                    changed=client.put(f"/paam/ledger/v1/account-ref/{ref['id']}/metadata",json={
+                                        'account_id':ref['account_id'],'name':'Mock changed between children',
+                                        'institution':ref['institution'],'reference':ref['reference'],
+                                        'status':ref['status'],'expected_updated_time':ref['updated_time']})
+                                    assert changed.status_code==200,changed.text
+                                else:
+                                    database=Path(target_database.engine.url.database).resolve()
+                                    assert database.is_relative_to(Path(temporary).resolve()),database
+                                    lock=sqlite3.connect(database,isolation_level=None)
+                                    lock.execute('BEGIN IMMEDIATE')
+                                    locks.append(lock)
+                                frozen.append(database_snapshot())
+                            else:
+                                assert response.status==(409 if code=='STALE_PREVIEW' else 503),response.text()
+                                assert response.json()['body']['code']==code,response.text()
+                                failed_responses.append(response.json())
+                                assert database_snapshot()==frozen[0],code
+                            route.fulfill(response=response)
+                        page.route(pattern,fail_second_child)
+                        try:
+                            page.locator('[data-batch-execute]').click()
+                            expect(page.locator('[data-batch-status]')).to_contain_text(code,timeout=35000)
+                            expect(page.locator('[data-batch-execution]')).to_contain_text('后续已停止',timeout=35000)
+                            expect(page.locator('[data-batch-execution]')).to_contain_text('1000 行')
+                            expect(page.locator('[data-batch-execution]')).not_to_contain_text('本批结果未知')
+                            expect(page.locator('[data-batch-selection]')).to_contain_text('1 行',timeout=35000)
+                            expect(page.locator('[data-batch-save]')).to_be_enabled(timeout=35000)
+                        finally:
+                            for lock in locks:
+                                lock.rollback()
+                                lock.close()
+                            page.unroute(pattern,fail_second_child)
+                        assert len(failed_responses)==1
+                        assert [len(body['selected_rows']) for _,body in writes[write_start:]]==[1000,1]
+                        assert len(approvals)==approval_start+1
+                        assert [after-before for after,before in zip(counts(),original)]==[1000]*5
+                        assert page.evaluate("localStorage.getItem('paam.import.pending.v1')") is None
+                        assert page.evaluate("JSON.parse(localStorage.getItem('paam.import.remaining.v1')).choices.length")==1
+                        viewport_evidence(page,'fix-import-execution-known-'+code.lower()+'-remaining-one')
+                        page.locator('[data-batch-execute]').evaluate('node=>node.onclick()')
+                        assert len(writes)==write_start+2 and len(approvals)==approval_start+1
+                        # A rejected child is known not committed. Its remaining
+                        # draft must be re-read/saved and explicitly approved,
+                        # never replayed under the old whole-plan approval.
+                        page.locator('[data-batch-save]').click()
+                        expect(page.locator('[data-batch-plan]')).to_be_enabled(timeout=35000)
+                        page.locator('[data-batch-plan]').click()
+                        expect(page.locator('[data-plan-batches] [data-plan-batch]')).to_have_count(1,timeout=35000)
+                        expect(page.locator('[data-batch-execute]')).to_be_disabled()
+                        page.locator('[data-batch-execute]').evaluate('node=>node.onclick()')
+                        assert len(writes)==write_start+2 and len(approvals)==approval_start+1
+                        page.locator('[data-batch-consent]').check()
+                        page.locator('[data-batch-execute]').click()
+                        expect(page.locator('[data-batch-execution]')).to_contain_text('全部完成',timeout=35000)
+                        expect(page.locator('[data-batch-selection]')).to_contain_text('0 行',timeout=35000)
+                        expect(page.locator('[data-batch-refresh]')).to_be_enabled(timeout=35000)
+                        assert [len(body['selected_rows']) for _,body in writes[write_start:]]==[1000,1,1]
+                        assert len(approvals)==approval_start+2
+                        assert [after-before for after,before in zip(counts(),original)]==[1001]*5
+                        assert page.evaluate("localStorage.getItem('paam.import.remaining.v1')") is None
+                        assert page.evaluate("localStorage.getItem('paam.import.pending.v1')") is None
+                        assert not errors,errors
+                        page.close()
                     browser.close()
-            print('PASS one informed real UI approval, exact 2500 actual 1000/1000/500, committed-inflight stop retains one unsubmitted row, explicit remaining reapproval, committed-lost response readonly reconciliation retains one row, no replay or provider calls')
+            print('PASS one informed real UI approval, exact 2500 actual 1000/1000/500, committed-inflight stop retains one unsubmitted row, explicit remaining reapproval, committed-lost response readonly reconciliation retains one row, actual stale metadata and busy SQLite failures preserve prior1000 and remaining1, explicit fresh approval, no replay or provider calls')
         finally:
             server.should_exit = True
             worker.join(timeout=5)
