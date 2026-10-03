@@ -150,6 +150,40 @@ def test_preview_rows_standard_shape_limit_filter_and_stale_digest(service):
             service.row_page(new["token"], new["preview_digest"], PreviewRowListRequest(filter=filter))
 
 
+def test_preview_half_open_source_range_and_empty_scope_validation(service):
+    current = preview(service)
+    state = service.store.get(current['token'])
+    keys = sorted(state.rows)
+    file_id = keys[0][0]
+    start, end = keys[2][1], keys[10][1]
+    request = PreviewRowListRequest(page_size=50, filter=dict(op='AND', expression=[
+        dict(key='file_id', op='=', val=file_id),
+        dict(key='source_row_number', op='between', val=dict(start=start, end=end)),
+        dict(key='classification', op='=', val='NEW')]))
+    result = service.row_page(current['token'], current['preview_digest'], request)
+    assert result['total'] == 8 and result['page_size'] == 50
+    assert [item['source_row_number'] for item in result['items']] == list(range(start, end))
+    assert service.store.get(current['token']) == state
+    assert service.db.scalar(select(func.count()).select_from(TransactionFact)) == 0
+    # Even an empty first AND branch must not short-circuit validation of the
+    # remaining fields, and an empty preview has exactly the same contract.
+    invalid = [dict(start=True, end=8), dict(start=0, end=8), dict(start=8, end=8),
+        dict(start=9, end=8), dict(start='6', end=8), dict(start=6.0, end=8),
+        dict(start=6, end=8, extra=1), {}, [], None]
+    empty = preview(service, content=b'not,a,statement')
+    for value in invalid:
+        expression = dict(op='AND', expression=[dict(key='file_id', op='=', val=file_id+999),
+            dict(key='source_row_number', op='between', val=value)])
+        for scope in (current, empty):
+            with pytest.raises(ListQueryError):
+                service.row_page(scope['token'], scope['preview_digest'], PreviewRowListRequest(filter=expression))
+    for expression in (dict(key='classification', op='=', val=[]),
+                       dict(key='source_row_number', op='=', val=6),
+                       dict(op='OR', expression=[dict(key='file_id', op='=', val=1), dict(key='file_id', op='=', val=2)])):
+        with pytest.raises(ListQueryError):
+            service.row_page(empty['token'], empty['preview_digest'], PreviewRowListRequest(filter=expression))
+
+
 def test_advisory_timeout_and_file_status_do_not_invalidate_selected_intent(service):
     current = preview(service)
     keys = sorted(service.store.get(current["token"]).rows)[:1]

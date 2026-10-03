@@ -432,24 +432,38 @@ class ImportBatchService:
             fail("PREVIEW_CHANGED")
         if request.query:
             raise ListQueryError("preview rows do not support Query", code="LIST_QUERY_NOT_SUPPORTED")
-        def predicate(expression, key, candidate):
+        # Validate the whole expression once, including on an empty preview or
+        # an empty earlier AND branch. Never let data-dependent short circuiting
+        # accept an unsupported field, malformed range or unhashable value.
+        def compile_filter(expression):
             if expression is None:
-                return True
+                return []
             if isinstance(expression, FilterFieldExpression):
+                value = expression.val
+                if expression.key == "source_row_number" and expression.op == "between":
+                    if not isinstance(value, dict) or set(value) != {"start", "end"} or \
+                       type(value["start"]) is not int or type(value["end"]) is not int or \
+                       not 0 < value["start"] < value["end"]:
+                        raise ListQueryError("invalid preview source-row interval", code="LIST_FILTER_INVALID")
+                    return [(expression.key, value["start"], value["end"])]
                 if expression.key not in {"file_id", "classification"} or expression.op != "=":
                     raise ListQueryError("unsupported preview filter", code="LIST_FILTER_INVALID")
-                value = expression.val
                 if expression.key == "file_id" and (type(value) is not int or value <= 0) or \
-                   expression.key == "classification" and value not in {"NEW", "EXISTING", "PROCESSED", "INVALID", "AMBIGUOUS"}:
+                   expression.key == "classification" and (not isinstance(value, str) or value not in {"NEW", "EXISTING", "PROCESSED", "INVALID", "AMBIGUOUS"}):
                     raise ListQueryError("invalid preview filter value", code="LIST_FILTER_INVALID")
-                return (key[0] if expression.key == "file_id" else candidate["classification"]) == value
+                return [(expression.key, value, None)]
             if expression.op != "AND":
                 raise ListQueryError("preview filter is AND-only", code="LIST_FILTER_INVALID")
-            return all(predicate(child, key, candidate) for child in expression.expression)
+            return [term for child in expression.expression for term in compile_filter(child)]
+        terms = compile_filter(request.filter)
+        def predicate(key, candidate):
+            return all(start <= key[1] < end if field == "source_row_number" else
+                       (key[0] if field == "file_id" else candidate["classification"]) == start
+                       for field, start, end in terms)
         sorts = [(sort.key, sort.direction) for sort in request.sorter] or [("file_id", "asc"), ("source_row_number", "asc")]
         if len(set(key for key, _direction in sorts)) != len(sorts) or any(key not in {"file_id", "source_row_number"} for key, _direction in sorts):
             raise ListQueryError("invalid preview sort", code="LIST_SORTER_INVALID")
-        items = [(key, candidate) for key, candidate in sorted(state.candidates.items()) if predicate(request.filter, key, candidate)]
+        items = [(key, candidate) for key, candidate in sorted(state.candidates.items()) if predicate(key, candidate)]
         for field, direction in reversed(sorts):
             items.sort(key=lambda item: item[0][0 if field == "file_id" else 1], reverse=direction == "desc")
         start = (request.page_index - 1) * request.page_size

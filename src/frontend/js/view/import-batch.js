@@ -4,6 +4,7 @@ import { mountPicker, workbenchDialog, metadataLabel } from "../component/workbe
 import { mountImportPlan, validateImportPlan } from '../component/import-plan.js';
 import { completeImportScope } from '../util/import-scope.js';
 import { openImportChoice, importIntentNames } from '../component/import-choice.js';
+import { openImportBulk, importRangeFilter } from '../component/import-bulk.js';
 
 const pendingKey = "paam.import.pending.v1";
 const contexts = new Map();
@@ -30,16 +31,37 @@ export async function mountImportBatch(host, initial, changed) {
     while (contexts.size > 128) contexts.delete(contexts.keys().next().value);
   }
   context.plan = initial;
+  context.pageSize ||= 20;
   let page, scopeController;
-  host.innerHTML = `<div class="preview-section"><h2 id="preview-title">显式分批导入</h2><p>每批仅处理明确选择的 1–1000 行；当前页最多 20 行，不代表整份账单。首次新事实建立默认解释，补来源证据不改变原审查。</p><div data-batch-files></div><p data-batch-summary></p><div class="actions"><label>文件<select data-batch-file><option value="">全部文件</option>${initial.files.map(file => `<option value="${file.file_id}">${esc(file.filename)} · #${file.file_id}</option>`).join("")}</select></label><label>分类<select data-batch-classification><option value="">全部分类</option>${Object.entries(classifications).map(([key, label]) => `<option value="${key}">${label}</option>`).join("")}</select></label><button type="button" data-batch-refresh>读取当前预览</button></div><p role="status" data-batch-status></p><div data-batch-rows></div><div class="actions"><button type="button" data-batch-prev>上一页</button><span data-batch-page></span><button type="button" data-batch-next>下一页</button></div><p data-batch-selection></p><div class="actions"><button type="button" data-batch-select-page>选择本页未接受行</button><button type="button" data-batch-clear>清空本批选择</button><button type="button" data-batch-save>保存选择并重新核验</button><button type="button" class="primary" data-batch-confirm>确认并写入本批</button><button type="button" data-batch-verify>核对所选行当前持久状态</button><button type="button" data-batch-cancel>取消驻留预览</button></div><div data-batch-verification></div></div>`;
+  host.innerHTML = `<div class="preview-section"><h2 id="preview-title">显式分批导入</h2>
+    <p>1000行限制单次入账事务，不限制整次选择；列表可选20／50／100行，不代表整份账单。补证据不改变原审查。</p>
+    <div data-batch-files></div><p data-batch-summary></p>
+    <div class="import-batch-toolbar" data-batch-toolbar><p data-batch-selection></p><small data-batch-selected-scope></small>
+      <div class="actions"><button type="button" data-batch-select-page>选择本页未接受行</button><button type="button" data-batch-bulk>批量修改意图／决定</button>
+      <button type="button" data-batch-save>保存选择并重新核验</button><button type="button" data-batch-plan>查看完整处理计划（不写入）</button><button type="button" class="primary" data-batch-confirm>确认并写入本批</button></div>
+    </div>
+    <div class="actions import-batch-filter"><label>文件<select data-batch-file><option value="">全部文件</option>${initial.files.map(file => `<option value="${file.file_id}">${esc(file.filename)} · #${file.file_id}</option>`).join("")}</select></label>
+      <label>分类<select data-batch-classification><option value="">全部分类</option>${Object.entries(classifications).map(([key, label]) => `<option value="${key}">${label}</option>`).join("")}</select></label>
+      <label>每页<select data-batch-page-size>${[20,50,100].map(size => `<option value="${size}" ${context.pageSize === size ? 'selected' : ''}>${size}行</option>`).join('')}</select></label><button type="button" data-batch-refresh>读取当前预览</button>
+    </div><details class="import-batch-scope" open><summary>跨页范围选择／清空／核对</summary><p>范围完整读取成功后才加入；不会自动接受新现金风险，失败／取消不加入部分范围。区间按文件原始行号，含起始、不含结束，分类筛选仍适用；只改变选择，不改变列表显示范围。</p>
+      <div class="actions"><label>起始行（含）<input type="number" min="1" step="1" data-batch-range-start></label><label>结束行（不含）<input type="number" min="2" step="1" data-batch-range-end></label><button type="button" data-batch-select-range>选择指定文件行号区间</button></div>
+      <div class="actions"><button type="button" data-batch-select-scope>选择当前筛选全部未接受行</button><button type="button" data-batch-stop-scope disabled>停止范围读取</button><button type="button" data-batch-clear>清空本批选择</button><button type="button" data-batch-verify>核对所选行当前持久状态</button><button type="button" data-batch-cancel>取消驻留预览</button></div>
+    </details><p role="status" data-batch-status></p><div data-batch-rows></div>
+    <div class="actions"><button type="button" data-batch-prev>上一页</button><span data-batch-page></span><button type="button" data-batch-next>下一页</button></div>
+    <div data-batch-operation></div><div data-batch-verification></div></div>`;
   const find = selector => host.querySelector(selector);
   const status = message => { if (host.isConnected) find("[data-batch-status]").textContent = message; };
   const live = () => host.isConnected && !signal.aborted;
   // Full operation planning is read-only. Until informed serial execution is
   // connected, the old financial action stays explicitly single-batch <=1000.
-  const actions = find('[data-batch-save]').parentElement;
-  actions?.insertAdjacentHTML('afterbegin', '<button type="button" data-batch-select-scope>选择当前筛选全部未接受行</button><button type="button" data-batch-stop-scope disabled>停止范围读取</button><button type="button" data-batch-plan>查看完整处理计划（不写入）</button>');
-  find('[data-batch-verification]').insertAdjacentHTML?.('beforebegin', '<div data-batch-operation></div>');
+  const filtersFor = (range = false) => {
+    const filters = [];
+    const file = find('[data-batch-file]').value, classification = find('[data-batch-classification]').value;
+    if (file) filters.push({key:'file_id',op:'=',val:resourceId(file)});
+    if (classification) filters.push({key:'classification',op:'=',val:classification});
+    if (range) filters.push(importRangeFilter(file,find('[data-batch-range-start]').value,find('[data-batch-range-end]').value));
+    return filters.length ? filters.length === 1 ? filters[0] : {op:'AND',expression:filters} : null;
+  };
   const invalidatePlan = () => {
     context.disclosure = null;
     const panel = find('[data-batch-operation]');
@@ -60,6 +82,9 @@ export async function mountImportBatch(host, initial, changed) {
       + ((plan.issues || []).some(issue => issue.source_row_number > 0) ? `<details data-batch-issues><summary>查看本次行问题提示</summary>${plan.issues.filter(issue => issue.source_row_number > 0).map(issue => `<p>文件 #${issue.file_id} · 第 ${issue.source_row_number} 行：${esc(issue.code)}</p>`).join("")}${plan.has_more_issues ? "<p>此处仅为有界提示；其余问题请按文件及分类分页核对，不能把本提示当作完整行列表。</p>" : ""}</details>` : "");
     find("[data-batch-summary]").textContent = `新事实 ${plan.counts.new} · 仅补证据 ${plan.counts.existing} · 已接受 ${plan.counts.processed} · 文件解析失败 ${failedFiles} · 行问题 ${Math.max(0, plan.issue_count - failedFiles)} · 总问题 ${plan.issue_count}${plan.has_more_issues ? "（行问题请按分类分页核对；文件失败已全部显示）" : ""}${plan.timed_out ? "；预览超时提示，确认仍会重新核验" : ""}`;
     find("[data-batch-selection]").textContent = `本次明确选择 ${context.selected.size} 行${context.dirty ? "；选择已修改，须先保存核验" : "；使用服务器最新摘要"}${context.selected.size > 1000 ? '；请查看完整拆批计划。串行执行尚未接通，不会把这些行塞入一个事务。' : ''}`;
+    const selectedRows = [...context.selected.values()], fileIds = new Set(selectedRows.map(item => item.row.file_id));
+    const files = plan.files.filter(file => fileIds.has(file.file_id)).map(file => file.filename);
+    find('[data-batch-selected-scope]').textContent = `文件范围：${files.join('、') || '未选'}；已选待处理 ${selectedRows.filter(item => item.row.classification !== 'PROCESSED').length}，行问题 ${selectedRows.filter(item => item.row.issue_codes?.length).length}。来源按完整可靠身份逐行核验，不按尾号合并。`;
     host.querySelectorAll("button,input,select").forEach(node => {
       if (!node.closest?.('[data-batch-operation]')) node.disabled = context.busy || context.unknown;
     });
@@ -70,6 +95,7 @@ export async function mountImportBatch(host, initial, changed) {
     find("[data-batch-confirm]").disabled = context.busy || context.unknown || context.dirty || !context.selected.size || context.selected.size > 1000 || plan.status === "CONFIRMING" || (context.disclosure && !singleBatch()) || (advancedChoices() && !singleBatch());
     if (find('[data-batch-plan]')) find('[data-batch-plan]').disabled = context.busy || context.unknown || context.dirty || !context.selected.size || plan.status === 'CONFIRMING';
     if (find('[data-batch-stop-scope]')) find('[data-batch-stop-scope]').disabled = !context.scopeReading;
+    find('[data-batch-bulk]').disabled ||= !context.selected.size || plan.status === 'CONFIRMING';
     find("[data-batch-prev]").disabled ||= context.page <= 1;
     find("[data-batch-next]").disabled ||= !page || context.page * page.page_size >= page.total;
     host.querySelectorAll("[data-batch-processed]").forEach(node => { node.disabled = true; });
@@ -80,17 +106,15 @@ export async function mountImportBatch(host, initial, changed) {
     const issued = ++context.generation;
     context.busy = true;
     update();
-    const params = new URLSearchParams({ page_index: requestedPage, page_size: "20", preview_digest: context.plan.preview_digest });
+    const params = new URLSearchParams({ page_index: requestedPage, page_size: context.pageSize, preview_digest: context.plan.preview_digest });
     try {
-      const filters = [];
-      if (find("[data-batch-file]").value) filters.push({ key: "file_id", op: "=", val: resourceId(find("[data-batch-file]").value) });
-      if (find("[data-batch-classification]").value) filters.push({ key: "classification", op: "=", val: find("[data-batch-classification]").value });
-      if (filters.length) params.set("filter", JSON.stringify(filters.length === 1 ? filters[0] : { op: "AND", expression: filters }));
+      const filter = filtersFor();
+      if (filter) params.set('filter', JSON.stringify(filter));
       const next = await request(`/paam/import/v1/preview/${context.plan.token}/row/list?${params}`, { signal });
       if (!live() || issued !== context.generation) return;
       page = next;
       context.page = requestedPage;
-      find("[data-batch-page]").textContent = `第 ${requestedPage} 页 · 当前筛选共 ${next.total} 行`;
+      find("[data-batch-page]").textContent = `第 ${requestedPage} 页 · 每页 ${next.page_size} 行 · 当前筛选共 ${next.total} 行`;
       find("[data-batch-rows]").innerHTML = next.items.map(row => {
         const selected = context.selected.get(identity(row));
         const choice = selected?.choice || row.choice || { decision: "ACCEPT", recheck: false, account_ref_id: null };
@@ -237,15 +261,12 @@ export async function mountImportBatch(host, initial, changed) {
     } catch (error) { status(`无法核实：${error.message}。保持结果未知，不自动重发。`); }
     finally { context.busy = false; update(); }
   };
-  const scopeButton = find('[data-batch-select-scope]');
-  if (scopeButton) scopeButton.onclick = async () => {
+  const selectScope = async (range = false) => {
     if (context.busy || context.unknown || context.plan.status === 'CONFIRMING') return;
     const digest = context.plan.preview_digest, issued = ++context.generation;
     const params = new URLSearchParams({preview_digest:digest});
-    const filters = [];
-    if (find('[data-batch-file]').value) filters.push({key:'file_id',op:'=',val:resourceId(find('[data-batch-file]').value)});
-    if (find('[data-batch-classification]').value) filters.push({key:'classification',op:'=',val:find('[data-batch-classification]').value});
-    if (filters.length) params.set('filter',JSON.stringify(filters.length === 1 ? filters[0] : {op:'AND',expression:filters}));
+    try {const filter = filtersFor(range);if (filter) params.set('filter',JSON.stringify(filter));}
+    catch (error) {status(error.message);return;}
     scopeController = new AbortController();
     const abortScope = () => scopeController?.abort();
     signal.addEventListener('abort', abortScope, {once:true});
@@ -261,7 +282,7 @@ export async function mountImportBatch(host, initial, changed) {
       if (selected.size > 20000) throw new Error('合并选择超过20000行；未部分加入，请缩小范围。');
       if (!live() || issued !== context.generation || context.plan.preview_digest !== digest) return;
       context.selected = selected; context.dirty = !!selected.size; invalidatePlan();
-      status(`当前筛选完整读取 ${rows.length} 行；已接受行不加入，新选择总计 ${selected.size} 行。未自动确认风险或写入账务。`);
+      status(`${range ? '指定文件区间' : '当前筛选'}完整读取 ${rows.length} 行；已接受行不加入，新选择总计 ${selected.size} 行。未自动确认风险或写入账务。`);
     } catch (error) { if (live()) status(error.name === 'AbortError' ? '范围读取已停止；原选择保留，没有部分加入。'
       : `${error.code || '完整范围读取失败'}：${error.message}；原选择保留。`); }
     finally {
@@ -269,6 +290,22 @@ export async function mountImportBatch(host, initial, changed) {
       scopeController = null; context.scopeReading = false; context.busy = false; update();
     }
     if (live()) await readPage(context.page);
+  };
+  find('[data-batch-select-scope]').onclick = () => selectScope();
+  find('[data-batch-select-range]').onclick = () => selectScope(true);
+  find('[data-batch-bulk]').onclick = () => {
+    if (!live() || context.busy || context.unknown || !context.selected.size || context.plan.status === 'CONFIRMING') return;
+    const frozen = {digest:context.plan.preview_digest,time:context.plan.updated_time,generation:context.generation,selected:context.selected};
+    openImportBulk({selected:context.selected,files:context.plan.files,signal,
+      valid:() => live() && !context.busy && !context.unknown && context.plan.preview_digest === frozen.digest
+        && context.plan.updated_time === frozen.time && context.generation === frozen.generation && context.selected === frozen.selected && context.plan.status !== 'CONFIRMING',
+      apply:result => {
+        context.selected = new Map(context.selected);
+        for (const [key,item] of result.updates) context.selected.set(key,item);
+        context.dirty = true;invalidatePlan();update();
+        status(`已修改 ${result.updates.size} 行草稿；${result.exceptions.length} 行例外保留原决定和选择。尚未保存或入账。`);
+        void readPage(context.page);
+      }});
   };
   if (find('[data-batch-stop-scope]')) find('[data-batch-stop-scope]').onclick = () => scopeController?.abort();
   const planButton = find('[data-batch-plan]');
@@ -360,6 +397,11 @@ export async function mountImportBatch(host, initial, changed) {
   find("[data-batch-next]").onclick = () => readPage(context.page + 1);
   find("[data-batch-refresh]").onclick = refresh;
   find("[data-batch-verify]").onclick = verify;
+  find('[data-batch-page-size]').onchange = () => {
+    const size = Number(find('[data-batch-page-size]').value);
+    if (context.busy || ![20,50,100].includes(size)) return;
+    context.pageSize = size;void readPage(1);
+  };
   host.querySelectorAll("[data-batch-file],[data-batch-classification]").forEach(input => { input.onchange = () => readPage(1); });
   await readPage(context.page);
 }

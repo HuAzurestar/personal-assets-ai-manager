@@ -48,6 +48,28 @@ def accept(client, current, rows):
     return response.json()["body"]
 
 
+@pytest.mark.parametrize('size', [20, 50, 100])
+def test_preview_source_range_is_half_open_paged_and_readonly(client, size):
+    current = preview(client)
+    all_rows = page(client, current, page_size=100)['items']
+    file_id = all_rows[0]['file_id']
+    start, end = all_rows[2]['source_row_number'], all_rows[13]['source_row_number']
+    expression = dict(op='AND', expression=[dict(key='file_id', op='=', val=file_id),
+        dict(key='source_row_number', op='between', val=dict(start=start, end=end))])
+    result = page(client, current, page_size=size, filter=json.dumps(expression))
+    assert result['total'] == 11 and result['page_size'] == size
+    assert [row['source_row_number'] for row in result['items']] == list(range(start, end))
+    after = client.get(BASE + f"/preview/{current['token']}").json()['body']
+    assert after['preview_digest'] == current['preview_digest'] and after['updated_time'] == current['updated_time']
+    file = client.get(BASE + f'/import_file/{file_id}').json()['body']
+    assert file['progress']['accepted'] == file['progress']['skipped'] == file['progress']['invalid'] == 0
+    response = client.get(BASE + f"/preview/{current['token']}/row/list", params=dict(
+        preview_digest=current['preview_digest'], filter=json.dumps(dict(op='AND', expression=[
+            dict(key='file_id', op='=', val=file_id+999),
+            dict(key='source_row_number', op='between', val=dict(start=True, end=end))]))))
+    assert response.status_code == 422 and response.json()['body']['code'] == 'LIST_FILTER_INVALID'
+
+
 def test_v1_cutover_selected_batch_typed_read_and_no_old_receipt(client):
     current = preview(client)
     rows = page(client, current)["items"]

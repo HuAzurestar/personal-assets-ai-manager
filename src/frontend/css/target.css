@@ -1475,6 +1475,17 @@
 .import-choice [data-new-risk-ack] { flex:none; width:auto; }
 .import-choice select { max-width:100%; }
 .import-choice-dialog .dialog-head button { flex:none; white-space:nowrap; }
+.import-batch-toolbar { position:sticky; top:0; z-index:31; background:var(--surface); border-block:1px solid var(--line); padding:8px 0; }
+.import-batch-toolbar p { margin:0 0 4px; font-size:12px; overflow-wrap:anywhere; }
+.import-batch-toolbar small { display:block; margin-bottom:6px; font-size:11px; overflow-wrap:anywhere; }
+.import-batch-toolbar .actions { gap:6px; }
+.import-batch-toolbar button { min-height:34px; padding:5px 8px; font-size:12px; }
+.import-batch-filter { margin-block:12px; }
+.import-batch-filter label { min-width:0; }
+.import-batch-scope { margin-block:8px; }
+.import-batch-scope p { font-size:12px; overflow-wrap:anywhere; }
+.import-batch-scope input { max-width:150px; }
+.import-bulk-record { border-bottom:1px solid var(--line); padding:6px 0; font-size:12px; overflow-wrap:anywhere; }
 .import-plan-record { align-items:start; font-size:12px; line-height:1.45; }
 .import-plan-record > div { min-width:0; overflow-wrap:anywhere; }
 .import-plan-record p { margin:3px 0; }
@@ -1483,6 +1494,9 @@
   .import-batch-row { grid-template-columns:24px minmax(0,1fr) 170px; grid-template-areas:"select main amount" ". source decision" "intent intent intent" "issue issue issue"; row-gap:6px; }
 }
 @media(max-width:560px) {
+  .import-batch-toolbar .actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .import-batch-toolbar button { min-width:0; min-height:44px; white-space:normal; }
+  .import-batch-filter label { flex:1 1 120px; }
   .import-plan-record { grid-template-columns:minmax(0,1fr); }
   .import-plan-record > button { justify-self:start; min-height:44px; }
   .picker-list-row { gap:8px; padding:6px; }
