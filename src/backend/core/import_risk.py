@@ -1,5 +1,6 @@
 """Exact-scope hints and explicit new-cash consent, not duplicate decisions."""
 from backend.core.import_identity import SOURCE_CODES, source_account_code
+from backend.core.import_evidence import complete_source_code
 from backend.error import TargetIntakeError
 
 
@@ -11,7 +12,8 @@ def hint_scope(row, values):
     return dict(occurred_time=values["occurred_time"] if values else None,
         currency_code=values["currency_code"] if values else None,
         cash_direction=("IN" if values["cash_direction"] == 1 else "OUT") if values else None,
-        source_known=bool(SOURCE_CODES.get(row.get("source_type"), 0) and source_account_code(row)))
+        source_known=bool(SOURCE_CODES.get(row.get("source_type"), 0) and
+            complete_source_code(SOURCE_CODES[row["source_type"]],source_account_code(row))))
 
 
 def require_new_risk_confirmation(choice, hint):

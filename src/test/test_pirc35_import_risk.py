@@ -84,6 +84,43 @@ def test_unchecked_scope_never_fabricates_zero_candidate_count(service, invalid)
     assert hint["state"] == "UNCHECKED" and hint["candidate_count"] is None
 
 
+@pytest.mark.parametrize("bound",[False,True])
+def test_masked_bank_scope_requires_explicit_new_cash_even_after_manual_binding(service,bound):
+    from backend.entity import LedgerAccountRef
+    from backend.schema.import_command import ImportReviseInput, ImportConfirmInput, PreviewRowListRequest
+    from test_pirc35_import_confirm_preview import install, batch, input_for
+    ref = 0
+    if bound:
+        metadata = LedgerAccountRef(name="Mock人工归属资料",reference="Mock unknown source",identity_strength=0)
+        service.db.add(metadata);service.db.commit();ref=metadata.id
+    rows = prepare(service.mapper,[row(reference="",account=dict(number="**************3456"),
+        source_account=dict(identity_strength="WEAK"))])
+    current = install(service,rows,{})
+    key = next(iter(rows))
+    def save(current,**intent):
+        return service.revise(current["token"],ImportReviseInput(expected_updated_time=current["updated_time"],choices=[dict(
+            file_id=key[0],source_row_number=key[1],decision="ACCEPT",account_ref_id=ref or None,**intent)]))
+    current = save(current)
+    before = manifest(service)
+    hint = service.row_page(current["token"],current["preview_digest"],PreviewRowListRequest())["items"][0]["duplicate_hint"]
+    assert hint["scope"]["source_known"] is False
+    assert hint["state"] == "UNCHECKED" and hint["candidate_count"] is None
+    disclosure = batch(service,current,[key])
+    assert not disclosure["can_confirm"] and disclosure["issues"][0]["code"] == "IMPORT_REVIEW_REQUIRED"
+    with pytest.raises(TargetIntakeError) as error:
+        service.confirm(current["token"],ImportConfirmInput(**input_for(current,[key])))
+    assert error.value.code == "IMPORT_REVIEW_REQUIRED" and manifest(service) == before
+    current = save(current,resolution="NEW",acknowledge_new_risk=True)
+    disclosure = batch(service,current,[key])
+    assert disclosure["can_confirm"]
+    result = service.confirm(current["token"],ImportConfirmInput(**input_for(current,[key],batch_preview_digest=disclosure["batch_preview_digest"])))
+    assert result["new_fact_count"] == 1 and result["duplicate_fact_count"] == 0
+    now = manifest(service)
+    assert len(now["transaction_fact"]) == len(now["review_case"]) == len(now["ledger_entry"]) == 1
+    assert now["ledger_entry"][0]["account_ref_id"] == ref
+    assert now["ledger_account_ref"] == before["ledger_account_ref"] # no fabricated reliable source
+
+
 @pytest.mark.parametrize("state", ["SUSPECTED", "UNCHECKED"])
 @pytest.mark.parametrize("choice", [dict(decision="ACCEPT"), dict(decision="ACCEPT", resolution="NEW"),
     dict(decision="ACCEPT", resolution="AUTO", acknowledge_new_risk=True),
