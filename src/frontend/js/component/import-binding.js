@@ -46,16 +46,16 @@ export function projectImportBinding(selected,result,ref,label,digest,time) {
 
 // Bound the complete readonly request, including a transport that ignores abort.
 // A partial/late/failed check cannot make any row applicable or change choices.
-export async function readImportBinding(read,{signal,valid=()=>true,timers=globalThis}={}) {
+export async function readImportBinding(read,{signal,valid=()=>true,timers=globalThis,label='完整来源核验'}={}) {
   const controller = new AbortController();
   let reject;
   const interrupted = new Promise((_resolve,no) => {reject=no;});
-  const cancelled = () => Object.assign(new Error('来源核验已取消或预览变化'),{name:'AbortError'});
+  const cancelled = () => Object.assign(new Error(`${label}已取消或预览变化`),{name:'AbortError'});
   const stop = error => {controller.abort();reject(error);};
   const abort = () => stop(cancelled());
   if (signal?.aborted || !valid()) throw cancelled();
   signal?.addEventListener('abort',abort,{once:true});
-  const timeout = timers.setTimeout(() => stop(new Error('完整来源核验超过30秒；原选择不变')),30000);
+  const timeout = timers.setTimeout(() => stop(new Error(`${label}超过30秒；原选择不变`)),30000);
   try {
     const result = await Promise.race([Promise.resolve().then(() => read(controller.signal)),interrupted]);
     if (signal?.aborted || !valid()) throw cancelled();

@@ -1475,6 +1475,17 @@
 .import-choice [data-new-risk-ack] { flex:none; width:auto; }
 .import-choice select { max-width:100%; }
 .import-choice-dialog .dialog-head button { flex:none; white-space:nowrap; }
+.import-pairing-row { display:grid; grid-template-columns:24px minmax(0,1fr) minmax(0,1fr) minmax(100px,.45fr); gap:8px; padding:8px; border-bottom:1px solid var(--line); font-size:12px; }
+.import-pairing-row > div { display:grid; align-content:start; gap:4px; min-width:0; }
+.import-pairing-row span { overflow-wrap:anywhere; white-space:pre-line; }
+.import-pairing-row small { opacity:.8; }
+.import-pairing-row button { padding:4px 8px; min-height:34px; }
+.import-pairing-select input,.import-pairing-dialog input[type=checkbox] { flex:none; width:auto; }
+@media (max-width:700px) {
+  .import-pairing-row { grid-template-columns:24px minmax(0,1fr); }
+  .import-pairing-row > div { grid-column:2; }
+  .import-pairing-row button { min-height:44px; }
+}
 .import-batch-toolbar { position:sticky; top:0; z-index:31; background:var(--surface); border-block:1px solid var(--line); padding:8px 0; }
 .import-batch-toolbar p { margin:0 0 4px; font-size:12px; overflow-wrap:anywhere; }
 .import-batch-toolbar small { display:block; margin-bottom:6px; font-size:11px; overflow-wrap:anywhere; }

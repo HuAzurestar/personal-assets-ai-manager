@@ -6,6 +6,7 @@ import { completeImportScope } from '../util/import-scope.js';
 import { openImportChoice, importIntentNames } from '../component/import-choice.js';
 import { openImportBulk, importRangeFilter } from '../component/import-bulk.js';
 import { openImportBinding } from '../component/import-binding.js';
+import { openImportPairing } from '../component/import-pairing.js';
 
 const pendingKey = "paam.import.pending.v1";
 const contexts = new Map();
@@ -38,7 +39,7 @@ export async function mountImportBatch(host, initial, changed) {
     <p>1000行限制单次入账事务，不限制整次选择；列表可选20／50／100行，不代表整份账单。补证据不改变原审查。</p>
     <div data-batch-files></div><p data-batch-summary></p>
     <div class="import-batch-toolbar" data-batch-toolbar><p data-batch-selection></p><small data-batch-selected-scope></small>
-      <div class="actions"><button type="button" data-batch-select-page>选择本页未接受行</button><button type="button" data-batch-bulk>批量修改意图／决定</button><button type="button" data-batch-bind>批量绑定来源</button>
+      <div class="actions"><button type="button" data-batch-select-page>选择本页未接受行</button><button type="button" data-batch-bulk>批量修改意图／决定</button><button type="button" data-batch-bind>批量绑定来源</button><button type="button" data-batch-pair>具名批配对</button>
       <button type="button" data-batch-save>保存选择并重新核验</button><button type="button" data-batch-plan>查看完整处理计划（不写入）</button><button type="button" class="primary" data-batch-confirm>确认并写入本批</button></div>
     </div>
     <div class="actions import-batch-filter"><label>文件<select data-batch-file><option value="">全部文件</option>${initial.files.map(file => `<option value="${file.file_id}">${esc(file.filename)} · #${file.file_id}</option>`).join("")}</select></label>
@@ -98,6 +99,7 @@ export async function mountImportBatch(host, initial, changed) {
     if (find('[data-batch-stop-scope]')) find('[data-batch-stop-scope]').disabled = !context.scopeReading;
     find('[data-batch-bulk]').disabled ||= !context.selected.size || plan.status === 'CONFIRMING';
     find('[data-batch-bind]').disabled ||= !context.selected.size || plan.status === 'CONFIRMING';
+    find('[data-batch-pair]').disabled ||= !context.selected.size || plan.status === 'CONFIRMING';
     find("[data-batch-prev]").disabled ||= context.page <= 1;
     find("[data-batch-next]").disabled ||= !page || context.page * page.page_size >= page.total;
     host.querySelectorAll("[data-batch-processed]").forEach(node => { node.disabled = true; });
@@ -320,6 +322,19 @@ export async function mountImportBatch(host, initial, changed) {
         context.selected = selected;
         context.dirty = true;invalidatePlan();update();
         status(`已应用 ${modified} 行来源草稿；${exceptions} 行例外保留原选择和决定。尚未保存或入账。`);
+        void readPage(context.page);
+      }});
+  };
+  find('[data-batch-pair]').onclick = () => {
+    if (!live() || context.busy || context.unknown || !context.selected.size || context.plan.status === 'CONFIRMING') return;
+    const frozen = {digest:context.plan.preview_digest,time:context.plan.updated_time,generation:context.generation,selected:context.selected};
+    openImportPairing({selected:context.selected,current:()=>context.selected,files:context.plan.files,token:context.plan.token,
+      digest:frozen.digest,time:frozen.time,signal,
+      valid:()=>live() && !context.busy && !context.unknown && context.plan.preview_digest === frozen.digest
+        && context.plan.updated_time === frozen.time && context.generation === frozen.generation && context.selected === frozen.selected && context.plan.status !== 'CONFIRMING',
+      apply:(selected,{modified,unchanged})=>{
+        context.selected=selected;context.dirty=true;invalidatePlan();update();
+        status(`已应用 ${modified} 行具名配对／人工草稿；其余 ${unchanged} 行保留原选择和决定。尚未保存或入账。`);
         void readPage(context.page);
       }});
   };

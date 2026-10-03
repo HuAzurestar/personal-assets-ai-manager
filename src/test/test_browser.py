@@ -22,6 +22,7 @@ import pytest
     "verify_pirc35_import_plan.py",
     "verify_pirc35_import_choice.py",
     "verify_pirc35_import_bulk.py",
+    "verify_pirc35_import_pairing.py",
     "verify_pirc35_flow.py",
     "verify_pirc35_review.py",
     "verify_pirc35_draft.py",
