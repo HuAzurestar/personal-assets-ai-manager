@@ -7,6 +7,7 @@ import tempfile
 import threading
 import time
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import uvicorn
@@ -44,7 +45,28 @@ def run():
                 with sync_playwright() as playwright:
                     browser = playwright.chromium.launch(channel="msedge" if os.name == "nt" else None, headless=True)
                     page = browser.new_page(viewport={"width": 1280, "height": 900})
-                    errors, puts, writes = [], [], []
+                    errors, puts, writes, reads = [], [], [], []
+                    issued_reads = {}
+                    def track_read(request):
+                        if request.method != 'GET' or '/row/list?' not in request.url:
+                            return
+                        query = parse_qs(urlsplit(request.url).query)
+                        entry = dict(page=query.get('page_index'), size=query.get('page_size'), started=time.monotonic())
+                        reads.append(entry)
+                        issued_reads[request] = entry
+                    def finish_read(request):
+                        entry = issued_reads.get(request)
+                        if entry is not None:
+                            entry['elapsed'] = round(time.monotonic() - entry['started'], 3)
+                            entry['failure'] = request.failure
+                    def response_read(response):
+                        entry = issued_reads.get(response.request)
+                        if entry is not None:
+                            entry['status'] = response.status
+                    page.on('request', track_read)
+                    page.on('response', response_read)
+                    page.on('requestfinished', finish_read)
+                    page.on('requestfailed', finish_read)
                     page.on("pageerror", lambda error: errors.append(str(error)))
                     page.on("request", lambda request: puts.append(request.post_data_json)
                         if request.method == "PUT" and "/paam/import/v1/preview/" in request.url else None)
@@ -77,8 +99,51 @@ def run():
                     expect(page.locator('[data-batch-select-scope]')).to_be_enabled(timeout=15000)
                     assert puts == writes == [] and snapshot() == before
                     page.unroute(pattern,fail_second)
+
+                    # Hold page two without a response: a real 30-second whole
+                    # scope timer must release the view and preserve selection.
+                    held = []
+                    def stall_second(route):
+                        if 'page_index=2' in route.request.url and 'page_size=100' in route.request.url:
+                            held.append(route)
+                        else:
+                            route.continue_()
+                    page.route(pattern,stall_second)
                     page.locator('[data-batch-select-scope]').click()
-                    expect(page.locator('[data-batch-select-scope]')).to_be_enabled(timeout=30000)
+                    page.wait_for_event('request', predicate=lambda request: 'page_index=2' in request.url and 'page_size=100' in request.url,timeout=15000)
+                    expect(page.locator('[data-batch-stop-scope]')).to_be_enabled()
+                    page.locator('[data-batch-stop-scope]').click()
+                    expect(page.locator('[data-batch-status]')).to_contain_text('范围读取已停止')
+                    expect(page.locator('[data-batch-selection]')).to_contain_text('0 行')
+                    expect(page.locator('[data-batch-select-scope]')).to_be_enabled(timeout=15000)
+                    expect(page.locator('[data-batch-stop-scope]')).to_be_disabled()
+                    for route in held:
+                        route.abort('timedout')
+                    held.clear()
+                    assert puts == writes == [] and snapshot() == before
+                    deadline_started = time.monotonic()
+                    page.locator('[data-batch-select-scope]').click()
+                    expect(page.locator('[data-batch-status]')).to_contain_text('超过30秒',timeout=35000)
+                    assert held and time.monotonic() - deadline_started < 36
+                    expect(page.locator('[data-batch-selection]')).to_contain_text('0 行')
+                    expect(page.locator('[data-batch-select-scope]')).to_be_enabled(timeout=15000)
+                    assert puts == writes == [] and snapshot() == before
+                    print('SCOPE_DEADLINE', round(time.monotonic() - deadline_started, 3), 'NO_PARTIAL_SELECTION')
+                    # Finish held handlers before removing their registration;
+                    # unroute first would handle the request a second time.
+                    for route in held:
+                        route.abort('timedout')
+                    page.unroute(pattern,stall_second)
+
+                    page.locator('[data-batch-select-scope]').click()
+                    try:
+                        expect(page.locator('[data-batch-select-scope]')).to_be_enabled(timeout=30000)
+                    finally:
+                        # Safe locating/timing evidence only, never bill payloads.
+                        print('SCOPE_DIAGNOSTIC', json.dumps(dict(
+                            status=page.locator('[data-batch-status]').inner_text(),
+                            selection=page.locator('[data-batch-selection]').inner_text(),
+                            errors=errors, reads=[{key:value for key,value in read.items() if key != 'started'} for read in reads]), ensure_ascii=False))
                     assert "2500 行" in page.locator('[data-batch-selection]').inner_text(), page.locator('[data-batch-status]').inner_text()
                     expect(page.locator('[data-batch-plan]')).to_be_disabled()
                     expect(page.locator('[data-batch-confirm]')).to_be_disabled()

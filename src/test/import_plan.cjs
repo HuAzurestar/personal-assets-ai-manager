@@ -61,6 +61,28 @@ async function run() {
   await assert.rejects(completeImportScope(async query => {now = 30001; return page(query);},
     {preview_digest:'frozen'},{now:() => now}),/30秒/);
 
+  // A read that never settles must still obey the whole-scope budget. A late
+  // response or an ignored AbortSignal must not return an accumulated prefix.
+  for (const stop of ['TIMEOUT','CANCEL']) {
+    let timeout, cleared = 0, issued = 0, late, readSignal;
+    const parent = new AbortController();
+    const timers = {setTimeout(callback, delay) {assert.equal(delay,30000); timeout = callback; return 7;},
+      clearTimeout(id) {assert.equal(id,7); cleared++;}};
+    const scope = completeImportScope(async (query, options) => {
+      issued++; readSignal = options?.signal;
+      if (issued === 1) return page(query);
+      return new Promise(resolve => {late = () => resolve(page(query));});
+    },{preview_digest:'frozen'},{signal:parent.signal,timers});
+    // Allow the first page to settle and the second to start.
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(issued,2); assert.equal(typeof timeout,'function');
+    if (stop === 'TIMEOUT') timeout(); else parent.abort();
+    await assert.rejects(scope, error => stop === 'TIMEOUT' ? /30秒/.test(error.message) : error.name === 'AbortError');
+    assert.equal(readSignal.aborted,true); assert.equal(cleared,1);
+    late(); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(issued,2); // No page-three request after a stopped read.
+  }
+
   // Exercise actual local pager handlers, not a source-string assertion.
   class Node {
     constructor() {this.isConnected = true; this.innerHTML = ''; this.nodes = new Map();}

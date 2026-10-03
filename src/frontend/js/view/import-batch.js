@@ -29,7 +29,7 @@ export async function mountImportBatch(host, initial, changed) {
     while (contexts.size > 128) contexts.delete(contexts.keys().next().value);
   }
   context.plan = initial;
-  let page;
+  let page, scopeController;
   host.innerHTML = `<div class="preview-section"><h2 id="preview-title">显式分批导入</h2><p>每批仅处理明确选择的 1–1000 行；当前页最多 20 行，不代表整份账单。首次新事实建立默认解释，补来源证据不改变原审查。</p><div data-batch-files></div><p data-batch-summary></p><div class="actions"><label>文件<select data-batch-file><option value="">全部文件</option>${initial.files.map(file => `<option value="${file.file_id}">${esc(file.filename)} · #${file.file_id}</option>`).join("")}</select></label><label>分类<select data-batch-classification><option value="">全部分类</option>${Object.entries(classifications).map(([key, label]) => `<option value="${key}">${label}</option>`).join("")}</select></label><button type="button" data-batch-refresh>读取当前预览</button></div><p role="status" data-batch-status></p><div data-batch-rows></div><div class="actions"><button type="button" data-batch-prev>上一页</button><span data-batch-page></span><button type="button" data-batch-next>下一页</button></div><p data-batch-selection></p><div class="actions"><button type="button" data-batch-select-page>选择本页未接受行</button><button type="button" data-batch-clear>清空本批选择</button><button type="button" data-batch-save>保存选择并重新核验</button><button type="button" class="primary" data-batch-confirm>确认并写入本批</button><button type="button" data-batch-verify>核对所选行当前持久状态</button><button type="button" data-batch-cancel>取消驻留预览</button></div><div data-batch-verification></div></div>`;
   const find = selector => host.querySelector(selector);
   const status = message => { if (host.isConnected) find("[data-batch-status]").textContent = message; };
@@ -37,7 +37,7 @@ export async function mountImportBatch(host, initial, changed) {
   // Full operation planning is read-only. Until informed serial execution is
   // connected, the old financial action stays explicitly single-batch <=1000.
   const actions = find('[data-batch-save]').parentElement;
-  actions?.insertAdjacentHTML('afterbegin', '<button type="button" data-batch-select-scope>选择当前筛选全部未接受行</button><button type="button" data-batch-plan>查看完整处理计划（不写入）</button>');
+  actions?.insertAdjacentHTML('afterbegin', '<button type="button" data-batch-select-scope>选择当前筛选全部未接受行</button><button type="button" data-batch-stop-scope disabled>停止范围读取</button><button type="button" data-batch-plan>查看完整处理计划（不写入）</button>');
   find('[data-batch-verification]').insertAdjacentHTML?.('beforebegin', '<div data-batch-operation></div>');
   const invalidatePlan = () => {
     context.disclosure = null;
@@ -64,6 +64,7 @@ export async function mountImportBatch(host, initial, changed) {
     if (find("[data-batch-observed]")) find("[data-batch-observed]").disabled = context.busy || !context.verificationReady || plan.status === "CONFIRMING";
     find("[data-batch-confirm]").disabled = context.busy || context.unknown || context.dirty || !context.selected.size || context.selected.size > 1000 || plan.status === "CONFIRMING" || (context.disclosure && !context.disclosure.can_confirm);
     if (find('[data-batch-plan]')) find('[data-batch-plan]').disabled = context.busy || context.unknown || context.dirty || !context.selected.size || plan.status === 'CONFIRMING';
+    if (find('[data-batch-stop-scope]')) find('[data-batch-stop-scope]').disabled = !context.scopeReading;
     find("[data-batch-prev]").disabled ||= context.page <= 1;
     find("[data-batch-next]").disabled ||= !page || context.page * page.page_size >= page.total;
     host.querySelectorAll("[data-batch-processed]").forEach(node => { node.disabled = true; });
@@ -224,10 +225,13 @@ export async function mountImportBatch(host, initial, changed) {
     if (find('[data-batch-file]').value) filters.push({key:'file_id',op:'=',val:resourceId(find('[data-batch-file]').value)});
     if (find('[data-batch-classification]').value) filters.push({key:'classification',op:'=',val:find('[data-batch-classification]').value});
     if (filters.length) params.set('filter',JSON.stringify(filters.length === 1 ? filters[0] : {op:'AND',expression:filters}));
-    context.busy = true; update();
+    scopeController = new AbortController();
+    const abortScope = () => scopeController?.abort();
+    signal.addEventListener('abort', abortScope, {once:true});
+    context.scopeReading = true; context.busy = true; update();
     try {
-      const rows = await completeImportScope(query => request(`/paam/import/v1/preview/${context.plan.token}/row/list?${query}`, {signal}), params,
-        {signal, valid:() => live() && issued === context.generation && context.plan.preview_digest === digest});
+      const rows = await completeImportScope((query, options) => request(`/paam/import/v1/preview/${context.plan.token}/row/list?${query}`, options), params,
+        {signal:scopeController.signal, valid:() => live() && issued === context.generation && context.plan.preview_digest === digest});
       const selected = new Map(context.selected);
       for (const row of rows) {
         if (row.classification !== 'PROCESSED' && !selected.has(identity(row))) selected.set(identity(row),
@@ -237,10 +241,15 @@ export async function mountImportBatch(host, initial, changed) {
       if (!live() || issued !== context.generation || context.plan.preview_digest !== digest) return;
       context.selected = selected; context.dirty = !!selected.size; invalidatePlan();
       status(`当前筛选完整读取 ${rows.length} 行；已接受行不加入，新选择总计 ${selected.size} 行。未自动确认风险或写入账务。`);
-    } catch (error) { if (live() && error.name !== 'AbortError') status(`${error.code || '完整范围读取失败'}：${error.message}；原选择保留。`); }
-    finally { context.busy = false; update(); }
+    } catch (error) { if (live()) status(error.name === 'AbortError' ? '范围读取已停止；原选择保留，没有部分加入。'
+      : `${error.code || '完整范围读取失败'}：${error.message}；原选择保留。`); }
+    finally {
+      signal.removeEventListener('abort', abortScope);
+      scopeController = null; context.scopeReading = false; context.busy = false; update();
+    }
     if (live()) await readPage(context.page);
   };
+  if (find('[data-batch-stop-scope]')) find('[data-batch-stop-scope]').onclick = () => scopeController?.abort();
   const planButton = find('[data-batch-plan]');
   if (planButton) planButton.onclick = async () => {
     if (context.busy || context.unknown || context.dirty || !context.selected.size || context.plan.status === 'CONFIRMING') return;
