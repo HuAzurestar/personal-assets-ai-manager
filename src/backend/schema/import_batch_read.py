@@ -105,6 +105,10 @@ class ProcessedRow(PO):
     transaction_id: int
     created_review_id: int
     created_ledger_id: int
+    resolution_effect: Literal["EVIDENCE_ONLY", "NEW_REAL", "DUPLICATE_ZERO", "NONE"]
+    effective_review_ids: list[int] = Field(max_length=4000)
+    effective_ledger_ids: list[int] = Field(max_length=4000)
+    duplicate_kept_transaction_id: int
 
 
 class ImportConfirmPO(PO):
@@ -112,6 +116,8 @@ class ImportConfirmPO(PO):
     processed_rows: list[ProcessedRow] = Field(max_length=1000)
     new_fact_count: int
     linked_existing_count: int
+    manual_linked_count: int
+    duplicate_fact_count: int
     skipped_count: int
     invalid_count: int
     remaining_count: int

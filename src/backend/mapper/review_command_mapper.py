@@ -59,7 +59,7 @@ class ReviewCommandMapper:
             TargetTag.status == "ACTIVE", TargetTagView.status == "ACTIVE"
         ).order_by(TargetTag.id)).mappings()]
 
-    def allocations_for_facts(self, ids, *, active=False, defaults=False):
+    def allocations_for_facts(self, ids, *, active=False, defaults=False, limit=None):
         result = []
         for batch in chunks(ids):
             statement = select(ReviewAllocation.__table__).join(
@@ -69,7 +69,12 @@ class ReviewCommandMapper:
                 statement = statement.where(ReviewCase.status == 0)
             if defaults:
                 statement = statement.where(ReviewCase.behavior_type == 0)
-            result.extend(dict(row) for row in self.db.execute(statement.order_by(ReviewAllocation.id)).mappings())
+            statement = statement.order_by(ReviewAllocation.id)
+            if limit is not None:
+                statement = statement.limit(limit + 1 - len(result))
+            result.extend(dict(row) for row in self.db.execute(statement).mappings())
+            if limit is not None and len(result) > limit:
+                raise TargetEconomicError(413, "immutable relation budget exceeded; use paged relations", code="DETAIL_LIMIT")
         return result
 
     def bundle(self, ids):

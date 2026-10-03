@@ -13,15 +13,19 @@ from sqlalchemy import and_, case, func, insert, select, tuple_, update
 from sqlalchemy.exc import OperationalError
 
 from backend.core.import_identity import (SOURCE_CODES, FORMAT_CODES, canonical_json,
-    fact_values, raw_evidence, same_fact, source_account_code)
+    fact_key, fact_values, raw_evidence, same_fact, source_account_code)
 from backend.core.source_account_identity import reliable_source
+from backend.core.import_evidence import plan_same_source_links, target_locator
 from backend.entity import TransactionFact, TransactionImportFile, TransactionImportRow
 from backend.entity.base import utc_now
 from backend.error import TargetIntakeError
+from backend.schema.identifier import SQLITE_ID_MAX
 from backend.mapper.account_management_mapper import AccountManagementMapper
 from backend.mapper.review_command_mapper import ReviewCommandMapper, chunks
 from backend.mapper.trusted_relation_mapper import TrustedRelationMapper
 from backend.service.target_tag_projection_service import TargetTagProjectionService
+
+MAX_EVIDENCE_CANDIDATES = 50_000
 
 
 def fail(code, status=409):
@@ -60,6 +64,7 @@ class ImportBatchMapper(ReviewCommandMapper):
     @contextmanager
     def match_budget(self):
         started = monotonic()
+        self._match_candidate_count = 0
         driver = self.db.connection().connection.driver_connection
         driver.set_progress_handler(lambda: int(monotonic() - started > 2 or
             self.write_started is not None and monotonic() - self.write_started > 2), 1000)
@@ -233,6 +238,81 @@ class ImportBatchMapper(ReviewCommandMapper):
                     found = found | {fact["id"]: fact}
             result[identity] = (found, self._candidate_hashes[key] if found is by_identity_key[key]
                                 else fingerprint([found[id] for id in sorted(found)]))
+        self._match_candidate_count = count
+        return result
+
+    def evidence_targets(self, fact_ids):
+        """Batch-prove original accepted sources for explicit FACT targets.
+
+        Matching the immutable canonical key identifies original evidence;
+        another manual supplement cannot grant a different source identity.
+        Unprovable legacy keys are reported, never repaired or guessed by row
+        order. Existing AUTO legacy matching retains its own compatibility path.
+        No Review, Ledger, card binding or tag is changed by this read.
+        """
+        TrustedRelationMapper(self.db).read_snapshot()
+        with self.match_budget():
+            return self._evidence_targets(fact_ids)
+
+    def _evidence_targets(self, fact_ids):
+        ids = list(fact_ids)
+        if any(type(value) is not int or not 0 < value <= SQLITE_ID_MAX for value in ids):
+            fail("INVALID_EVIDENCE_TARGET", 422)
+        ids = set(ids)
+        if len(ids) > 2000:
+            fail("DETAIL_LIMIT", 413)
+        facts = {row["id"]: row for row in self.rows(TransactionFact, TransactionFact.id, ids)}
+        result = {id: dict(issue="INVALID_EVIDENCE_TARGET") for id in ids - set(facts)}
+        originals, sources, premises = {}, {}, {}
+        count = getattr(self, "_match_candidate_count", 0)
+        for batch in chunks(facts):
+            statement = select(TransactionImportRow.__table__,
+                TransactionImportFile.id.label("file_id"),
+                TransactionImportFile.sha256.label("file_sha256"),
+                TransactionImportFile.source_type.label("file_source_type"),
+                TransactionImportFile.file_format.label("file_format"))\
+                .outerjoin(TransactionImportFile, TransactionImportFile.id == TransactionImportRow.transaction_import_file_id)\
+                .where(TransactionImportRow.transaction_fact_id.in_(batch), TransactionImportRow.row_status == 1)\
+                .order_by(TransactionImportRow.id).limit(MAX_EVIDENCE_CANDIDATES + 1 - count)
+            # Stream raw envelopes: retain bounded proof hashes, not 50k payloads.
+            for evidence in self.db.execute(statement).mappings():
+                count += 1
+                if count > MAX_EVIDENCE_CANDIDATES:
+                    fail("IMPORT_MATCH_LIMIT", 422)
+                if evidence["file_id"] is None:
+                    fail("RELATION_BROKEN")
+                id = evidence["transaction_fact_id"]
+                normalized = self.evidence_projection(evidence)
+                if normalized.get("reference", "") != evidence["source_reference"]:
+                    fail("RELATION_BROKEN")
+                source_type = SOURCE_CODES.get(normalized.get("source_type"), 0)
+                if source_type != evidence["file_source_type"]:
+                    fail("RELATION_BROKEN")
+                projected = self.accepted_projection(facts[id], evidence)
+                sources.setdefault(id, set()).add((source_type, projected["account_code"]))
+                proof = dict(row_id=evidence["id"], file_id=evidence["file_id"],
+                    file_sha256=evidence["file_sha256"], file_format=evidence["file_format"],
+                    source_row_number=evidence["source_row_number"], raw_hash=evidence["raw_hash"],
+                    evidence_hash=fingerprint(evidence["raw_payload"]))
+                premises.setdefault(id, []).append(proof)
+                parsed = normalized | dict(row_number=evidence["source_row_number"])
+                if fact_key(parsed, evidence["file_sha256"]) == facts[id]["fact_key"]:
+                    originals.setdefault(id, []).append(proof)
+        for id, fact in facts.items():
+            identity = sources.get(id, set())
+            if len(identity) > 1:
+                result[id] = dict(issue="FACT_CONFLICT")
+                continue
+            if id not in originals or not identity or not next(iter(identity))[0] or not next(iter(identity))[1]:
+                result[id] = dict(issue="SOURCE_IDENTITY_REQUIRED")
+                continue
+            source_type, account_code = next(iter(identity))
+            values = fact | dict(account_code=account_code)
+            origin_file_ids = sorted({row["file_id"] for row in originals[id]})
+            result[id] = dict(issue=None, values=values, source_type=source_type, origin_file_ids=origin_file_ids,
+                premise=dict(fact=fact, source_type=source_type, account_code=account_code,
+                             originals=originals[id], evidence=premises[id]))
+        self._match_candidate_count = count
         return result
 
     def account_premises(self, rows, choices):
@@ -280,6 +360,13 @@ class ImportBatchMapper(ReviewCommandMapper):
 
     def _match(self, input_rows, choices):
         choices = {key: choices[key] for key in input_rows if key in choices}
+        if any(choice.get("resolution", "AUTO") not in {"AUTO", "NEW", "LINK_EXISTING"}
+               for choice in choices.values()):
+            fail("INVALID_EVIDENCE_TARGET", 422)
+        if any(choice.get("target") is not None and choice.get("resolution", "AUTO") != "LINK_EXISTING"
+               or choice.get("decision") == "SKIP" and choice.get("resolution", "AUTO") != "AUTO"
+               for choice in choices.values()):
+            fail("INVALID_EVIDENCE_TARGET", 422)
         self._input_rows = input_rows
         files = {row["id"]: row for row in self.rows(TransactionImportFile, TransactionImportFile.id, [key[0] for key in input_rows])}
         if set(files) != {key[0] for key in input_rows}:
@@ -296,7 +383,10 @@ class ImportBatchMapper(ReviewCommandMapper):
                 errors[key] = ("NON_POSTED_EVIDENCE" if not row.get("error") and row.get("disposition") == "non_posted"
                     else "NEUTRAL_EVIDENCE" if not row.get("error") and row.get("disposition") == "neutral_evidence" else "ROW_INVALID")
         found = self.candidates(parsed, files, stored)
-        account = self.account_premises(input_rows, choices)
+        link_keys = {key for key, choice in choices.items() if choice.get("resolution") == "LINK_EXISTING"}
+        account = self.account_premises({key: row for key, row in input_rows.items() if key not in link_keys},
+                                       {key: choice for key, choice in choices.items() if key not in link_keys})
+        account.update({key: dict(ref_id=0, auto_identity=None, chain=[], issue=None) for key in link_keys})
         result, groups = {}, {}
         for key in input_rows:
             existing = stored.get(key)
@@ -347,6 +437,20 @@ class ImportBatchMapper(ReviewCommandMapper):
             for key in group:
                 if conflict or len(selected_refs) > 1:
                     result[key].update(classification="INVALID", issue="FACT_CONFLICT" if conflict else "ACCOUNT_BINDING_CONFLICT")
+        active_links = {key: choices[key] for key in link_keys if result[key]["classification"] != "PROCESSED"}
+        if active_links:
+            locators = [target_locator(choice.get("target")) for choice in active_links.values()]
+            targets = self._evidence_targets([locator for kind, locator in locators if kind == "FACT"])
+            plans = plan_same_source_links(input_rows, files, result,
+                choices if len(active_links) == len(link_keys) else
+                {key: choice for key, choice in choices.items() if key not in link_keys or key in active_links}, targets)
+            for key, plan in plans.items():
+                result[key].update(classification="EXISTING", fact_id=plan["locator"] if plan["kind"] == "FACT" else 0,
+                                   evidence_link=plan)
+                result[key]["premise"]["evidence_link"] = plan
+        for key, choice in choices.items():
+            if choice.get("resolution") == "NEW" and result[key]["fact_id"] and result[key]["classification"] != "PROCESSED":
+                fail("INVALID_EVIDENCE_TARGET", 422)
         for key, candidate in result.items():
             candidate["premise_hash"] = fingerprint(candidate["premise"] | dict(
                 classification=candidate["classification"], issue=candidate["issue"], values=candidate["values"],
@@ -377,7 +481,7 @@ class ImportBatchMapper(ReviewCommandMapper):
         now = utc_now()
         new_by_key = {}
         for key, candidate in candidates.items():
-            if choices[key]["decision"] == "ACCEPT" and not candidate["fact_id"]:
+            if choices[key]["decision"] == "ACCEPT" and not candidate["fact_id"] and not candidate.get("evidence_link"):
                 new_by_key.setdefault(candidate["values"]["fact_key"], (candidate["values"], candidate["account"]))
         new = [TransactionFact(**values, created_time=now, updated_time=now) for values, _account in new_by_key.values()]
         self.db.add_all(new)
@@ -407,7 +511,9 @@ class ImportBatchMapper(ReviewCommandMapper):
             candidate, choice = candidates[key], choices[key]
             accepted = choice["decision"] == "ACCEPT"
             status = 1 if accepted else 3 if candidate["issue"] and candidate["issue"] not in {"NON_POSTED_EVIDENCE", "NEUTRAL_EVIDENCE"} else 2
-            fact_id = (candidate["fact_id"] or facts[candidate["values"]["fact_key"]]) if accepted else 0
+            link = candidate.get("evidence_link")
+            anchor = candidates[link["locator"]] if link and link["kind"] == "ROW" else candidate
+            fact_id = (anchor["fact_id"] or facts[anchor["values"]["fact_key"]]) if accepted else 0
             values = dict(transaction_fact_id=fact_id, row_status=status,
                           issue_code=candidate["issue"] if status == 3 else "", issue_message=candidate["issue"] if status == 3 else "")
             old = candidate["stored"]
@@ -418,7 +524,11 @@ class ImportBatchMapper(ReviewCommandMapper):
                     source_reference=self._input_rows[key].get("reference", ""), raw_hash=candidate["raw_hash"],
                     raw_payload=candidate["raw_payload"], created_time=now, updated_time=now))
             outcomes[key] = dict(file_id=key[0], source_row_number=key[1], row_status=status, transaction_id=fact_id,
-                created_review_id=defaults.get(fact_id, (0, 0))[0], created_ledger_id=defaults.get(fact_id, (0, 0))[1])
+                created_review_id=0 if link else defaults.get(fact_id, (0, 0))[0],
+                created_ledger_id=0 if link else defaults.get(fact_id, (0, 0))[1],
+                resolution_effect="EVIDENCE_ONLY" if accepted and (link or candidate["fact_id"]) else
+                                  "NEW_REAL" if accepted else "NONE",
+                duplicate_kept_transaction_id=0)
         self.db.add_all(new_rows)
         self.db.flush()
         if updates:
@@ -426,13 +536,27 @@ class ImportBatchMapper(ReviewCommandMapper):
         if fault:
             fault("source_rows")
         stored = self.source_rows(order)
+        effective = self.allocations_for_facts([row["transaction_id"] for row in outcomes.values()
+                                               if row["transaction_id"]], active=True, limit=4000)
+        by_fact = {}
+        for allocation in effective:
+            group = by_fact.setdefault(allocation["transaction_id"], dict(reviews=set(), ledgers=set()))
+            group["reviews"].add(allocation["review_id"])
+            group["ledgers"].add(allocation["ledger_id"])
         for key, result in outcomes.items():
             result["row_id"] = stored[key]["id"]
+            output = by_fact.get(result["transaction_id"], dict(reviews=set(), ledgers=set()))
+            result["effective_review_ids"] = sorted(output["reviews"])
+            result["effective_ledger_ids"] = sorted(output["ledgers"])
+        if any(candidate.get("evidence_link") for candidate in candidates.values()):
+            TrustedRelationMapper(self.db).validate()
         files = self.progress([key[0] for key in order], persist=True)
         if fault:
             fault("file_counts")
         return dict(files=files, processed_rows=[outcomes[key] for key in order], new_fact_count=len(new),
             linked_existing_count=sum(choices[key]["decision"] == "ACCEPT" and bool(candidates[key]["fact_id"]) for key in order),
+            manual_linked_count=sum(choices[key]["decision"] == "ACCEPT" and bool(candidates[key].get("evidence_link")) for key in order),
+            duplicate_fact_count=0,
             skipped_count=sum(item["row_status"] == 2 for item in outcomes.values()),
             invalid_count=sum(item["row_status"] == 3 for item in outcomes.values()),
             remaining_count=sum(file["remaining"] for file in files))
