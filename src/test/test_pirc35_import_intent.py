@@ -13,6 +13,68 @@ from test_pirc35_import_batch import prepare, row, accept
 from test_pirc35_import_confirm_preview import install, input_for, batch
 from test_pirc35_import_duplicate import manifest, existing_pair, local_pair
 from test_pirc35_import_match import paired
+from import_batch_helpers import confirm_api_batch, prepare_api_batch
+
+
+def test_fixture_helper_default_never_acknowledges_unknown_cash(service, client):
+    rows = prepare(service.mapper, [row(reference="", account={}, source_account={})])
+    current = install(service, rows, {})
+    import_preview_store.put(service.store.get(current["token"]))
+    before = manifest(service)
+    error, payload = prepare_api_batch(client, current)
+    assert error is None and "batch_preview_digest" not in payload
+    choices = import_preview_store.get(current["token"]).choices
+    assert all(choice["resolution"] == "AUTO" and not choice["acknowledge_new_risk"] for choice in choices.values())
+    response = client.post(BASE + f"/preview/{current['token']}/confirm", json=payload)
+    assert response.status_code == 422 and response.json()["body"]["code"] == "IMPORT_REVIEW_REQUIRED"
+    assert manifest(service) == before
+
+
+def test_fixture_helper_explicit_new_discloses_then_confirms_once(service, client, monkeypatch):
+    rows = prepare(service.mapper, [row(reference="", account={}, source_account={})])
+    current = install(service, rows, {})
+    import_preview_store.put(service.store.get(current["token"]))
+    observed = []
+    original = client.post
+
+    def recording(url, **kwargs):
+        response = original(url, **kwargs)
+        observed.append((url, kwargs.get("json"), response))
+        return response
+
+    monkeypatch.setattr(client, "post", recording)
+    service.db.rollback()
+    response = confirm_api_batch(client, current, explicit_new=True)
+    assert response.status_code == 200, response.text
+    assert response.json()["body"]["new_fact_count"] == 1
+    assert [call[0] for call in observed] == [BASE + f"/preview/{current['token']}/confirm-preview", BASE + f"/preview/{current['token']}/confirm"]
+    disclosure = observed[0][2].json()["body"]
+    assert disclosure["can_confirm"] and disclosure["pairs"][0]["duplicate_hint"]["state"] == "UNCHECKED"
+    assert observed[1][1]["batch_preview_digest"] == disclosure["batch_preview_digest"]
+    after = manifest(service)
+    assert len(after["transaction_fact"]) == len(after["review_case"]) == len(after["ledger_entry"]) == 1
+    service.db.rollback()
+    # Deliberate repeat in this contract, not an automatic transport retry.
+    repeated = confirm_api_batch(client, current, explicit_new=True)
+    assert repeated.status_code == 409
+    assert manifest(service) == after
+
+
+@pytest.mark.parametrize("explicit_new", [False, True])
+def test_fixture_helper_never_overrides_existing_evidence(service, client, explicit_new):
+    originals = prepare(service.mapper, [row()])
+    accept(service.mapper, originals)
+    incoming = prepare(service.mapper, [row()], sha="b" * 64)
+    current = install(service, incoming, {})
+    import_preview_store.put(service.store.get(current["token"]))
+    before = manifest(service)
+    service.db.rollback()
+    response = confirm_api_batch(client, current, explicit_new=explicit_new)
+    assert response.status_code == 200, response.text
+    assert response.json()["body"]["new_fact_count"] == 0
+    after = manifest(service)
+    for table in ("transaction_fact", "review_case", "ledger_entry", "review_transaction_ledger_allocation"):
+        assert after[table] == before[table]
 
 
 @pytest.mark.parametrize("intent", [dict(resolution="bad"), dict(resolution="NEW", acknowledge_new_risk=1),

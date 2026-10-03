@@ -281,7 +281,8 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
             )
             assert preview_response.status_code == 200, preview_response.text
             preview = preview_response.json()["body"]
-            confirmation = confirm_api_batch(client, preview)
+            # Explicitly approve NEW for this fictional no-profile source.
+            confirmation = confirm_api_batch(client, preview, explicit_new=True)
             assert confirmation.status_code == 200, confirmation.text
             page = client.get("/paam/ledger/v1/flow/list")
             assert page.status_code == 200, page.text
@@ -330,7 +331,8 @@ def test_target_review_confirm_revoke_restore_rebuilds_projection(
                     "content_base64": base64.b64encode(content).decode(),
                 }]},
             ).json()["body"]
-            confirmation = confirm_api_batch(client, preview)
+            # These two fictional transfers are distinct real cash movements.
+            confirmation = confirm_api_batch(client, preview, explicit_new=True)
             assert confirmation.status_code == 200, confirmation.text
             fact_ids = [row["transaction_id"] for row in confirmation.json()["body"]["processed_rows"]]
             assert len(fact_ids) == 2

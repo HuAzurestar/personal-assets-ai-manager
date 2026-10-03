@@ -212,7 +212,9 @@ def _preview(client, filename: str, content: bytes, password: str | None = None)
 
 
 def _confirm(client, preview, *, skip_invalid=False):
-    return confirm_api_batch(client, preview, skip_invalid=skip_invalid)
+    # Author-controlled fictional WeChat bills omit a reliable profile. NEW is
+    # explicit for new rows only; repeats stay AUTO and invalid rows stay SKIP.
+    return confirm_api_batch(client, preview, skip_invalid=skip_invalid, explicit_new=True)
 
 
 def test_import_read_mapper_owns_public_import_queries():
@@ -533,7 +535,8 @@ def test_target_confirm_select_count_is_independent_of_row_count(target_import_a
 
     def count_for(row_count: int, prefix: str) -> int:
         preview = _preview(client, f"{prefix}.csv", _csv(_rows(row_count, prefix=prefix)))
-        error, payload = prepare_api_batch(client, preview)
+        # Complete risk disclosure is outside this financial SQL-count probe.
+        error, payload = prepare_api_batch(client, preview, explicit_new=True)
         assert error is None
         statements = []
 

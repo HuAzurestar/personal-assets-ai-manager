@@ -64,7 +64,8 @@ def test_preset_is_idempotent_and_import_cron_review_remain_independent(scan_run
             "filename": "fictional-scenario.csv",
             "content_base64": base64.b64encode(stream.getvalue().encode()).decode(),
         }]}))
-        _body(confirm_api_batch(client, preview))
+        # The fictional no-profile bill intentionally represents new cash.
+        _body(confirm_api_batch(client, preview, explicit_new=True))
         assert calls == []  # Import never invokes the model or a scan callback.
 
         for row in first["configuration"]:

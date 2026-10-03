@@ -76,7 +76,9 @@ def _import(client, serial):
         "filename": f"live-{serial}.csv",
         "content_base64": base64.b64encode(stream.getvalue().encode()).decode(),
     }]}))
-    _body(confirm_api_batch(client, preview))
+    # This fictional statement has no reliable profile; explicitly intend NEW
+    # through complete disclosure before exercising the offline CRON path.
+    _body(confirm_api_batch(client, preview, explicit_new=True))
 
 
 def _rule(client, view_id, *, enabled=True):
