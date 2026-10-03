@@ -104,7 +104,7 @@ def run():
                     upload.locator('[name="files"]').set_input_files([
                         {'name':'Mock-A.csv','mimeType':'text/csv','buffer':content},
                         {'name':'Mock-B.csv','mimeType':'text/csv','buffer':statement('990000000000009876',2,'Mock批量B')},
-                        {'name':'Mock-unknown.csv','mimeType':'text/csv','buffer':statement('',1,'Mock未知来源')},
+                        {'name':'Mock-unknown.csv','mimeType':'text/csv','buffer':statement('**************0000',1,'Mock未知来源')},
                     ])
                     upload.locator('[data-action="preview-import"]').click()
                     expect(page.locator('[data-batch-row]')).to_have_count(20,timeout=30000)

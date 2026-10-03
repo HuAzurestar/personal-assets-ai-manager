@@ -316,11 +316,10 @@ export async function mountImportBatch(host, initial, changed) {
       digest:frozen.digest,time:frozen.time,signal,
       valid:() => live() && !context.busy && !context.unknown && context.plan.preview_digest === frozen.digest
         && context.plan.updated_time === frozen.time && context.generation === frozen.generation && context.selected === frozen.selected && context.plan.status !== 'CONFIRMING',
-      apply:selected => {
-        const modified = [...selected].filter(([key,item]) => item !== frozen.selected.get(key)).length;
+      apply:(selected,{modified,exceptions}) => {
         context.selected = selected;
         context.dirty = true;invalidatePlan();update();
-        status(`已应用 ${modified} 行来源草稿；${selected.size-modified} 行例外保留原选择和决定。尚未保存或入账。`);
+        status(`已应用 ${modified} 行来源草稿；${exceptions} 行例外保留原选择和决定。尚未保存或入账。`);
         void readPage(context.page);
       }});
   };

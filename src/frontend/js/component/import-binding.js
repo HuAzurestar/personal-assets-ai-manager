@@ -134,7 +134,9 @@ export function openImportBinding({selected,files,token,digest,time,signal,valid
     try {
       if(result.items.some(item=>!item.applicable) && !find('[data-binding-exclude-ack]').checked) throw new Error('请先明确核对并排除本次修改的例外');
       if(ref>0 && result.items.some(item=>item.applicable && item.source_state==='UNKNOWN') && !find('[data-binding-unknown-ack]').checked) throw new Error('请明确未知来源的手工归属边界');
-      apply(projectImportBinding(frozen,result,ref,label,digest,time));dialog.close();
+      apply(projectImportBinding(frozen,result,ref,label,digest,time),{
+        modified:result.items.filter(item=>item.applicable).length,
+        exceptions:result.items.filter(item=>!item.applicable).length});dialog.close();
     } catch(error){find('[data-binding-status]').textContent=error.message;}
   };
   return dialog;

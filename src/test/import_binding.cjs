@@ -2,6 +2,8 @@
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const {pathToFileURL} = require('node:url');
+const fs = require('node:fs');
+const vm = require('node:vm');
 
 (async () => {
   const {validateImportBinding,projectImportBinding,readImportBinding} = await import(pathToFileURL(
@@ -79,5 +81,30 @@ const {pathToFileURL} = require('node:url');
   const cancelled=assert.rejects(stopped,{name:'AbortError'});controller.abort();await cancelled;
   let valid=true;
   await assert.rejects(readImportBinding(async()=>{valid=false;return result;},{valid:()=>valid,timers}),{name:'AbortError'});
+
+  // Execute the real toolbar handler. Dialog snapshots clone every item;
+  // counting reference inequality would falsely count unchanged exceptions.
+  const source=fs.readFileSync(path.join(__dirname,'../frontend/js/view/import-batch.js'),'utf8')
+    .replace(/^import .*;\r?\n/gm,'').replace(/^export /gm,'');
+  const nodes=new Map(),host={isConnected:true,innerHTML:'',querySelector(key){
+    if(!nodes.has(key))nodes.set(key,{value:'',textContent:'',innerHTML:'',disabled:false});return nodes.get(key);
+  },querySelectorAll(key){return key==='button,input,select'?[...nodes.values()]:[];}};
+  const plan={token:'binding-node',status:'READY',files:[],counts:{new:0,existing:0,processed:0},
+    preview_digest:digest,updated_time:time,issue_count:0};
+  let options,writes=0;
+  const sandbox=vm.createContext({AbortController,URLSearchParams,esc:String,
+    localStorage:{getItem:()=>null},openImportBinding:input=>{options=input;},
+    request:async()=>({items:[],total:0,page_size:20}),jsonRequest:async()=>{writes++;}});
+  vm.runInContext(source+'\nglobalThis.mount=mountImportBatch;globalThis.contexts=contexts;',sandbox);
+  await sandbox.mount(host,plan,()=>{});
+  const context=sandbox.contexts.get(plan.token);
+  context.selected=selected;
+  host.querySelector('[data-batch-bind]').onclick();
+  assert.ok(options.valid());
+  const cloned=projectImportBinding(new Map([...selected].map(([key,item])=>[key,{...item,choice:{...item.choice}}])),
+    result,9,'Named',digest,time);
+  options.apply(cloned,{modified:2,exceptions:1});
+  assert.match(host.querySelector('[data-batch-status]').textContent,/已应用 2 行来源草稿；1 行例外/);
+  assert.equal(context.selected.size,3);assert.ok(context.dirty);assert.equal(writes,0);
   console.log('PASS complete exact-time binding scope, strict source policy, immutable intent/risk/targets, selected exceptions, 20k projection, deadline/cancel/late/stale guards');
 })().catch(error=>{console.error(error);process.exitCode=1;});
