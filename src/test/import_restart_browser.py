@@ -108,6 +108,16 @@ def run_import_restart():
                         expect(page.locator('[data-batch-row]')).to_have_count(20, timeout=35000)
 
                     upload()
+                    for width in (1280, 820, 390):
+                        page.set_viewport_size({"width": width, "height": 900})
+                        page.locator('[data-batch-row]').last.scroll_into_view_if_needed()
+                        toolbar = page.locator('[data-batch-toolbar]').bounding_box()
+                        topbar = page.locator('.module-topbar').bounding_box()
+                        viewport_evidence(page, f"fix-import-restart-toolbar-{width}")
+                        assert toolbar and 0 <= toolbar["y"] <= 2 and toolbar["height"] < 300, toolbar
+                        assert topbar and topbar["y"] + topbar["height"] <= 2, (width, topbar, toolbar)
+                        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+                    page.set_viewport_size({"width": 1280, "height": 900})
                     page.locator('[data-batch-select-scope]').click()
                     expect(page.locator('[data-batch-selection]')).to_contain_text("1001 行", timeout=35000)
                     expect(page.locator('[data-batch-select-scope]')).to_be_enabled(timeout=35000)
@@ -211,6 +221,9 @@ def run_import_restart():
                             json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")
                     print("PASS actual isolated OS process restart, actual410, same bytes and safe draft, "
                           "readonly1000 reconciliation, fresh explicit remaining1 approval, immutable originals, no replay")
+                    page.goto(base + "/#details/transaction-fact")
+                    expect(page.locator('.module-topbar')).to_have_css("position", "sticky")
+                    assert len(writes) == len(approvals) == 2 and not errors, errors
                 finally:
                     browser.close()
         finally:

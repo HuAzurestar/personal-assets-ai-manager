@@ -1486,6 +1486,10 @@
   .import-pairing-row > div { grid-column:2; }
   .import-pairing-row button { min-height:44px; }
 }
+/* Only the batch tools stick while reading a long import preview. Keeping
+   the global topbar sticky at the same top:0 paints two overlapping controls,
+   especially when the global navigation wraps on narrower screens. */
+.module-shell:has(.import-batch-toolbar) > .module-topbar { position:relative; }
 .import-batch-toolbar { position:sticky; top:0; z-index:31; background:var(--surface); border-block:1px solid var(--line); padding:8px 0; }
 .import-batch-toolbar p { margin:0 0 4px; font-size:12px; overflow-wrap:anywhere; }
 .import-batch-toolbar small { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; margin-bottom:6px; font-size:11px; overflow-wrap:anywhere; }

@@ -89,6 +89,8 @@ def run():
                         page.locator('[data-batch-row]').last.scroll_into_view_if_needed()
                         toolbar=page.locator('[data-batch-toolbar]').bounding_box()
                         assert toolbar and 0 <= toolbar['y'] <= 2 and toolbar['height'] < 300,toolbar
+                        topbar=page.locator('.module-topbar').bounding_box()
+                        assert topbar and topbar['y']+topbar['height'] <= 2,(width,topbar,toolbar)
                         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
                         viewport_evidence(page,f'fix-import-execution-ready-toolbar-{width}')
                     page.set_viewport_size({'width':1280,'height':900})
