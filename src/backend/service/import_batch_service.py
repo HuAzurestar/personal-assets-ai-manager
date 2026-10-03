@@ -153,9 +153,7 @@ class ImportBatchService:
     @staticmethod
     def digest(state):
         # Advisory file status/time and TTL are deliberately excluded.
-        return fingerprint(dict(files=state.files,
-            candidates=[dict(identity=list(key), premise=candidate["premise_hash"], choice=state.choices.get(key))
-                        for key, candidate in sorted(state.candidates.items())]))
+        return state.digest()
 
     def current(self, token):
         with query_budget(self.db):
@@ -471,9 +469,7 @@ class ImportBatchService:
         expected_updated_time = state.updated_time
         try:
             risks = ImportRiskService(self.mapper).plan(state.rows, state.candidates, [key for key, _candidate in selected]) if selected else {}
-            latest = self.store.get(token)
-            if latest.updated_time != expected_updated_time or self.digest(latest) != digest:
-                fail("PREVIEW_CHANGED")
+            self.store.ensure_current(token,expected_updated_time,digest)
             return dict(items=[self.row_po(key, candidate, state.choices.get(key), risks[key]["hint"]) for key, candidate in selected],
                         total=len(items), page_index=request.page_index, page_size=request.page_size)
         finally:

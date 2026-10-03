@@ -1,6 +1,7 @@
 """Bounded, pinnable process-local import state; never a result-replay cache."""
 from contextlib import contextmanager
 import copy
+import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from threading import RLock
@@ -41,6 +42,14 @@ class ImportPreviewState:
             candidates=[dict(identity=list(identity), value=row) for identity, row in sorted(self.candidates.items())],
             choices=[dict(identity=list(identity), value=row) for identity, row in sorted(self.choices.items())])
         return len(canonical_json(value).encode("utf-8"))
+
+    def digest(self):
+        # Same complete source/candidate/choice guard, without advisory status
+        # or TTL. Keep one definition for Service checks and cache-local checks.
+        value = dict(files=self.files,candidates=[dict(identity=list(key),
+            premise=candidate['premise_hash'],choice=self.choices.get(key))
+            for key,candidate in sorted(self.candidates.items())])
+        return hashlib.sha256(canonical_json(value).encode('utf-8')).hexdigest()
 
 
 @dataclass
@@ -102,6 +111,21 @@ class ImportPreviewStore:
             result = copy.deepcopy(state)
             result.status = "CONFIRMING" if token in self._claims else "READY"
             return result
+
+    def ensure_current(self, token, expected_updated_time, expected_digest):
+        """Check the full guard under the cache lock; expose no mutable state.
+
+        List callers already hold their detached copy. Copying every original
+        source envelope again merely to recheck time/digest costs O(full data)
+        per page. This retains both guards, including cancellation/eviction,
+        without copying private source content or holding a SQLite writer lock.
+        """
+        with self._lock:
+            state = self._states.get(token)
+            if state is None:
+                fail('PREVIEW_UNAVAILABLE','preview is no longer resident',410)
+            if state.updated_time != expected_updated_time or state.digest() != expected_digest:
+                fail('PREVIEW_CHANGED','preview input changed')
 
     def replace(self, state, expected_updated_time):
         size = self._size(state)
