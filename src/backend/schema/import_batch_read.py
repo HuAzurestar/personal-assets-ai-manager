@@ -1,7 +1,7 @@
 """Typed public v1 batch import projections; never cache or replay results."""
 from datetime import datetime
 from typing import Literal
-from pydantic import Field
+from pydantic import Field, StrictInt, model_validator
 from backend.schema.review_read import PO, ReviewReadPO
 from backend.schema.review_command import ExpectedReview
 from backend.schema.import_command import RowChoice, RowIdentity, EvidenceTarget
@@ -71,6 +71,29 @@ class PreviewParsed(PO):
 class PreviewAccountCandidate(PO):
     account_ref_id: int
     label_masked: str
+
+
+class ImportDuplicateScope(PO):
+    occurred_time: datetime | None
+    currency_code: str | None
+    cash_direction: Literal["IN", "OUT"] | None
+    source_known: bool
+
+
+class ImportDuplicateHint(PO):
+    state: Literal["NONE_IN_SCOPE", "SUSPECTED", "UNCHECKED"]
+    scope: ImportDuplicateScope
+    candidate_count: StrictInt | None = Field(ge=0)
+    reason_codes: list[str]
+
+    @model_validator(mode="after")
+    def truthful_count(self):
+        valid = (self.state == "UNCHECKED" and self.candidate_count is None or
+            self.state == "NONE_IN_SCOPE" and self.candidate_count == 0 and self.scope.source_known or
+            self.state == "SUSPECTED" and self.candidate_count is not None and self.candidate_count > 0)
+        if not valid:
+            raise ValueError("risk state/count must describe the checked scope, not a fabricated zero")
+        return self
 
 
 class PreviewRowPO(PO):

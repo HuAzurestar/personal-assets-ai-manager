@@ -69,8 +69,15 @@ class ImportBatchMapper(ReviewCommandMapper):
         driver.set_progress_handler(lambda: int(monotonic() - started > 2 or
             self.write_started is not None and monotonic() - self.write_started > 2), 1000)
         try:
+            # Small SQL statements may never invoke SQLite's progress handler.
+            # Check the caller's original deadline at both Python boundaries too.
+            if self.write_started is not None and started - self.write_started > 2:
+                fail("WRITE_BUSY", 503)
             yield started
-            if monotonic() - started > 2:
+            finished = monotonic()
+            if self.write_started is not None and finished - self.write_started > 2:
+                fail("WRITE_BUSY", 503)
+            if finished - started > 2:
                 fail("IMPORT_MATCH_LIMIT", 422)
         except OperationalError as error:
             if "interrupted" in str(error).lower():
@@ -253,6 +260,27 @@ class ImportBatchMapper(ReviewCommandMapper):
         TrustedRelationMapper(self.db).read_snapshot()
         with self.match_budget():
             return self._evidence_targets(fact_ids)
+
+    def signature_facts(self, signatures):
+        """Batch exact-core risk scope, without raw evidence or financial POs.
+
+        The caller owns the shared match budget/snapshot. Four-field equality
+        is only a hint, never source identity or permission to merge. Even an
+        unproven legacy origin stays a risk candidate for explicit inspection.
+        """
+        f = TransactionFact
+        result = []
+        for batch in chunks(signatures):
+            statement = select(f.id, f.fact_key, f.occurred_time, f.cash_direction, f.amount, f.currency_code).where(
+                tuple_(f.occurred_time, f.cash_direction, f.amount, f.currency_code).in_(batch)
+            ).order_by(f.id).limit(MAX_EVIDENCE_CANDIDATES + 1 - self._match_candidate_count)
+            found = [dict(row) for row in self.db.execute(statement).mappings()]
+            self._match_candidate_count += len(found)
+            if self._match_candidate_count > MAX_EVIDENCE_CANDIDATES:
+                raise TargetIntakeError(422, "exact source candidates exceed the matching budget", code="IMPORT_MATCH_LIMIT",
+                    details=dict(action="NARROW_IMPORT_SCOPE", limit=MAX_EVIDENCE_CANDIDATES))
+            result.extend(found)
+        return result
 
     def _evidence_targets(self, fact_ids):
         ids = list(fact_ids)
