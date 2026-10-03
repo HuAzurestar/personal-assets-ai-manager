@@ -61,8 +61,7 @@ export async function mountImportBatch(host, initial, changed) {
       <div class="actions"><button type="button" data-batch-select-page>选择本页未接受行</button><button type="button" data-batch-bulk>批量修改意图／决定</button><button type="button" data-batch-bind>批量绑定来源</button><button type="button" data-batch-pair>具名批配对</button>
       <button type="button" data-batch-save>保存选择并重新核验</button><button type="button" data-batch-plan>查看完整处理计划（不写入）</button><button type="button" class="primary" data-batch-confirm>确认并写入本批</button>
       <button type="button" data-batch-restore>重新读取已保留的剩余范围</button><button type="button" class="primary" data-batch-execute>批准完整计划并依次入账</button><button type="button" data-batch-stop-execution>停止后续批次</button></div>
-      <label class="import-operation-consent"><input type="checkbox" data-batch-consent>我已核对完整计划，理解各批独立提交；停止／失败／未知时保留已完成批，剩余须重新核对和批准。</label><p role="status" data-batch-execution></p>
-    </div>
+    </div><label class="import-operation-consent" data-batch-consent-panel><input type="checkbox" data-batch-consent>我已核对完整计划，理解各批独立提交；停止／失败／未知时保留已完成批，剩余须重新核对和批准。</label><p role="status" data-batch-execution></p>
     <div class="actions import-batch-filter"><label>文件<select data-batch-file><option value="">全部文件</option>${initial.files.map(file => `<option value="${file.file_id}">${esc(file.filename)} · #${file.file_id}</option>`).join("")}</select></label>
       <label>分类<select data-batch-classification><option value="">全部分类</option>${Object.entries(classifications).map(([key, label]) => `<option value="${key}">${label}</option>`).join("")}</select></label>
       <label>每页<select data-batch-page-size>${[20,50,100].map(size => `<option value="${size}" ${context.pageSize === size ? 'selected' : ''}>${size}行</option>`).join('')}</select></label><button type="button" data-batch-refresh>读取当前预览</button>
@@ -105,10 +104,11 @@ export async function mountImportBatch(host, initial, changed) {
       <p>已接受 ${file.accepted} · 跳过 ${file.skipped} · 无效记录 ${file.invalid} · 剩余 ${file.remaining}</p><small>活动范围 ${esc(file.activity_range.start || "未知")} 至 ${esc(file.activity_range.end || "未知")}（不是完整期间覆盖）</small></article>`).join("")
       + ((plan.issues || []).some(issue => issue.source_row_number > 0) ? `<details data-batch-issues><summary>查看本次行问题提示</summary>${plan.issues.filter(issue => issue.source_row_number > 0).map(issue => `<p>文件 #${issue.file_id} · 第 ${issue.source_row_number} 行：${esc(issue.code)}</p>`).join("")}${plan.has_more_issues ? "<p>此处仅为有界提示；其余问题请按文件及分类分页核对，不能把本提示当作完整行列表。</p>" : ""}</details>` : "");
     find("[data-batch-summary]").textContent = `新事实 ${plan.counts.new} · 仅补证据 ${plan.counts.existing} · 已接受 ${plan.counts.processed} · 文件解析失败 ${failedFiles} · 行问题 ${Math.max(0, plan.issue_count - failedFiles)} · 总问题 ${plan.issue_count}${plan.has_more_issues ? "（行问题请按分类分页核对；文件失败已全部显示）" : ""}${plan.timed_out ? "；预览超时提示，确认仍会重新核验" : ""}`;
-    find("[data-batch-selection]").textContent = `本次明确选择 ${context.selected.size} 行${context.dirty ? "；选择已修改，须先保存核验" : "；使用服务器最新摘要"}${context.selected.size > 1000 ? '；请核对完整拆批计划后一次批准逐批执行，不合成一个大事务。' : ''}${context.restoreRequired ? '；保留范围须重新读取，未自动继续。' : ''}`;
+    find("[data-batch-selection]").textContent = `本次明确选择 ${context.selected.size} 行 · ${context.dirty ? '待保存核验' : '使用服务器最新摘要'}${context.selected.size > 1000 ? ' · 先核对拆批计划' : ''}${context.restoreRequired ? ' · 保留范围须重读' : ''}`;
     const selectedRows = [...context.selected.values()], fileIds = new Set(selectedRows.map(item => item.row.file_id));
-    const files = plan.files.filter(file => fileIds.has(file.file_id)).map(file => file.filename);
-    find('[data-batch-selected-scope]').textContent = `文件范围：${files.join('、') || '未选'}；已选待处理 ${selectedRows.filter(item => item.row.classification !== 'PROCESSED').length}，行问题 ${selectedRows.filter(item => item.row.issue_codes?.length).length}。来源按完整可靠身份逐行核验，不按尾号合并。`;
+    const files=plan.files.filter(file=>fileIds.has(file.file_id)).map(file=>file.filename);
+    find('[data-batch-selected-scope]').textContent = `文件范围：${files.length === 1 ? files[0] : `${fileIds.size}份（完整范围见文件摘要／计划）`}；待处理 ${selectedRows.filter(item => item.row.classification !== 'PROCESSED').length}，行问题 ${selectedRows.filter(item => item.row.issue_codes?.length).length}。`;
+    find('[data-batch-selected-scope]').title=files.join('、');
     host.querySelectorAll("button,input,select").forEach(node => {
       if (!node.closest?.('[data-batch-operation]') && !node.closest?.('[data-batch-verification]')) node.disabled = context.busy || context.unknown;
     });
@@ -120,6 +120,10 @@ export async function mountImportBatch(host, initial, changed) {
     find("[data-batch-confirm]").disabled = context.busy || context.unknown || context.dirty || !context.selected.size || context.selected.size > 1000 || plan.status === "CONFIRMING" || (context.disclosure && !singleBatch()) || (advancedChoices() && !singleBatch());
     find('[data-batch-execute]').disabled=context.busy || context.unknown || context.dirty || context.restoreRequired || plan.status === 'CONFIRMING'
       || !context.selected.size || !context.disclosure?.can_confirm || !find('[data-batch-consent]').checked;
+    find('[data-batch-execute]').hidden=!context.disclosure || !!context.executor;
+    find('[data-batch-consent-panel]').hidden=!context.disclosure || !!context.executor;
+    for (const selector of ['[data-batch-select-page]','[data-batch-bulk]','[data-batch-bind]','[data-batch-pair]','[data-batch-save]','[data-batch-plan]','[data-batch-confirm]']) find(selector).hidden=!!context.executor;
+    find('[data-batch-confirm]').hidden ||= context.disclosure?.batches.length > 1;
     find('[data-batch-stop-execution]').disabled=!context.executor || context.executor.state.stop_requested;
     find('[data-batch-stop-execution]').hidden=!context.executor;
     find('[data-batch-restore]').disabled=context.busy || context.unknown || !context.restoreRequired;

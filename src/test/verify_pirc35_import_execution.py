@@ -83,6 +83,14 @@ def run():
                     page.locator('[data-batch-confirm]').evaluate("node=>node.onclick()")
                     page.locator('[data-batch-execute]').evaluate("node=>node.onclick()")
                     assert writes == approvals == [] and counts() == before
+                    for width in (1280,820,390):
+                        page.set_viewport_size({'width':width,'height':900})
+                        page.locator('[data-batch-row]').last.scroll_into_view_if_needed()
+                        toolbar=page.locator('[data-batch-toolbar]').bounding_box()
+                        assert toolbar and 0 <= toolbar['y'] <= 2 and toolbar['height'] < 300,toolbar
+                        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+                        viewport_evidence(page,f'fix-import-execution-ready-toolbar-{width}')
+                    page.set_viewport_size({'width':1280,'height':900})
                     viewport_evidence(page, 'fix-import-execution-2500-approved-plan')
                     page.locator('[data-batch-consent]').check()
                     expect(page.locator('[data-batch-execute]')).to_be_enabled()
