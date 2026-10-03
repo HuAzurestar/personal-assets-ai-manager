@@ -3,6 +3,7 @@ import { esc, money, date, resourceId } from "../util/core.js";
 import { mountPicker, workbenchDialog, metadataLabel } from "../component/workbench.js";
 import { mountImportPlan, validateImportPlan } from '../component/import-plan.js';
 import { completeImportScope } from '../util/import-scope.js';
+import { openImportChoice, importIntentNames } from '../component/import-choice.js';
 
 const pendingKey = "paam.import.pending.v1";
 const contexts = new Map();
@@ -44,6 +45,10 @@ export async function mountImportBatch(host, initial, changed) {
     const panel = find('[data-batch-operation]');
     if (panel) panel.textContent = '';
   };
+  const advancedChoices = () => [...context.selected.values()].some(item => item.choice.decision === 'ACCEPT'
+    && ((item.choice.resolution || 'AUTO') !== 'AUTO' || item.choice.acknowledge_new_risk));
+  const singleBatch = () => context.disclosure?.can_confirm && context.disclosure.batches.length === 1
+    ? context.disclosure.batches[0].preview : null;
   const update = () => {
     if (!live()) return;
     const plan = context.plan;
@@ -62,7 +67,7 @@ export async function mountImportBatch(host, initial, changed) {
     find("[data-batch-verify]").disabled = context.busy;
     find("[data-batch-refresh]").disabled = context.busy;
     if (find("[data-batch-observed]")) find("[data-batch-observed]").disabled = context.busy || !context.verificationReady || plan.status === "CONFIRMING";
-    find("[data-batch-confirm]").disabled = context.busy || context.unknown || context.dirty || !context.selected.size || context.selected.size > 1000 || plan.status === "CONFIRMING" || (context.disclosure && !context.disclosure.can_confirm);
+    find("[data-batch-confirm]").disabled = context.busy || context.unknown || context.dirty || !context.selected.size || context.selected.size > 1000 || plan.status === "CONFIRMING" || (context.disclosure && !singleBatch()) || (advancedChoices() && !singleBatch());
     if (find('[data-batch-plan]')) find('[data-batch-plan]').disabled = context.busy || context.unknown || context.dirty || !context.selected.size || plan.status === 'CONFIRMING';
     if (find('[data-batch-stop-scope]')) find('[data-batch-stop-scope]').disabled = !context.scopeReading;
     find("[data-batch-prev]").disabled ||= context.page <= 1;
@@ -96,8 +101,9 @@ export async function mountImportBatch(host, initial, changed) {
           <label class="import-batch-select"><input type="checkbox" data-row-select aria-label="选择文件 #${row.file_id} 第 ${row.source_row_number} 行" ${selected ? "checked" : ""} ${processed ? "data-batch-processed disabled" : ""}></label>
           <div class="import-batch-main"><strong>${esc(row.parsed.summary || "摘要未知")}</strong><small>${esc(row.parsed.cash_direction || "方向未知")} · ${esc(row.parsed.occurred_time ? date(row.parsed.occurred_time) : "时间未知")} · 文件 #${row.file_id} 第 ${row.source_row_number} 行${row.existing_transaction_id ? ` · Fact #${row.existing_transaction_id}` : ""}</small></div>
           <div class="import-batch-amount"><strong>${esc(row.parsed.amount == null ? "金额未知" : money(row.parsed))}</strong><small>${esc(classifications[row.classification])}</small></div>
-          <div class="import-batch-source"><span data-row-ref>来源卡：${esc(refText)}</span>${row.classification === "NEW" ? '<button type="button" data-row-account>选择来源卡</button>' : ""}</div>
+          <div class="import-batch-source"><span data-row-ref>来源卡：${choice.resolution === 'LINK_EXISTING' ? '保留目标Fact当前来源和解释' : esc(refText)}</span>${row.classification === "NEW" && choice.resolution !== 'LINK_EXISTING' ? '<button type="button" data-row-account>选择来源卡</button>' : ""}</div>
           <div class="import-batch-decision"><label><span class="visually-hidden">本行决定</span><select data-row-decision aria-label="文件 #${row.file_id} 第 ${row.source_row_number} 行决定" ${processed ? "data-batch-processed disabled" : ""}><option value="ACCEPT" ${choice.decision === "ACCEPT" ? "selected" : ""}>接受</option><option value="SKIP" ${choice.decision === "SKIP" ? "selected" : ""}>跳过（问题行保留INVALID）</option></select></label>${[2, 3].includes(row.persisted_row_status) ? `<label class="import-batch-recheck"><input type="checkbox" data-row-recheck ${choice.recheck ? "checked" : ""}>重新检查未接受行（旧状态：${statusNames[row.persisted_row_status]}）</label>` : ""}</div>
+          ${!processed && (['NEW','INVALID','AMBIGUOUS'].includes(row.classification) || ['LINK_EXISTING','DUPLICATE'].includes(choice.resolution)) ? `<div class="import-batch-intent"><span>${esc(importIntentNames[choice.resolution || 'AUTO'])}${selected?.targetLabel ? ` → ${esc(selected.targetLabel)}` : ''}</span><button type="button" data-row-intent>核对意图／重复</button></div>` : ''}
           ${row.issue_codes.length ? `<p class="import-batch-issue" role="note">行问题：${esc(row.issue_codes.join("、"))}</p>` : ""}</article>`;
       }).join("") || "<p>当前筛选无行。</p>";
       host.querySelectorAll("[data-batch-row]").forEach(node => {
@@ -109,7 +115,7 @@ export async function mountImportBatch(host, initial, changed) {
             const prior = previous?.choice || row.choice || {};
             const decision = node.querySelector('[data-row-decision]').value;
             const intent = decision === 'SKIP' ? {resolution:'AUTO', target:null, acknowledge_new_risk:false} : {};
-            context.selected.set(identity(row), { row, refLabel: previous?.refLabel, choice: { ...prior, ...intent, file_id: row.file_id, source_row_number: row.source_row_number,
+            context.selected.set(identity(row), { row, refLabel: previous?.refLabel, targetLabel:decision === 'SKIP' ? null : previous?.targetLabel, choice: { ...prior, ...intent, file_id: row.file_id, source_row_number: row.source_row_number,
               decision: node.querySelector("[data-row-decision]").value, recheck: !!node.querySelector("[data-row-recheck]")?.checked,
               account_ref_id: previous?.choice.account_ref_id ?? row.choice?.account_ref_id ?? null } });
           } else context.selected.delete(identity(row));
@@ -118,6 +124,21 @@ export async function mountImportBatch(host, initial, changed) {
           update();
         };
         node.querySelectorAll("input,select").forEach(input => { input.onchange = save; });
+        const intent = node.querySelector('[data-row-intent]');
+        if (intent) intent.onclick = () => {
+          if (!live() || context.busy || context.unknown) return;
+          const frozen = context.plan.preview_digest, previous = context.selected.get(identity(row));
+          openImportChoice({row, choice:previous?.choice || row.choice || {decision:'ACCEPT',recheck:false,account_ref_id:null},
+            targetLabel:previous?.targetLabel, token:context.plan.token, digest:frozen, files:context.plan.files,
+            selected:() => context.selected, signal,
+            valid:() => live() && !context.busy && !context.unknown && context.plan.preview_digest === frozen && context.plan.status !== 'CONFIRMING',
+            apply:(choice, targetLabel) => {
+              if (!context.selected.has(identity(row)) && context.selected.size >= 20000) throw new Error('一次选择最多20000行；本次未加入');
+              context.selected.set(identity(row), {row, choice, targetLabel,
+                refLabel:choice.resolution === 'LINK_EXISTING' ? null : previous?.refLabel});
+              context.dirty = true; invalidatePlan(); update(); void readPage(context.page);
+            }});
+        };
         const account = node.querySelector("[data-row-account]");
         if (account) account.onclick = () => {
           node.querySelector("[data-row-select]").checked = true;
@@ -291,14 +312,16 @@ export async function mountImportBatch(host, initial, changed) {
     finally { context.busy = false; update(); }
   };
   find("[data-batch-confirm]").onclick = async () => {
-    if (context.busy || context.unknown || context.dirty || !context.selected.size || context.selected.size > 1000 || (context.disclosure && !context.disclosure.can_confirm)) return;
+    if (context.busy || context.unknown || context.dirty || !context.selected.size || context.selected.size > 1000 || (context.disclosure && !singleBatch()) || (advancedChoices() && !singleBatch())) return;
     context.verificationReady = false;
     const selected = [...context.selected.values()].map(item => ({ file_id: item.row.file_id, source_row_number: item.row.source_row_number }));
     context.busy = true;
     update();
     // Persist only safe current locating context before a financial POST.
     try {
-      localStorage.setItem(pendingKey, JSON.stringify({ token: context.plan.token, files: context.plan.files.map(file => ({ file_id: file.file_id, sha256: file.sha256 })), rows: selected }));
+      localStorage.setItem(pendingKey, JSON.stringify({ token: context.plan.token, files: context.plan.files.map(file => ({ file_id: file.file_id, sha256: file.sha256 })), rows: selected,
+        intents:[...context.selected.values()].map(item => ({file_id:item.row.file_id,source_row_number:item.row.source_row_number,
+          resolution:item.choice.resolution || 'AUTO',target:item.choice.target ? {...item.choice.target} : null})) }));
     } catch {
       context.busy = false;
       status("无法保存本批安全定位信息；本次未发送确认。请检查浏览器存储设置。");
@@ -307,7 +330,8 @@ export async function mountImportBatch(host, initial, changed) {
     }
     try {
       const result = await jsonRequest(`/paam/import/v1/preview/${context.plan.token}/confirm`, "POST", {
-        expected_updated_time: context.plan.updated_time, preview_digest: context.plan.preview_digest, selected_rows: selected });
+        expected_updated_time: context.plan.updated_time, preview_digest: context.plan.preview_digest, selected_rows: selected,
+        ...(singleBatch() ? {batch_preview_digest:singleBatch().batch_preview_digest} : {}) });
       localStorage.removeItem(pendingKey);
       context.selected.clear();
       context.dirty = false;

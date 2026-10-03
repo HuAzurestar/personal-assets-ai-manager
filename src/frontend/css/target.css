@@ -1450,7 +1450,7 @@
 .review-member-tools { position:sticky; top:0; padding:8px 0; background:var(--surface); z-index:1; }
 [data-current-review-selection], [data-current-groups] { display:flex; flex-wrap:wrap; gap:6px; }
 [data-current-review-selection] > button { min-height:34px; padding:5px 10px; font-size:12px; }
-.import-batch-row { display:grid; grid-template-columns:24px minmax(200px,1fr) 120px minmax(170px,.7fr) 170px; grid-template-areas:"select main amount source decision" "issue issue issue issue issue"; align-items:center; gap:0 12px; padding:8px 10px; border-bottom:1px solid var(--row-line); background:var(--subtle); font-size:12px; line-height:1.45; }
+.import-batch-row { display:grid; grid-template-columns:24px minmax(200px,1fr) 120px minmax(170px,.7fr) 170px; grid-template-areas:"select main amount source decision" "intent intent intent intent intent" "issue issue issue issue issue"; align-items:center; gap:0 12px; padding:8px 10px; border-bottom:1px solid var(--row-line); background:var(--subtle); font-size:12px; line-height:1.45; }
 .import-batch-row > * { min-width:0; }
 .import-batch-row label { margin:0; gap:0; font-size:12px; }
 .import-batch-select { grid-area:select; }
@@ -1465,12 +1465,22 @@
 .import-batch-decision .import-batch-recheck { display:flex; align-items:center; gap:5px; margin-top:5px; }
 .import-batch-recheck input { flex:0 0 20px; }
 .import-batch-issue { grid-area:issue; margin:5px 0 0; color:var(--danger); overflow-wrap:anywhere; }
+.import-batch-intent { grid-area:intent; display:flex; align-items:center; gap:8px; margin-top:4px; min-width:0; }
+.import-batch-intent span { flex:1; min-width:0; overflow-wrap:anywhere; }
+.import-batch-intent button { flex:none; min-height:28px; padding:3px 7px; font-size:12px; }
+.import-choice { display:grid; gap:10px; min-width:0; }
+.import-choice [hidden] { display:none !important; }
+.import-choice p,.import-choice .picker-list-row span { overflow-wrap:anywhere; }
+.import-choice label { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.import-choice [data-new-risk-ack] { flex:none; width:auto; }
+.import-choice select { max-width:100%; }
+.import-choice-dialog .dialog-head button { flex:none; white-space:nowrap; }
 .import-plan-record { align-items:start; font-size:12px; line-height:1.45; }
 .import-plan-record > div { min-width:0; overflow-wrap:anywhere; }
 .import-plan-record p { margin:3px 0; }
 .import-plan-record > button { min-height:34px; padding:5px 8px; font-size:12px; }
 @media(max-width:1000px) {
-  .import-batch-row { grid-template-columns:24px minmax(0,1fr) 170px; grid-template-areas:"select main amount" ". source decision" "issue issue issue"; row-gap:6px; }
+  .import-batch-row { grid-template-columns:24px minmax(0,1fr) 170px; grid-template-areas:"select main amount" ". source decision" "intent intent intent" "issue issue issue"; row-gap:6px; }
 }
 @media(max-width:560px) {
   .import-plan-record { grid-template-columns:minmax(0,1fr); }
@@ -1482,7 +1492,7 @@
   .review-member-tools > [data-member-count] { order:-1; grid-column:1 / -1; font-size:12px; }
   .review-member-tools > button { min-width:0; min-height:44px; padding:5px 6px; font-size:12px; white-space:normal; }
   .review-member-tools > [data-select-review-group] { grid-column:span 2; }
-  .import-batch-row { grid-template-columns:24px minmax(0,1fr); grid-template-areas:"select main" ". amount" ". source" ". decision" "issue issue"; }
+  .import-batch-row { grid-template-columns:24px minmax(0,1fr); grid-template-areas:"select main" ". amount" ". source" ". decision" "intent intent" "issue issue"; }
   .import-batch-amount { text-align:left; }
 }
 .selected-review-facts { display:grid; gap:9px; }
