@@ -82,8 +82,16 @@ def run():
                         page.locator('[data-action="import-step"][data-step="2"]').last.click()
                         form=page.locator('[data-form="import-preview"]')
                         form.locator('[name="files"]').set_input_files(files)
-                        form.locator('[data-action="preview-import"]').click()
-                        expect(page.locator('[data-batch-row]')).to_have_count(20,timeout=30000)
+                        with page.expect_response(lambda response:response.request.method=='POST'
+                                and response.url.endswith('/paam/import/v1/preview'),timeout=35000) as uploaded:
+                            form.locator('[data-action="preview-import"]').click()
+                        response=uploaded.value
+                        assert response.status==200,(response.status,response.text())
+                        try:
+                            expect(page.locator('[data-batch-row]')).to_have_count(20,timeout=30000)
+                        except AssertionError as error:
+                            raise AssertionError(f'Upload succeeded but draft rows did not mount; page errors={errors}; '
+                                f'visible UI={page.locator("body").inner_text()[:4000]}') from error
                         expect(page.locator('[data-batch-select-scope]')).to_be_enabled(timeout=15000)
                         page.locator('[data-batch-select-scope]').click()
                         expect(page.locator('[data-batch-pair]')).to_be_enabled(timeout=15000)
@@ -107,12 +115,19 @@ def run():
                     expect(dialog.locator('[data-pairing-choice]:checked')).to_have_count(0)
                     expect(dialog.locator('[data-pairing-apply]')).to_be_disabled()
                     expect(dialog.locator('[data-pairing-row]')).to_have_count(20)
+                    dialog.locator('[data-pairing-filter]').select_option('SUGGESTED')
                     expect(dialog.locator('[data-pairing-row]').first).to_contain_text('Mock原事实1')
                     expect(dialog.locator('[data-pairing-row]').first).to_contain_text('Fact #')
                     assert '990000000000001234' not in dialog.inner_text()
                     dialog.locator('[data-pairing-next]').click()
+                    expect(dialog.locator('[data-pairing-page]')).to_contain_text('21–30 / 30')
+                    expect(dialog.locator('[data-pairing-row]')).to_have_count(10)
+                    dialog.locator('[data-pairing-filter]').select_option('ALL')
+                    dialog.locator('[data-pairing-next]').click()
                     expect(dialog.locator('[data-pairing-page]')).to_contain_text('21–33 / 33')
                     expect(dialog.locator('[data-pairing-row]')).to_have_count(13)
+                    dialog.locator('[data-pairing-filter]').select_option('OTHER')
+                    expect(dialog.locator('[data-pairing-row]')).to_have_count(3)
                     expect(dialog.locator('[data-pairing-items]')).to_contain_text('有多个候选')
                     expect(dialog.locator('[data-pairing-items]')).to_contain_text('完整来源身份不能证明')
                     expect(dialog.locator('[data-pairing-items]')).to_contain_text('不自动视为新交易')
