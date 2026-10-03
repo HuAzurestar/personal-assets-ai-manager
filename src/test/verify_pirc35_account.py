@@ -99,9 +99,50 @@ def run():
                     expect(form.locator('[data-choice-label]')).to_contain_text('Mock person B')
                     expect(form.locator('[data-choice-label]')).to_contain_text('Mock set B')
                     expect(form.locator('[name="account_id"]')).to_have_value(str(target['id']))
+                    # Expire the real backend read guard after Python assembly,
+                    # not a fabricated HTTP response or a thirty-second SLA test.
+                    from backend.core import target_database
+                    from backend.mapper import bounded_query_mapper as bounded
+                    from backend.mapper.account_management_mapper import AccountManagementMapper
+                    from backend.service.account_management_service import AccountManagementService
+                    from test_pirc35_import_duplicate import manifest
+                    def account_state():
+                        with target_database.SessionLocal() as db:
+                            return manifest(AccountManagementMapper(db))
+                    before_preview = account_state()
+                    assert len(before_preview) == 20
+                    move_requests = []
+                    page.on('request', lambda request: move_requests.append(request.url.rsplit('/', 1)[-1])
+                        if request.url.endswith(('/move-preview', '/move-command')) else None)
+                    original_clock, original_move = bounded.monotonic, AccountManagementService._move
+                    clock = [0.0]
+                    def expired_move(self, *args):
+                        result = original_move(self, *args)
+                        clock[0] = 31.0
+                        return result
+                    bounded.monotonic = lambda: clock[0]
+                    AccountManagementService._move = expired_move
+                    try:
+                        with page.expect_response(lambda response: response.url.endswith('/move-preview')) as failed:
+                            form.locator('[type="submit"]').click()
+                        assert failed.value.status == 503
+                        assert failed.value.json()['body']['code'] == 'QUERY_BUSY'
+                        expect(form.locator('[role=status]')).to_contain_text('QUERY_BUSY')
+                        expect(form.locator('[role=status]')).to_contain_text('未执行归属变更')
+                        expect(form.locator('[type="submit"]')).to_be_enabled()
+                        expect(form.locator('[data-confirm]')).to_be_disabled()
+                        expect(form.locator('[name="account_id"]')).to_have_value(str(target['id']))
+                        expect(form.locator('[data-choice-label]')).to_contain_text('Mock set B')
+                        assert move_requests == ['move-preview']
+                        assert account_state() == before_preview
+                    finally:
+                        bounded.monotonic, AccountManagementService._move = original_clock, original_move
+                    # Only this explicit second preview may enable confirmation.
                     form.locator('[type="submit"]').click()
                     expect(form.locator("[data-impact]")).to_contain_text("跨个人变更")
                     expect(form.locator('[data-impact]')).to_contain_text('Mock person A / Mock set A maintained → Mock person B / Mock set B')
+                    assert move_requests == ['move-preview', 'move-preview']
+                    assert account_state() == before_preview
                     # Hold the actual list response after a successful move. The
                     # old table must not open an editor that the pending render
                     # immediately aborts. No mocked financial result is used.

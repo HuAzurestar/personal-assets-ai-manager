@@ -2,6 +2,7 @@
 import hashlib
 import json
 from datetime import datetime
+from time import monotonic
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 from backend.error import TargetEconomicError, ListQueryError
@@ -140,6 +141,8 @@ class AccountManagementService:
             self.relations.validate()
             result = self._po(kind, self.mapper.public_get(kind, row["id"]),
                 self.mapper.source_times([row["id"]]) if kind == "ref" else None)
+            if monotonic() - self.mapper.write_started > 2:
+                reject("WRITE_BUSY", "metadata write budget exceeded; not committed, no partial changes", 503)
             self.mapper.end_write()
             commit_started = True
             self.mapper.db.commit()
@@ -199,9 +202,10 @@ class AccountManagementService:
         return result, row
 
     def move_preview(self, ref_id, payload):
-        self.relations.read_snapshot()
-        self.relations.validate()
-        return self._move(ref_id, payload)[0]
+        with query_budget(self.mapper.db):
+            self.relations.read_snapshot()
+            self.relations.validate()
+            return self._move(ref_id, payload)[0]
 
     def move_command(self, ref_id, payload):
         def operation():
