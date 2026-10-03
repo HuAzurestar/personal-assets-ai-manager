@@ -76,12 +76,60 @@ def run():
                         if request.method=='POST' and request.url.endswith('/pairing-preview') else None)
 
                     def confirm_visible_batch():
-                        with page.expect_response(lambda response:response.request.method=='POST'
-                                and response.url.endswith('/confirm'),timeout=15000) as submitted:
-                            page.locator('[data-batch-confirm]').click()
-                        response=submitted.value
-                        assert response.status==200,(response.status,response.text())
-                        responses.append(response.json()['body'])
+                        # The real server commits, but the browser loses this
+                        # financial response. Do not simulate acceptance in JS.
+                        def lost_response(route):
+                            response=route.fetch()
+                            assert response.status==200,(response.status,response.text())
+                            responses.append(response.json()['body'])
+                            route.abort('failed')
+                        confirm_pattern='**/paam/import/v1/preview/*/confirm'
+                        page.route(confirm_pattern,lost_response)
+                        page.locator('[data-batch-confirm]').click()
+                        expect(page.locator('[data-batch-status]')).to_contain_text('提交结果未知',timeout=15000)
+                        page.unroute(confirm_pattern,lost_response)
+                        expect(page.locator('[data-batch-confirm]')).to_be_disabled()
+                        retained=page.evaluate("JSON.parse(localStorage.getItem('paam.import.pending.v1'))")
+                        assert len(retained['rows'])==len(retained['intents'])==len(writes[-1]['selected_rows'])
+                        persisted=snapshot();submitted_count=len(writes)
+                        reconcile_pattern='**/paam/import/v1/import_file/reconcile'
+                        def failed_observation(route):
+                            route.fulfill(status=503,content_type='application/json',body=json.dumps(dict(status=503,
+                                message='Mock observation failure',body=dict(code='QUERY_BUSY'))))
+                        page.route(reconcile_pattern,failed_observation)
+                        page.locator('[data-batch-verify]').click()
+                        expect(page.locator('[data-batch-verify]')).to_be_enabled(timeout=15000)
+                        expect(page.locator('[data-batch-observed]')).to_have_count(0)
+                        assert page.evaluate("JSON.parse(localStorage.getItem('paam.import.pending.v1'))")==retained
+                        page.unroute(reconcile_pattern,failed_observation)
+                        def wrong_target(route):
+                            response=route.fetch();value=response.json()
+                            value['body']['items'][0]['target_transaction_id']=999999
+                            route.fulfill(response=response,json=value)
+                        page.route(reconcile_pattern,wrong_target)
+                        page.locator('[data-batch-verify]').click()
+                        expect(page.locator('[data-batch-verify]')).to_be_enabled(timeout=15000)
+                        expect(page.locator('[data-batch-observed]')).to_have_count(0)
+                        page.unroute(reconcile_pattern,wrong_target)
+                        with page.expect_response(lambda response:response.url.endswith('/import_file/reconcile')) as read:
+                            page.locator('[data-batch-verify]').click()
+                        observed=read.value.json()['body']
+                        assert observed['fully_observed'] and observed['current_state_only']
+                        assert len(observed['items'])==len(retained['rows'])
+                        expect(page.locator('[data-batch-observed]')).to_be_enabled(timeout=15000)
+                        expect(page.locator('[data-reconcile-rows] .import-bulk-record')).to_have_count(20)
+                        page.locator('[data-reconcile-rows] [data-bulk-next]').click()
+                        expect(page.locator('[data-reconcile-rows] .import-bulk-record')).to_have_count(len(retained['rows'])-20)
+                        if retained['intents'][0]['resolution']=='DUPLICATE':
+                            assert all(item['state']=='DUPLICATE_EXCLUDED' and item['target_transaction_id'] in seed_ids for item in observed['items'])
+                            assert {value['review_status'] for value in observed['outputs']}=={'CONFIRMED','REVOKED'}
+                            expect(page.locator('[data-reconcile-rows]')).to_contain_text('不是数据库首次配对回执')
+                        else:
+                            assert all(item['state']=='EVIDENCE_LINKED' and item['transaction_id']==item['target_transaction_id'] for item in observed['items'])
+                        assert len(writes)==submitted_count and snapshot()==persisted
+                        assert page.evaluate("JSON.parse(localStorage.getItem('paam.import.pending.v1'))")==retained
+                        viewport_evidence(page,'fix-import-reconcile-'+retained['intents'][0]['resolution'])
+                        page.locator('[data-batch-observed]').click()
                         expect(page.locator('[data-batch-selection]')).to_contain_text('本次明确选择 0 行',timeout=15000)
 
                     def upload(files):

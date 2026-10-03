@@ -1,5 +1,6 @@
 """Visible manual import intents and real atomic writes on fictional CSV only."""
 import base64
+import json
 import os
 from pathlib import Path
 import socket
@@ -169,8 +170,18 @@ def run():
                     expect(detail).to_contain_text('真实新增 1 · 新重复 Fact 1 · 仅补证据 1')
                     viewport_evidence(page, 'fix-import-choice-complete-preview')
                     expect(page.locator('[data-batch-confirm]')).to_be_enabled()
+                    def lost_reply(route):
+                        response=route.fetch()
+                        assert response.status==200,(response.status,response.text())
+                        responses.append(response.json()['body'])
+                        route.fulfill(status=503,content_type='application/json',body=json.dumps(dict(status=503,
+                            message='Mock dropped ROW-anchor response',body=dict(code='RESULT_UNKNOWN'))))
+                    confirm_pattern='**/paam/import/v1/preview/*/confirm'
+                    page.route(confirm_pattern,lost_reply)
                     page.locator('[data-batch-confirm]').click()
-                    expect(page.locator('[data-batch-selection]')).to_contain_text('0 行', timeout=15000)
+                    expect(page.locator('[data-batch-status]')).to_contain_text('结果未知',timeout=15000)
+                    page.unroute(confirm_pattern,lost_reply)
+                    expect(page.locator('[data-batch-confirm]')).to_be_disabled()
                     assert len(writes) == 1 and len(writes[0]['selected_rows']) == 3
                     assert len(writes[0]['batch_preview_digest']) == 64
                     assert len(responses) == 1
@@ -181,6 +192,21 @@ def run():
                     assert new_duplicate['duplicate_kept_transaction_id'] == new_real['transaction_id']
                     assert new_duplicate['transaction_id'] != new_real['transaction_id']
                     assert evidence['transaction_id'] == keeper_id and evidence['created_review_id'] == evidence['created_ledger_id'] == 0
+                    committed=snapshot()
+                    with page.expect_response(lambda response:response.url.endswith('/import_file/reconcile')) as verified:
+                        page.locator('[data-batch-verify]').click()
+                    observed=verified.value.json()['body']
+                    assert observed['fully_observed'] and len(observed['items'])==3
+                    duplicate_observed=next(item for item in observed['items'] if item['resolution']=='DUPLICATE')
+                    assert duplicate_observed['state']=='DUPLICATE_EXCLUDED'
+                    assert duplicate_observed['transaction_id']==new_duplicate['transaction_id']
+                    assert duplicate_observed['target_transaction_id']==new_real['transaction_id']
+                    expect(page.locator('[data-batch-observed]')).to_be_enabled(timeout=15000)
+                    expect(page.locator('[data-reconcile-rows]')).to_contain_text('不是数据库首次配对回执')
+                    assert snapshot()==committed and len(writes)==1
+                    viewport_evidence(page,'fix-import-reconcile-row-anchor')
+                    page.locator('[data-batch-observed]').click()
+                    expect(page.locator('[data-batch-selection]')).to_contain_text('本次明确选择 0 行',timeout=15000)
                     after = snapshot()
                     assert len(after['transaction_fact']) - len(before['transaction_fact']) == 2
                     assert len(after['review_case']) - len(before['review_case']) == 3

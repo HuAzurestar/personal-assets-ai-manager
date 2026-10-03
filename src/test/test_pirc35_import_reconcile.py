@@ -1,11 +1,9 @@
 """Current-state observations only: no receipts, guessing or financial replay."""
-from copy import deepcopy
-
 import pytest
 from pydantic import ValidationError
-from sqlalchemy import event, select, update
+from sqlalchemy import event, update
 
-from backend.entity import TransactionImportFile, TransactionImportRow, LedgerEntry
+from backend.entity import TransactionImportFile, TransactionImportRow
 from backend.schema.import_source_read import SourceReconcileInput, SourceReconcilePO
 from backend.service.import_source_service import ImportSourceService
 from test_pirc35_import_service import service  # noqa: F401
@@ -156,7 +154,11 @@ def test_missing_persisted_source_not_proof_of_no_submission(service):
 @pytest.mark.parametrize('size', [1, 100, 1000])
 def test_complete_rows_use_bounded_set_reads_not_per_row_sql(service, size):
     rows = prepare(service.mapper, [row(n, reference=f'fictional-{n}') for n in range(1, size + 1)])
-    accept(service.mapper, rows)
+    # This is a complete 1000-row READ contract, not a capacity promise that
+    # fictional fixture creation will fit one two-second financial write.
+    entries = list(rows.items())
+    for offset in range(0, len(entries), 500):
+        accept(service.mapper, dict(entries[offset:offset+500]))
     body = SourceReconcileInput(**payload(service, rows))
     service.db.rollback()
     queries = []

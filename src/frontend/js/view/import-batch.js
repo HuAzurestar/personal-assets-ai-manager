@@ -4,9 +4,10 @@ import { mountPicker, workbenchDialog, metadataLabel } from "../component/workbe
 import { mountImportPlan, validateImportPlan } from '../component/import-plan.js';
 import { completeImportScope } from '../util/import-scope.js';
 import { openImportChoice, importIntentNames } from '../component/import-choice.js';
-import { openImportBulk, importRangeFilter } from '../component/import-bulk.js';
-import { openImportBinding } from '../component/import-binding.js';
+import { openImportBulk, importRangeFilter, mountImportDraftRows } from '../component/import-bulk.js';
+import { openImportBinding, readImportBinding } from '../component/import-binding.js';
 import { openImportPairing } from '../component/import-pairing.js';
+import { importReconciliationInput, validateImportReconciliation, reconciliationRowLabel, reconciliationOutputLabel } from '../component/import-reconciliation.js';
 
 const pendingKey = "paam.import.pending.v1";
 const contexts = new Map();
@@ -88,9 +89,10 @@ export async function mountImportBatch(host, initial, changed) {
     const files = plan.files.filter(file => fileIds.has(file.file_id)).map(file => file.filename);
     find('[data-batch-selected-scope]').textContent = `文件范围：${files.join('、') || '未选'}；已选待处理 ${selectedRows.filter(item => item.row.classification !== 'PROCESSED').length}，行问题 ${selectedRows.filter(item => item.row.issue_codes?.length).length}。来源按完整可靠身份逐行核验，不按尾号合并。`;
     host.querySelectorAll("button,input,select").forEach(node => {
-      if (!node.closest?.('[data-batch-operation]')) node.disabled = context.busy || context.unknown;
+      if (!node.closest?.('[data-batch-operation]') && !node.closest?.('[data-batch-verification]')) node.disabled = context.busy || context.unknown;
     });
     if (find('[data-batch-operation]')) find('[data-batch-operation]').inert = context.busy || context.unknown;
+    if (find('[data-batch-verification]')) find('[data-batch-verification]').inert = context.busy;
     find("[data-batch-verify]").disabled = context.busy;
     find("[data-batch-refresh]").disabled = context.busy;
     if (find("[data-batch-observed]")) find("[data-batch-observed]").disabled = context.busy || !context.verificationReady || plan.status === "CONFIRMING";
@@ -103,7 +105,7 @@ export async function mountImportBatch(host, initial, changed) {
     find("[data-batch-prev]").disabled ||= context.page <= 1;
     find("[data-batch-next]").disabled ||= !page || context.page * page.page_size >= page.total;
     host.querySelectorAll("[data-batch-processed]").forEach(node => { node.disabled = true; });
-    if (context.unknown) status("提交结果未知。不要重发；先核对当前行状态。410/预览丢失不能证明未提交。");
+    if (context.unknown) status(context.verificationMessage || "提交结果未知。不要重发；先核对当前行状态。410/预览丢失不能证明未提交。");
   };
   const readPage = async requestedPage => {
     if (context.busy) return;
@@ -205,6 +207,7 @@ export async function mountImportBatch(host, initial, changed) {
   const verify = async () => {
     if (context.busy) return;
     context.verificationReady = false;
+    context.verificationMessage = null;
     const retained = pending();
     const rows = retained?.rows || [...context.selected.values()].map(item => ({ file_id: item.row.file_id, source_row_number: item.row.source_row_number }));
     if (!rows.length) { status("没有可核对的所选行定位；按文件sha256查询导入历史，不能凭无响应推断失败。"); return; }
@@ -216,6 +219,39 @@ export async function mountImportBatch(host, initial, changed) {
       // Do not let that old state unlock writes while the original POST owns
       // the preview. A resident claimed token cannot be evicted by the server.
       let confirming = false;
+      if (retained?.intents) {
+        const input = importReconciliationInput(retained);
+        const result = await readImportBinding(async readSignal => {
+          const checkInFlight = async () => {
+            if (!retained.token) return;
+            try {
+              const current = await request(`/paam/import/v1/preview/${retained.token}`, {signal:readSignal});
+              confirming ||= current.status === 'CONFIRMING';
+            } catch (error) {if (error.status !== 410) throw error;}
+          };
+          await checkInFlight();
+          const value = await request('/paam/import/v1/import_file/reconcile',{method:'POST',
+            headers:{'Content-Type':'application/json'},body:JSON.stringify(input),signal:readSignal});
+          validateImportReconciliation(value,input);
+          // A terminal old source row is not proof that a still-running recheck
+          // has finished. Recheck the preview lease after the same-snapshot read.
+          await checkInFlight();
+          return value;
+        },{signal,valid:live,label:'当前持久状态核对'});
+        if (!live()) return;
+        const panel=find('[data-batch-verification]');
+        panel.innerHTML=`<h3>当前持久状态（不是首次命令回执）</h3><p>核对时点 ${esc(result.observed_at)}；共 ${result.items.length} 行，${result.outputs.length} 条当前／历史现金输出。后续解释变化不等于本次失败；不会重发原请求、恢复解释或补造默认。</p><div data-reconcile-rows></div><details><summary>完整当前及历史输出（不截断）</summary><div data-reconcile-outputs></div></details>${result.fully_observed ? '<button type="button" data-batch-observed>我已核对这些行，开始新的明确批次</button>' : '<p>范围尚未完整核实；保留结果未知与原定位信息。</p>'}`;
+        mountImportDraftRows(panel.querySelector('[data-reconcile-rows]'),result.items,reconciliationRowLabel,signal);
+        mountImportDraftRows(panel.querySelector('[data-reconcile-outputs]'),result.outputs,reconciliationOutputLabel,signal);
+        const button=find('[data-batch-observed]');
+        context.verificationReady=!!button && !confirming;
+        if (button) button.onclick=async()=>{
+          if (context.busy || !context.verificationReady || context.plan.status === 'CONFIRMING') return;
+          localStorage.removeItem(pendingKey);context.unknown=false;context.verificationReady=false;context.verificationMessage=null;
+          context.selected.clear();context.dirty=false;invalidatePlan();await refresh();
+        };
+        return;
+      }
       if (retained?.token) {
         try {
           const current = await request(`/paam/import/v1/preview/${retained.token}`, { signal });
@@ -262,7 +298,7 @@ export async function mountImportBatch(host, initial, changed) {
         localStorage.removeItem(pendingKey); context.unknown = false; context.verificationReady = false;
         context.selected.clear(); context.dirty = false; await refresh();
       };
-    } catch (error) { status(`无法核实：${error.message}。保持结果未知，不自动重发。`); }
+    } catch (error) { context.verificationMessage=`无法核实：${error.message}。保持结果未知，不自动重发。`;status(context.verificationMessage); }
     finally { context.busy = false; update(); }
   };
   const selectScope = async (range = false) => {
@@ -389,7 +425,7 @@ export async function mountImportBatch(host, initial, changed) {
     try {
       localStorage.setItem(pendingKey, JSON.stringify({ token: context.plan.token, files: context.plan.files.map(file => ({ file_id: file.file_id, sha256: file.sha256 })), rows: selected,
         intents:[...context.selected.values()].map(item => ({file_id:item.row.file_id,source_row_number:item.row.source_row_number,
-          resolution:item.choice.resolution || 'AUTO',target:item.choice.target ? {...item.choice.target} : null})) }));
+          resolution:item.choice.resolution || 'AUTO',decision:item.choice.decision,target:item.choice.target ? {...item.choice.target} : null})) }));
     } catch {
       context.busy = false;
       status("无法保存本批安全定位信息；本次未发送确认。请检查浏览器存储设置。");
