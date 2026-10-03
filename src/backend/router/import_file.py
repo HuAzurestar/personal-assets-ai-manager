@@ -8,7 +8,8 @@ from backend.router.bounded_query import bounded_search_dependency
 from backend.schema.list_query import parse_list_request
 from backend.schema.import_source_read import (SourceFileListRequest, SourceFileSearchRequest, SourceRowListRequest,
     SourceRowSearchRequest, SourceFileListResponse, SourceFileSearchResponse, SourceFileDetailResponse,
-    SourceRowListResponse, SourceRowSearchResponse, SourceRowDetailResponse, SourceRelationsResponse)
+    SourceRowListResponse, SourceRowSearchResponse, SourceRowDetailResponse, SourceRelationsResponse,
+    SourceReconcileInput, SourceReconcileResponse)
 from backend.schema.import_file import (ImportFileListRequest, ImportFileSummaryResponse, ImportFileTransactionFactListResponse)
 from backend.service.import_source_service import ImportSourceService
 from backend.service.import_file_service import ImportFileService
@@ -40,6 +41,12 @@ def file_summary(http_request: Request, filter: str | None = None, db: Session =
     validate_query_parameter_names(http_request, {"filter"})
     return ImportFileSummaryResponse(status=200, message="ok", body=ImportFileService(db).summary(
         request=parse_list_request(ImportFileListRequest, filter=filter)))
+
+
+@router.post("/import_file/reconcile", response_model=SourceReconcileResponse)
+def reconcile(http_request: Request, request: SourceReconcileInput, db: Session = Depends(get_db)):
+    validate_query_parameter_names(http_request,set())
+    return SourceReconcileResponse(status=200,message="ok",body=ImportSourceService(db).reconcile(request))
 
 
 @router.get("/import_file/{import_file_id}", response_model=SourceFileDetailResponse)

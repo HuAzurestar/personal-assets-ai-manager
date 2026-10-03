@@ -1,10 +1,12 @@
 """Read-only persisted progress and evidence, never a command receipt."""
 import json
 import re
+from collections import defaultdict
 from backend.core.import_identity import canonical_json
 from backend.core.import_public_text import masked_reference, public_issue
-from backend.entity import TransactionImportFile, TransactionImportRow, TransactionFact
-from backend.error import ListQueryError
+from backend.entity import TransactionImportFile, TransactionImportRow, TransactionFact, LedgerEntry, ReviewCase
+from backend.entity.base import utc_now
+from backend.error import ListQueryError, TargetEconomicError
 from backend.mapper.import_batch_mapper import ImportBatchMapper, fail
 from backend.mapper.import_source_mapper import ImportSourceMapper
 from backend.mapper.bounded_query_mapper import query_budget
@@ -12,6 +14,7 @@ from backend.mapper.trusted_relation_mapper import TrustedRelationMapper
 from backend.schema.import_file import parse_import_file_time
 from backend.schema.list_query import iter_filter_fields, validate_list_capabilities, BetweenValue
 from backend.service.fact_read_service import fact_po
+from backend.service.review_intent_service import validate_duplicate_keepers
 
 
 class ImportSourceService:
@@ -128,4 +131,111 @@ class ImportSourceService:
                 if row["review_status"] is not None:
                     row["review_status"] = "CONFIRMED" if row["review_status"] == 0 else "REVOKED"
             return dict(items=items, total=len(items))
+        return self.read(action)
+
+    def reconcile(self, payload):
+        """Read current persisted effects against explicit client locators.
+
+        Not a receipt: an accepted source may have subsequent explanations.
+        Nothing is replayed, repaired, activated or guessed from equal money.
+        """
+        def action():
+            keys={(row.file_id,row.source_row_number) for row in payload.rows}
+            keys |= {(row.target.file_id,row.target.source_row_number) for row in payload.rows
+                if row.target is not None and row.target.kind == "ROW"}
+            files={row["id"]:row for row in self.mapper.rows(TransactionImportFile,TransactionImportFile.id,{key[0] for key in keys})}
+            proofs={file.file_id:file.sha256 for file in payload.files}
+            sources={(row["transaction_import_file_id"],row["source_row_number"]):row for row in self.mapper.located_rows(keys)}
+            ids={row["transaction_fact_id"] for row in sources.values() if row["transaction_fact_id"]}
+            ids |= {row.target.transaction_id for row in payload.rows if row.target is not None and row.target.kind == "FACT"}
+            facts={row["id"]:row for row in self.mapper.rows(TransactionFact,TransactionFact.id,ids,limit=2000)}
+            for source in sources.values():
+                if (source["row_status"] == 1 and source["transaction_fact_id"] not in facts or
+                    source["row_status"] != 1 and source["transaction_fact_id"] != 0):
+                    fail("RELATION_BROKEN")
+            allocations=self.mapper.allocations_for_facts(facts,limit=4000)
+            reviews={row["id"]:row for row in self.mapper.rows(ReviewCase,ReviewCase.id,{row["review_id"] for row in allocations})}
+            ledgers={row["id"]:row for row in self.mapper.rows(LedgerEntry,LedgerEntry.id,{row["ledger_id"] for row in allocations})}
+            current=defaultdict(list)
+            outputs=[]
+            names=("TRANSACTION","ACCOUNT_TRANSFER","ASSET_LIABILITY","DUPLICATE")
+            for allocation in allocations:
+                ledger=ledgers[allocation["ledger_id"]]
+                status=reviews[allocation["review_id"]]["status"]
+                if status == 0:current[allocation["transaction_id"]].append(ledger)
+                outputs.append(dict(transaction_id=allocation["transaction_id"],allocation_id=allocation["id"],
+                    review_id=allocation["review_id"],review_status="CONFIRMED" if status == 0 else "REVOKED",
+                    ledger_id=ledger["id"],economic_type=names[ledger["entry_type"]],account_ref_id=ledger["account_ref_id"],
+                    cash_amount=allocation["cash_amount"],cash_currency_code=allocation["cash_currency_code"],
+                    cash_direction="IN" if ledger["entry_direction"] == 1 else "OUT",occurred_time=ledger["occurred_time"]))
+            items=[]
+            for row in payload.rows:
+                key=(row.file_id,row.source_row_number)
+                source=sources.get(key)
+                item=dict(row=dict(file_id=key[0],source_row_number=key[1]),resolution=row.resolution,
+                    row_id=source["id"] if source else 0,row_status=source["row_status"] if source else None,
+                    transaction_id=source["transaction_fact_id"] if source else 0,target_transaction_id=0,
+                    state="UNRESOLVED",fully_observed=False,reason_codes=[])
+                items.append(item)
+                target_key=(row.target.file_id,row.target.source_row_number) if row.target is not None and row.target.kind == "ROW" else None
+                scoped_files={key[0]} | ({target_key[0]} if target_key else set())
+                if any(id not in files or proofs.get(id) != files[id]["sha256"] for id in scoped_files):
+                    item["reason_codes"]=["SOURCE_FILE_IDENTITY_REQUIRED"]
+                    continue
+                if not source:
+                    item.update(state="NOT_PERSISTED",reason_codes=["PERSISTED_RESULT_NOT_FOUND"])
+                    continue
+                if source["row_status"] == 0:
+                    item.update(state="UNPROCESSED",reason_codes=["PERSISTED_RESULT_NOT_FINAL"])
+                    continue
+                if source["row_status"] in {2,3}:
+                    item.update(state="SKIPPED" if source["row_status"] == 2 else "INVALID",fully_observed=True,
+                        reason_codes=["CURRENT_NON_ACCEPTED_STATE"])
+                    continue
+                id=source["transaction_fact_id"]
+                if row.resolution in {"AUTO","NEW"}:
+                    item.update(state="ACCEPTED",fully_observed=True)
+                    if any(ledger["entry_type"] == 3 for ledger in current[id]):
+                        item.update(state="CURRENT_STATE_CHANGED",reason_codes=["CURRENT_DUPLICATE_WITHOUT_PAIR_CONTEXT"])
+                    elif not current[id] or sum(ledger["cash_amount"] for ledger in current[id]) != facts[id]["amount"]:
+                        item.update(state="CURRENT_STATE_CHANGED",reason_codes=["CURRENT_CASH_COVERAGE_CHANGED"])
+                    if row.decision == "SKIP":item.update(state="CURRENT_STATE_CHANGED",reason_codes=["CURRENT_DECISION_CHANGED"])
+                    continue
+                if row.target is None:
+                    item["reason_codes"]=["PAIR_CONTEXT_REQUIRED"]
+                    continue
+                if row.target.kind == "FACT":target=row.target.transaction_id
+                else:
+                    anchor=sources.get(target_key)
+                    target=anchor["transaction_fact_id"] if anchor and anchor["row_status"] == 1 else 0
+                item["target_transaction_id"]=target
+                if not target or target not in facts:
+                    item["reason_codes"]=["PAIR_TARGET_NOT_OBSERVED"]
+                    continue
+                if row.resolution == "LINK_EXISTING":
+                    if id != target:
+                        item["reason_codes"]=["EVIDENCE_TARGET_CHANGED"]
+                    else:item.update(state="EVIDENCE_LINKED",fully_observed=True)
+                    continue
+                if id == target:
+                    item["reason_codes"]=["DUPLICATE_TARGET_CHANGED"]
+                    continue
+                if any(facts[id][field] != facts[target][field] for field in
+                    ("amount","currency_code","cash_direction","occurred_time")):
+                    # Immutable core mismatch is a wrong/lost target, not a
+                    # later legitimate change of the published explanation.
+                    item["reason_codes"]=["PAIR_TARGET_CORE_MISMATCH"]
+                    continue
+                try:
+                    validate_duplicate_keepers([dict(transaction_id=id,kept_transaction_id=target)],current,facts)
+                    item.update(state="DUPLICATE_EXCLUDED",fully_observed=True,
+                        reason_codes=["KEEPER_LOCATED_FROM_CLIENT_CONTEXT"])
+                except TargetEconomicError:
+                    # A later legitimate change is not evidence of failed import.
+                    item.update(state="CURRENT_STATE_CHANGED",fully_observed=True,
+                        reason_codes=["CURRENT_PAIR_EFFECT_CHANGED","KEEPER_LOCATED_FROM_CLIENT_CONTEXT"])
+            return dict(observed_at=utc_now(),items=items,fully_observed=all(item["fully_observed"] for item in items),
+                current_state_only=True,facts=[dict(id=row["id"],amount=row["amount"],currency_code=row["currency_code"],
+                    cash_direction="IN" if row["cash_direction"] == 1 else "OUT",occurred_time=row["occurred_time"]) for row in facts.values()],
+                outputs=outputs)
         return self.read(action)

@@ -1,8 +1,8 @@
 """Bounded public source reads; private evidence only in one-row detail."""
-from sqlalchemy import select, or_, and_
+from sqlalchemy import select, or_, and_, tuple_
 from backend.core.import_public_text import masked_reference, public_issue
 from backend.entity import TransactionImportFile, TransactionImportRow, TransactionFact, ReviewAllocation, ReviewCase, LedgerEntry
-from backend.mapper.review_command_mapper import ReviewCommandMapper
+from backend.mapper.review_command_mapper import ReviewCommandMapper, chunks
 from backend.mapper.bounded_query_mapper import page_rows, scan_rows
 
 
@@ -11,6 +11,16 @@ def row_po(row):
 
 
 class ImportSourceMapper(ReviewCommandMapper):
+    def located_rows(self, keys):
+        """Exact bounded source coordinates; never load raw evidence to reconcile."""
+        entity=TransactionImportRow
+        columns=[column for column in entity.__table__.columns if column.name != "raw_payload"]
+        result=[]
+        for batch in chunks(keys):
+            result.extend(dict(row) for row in self.db.execute(select(*columns).where(
+                tuple_(entity.transaction_import_file_id,entity.source_row_number).in_(batch)).order_by(entity.id)).mappings())
+        return result
+
     def broken_file_sources(self, file_id):
         row, fact = TransactionImportRow, TransactionFact
         return self.db.scalar(select(row.id).outerjoin(fact, fact.id == row.transaction_fact_id).where(

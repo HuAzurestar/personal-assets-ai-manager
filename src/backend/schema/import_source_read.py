@@ -1,6 +1,8 @@
 from datetime import datetime
 from typing import Literal
-from pydantic import Field
+from pydantic import Field, model_validator
+from backend.schema.import_command import ImportInput, RowIdentity, EvidenceTarget
+from backend.schema.identifier import PositiveId
 from backend.schema.review_read import PO
 from backend.schema.response import SuccessResponse
 from backend.schema.list_query import ListRequest
@@ -123,4 +125,89 @@ class SourceRowDetailResponse(SuccessResponse[SourceRowDetailPO]):
 
 
 class SourceRelationsResponse(SuccessResponse[SourceRelationsPO]):
+    pass
+
+
+class SourceReconcileRow(RowIdentity):
+    resolution: Literal["AUTO", "NEW", "LINK_EXISTING", "DUPLICATE"] = "AUTO"
+    decision: Literal["ACCEPT", "SKIP"] | None = None
+    target: EvidenceTarget | None = None
+
+    @model_validator(mode="after")
+    def pair_context(self):
+        if self.target is not None and self.resolution not in {"LINK_EXISTING", "DUPLICATE"}:
+            raise ValueError("only a pair can carry a target")
+        # Lost pair context is a truthful unresolved read, not an invented target.
+        return self
+
+
+class SourceFileProof(ImportInput):
+    file_id: PositiveId
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class SourceReconcileInput(ImportInput):
+    rows: list[SourceReconcileRow] = Field(min_length=1, max_length=1000)
+    files: list[SourceFileProof] = Field(max_length=100)
+
+    @model_validator(mode="after")
+    def distinct(self):
+        if len({(row.file_id,row.source_row_number) for row in self.rows}) != len(self.rows) or \
+            len({file.file_id for file in self.files}) != len(self.files):
+            raise ValueError("reconciliation requires unique exact source locators")
+        return self
+
+
+class ReconcileFact(PO):
+    id: int
+    amount: int
+    currency_code: str
+    cash_direction: Literal["IN", "OUT"]
+    occurred_time: datetime
+
+
+class ReconcileOutput(PO):
+    transaction_id: int
+    allocation_id: int
+    review_id: int
+    review_status: Literal["CONFIRMED", "REVOKED"]
+    ledger_id: int
+    economic_type: Literal["TRANSACTION", "ACCOUNT_TRANSFER", "ASSET_LIABILITY", "DUPLICATE"]
+    account_ref_id: int
+    cash_amount: int
+    cash_currency_code: str
+    cash_direction: Literal["IN", "OUT"]
+    occurred_time: datetime
+
+
+class ReconcileRowPO(PO):
+    row: RowIdentity
+    resolution: Literal["AUTO", "NEW", "LINK_EXISTING", "DUPLICATE"]
+    row_id: int
+    row_status: Literal[0, 1, 2, 3] | None
+    transaction_id: int
+    target_transaction_id: int
+    state: Literal["NOT_PERSISTED", "UNPROCESSED", "SKIPPED", "INVALID", "ACCEPTED", "EVIDENCE_LINKED",
+        "DUPLICATE_EXCLUDED", "CURRENT_STATE_CHANGED", "UNRESOLVED"]
+    fully_observed: bool
+    reason_codes: list[str]
+
+
+class SourceReconcilePO(PO):
+    observed_at: datetime
+    items: list[ReconcileRowPO] = Field(max_length=1000)
+    facts: list[ReconcileFact] = Field(max_length=2000)
+    outputs: list[ReconcileOutput] = Field(max_length=4000)
+    fully_observed: bool
+    current_state_only: Literal[True]
+
+    @model_validator(mode="after")
+    def complete(self):
+        if len({(item.row.file_id,item.row.source_row_number) for item in self.items}) != len(self.items) or \
+            self.fully_observed != all(item.fully_observed for item in self.items):
+            raise ValueError("current observation must describe every unique row")
+        return self
+
+
+class SourceReconcileResponse(SuccessResponse[SourceReconcilePO]):
     pass
