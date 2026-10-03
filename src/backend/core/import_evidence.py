@@ -5,6 +5,7 @@ cards, labels, amounts alone and user-selected account identities are not proof.
 The returned ROW locators are command state, not guessed or persistent IDs.
 """
 from collections import defaultdict
+import re
 
 from backend.core.import_identity import SOURCE_CODES, fact_values, same_fact
 from backend.error import TargetIntakeError
@@ -13,6 +14,21 @@ from backend.schema.identifier import SQLITE_ID_MAX
 
 def reject(code, status=422):
     raise TargetIntakeError(status, code, code=code)
+
+
+def complete_source_code(source_type, account_code):
+    """A masked string is evidence, never a complete source identity.
+
+    Bank identities use the same full-digit boundary as parser-owned reliable
+    identities. Wallet profiles retain their existing origin contract, but
+    known redaction markers cannot grant manual linking/exclusion authority.
+    AUTO source keys and persisted Facts are not rewritten by this check.
+    """
+    if not account_code or any(marker in account_code for marker in ("*","＊","•","…")):
+        return False
+    if source_type in {SOURCE_CODES[name] for name in ("abc","ccb","cmb")}:
+        return re.fullmatch(r"[0-9]{10,30}",account_code) is not None
+    return True
 
 
 def target_locator(target):
@@ -38,7 +54,7 @@ def parsed_source(row, file):
         values = fact_values(row, file["sha256"])
     except (ValueError, TypeError, KeyError):
         reject("INVALID_EVIDENCE_TARGET")
-    if not values["account_code"]:
+    if not complete_source_code(source_type,values["account_code"]):
         reject("SOURCE_IDENTITY_REQUIRED")
     return dict(values=values, source_type=source_type, origin_file_ids=[file["id"]])
 

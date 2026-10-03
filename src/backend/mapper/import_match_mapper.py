@@ -4,6 +4,8 @@ from sqlalchemy import select
 from backend.entity import TransactionFact
 from backend.mapper.import_batch_mapper import ImportBatchMapper, MAX_EVIDENCE_CANDIDATES
 from backend.error import TargetIntakeError
+from backend.mapper.candidate_mapper import CandidateMapper
+from backend.mapper.review_command_mapper import chunks
 
 
 def match_limit():
@@ -12,6 +14,15 @@ def match_limit():
 
 
 class ImportMatchMapper(ImportBatchMapper):
+    def suggestion_reviews(self, ids):
+        """Bounded IN reads shared by all unique suggestions, not per row SQL."""
+        result = []
+        for batch in chunks(sorted(set(ids))):
+            result.extend(CandidateMapper(self.db).current_reviews([dict(id=id) for id in batch]))
+            if len(result) > MAX_EVIDENCE_CANDIDATES:
+                raise TargetIntakeError(413,"complete candidate summaries exceed read budget",code="DETAIL_LIMIT")
+        return result
+
     def exact_page(self, values, source, kind, request):
         """Count all scoped identities; never filter by financial eligibility.
 

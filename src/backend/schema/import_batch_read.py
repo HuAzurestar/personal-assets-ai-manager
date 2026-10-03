@@ -385,5 +385,54 @@ class ImportBindingPreviewResponse(SuccessResponse[ImportBindingPreviewPO]):
     pass
 
 
+class ImportPairingSuggestion(PO):
+    target: EvidenceTarget
+    resolution: Literal["LINK_EXISTING", "DUPLICATE"]
+    occurred_time: datetime
+    amount: int
+    currency_code: str
+    cash_direction: Literal["IN", "OUT"]
+    summary_masked: str
+    source_label_masked: str
+    current_review_summaries: list[CurrentReviewPO] = Field(max_length=4000)
+
+
+class ImportPairingRowPO(PO):
+    row: RowIdentity
+    state: Literal["SUGGESTED", "NO_MATCH", "AMBIGUOUS", "EXCEPTION"]
+    candidate_count: StrictInt | None = Field(ge=0)
+    source_label_masked: str
+    suggestion: ImportPairingSuggestion | None
+    reason_codes: list[str]
+
+    @model_validator(mode="after")
+    def truthful_suggestion(self):
+        if ((self.state == "SUGGESTED") != (self.suggestion is not None) or
+            self.state == "SUGGESTED" and (self.candidate_count != 1 or self.reason_codes) or
+            self.state == "NO_MATCH" and (self.candidate_count != 0 or self.reason_codes) or
+            self.state == "AMBIGUOUS" and (self.candidate_count is None or self.candidate_count <= 1 or not self.reason_codes) or
+            self.state == "EXCEPTION" and not self.reason_codes):
+            raise ValueError("suggestion, exact count and exception state must agree")
+        return self
+
+
+class ImportPairingPreviewPO(PO):
+    source_preview_digest: str
+    expected_updated_time: datetime
+    kind: Literal["SAME_SOURCE", "CROSS_SOURCE"]
+    selected_count: int
+    items: list[ImportPairingRowPO] = Field(max_length=20000)
+
+    @model_validator(mode="after")
+    def complete(self):
+        if self.selected_count != len(self.items) or len({(item.row.file_id,item.row.source_row_number) for item in self.items}) != len(self.items):
+            raise ValueError("pair suggestions must describe the complete unique selected scope")
+        return self
+
+
+class ImportPairingPreviewResponse(SuccessResponse[ImportPairingPreviewPO]):
+    pass
+
+
 class ImportCancelResponse(SuccessResponse[ImportCancelPO]):
     pass

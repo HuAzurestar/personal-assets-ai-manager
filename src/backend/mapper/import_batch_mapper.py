@@ -15,7 +15,7 @@ from sqlalchemy.exc import OperationalError
 from backend.core.import_identity import (SOURCE_CODES, FORMAT_CODES, canonical_json,
     fact_key, fact_values, raw_evidence, same_fact, source_account_code)
 from backend.core.source_account_identity import reliable_source
-from backend.core.import_evidence import plan_same_source_links, plan_cross_source_duplicates, target_locator
+from backend.core.import_evidence import plan_same_source_links, plan_cross_source_duplicates, target_locator, complete_source_code
 from backend.entity import TransactionFact, TransactionImportFile, TransactionImportRow
 from backend.entity.base import utc_now
 from backend.error import TargetIntakeError
@@ -291,7 +291,7 @@ class ImportBatchMapper(ReviewCommandMapper):
             fail("DETAIL_LIMIT", 413)
         facts = {row["id"]: row for row in self.rows(TransactionFact, TransactionFact.id, ids)}
         result = {id: dict(issue="INVALID_EVIDENCE_TARGET") for id in ids - set(facts)}
-        originals, sources, premises = {}, {}, {}
+        originals, sources, premises, incomplete = {}, {}, {}, set()
         count = getattr(self, "_match_candidate_count", 0)
         for batch in chunks(facts):
             statement = select(TransactionImportRow.__table__,
@@ -318,6 +318,8 @@ class ImportBatchMapper(ReviewCommandMapper):
                     fail("RELATION_BROKEN")
                 projected = self.accepted_projection(facts[id], evidence)
                 sources.setdefault(id, set()).add((source_type, projected["account_code"]))
+                if not complete_source_code(source_type,projected["account_code"]):
+                    incomplete.add(id)
                 proof = dict(row_id=evidence["id"], file_id=evidence["file_id"],
                     file_sha256=evidence["file_sha256"], file_format=evidence["file_format"],
                     source_row_number=evidence["source_row_number"], raw_hash=evidence["raw_hash"],
@@ -331,7 +333,7 @@ class ImportBatchMapper(ReviewCommandMapper):
             if len(identity) > 1:
                 result[id] = dict(issue="FACT_CONFLICT")
                 continue
-            if id not in originals or not identity or not next(iter(identity))[0] or not next(iter(identity))[1]:
+            if id not in originals or not identity or not next(iter(identity))[0] or id in incomplete:
                 result[id] = dict(issue="SOURCE_IDENTITY_REQUIRED")
                 continue
             source_type, account_code = next(iter(identity))

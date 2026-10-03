@@ -30,6 +30,7 @@ from backend.schema.list_query import FilterFieldExpression
 from backend.service.import_confirmation_service import ImportConfirmationService
 from backend.service.import_duplicate_service import ImportDuplicateService
 from backend.service.import_match_service import ImportMatchService
+from backend.service.import_pairing_service import ImportPairingService
 from backend.service.import_risk_service import ImportRiskService
 from backend.service.import_operation_service import ImportOperationService
 from backend.core.import_evidence import target_locator
@@ -546,6 +547,29 @@ class ImportBatchService:
                         applicable=key not in issues,reason_codes=[issues[key]] if key in issues else []) for key in sorted(choices)])
                 if len(canonical_json(result).encode("utf-8")) > 24 * 1024 * 1024:
                     fail("DETAIL_LIMIT", 413)
+                latest = self.store.get(token)
+                if latest.updated_time != payload.expected_updated_time or latest.status == "CONFIRMING" or self.digest(latest) != payload.preview_digest:
+                    fail("PREVIEW_CHANGED")
+            return result
+        finally:
+            self.db.rollback()
+
+    def pairing_preview(self, token, payload):
+        """Complete readonly proposed pairs; no draft publish or consent."""
+        state = self.store.get(token)
+        if state.status == "CONFIRMING":
+            fail("PREVIEW_BUSY")
+        if state.updated_time != payload.expected_updated_time or self.digest(state) != payload.preview_digest:
+            fail("PREVIEW_CHANGED")
+        choices = {(choice.file_id,choice.source_row_number):choice.model_dump() for choice in payload.choices}
+        if any(key not in state.rows for key in choices):
+            fail("PREVIEW_ROW_NOT_FOUND",404)
+        try:
+            with query_budget(self.db,seconds=30):
+                result = ImportPairingService(self.db).propose(state,choices,payload.kind) | dict(
+                    source_preview_digest=payload.preview_digest,expected_updated_time=payload.expected_updated_time)
+                if len(canonical_json(result).encode("utf-8")) > 24 * 1024 * 1024:
+                    fail("DETAIL_LIMIT",413)
                 latest = self.store.get(token)
                 if latest.updated_time != payload.expected_updated_time or latest.status == "CONFIRMING" or self.digest(latest) != payload.preview_digest:
                     fail("PREVIEW_CHANGED")

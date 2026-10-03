@@ -99,6 +99,13 @@ class ImportBindingPreviewInput(ImportReviseInput):
     choices: list[RowChoice] = Field(min_length=1, max_length=20000)
 
 
+class ImportPairingPreviewInput(ImportReviseInput):
+    """Complete readonly suggestions, never mass consent or a larger write."""
+    preview_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    kind: Literal["SAME_SOURCE", "CROSS_SOURCE"]
+    choices: list[RowChoice] = Field(min_length=1, max_length=20000)
+
+
 class PreviewRowListRequest(ListRequest):
     pass
 

@@ -234,8 +234,9 @@ def test_late_row_risk_read_cannot_return_old_context_after_choice_change(servic
         service.store.replace(latest, latest.updated_time)
         return result
     monkeypatch.setattr(ImportRiskService, "plan", changed)
-    with pytest.raises(TargetIntakeError, match="PREVIEW_CHANGED"):
+    with pytest.raises(TargetIntakeError) as error:
         service.row_page(current["token"], current["preview_digest"], PreviewRowListRequest())
+    assert error.value.code == "PREVIEW_CHANGED"
     assert not service.db.in_transaction()
 
 
