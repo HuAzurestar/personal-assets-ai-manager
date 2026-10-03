@@ -4,7 +4,7 @@ from sqlalchemy import event, select, update, text
 
 from backend.core import target_database
 from backend.entity import (TransactionFact, ReviewCase, LedgerEntry, ReviewAllocation, TransactionImportRow,
-                            TargetTag, TargetTagView, LedgerEntryTag)
+                            TargetTag, TargetTagView, LedgerEntryTag, AutoTagRule)
 from backend.error import TargetEconomicError, TargetIntakeError
 from backend.schema.import_command import ImportConfirmInput
 from backend.schema.import_batch_read import ImportBatchPreviewPO, ImportConfirmPO
@@ -381,3 +381,31 @@ def test_one_canonical_b_cannot_mix_real_and_duplicate_choices(service):
         install(service, rows, {first: decision(dict(kind="FACT", transaction_id=id)),
             second: dict(decision="ACCEPT", resolution="NEW")})
     assert manifest(service) == before
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_compound_budget_binds_disabled_rule_and_rewinds_it_in_the_same_commit(service, changed):
+    service.db.add(TargetTagView(id=1, name="Mock purpose", system_name="mock-purpose", status="ACTIVE"))
+    service.db.add(TargetTag(id=1, view_id=1, name="Mock unclassified", system_name="unclassified", status="ACTIVE"))
+    service.db.add(AutoTagRule(id=1, name="Mock disabled rule", view_id=1, method=1,
+        method_config_json='{"schema_version":1,"model_id":9,"prompt":"Mock"}',
+        enabled=0, cron="", amount_mode=1, scan_after_ledger_id=100, scan_epoch=1, rule_revision=1))
+    service.db.commit()
+    _id, rows, choices = existing_pair(service)
+    current = install(service, rows, choices)
+    disclosure = batch(service, current, list(rows))
+    assert disclosure["effects"]["tag_effect"]["projected_assignment_count"] == 2
+    assert disclosure["effects"]["tag_effect"]["affected_rule_ids"] == [1]
+    assert disclosure["budget"]["tag_changes"] == 3
+    if changed:
+        service.db.execute(update(AutoTagRule).where(AutoTagRule.id == 1).values(scan_epoch=2))
+        service.db.commit()
+        before = manifest(service)
+        with pytest.raises(TargetIntakeError, match="STALE_PREVIEW"):
+            confirm_pair(service, current, list(rows), disclosure)
+        assert manifest(service) == before
+    else:
+        result = confirm_pair(service, current, list(rows), disclosure)
+        rule = service.db.get(AutoTagRule, 1)
+        assert (rule.scan_epoch, rule.scan_after_ledger_id, rule.rule_revision) == (2, 1, 1)
+        assert rule.enabled == 0 and result["duplicate_fact_count"] == 1
