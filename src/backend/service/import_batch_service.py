@@ -12,7 +12,7 @@ from datetime import timedelta
 
 from sqlalchemy.exc import IntegrityError, OperationalError
 
-from backend.core.import_identity import fact_key, fact_values, same_fact
+from backend.core.import_identity import fact_key, fact_values, same_fact, canonical_json
 from backend.core.import_public_text import masked_summary
 from backend.core.import_preview_store import ImportPreviewState, import_preview_store
 from backend.core.config import IMPORT_PREVIEW_TIMEOUT_MINUTES
@@ -489,6 +489,70 @@ class ImportBatchService:
             latest = self.store.get(token)
             if latest.updated_time != expected_updated_time or self.digest(latest) != digest:
                 fail("PREVIEW_CHANGED")
+            return result
+        finally:
+            self.db.rollback()
+
+    def binding_preview(self, token, payload):
+        """Read the whole proposed binding, never publish a draft or financial data.
+
+        Reuse canonical matching and full account-chain checks in one snapshot.
+        Financial pairing is deliberately not executed/approved here. Its
+        original intent and risk consent survive unchanged for later preview.
+        """
+        state = self.store.get(token)
+        if state.status == "CONFIRMING":
+            fail("PREVIEW_BUSY")
+        if state.updated_time != payload.expected_updated_time or self.digest(state) != payload.preview_digest:
+            fail("PREVIEW_CHANGED")
+        choices = {(choice.file_id,choice.source_row_number): choice.model_dump() for choice in payload.choices}
+        if any(key not in state.rows for key in choices):
+            fail("PREVIEW_ROW_NOT_FOUND", 404)
+        started = monotonic()
+        try:
+            # No manual account overrides or LINK/DUP targets in this canonical
+            # read: those must produce per-row binding exceptions, not a whole
+            # request failure or an alternative financial publication engine.
+            rows = {key:{field:value for field,value in state.rows[key].items()
+                if field not in {"_group_issue", "_group_token"}} for key in choices}
+            basic = {key:{field:choice[field] for field in ("decision", "recheck")} for key,choice in choices.items()}
+            current = self.mapper.operation_match(rows,basic)
+            issues = {}
+            for key,candidate in current.items():
+                stored,choice = candidate["stored"],choices[key]
+                if stored and stored["row_status"] == 1:
+                    issues[key] = "ROWS_ALREADY_PROCESSED"
+                elif choice["resolution"] == "LINK_EXISTING" or candidate["fact_id"]:
+                    issues[key] = "EXISTING_ACCOUNT_READ_ONLY"
+                elif stored and stored["row_status"] in {2,3} and not choice["recheck"]:
+                    issues[key] = "ROW_RECHECK_REQUIRED"
+                elif candidate["issue"] and candidate["issue"] != candidate["account"]["issue"]:
+                    issues[key] = candidate["issue"]
+            eligible = {key:row for key,row in rows.items() if key not in issues}
+            proposed = {key:choices[key] | dict(account_ref_id=payload.account_ref_id) for key in eligible}
+            remaining = 30 - (monotonic() - started)
+            if remaining <= 0:
+                fail("QUERY_BUSY", 503)
+            # The matcher owns its existing 2s/50k guard. Reinstall the outer
+            # remaining read budget for account lookup and in-memory projection.
+            with query_budget(self.db,seconds=remaining):
+                accounts = self.mapper.account_premises(eligible,proposed)
+                issues.update({key:value["issue"] for key,value in accounts.items() if value["issue"]})
+                state.choices.update(choices)
+                state.choices.update({key:choice for key,choice in proposed.items() if key not in issues})
+                self.group_premises(state)
+                issues.update({key:state.rows[key]["_group_issue"] for key in eligible
+                    if key not in issues and state.rows[key].get("_group_issue")})
+                result = dict(source_preview_digest=payload.preview_digest,expected_updated_time=payload.expected_updated_time,
+                    account_ref_id=payload.account_ref_id,selected_count=len(choices),items=[dict(
+                        row=dict(file_id=key[0],source_row_number=key[1]),
+                        source_state="RELIABLE" if reliable_source(rows[key]) else "UNKNOWN",
+                        applicable=key not in issues,reason_codes=[issues[key]] if key in issues else []) for key in sorted(choices)])
+                if len(canonical_json(result).encode("utf-8")) > 24 * 1024 * 1024:
+                    fail("DETAIL_LIMIT", 413)
+                latest = self.store.get(token)
+                if latest.updated_time != payload.expected_updated_time or latest.status == "CONFIRMING" or self.digest(latest) != payload.preview_digest:
+                    fail("PREVIEW_CHANGED")
             return result
         finally:
             self.db.rollback()

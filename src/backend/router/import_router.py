@@ -8,11 +8,12 @@ from backend.router.error import DomainErrorRoute
 from backend.error import TargetIntakeError
 from backend.schema.intake import IntakePreviewRequest
 from backend.schema.import_command import (ImportConfirmInput, ImportConfirmPreviewInput, ImportReviseInput,
-                                          PreviewRowListRequest, ImportMatchListRequest, ImportOperationPreviewInput)
+                                          PreviewRowListRequest, ImportMatchListRequest, ImportOperationPreviewInput,
+                                          ImportBindingPreviewInput)
 from backend.schema.identifier import SQLITE_ID_MAX
 from backend.schema.import_batch_read import (ImportPreviewResponse, PreviewRowListResponse,
                                             ImportConfirmResponse, ImportCancelResponse, ImportBatchPreviewResponse,
-                                            ImportMatchListResponse, ImportOperationPreviewResponse)
+                                            ImportMatchListResponse, ImportOperationPreviewResponse, ImportBindingPreviewResponse)
 from backend.schema.list_query import parse_list_request
 from backend.service.target_intake_service import TargetIntakeService
 
@@ -80,3 +81,8 @@ def operation_preview(token: str, payload: ImportOperationPreviewInput, db: Sess
 @router.delete("/preview/{token}", response_model=ImportCancelResponse)
 def cancel(token: str, db: Session = Depends(get_db)):
     return ImportCancelResponse(status=200, message="ok", body=TargetIntakeService(db).cancel(token))
+
+
+@router.post("/preview/{token}/binding-preview", response_model=ImportBindingPreviewResponse)
+def binding_preview(token: str, payload: ImportBindingPreviewInput, db: Session = Depends(get_db)):
+    return ImportBindingPreviewResponse(status=200, message="ok", body=TargetIntakeService(db).binding_preview(token, payload))

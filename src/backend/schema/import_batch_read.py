@@ -358,5 +358,32 @@ class ImportCancelPO(PO):
     cancelled: bool
 
 
+class ImportBindingRowPO(PO):
+    row: RowIdentity
+    source_state: Literal["RELIABLE", "UNKNOWN"]
+    applicable: bool
+    reason_codes: list[str]
+
+
+class ImportBindingPreviewPO(PO):
+    source_preview_digest: str
+    expected_updated_time: datetime
+    account_ref_id: int | None
+    selected_count: int
+    items: list[ImportBindingRowPO] = Field(max_length=20000)
+
+    @model_validator(mode="after")
+    def complete(self):
+        if self.selected_count != len(self.items) or len({(item.row.file_id,item.row.source_row_number) for item in self.items}) != len(self.items):
+            raise ValueError("binding check must contain the complete unique selected scope")
+        if any(item.applicable == bool(item.reason_codes) for item in self.items):
+            raise ValueError("binding applicability must agree with its exceptions")
+        return self
+
+
+class ImportBindingPreviewResponse(SuccessResponse[ImportBindingPreviewPO]):
+    pass
+
+
 class ImportCancelResponse(SuccessResponse[ImportCancelPO]):
     pass

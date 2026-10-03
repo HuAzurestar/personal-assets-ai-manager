@@ -48,7 +48,7 @@ export function projectImportBulk(selected, action, acknowledge = false) {
   return {updates,exceptions,total:selected.size,action};
 }
 
-function draftRows(host, rows, describe, signal) {
+export function mountImportDraftRows(host, rows, describe, signal) {
   let page = 0;
   const paint = () => {
     if (signal.aborted || !host.isConnected) return;
@@ -72,7 +72,7 @@ export function openImportBulk({selected, files, signal, valid, apply}) {
   signal.addEventListener('abort',abort,{once:true});
   dialog.addEventListener('close',() => {local.abort();signal.removeEventListener('abort',abort);},{once:true});
   const alive = () => dialog.isConnected && !local.signal.aborted && valid();
-  draftRows(find('[data-bulk-scope]'),[...frozen.values()],item => importRowLabel(item.row,files),local.signal);
+  mountImportDraftRows(find('[data-bulk-scope]'),[...frozen.values()],item => importRowLabel(item.row,files),local.signal);
   const effects = {ACCEPT:'仅设为接受，保留已选配对和风险状态；普通接受不确认新现金风险。',
     SKIP:'设为跳过并清除配对／新现金确认；问题行不伪装为有效事实。',
     RECHECK:'仅重查旧跳过／问题行，保留原接受或跳过决定和意图；不是自动接受。',
@@ -86,7 +86,7 @@ export function openImportBulk({selected, files, signal, valid, apply}) {
     find('[data-bulk-count]').textContent = `可修改草稿 ${projection.updates.size} 行 · 例外 ${projection.exceptions.length} 行；不代表金融校验通过`;
     find('[data-bulk-exclude]').hidden = !projection.exceptions.length;
     find('[data-bulk-exceptions]').textContent = '';
-    if (projection.exceptions.length) draftRows(find('[data-bulk-exceptions]'),projection.exceptions,
+    if (projection.exceptions.length) mountImportDraftRows(find('[data-bulk-exceptions]'),projection.exceptions,
       item => `${importRowLabel(item.row,files)}：${item.reason}`,local.signal);
     find('[data-bulk-apply]').disabled = !projection.updates.size;
   };

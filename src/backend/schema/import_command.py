@@ -92,6 +92,13 @@ class ImportOperationPreviewInput(ImportConfirmPreviewInput):
     selected_rows: list[RowIdentity] = Field(min_length=1, max_length=20000)
 
 
+class ImportBindingPreviewInput(ImportReviseInput):
+    """Readonly complete proposed source binding; not an enlarged PUT/write."""
+    preview_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    account_ref_id: NonnegativeId | None
+    choices: list[RowChoice] = Field(min_length=1, max_length=20000)
+
+
 class PreviewRowListRequest(ListRequest):
     pass
 
