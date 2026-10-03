@@ -77,11 +77,11 @@ class ReviewCommandMapper:
                 raise TargetEconomicError(413, "immutable relation budget exceeded; use paged relations", code="DETAIL_LIMIT")
         return result
 
-    def bundle(self, ids):
+    def bundle(self, ids, *, limit=4000):
         reviews = self.rows(ReviewCase, ReviewCase.id, ids)
-        allocations = self.rows(ReviewAllocation, ReviewAllocation.review_case_id, ids, limit=4000)
-        legs = self.rows(PositionLeg, PositionLeg.review_id, ids, limit=4000)
-        links = self.rows(ReviewLedgerPositionLegAllocation, ReviewLedgerPositionLegAllocation.review_id, ids, limit=4000)
+        allocations = self.rows(ReviewAllocation, ReviewAllocation.review_case_id, ids, limit=limit)
+        legs = self.rows(PositionLeg, PositionLeg.review_id, ids, limit=limit)
+        links = self.rows(ReviewLedgerPositionLegAllocation, ReviewLedgerPositionLegAllocation.review_id, ids, limit=limit)
         ledgers = self.rows(LedgerEntry, LedgerEntry.id, [row["ledger_id"] for row in allocations])
         return dict(reviews=reviews, allocations=allocations, ledger_entries=ledgers,
                     position_legs=legs, position_allocations=links)

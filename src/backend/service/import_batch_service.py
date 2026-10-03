@@ -31,6 +31,7 @@ from backend.service.import_confirmation_service import ImportConfirmationServic
 from backend.service.import_duplicate_service import ImportDuplicateService
 from backend.service.import_match_service import ImportMatchService
 from backend.service.import_risk_service import ImportRiskService
+from backend.service.import_operation_service import ImportOperationService
 from backend.core.import_evidence import target_locator
 
 
@@ -251,6 +252,36 @@ class ImportBatchService:
                 fail("STALE_PREVIEW")
             with query_budget(self.db):
                 result = ImportConfirmationService(self.mapper).plan(state, order, current, payload.preview_digest)
+            latest = self.store.get(token)
+            if latest.updated_time != payload.expected_updated_time or latest.status == "CONFIRMING" or self.digest(latest) != payload.preview_digest:
+                fail("STALE_PREVIEW")
+            return result
+        finally:
+            self.db.rollback()
+
+    def operation_preview(self, token, payload):
+        """Disclose the complete operation; no financial write or cache queue."""
+        state = self.store.get(token)
+        if state.status == "CONFIRMING":
+            fail("PREVIEW_BUSY")
+        if state.updated_time != payload.expected_updated_time or self.digest(state) != payload.preview_digest:
+            fail("STALE_PREVIEW")
+        order = sorted((row.file_id, row.source_row_number) for row in payload.selected_rows)
+        if any(key not in state.rows for key in order):
+            fail("PREVIEW_ROW_NOT_FOUND", 404)
+        rows = {key: state.rows[key] for key in order}
+        choices = {key: state.choices[key] for key in order if key in state.choices}
+        started = monotonic()
+        try:
+            candidates = self.mapper.operation_match(rows, choices)
+            if any(candidates[key]["premise_hash"] != state.candidates[key]["premise_hash"] for key in order):
+                fail("STALE_PREVIEW")
+            risks = ImportRiskService(self.mapper).plan(state.rows, state.candidates | candidates, order)
+            remaining = 30 - (monotonic() - started)
+            if remaining <= 0:
+                fail("QUERY_BUSY", 503)
+            with query_budget(self.db, seconds=remaining):
+                result = ImportOperationService(self.mapper, deadline=started + 30).plan(state, order, candidates, risks, payload.preview_digest)
             latest = self.store.get(token)
             if latest.updated_time != payload.expected_updated_time or latest.status == "CONFIRMING" or self.digest(latest) != payload.preview_digest:
                 fail("STALE_PREVIEW")

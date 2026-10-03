@@ -301,6 +301,59 @@ class ImportBatchPreviewResponse(SuccessResponse[ImportBatchPreviewPO]):
     pass
 
 
+class ImportRowRange(PO):
+    file_id: int
+    row_start: int
+    row_end: int
+    row_count: int
+
+
+class ImportOperationBatch(PO):
+    batch_index: int
+    row_ranges: list[ImportRowRange] = Field(max_length=1000)
+    preview: ImportBatchPreviewPO
+    duplicate_revoke_scope: list[RowIdentity] = Field(max_length=1000)
+
+
+class ImportPartitionIssue(PO):
+    code: str
+    dimension: Literal["selected_rows", "review_groups", "facts", "outputs", "position_links", "tag_changes"]
+    count: int
+    limit: int
+    action: Literal["EXCLUDE_OR_REVIEW_BLOCKED_GROUP"]
+
+
+class ImportBlockedGroup(PO):
+    selected_rows: list[RowIdentity] = Field(max_length=20000)
+    row_ranges: list[ImportRowRange] = Field(max_length=20000)
+    budget: ImportBatchBudget
+    issue: ImportPartitionIssue
+
+
+class ImportExecutionPolicy(PO):
+    max_batch_rows: Literal[1000]
+    serial: Literal[True]
+    retain_committed: Literal[True]
+    stop_on: list[Literal["CANCEL", "FAILURE", "STALE_PREVIEW", "RESULT_UNKNOWN"]]
+    automatic_post_replay: Literal[False]
+
+
+class ImportOperationPreviewPO(PO):
+    source_preview_digest: str
+    operation_preview_digest: str
+    selected_rows: list[RowIdentity] = Field(max_length=20000)
+    selected_count: int
+    batches: list[ImportOperationBatch] = Field(max_length=20000)
+    blocked: list[ImportBlockedGroup] = Field(max_length=20000)
+    can_confirm: bool
+    cross_batch_atomic: Literal[False]
+    execution_policy: ImportExecutionPolicy
+
+
+class ImportOperationPreviewResponse(SuccessResponse[ImportOperationPreviewPO]):
+    pass
+
+
 class ImportCancelPO(PO):
     cancelled: bool
 

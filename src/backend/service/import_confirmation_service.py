@@ -42,13 +42,13 @@ class ImportConfirmationService:
     def __init__(self, mapper):
         self.mapper = mapper
 
-    def target_context(self, ids):
+    def target_context(self, ids, *, relation_limit=4000, fact_limit=2000):
         """Load original/current whole groups, not one output per selected Fact."""
-        defaults = self.mapper.allocations_for_facts(ids, defaults=True, limit=4000)
-        current = self.mapper.allocations_for_facts(ids, active=True, limit=4000)
-        bundle = self.mapper.bundle({row["review_id"] for row in defaults + current})
+        defaults = self.mapper.allocations_for_facts(ids, defaults=True, limit=relation_limit)
+        current = self.mapper.allocations_for_facts(ids, active=True, limit=relation_limit)
+        bundle = self.mapper.bundle({row["review_id"] for row in defaults + current}, limit=relation_limit)
         fact_ids = set(ids) | {row["transaction_id"] for row in bundle["allocations"]}
-        if len(fact_ids) > 2000:
+        if len(fact_ids) > fact_limit:
             fail("DETAIL_LIMIT", 413)
         facts = {row["id"]: row for row in self.mapper.named_rows("facts", fact_ids)}
         if set(facts) != fact_ids:
@@ -110,12 +110,12 @@ class ImportConfirmationService:
             states.append(dict(before=public, after_status=public["status"]))
         return states
 
-    def plan(self, state, order, candidates, source_digest):
+    def plan(self, state, order, candidates, source_digest, *, prepared=None):
         order = sorted(order)
         choices = {key: state.choices[key] for key in order if key in state.choices}
         # Only selected signatures are re-read; the O(R) local dictionary keeps
         # other preview pages visible without reloading 20k source envelopes.
-        risks = ImportRiskService(self.mapper).plan(state.rows, state.candidates | candidates, order)
+        risks = prepared["risks"] if prepared is not None else ImportRiskService(self.mapper).plan(state.rows, state.candidates | candidates, order)
         issues, valid = [], set()
         for key in order:
             try:
@@ -140,8 +140,9 @@ class ImportConfirmationService:
         existing = {candidates[key]["fact_id"] for key in accepted if candidates[key]["fact_id"]}
         existing.update(candidates[key]["duplicate_plan"]["locator"] for key in accepted
                         if candidates[key].get("duplicate_plan", {}).get("kind") == "FACT")
-        TrustedRelationMapper(self.mapper.db).validate()
-        context = self.target_context(existing)
+        if prepared is None:
+            TrustedRelationMapper(self.mapper.db).validate()
+        context = prepared["context"] if prepared is not None else self.target_context(existing)
         bundle = context["bundle"]
         if duplicate:
             self.validate_duplicate_projection(new, duplicate, candidates, context)
@@ -155,15 +156,15 @@ class ImportConfirmationService:
             fail("DETAIL_LIMIT", 413)
         dictionary, tag_rows = (), []
         if new:
-            dictionary = TargetTagProjectionService(self.mapper.db).mapper.active_dictionary()
+            dictionary = prepared["dictionary"] if prepared is not None else TargetTagProjectionService(self.mapper.db).mapper.active_dictionary()
         default_tags = [item for item in dictionary if item.tag_system_name == "unclassified"]
         tag_count = (len(new) + len(duplicate)) * len(default_tags)
         if tag_count > 50000:
             fail("TAG_IMPACT_LIMIT", 413)
         if new:
             default_tag_ids = {item.tag_id for item in default_tags}
-            tag_rows = [row for row in self.mapper.tag_dictionary() if row["id"] in default_tag_ids]
-        rules = self.mapper.named_rows("rules", {item.view_id for item in default_tags}, "view_id") if duplicate else []
+            tag_rows = [row for row in (prepared["tag_rows"] if prepared is not None else self.mapper.tag_dictionary()) if row["id"] in default_tag_ids]
+        rules = (prepared["rules"] if prepared is not None else self.mapper.named_rows("rules", {item.view_id for item in default_tags}, "view_id")) if duplicate else []
         if tag_count + len(rules) > 50000:
             fail("TAG_IMPACT_LIMIT", 413)
         tag_meta = {row["id"]: row for row in tag_rows}

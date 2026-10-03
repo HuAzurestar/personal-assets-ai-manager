@@ -83,10 +83,13 @@ def _limit_issue(row_count, compound, counts):
     if row_count > MAX_BATCH_ROWS:
         return dict(code="INPUT_LIMIT", dimension="selected_rows",
                     count=row_count, limit=MAX_BATCH_ROWS)
-    limits = COMPOUND_LIMITS if compound else {"tag_changes": 50_000}
+    # Pure import keeps its own 1000-default exemption, but a complete old
+    # evidence inspection still has the existing bounded relation limits.
+    limits = COMPOUND_LIMITS if compound else {"review_groups": 4000, "facts": 2000,
+        "outputs": 4000, "position_links": 4000, "tag_changes": 50_000}
     for dimension, limit in limits.items():
         if counts[dimension] > limit:
-            return dict(code="TAG_IMPACT_LIMIT" if dimension == "tag_changes" else "REVIEW_CHANGE_LIMIT",
+            return dict(code="TAG_IMPACT_LIMIT" if dimension == "tag_changes" else "REVIEW_CHANGE_LIMIT" if compound else "DETAIL_LIMIT",
                         dimension=dimension, count=counts[dimension], limit=limit)
     return None
 

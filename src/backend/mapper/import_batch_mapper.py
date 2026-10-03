@@ -282,12 +282,12 @@ class ImportBatchMapper(ReviewCommandMapper):
             result.extend(found)
         return result
 
-    def _evidence_targets(self, fact_ids):
+    def _evidence_targets(self, fact_ids, *, target_limit=2000):
         ids = list(fact_ids)
         if any(type(value) is not int or not 0 < value <= SQLITE_ID_MAX for value in ids):
             fail("INVALID_EVIDENCE_TARGET", 422)
         ids = set(ids)
-        if len(ids) > 2000:
+        if len(ids) > target_limit:
             fail("DETAIL_LIMIT", 413)
         facts = {row["id"]: row for row in self.rows(TransactionFact, TransactionFact.id, ids)}
         result = {id: dict(issue="INVALID_EVIDENCE_TARGET") for id in ids - set(facts)}
@@ -386,7 +386,15 @@ class ImportBatchMapper(ReviewCommandMapper):
         with self.match_budget():
             return self._match(input_rows, choices)
 
-    def _match(self, input_rows, choices):
+    def operation_match(self, input_rows, choices):
+        """Read-only operation scope; never used to enlarge a financial batch."""
+        if self.write_started is not None or not 1 <= len(input_rows) <= 20000:
+            fail("INPUT_LIMIT", 422)
+        TrustedRelationMapper(self.db).read_snapshot()
+        with self.match_budget():
+            return self._match(input_rows, choices, target_limit=20000)
+
+    def _match(self, input_rows, choices, *, target_limit=2000):
         choices = {key: choices[key] for key in input_rows if key in choices}
         if any(choice.get("resolution", "AUTO") not in {"AUTO", "NEW", "LINK_EXISTING", "DUPLICATE"}
                for choice in choices.values()):
@@ -470,7 +478,7 @@ class ImportBatchMapper(ReviewCommandMapper):
                              if choice.get("resolution") == "DUPLICATE" and result[key]["classification"] != "PROCESSED"}
         if active_links or active_duplicates:
             locators = [target_locator(choice.get("target")) for choice in (active_links | active_duplicates).values()]
-            targets = self._evidence_targets([locator for kind, locator in locators if kind == "FACT"])
+            targets = self._evidence_targets([locator for kind, locator in locators if kind == "FACT"], target_limit=target_limit)
         if active_links:
             plans = plan_same_source_links(input_rows, files, result,
                 choices if len(active_links) == len(link_keys) else
