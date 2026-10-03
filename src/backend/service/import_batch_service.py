@@ -30,6 +30,8 @@ from backend.schema.list_query import FilterFieldExpression
 from backend.service.import_confirmation_service import ImportConfirmationService
 from backend.service.import_duplicate_service import ImportDuplicateService
 from backend.service.import_match_service import ImportMatchService
+from backend.service.import_risk_service import ImportRiskService
+from backend.core.import_evidence import target_locator
 
 
 class ImportBatchService:
@@ -199,6 +201,23 @@ class ImportBatchService:
         old_groups = {key: row.get("_group_token") for key, row in state.rows.items()}
         self.group_premises(state)
         changed |= {key for key, row in state.rows.items() if old_groups[key] != row.get("_group_token")}
+        # A ROW pair's other endpoint can live on another page or have been
+        # saved by an earlier PUT. Include both endpoints and dependent pairs
+        # in this read-only recheck, not in an implicit financial selection.
+        dependencies = defaultdict(set)
+        for key, choice in state.choices.items():
+            if choice.get("target") and choice["target"]["kind"] == "ROW":
+                _kind, target = target_locator(choice["target"])
+                dependencies[key].add(target)
+                dependencies[target].add(key)
+        pending = list(changed)
+        while pending:
+            for neighbor in dependencies[pending.pop()]:
+                if neighbor not in state.rows:
+                    fail("INVALID_EVIDENCE_TARGET", 422)
+                if neighbor not in changed:
+                    changed.add(neighbor)
+                    pending.append(neighbor)
         candidates = self.mapper.match({key: state.rows[key] for key in changed}, state.choices)
         # Rechecking a persisted non-accepted row requires explicit authorization
         # even before confirmation. SKIP on a new invalid row remains legal.
@@ -270,6 +289,12 @@ class ImportBatchService:
                     batch = ImportConfirmationService(self.mapper).plan(state, order, current, payload.preview_digest)
                     if batch["batch_preview_digest"] != payload.batch_preview_digest or not batch["can_confirm"]:
                         fail("STALE_PREVIEW")
+                else:
+                    # Legacy AUTO requests may still process a scoped safe new
+                    # row, but cannot bypass current suspected/unknown risk.
+                    risks = ImportRiskService(self.mapper).plan(state.rows, state.candidates | current, order)
+                    for key in order:
+                        ImportRiskService.validate_new_cash(current[key], choices[key], risks[key])
                 duplicate = any(candidate.get("duplicate_plan") for candidate in current.values())
                 duplicate_service = ImportDuplicateService(self.mapper) if duplicate else None
                 before_context = duplicate_service.confirmation.target_context(
@@ -355,7 +380,7 @@ class ImportBatchService:
         return count
 
     @staticmethod
-    def row_po(key, candidate, choice):
+    def row_po(key, candidate, choice, hint):
         values = candidate["values"]
         return dict(file_id=key[0], source_row_number=key[1], classification=candidate["classification"],
             parsed=dict(occurred_time=values["occurred_time"] if values else None,
@@ -366,6 +391,7 @@ class ImportBatchService:
             existing_transaction_id=candidate["fact_id"],
             persisted_row_status=candidate["stored"]["row_status"] if candidate["stored"] else None,
             choice=choice, issue_codes=[candidate["issue"]] if candidate["issue"] else [],
+            duplicate_hint=hint,
             account_candidates=[dict(account_ref_id=candidate["account"]["ref_id"], label_masked="已核验来源账户")]
                 if candidate["account"]["ref_id"] else [])
 
@@ -396,8 +422,17 @@ class ImportBatchService:
         for field, direction in reversed(sorts):
             items.sort(key=lambda item: item[0][0 if field == "file_id" else 1], reverse=direction == "desc")
         start = (request.page_index - 1) * request.page_size
-        return dict(items=[self.row_po(key, candidate, state.choices.get(key)) for key, candidate in items[start:start + request.page_size]],
-                    total=len(items), page_index=request.page_index, page_size=request.page_size)
+        selected = items[start:start + request.page_size]
+        expected_updated_time = state.updated_time
+        try:
+            risks = ImportRiskService(self.mapper).plan(state.rows, state.candidates, [key for key, _candidate in selected]) if selected else {}
+            latest = self.store.get(token)
+            if latest.updated_time != expected_updated_time or self.digest(latest) != digest:
+                fail("PREVIEW_CHANGED")
+            return dict(items=[self.row_po(key, candidate, state.choices.get(key), risks[key]["hint"]) for key, candidate in selected],
+                        total=len(items), page_index=request.page_index, page_size=request.page_size)
+        finally:
+            self.db.rollback()
 
     def match_page(self, token, digest, key, kind, request):
         state = self.store.get(token)

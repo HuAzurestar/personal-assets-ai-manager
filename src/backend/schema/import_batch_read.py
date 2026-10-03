@@ -106,6 +106,7 @@ class PreviewRowPO(PO):
     choice: RowChoice | None
     issue_codes: list[str]
     account_candidates: list[PreviewAccountCandidate] = Field(max_length=100)
+    duplicate_hint: ImportDuplicateHint
 
 
 class PreviewRowListPO(PO):
@@ -202,6 +203,7 @@ class ImportPreviewPair(PO):
     source_labels_masked: list[str] = Field(max_length=2)
     comparison: ImportPairComparison
     reason_codes: list[str]
+    duplicate_hint: ImportDuplicateHint
 
 
 class ImportCurrencyEffect(PO):

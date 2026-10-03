@@ -77,7 +77,7 @@ def local_pair(service, *, link=False):
     anchors = prepare(service.mapper, [row(reference="new-A")])
     excluded = prepare(service.mapper, [other_row(reference="new-B")], sha="b" * 64)
     anchor, source = next(iter(anchors)), next(iter(excluded))
-    choices = {anchor: dict(decision="ACCEPT", resolution="NEW"), source: decision(dict(kind="ROW",
+    choices = {anchor: dict(decision="ACCEPT", resolution="NEW", acknowledge_new_risk=True), source: decision(dict(kind="ROW",
         file_id=anchor[0], source_row_number=anchor[1]))}
     rows = anchors | excluded
     if link:
@@ -188,7 +188,7 @@ def many_local_pairs(service, n, *, extra=False):
         ([row(n + 1, reference="ordinary-extra")] if extra else []))
     excluded = prepare(service.mapper, [other_row(i, reference=f"B-{i}",
         occurred_at=f"2024-01-01T00:00:{i:02}Z") for i in range(1, n + 1)], sha="b" * 64)
-    choices = {key: dict(decision="ACCEPT", resolution="NEW") for key in anchors}
+    choices = {key: dict(decision="ACCEPT", resolution="NEW", acknowledge_new_risk=True) for key in anchors}
     for key in excluded:
         anchor = next(key_a for key_a in anchors if key_a[1] == key[1])
         choices[key] = decision(dict(kind="ROW", file_id=anchor[0], source_row_number=anchor[1]))

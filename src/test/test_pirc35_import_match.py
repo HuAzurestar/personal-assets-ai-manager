@@ -20,13 +20,19 @@ def test_match_route_is_typed_read_only_empty_exact_scope(client):
     assert response.json()["body"] == dict(items=[], total=0, page_index=1, page_size=20)
 
 
-def test_match_openapi_names_the_candidate_and_keeps_manual_writes_closed(client):
+def test_match_openapi_names_the_candidate_and_strict_informed_manual_intent(client):
     schema = client.get("/openapi.json").json()
     route = schema["paths"].get(BASE + "/preview/{token}/match/list")
     assert route is not None
     assert set(route) == {"get"}
     assert "ImportMatchCandidatePO" in schema["components"]["schemas"]
-    assert "resolution" not in schema["components"]["schemas"]["RowChoice"]["properties"]
+    choice = schema["components"]["schemas"]["RowChoice"]
+    assert choice["additionalProperties"] is False
+    assert set(choice["properties"]["resolution"]["enum"]) == {"AUTO", "NEW", "LINK_EXISTING", "DUPLICATE"}
+    assert choice["properties"]["acknowledge_new_risk"]["type"] == "boolean"
+    assert choice["properties"]["acknowledge_new_risk"]["default"] is False
+    target = choice["properties"]["target"]["anyOf"][0]
+    assert target["discriminator"]["propertyName"] == "kind"
 
 
 def paired(service, count=1, *, source_changes=None, accepted_changes=None):

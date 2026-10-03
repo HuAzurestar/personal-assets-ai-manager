@@ -14,6 +14,7 @@ from backend.mapper.trusted_relation_mapper import TrustedRelationMapper
 from backend.service.review_command_service import review_po, flow_po
 from backend.service.review_intent_service import validate_duplicate_keepers
 from backend.service.target_tag_projection_service import TargetTagProjectionService
+from backend.service.import_risk_service import ImportRiskService
 
 MAX_BATCH_PREVIEW_BYTES = 24 * 1024 * 1024
 
@@ -112,11 +113,17 @@ class ImportConfirmationService:
     def plan(self, state, order, candidates, source_digest):
         order = sorted(order)
         choices = {key: state.choices[key] for key in order if key in state.choices}
+        # Only selected signatures are re-read; the O(R) local dictionary keeps
+        # other preview pages visible without reloading 20k source envelopes.
+        risks = ImportRiskService(self.mapper).plan(state.rows, state.candidates | candidates, order)
         issues, valid = [], set()
         for key in order:
             try:
                 self.mapper.validate_selection({key: candidates[key]}, {key: choices[key]} if key in choices else {})
                 valid.add(key)
+                # Preserve the full prospective effects/budget for disclosure,
+                # but missing consent makes this entire batch unconfirmable.
+                ImportRiskService.validate_new_cash(candidates[key], choices[key], risks[key])
             except TargetIntakeError as error:
                 issues.append(row_locator(key) | dict(code=error.code))
         accepted = [key for key in order if key in valid and choices[key]["decision"] == "ACCEPT"]
@@ -202,7 +209,7 @@ class ImportConfirmationService:
                     amount=values["amount"] if values else None, currency_code=values["currency_code"] if values else None,
                     cash_direction=("IN" if values["cash_direction"] == 1 else "OUT") if values else None,
                     exact_match=bool(link or candidate["fact_id"]) and not candidate["issue"]),
-                reason_codes=[issue_by_key.get(key) or candidate["issue"]]
+                duplicate_hint=risks[key]["hint"], reason_codes=[issue_by_key.get(key) or candidate["issue"]]
                              if key in issue_by_key or candidate["issue"] else []))
         invalid = sum(key in valid and choices[key]["decision"] == "SKIP" and bool(candidates[key]["issue"])
                       and candidates[key]["issue"] not in {"NON_POSTED_EVIDENCE", "NEUTRAL_EVIDENCE"} for key in order)
@@ -221,7 +228,7 @@ class ImportConfirmationService:
                 facts=len(new) + len(context["facts"]), outputs=outputs, position_links=link_count, tag_changes=tag_count + len(rules)),
             can_confirm=not issues, issues=issues)
         premises = dict(source_digest=source_digest, selected=[dict(row=row_locator(key), choice=choices.get(key),
-                        candidate=candidates[key]["premise_hash"]) for key in order],
+                        candidate=candidates[key]["premise_hash"], risk=risks[key]["premise_hash"]) for key in order],
                         context=context, tag_dictionary=tag_rows, rules=rules, effects=preview)
         if len(canonical_json(premises).encode("utf-8")) > MAX_BATCH_PREVIEW_BYTES:
             fail("DETAIL_LIMIT", 413)

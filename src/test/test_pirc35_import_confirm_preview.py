@@ -362,12 +362,15 @@ def test_canonical_new_anchor_and_supplement_effect_match_reversed_confirm_order
 
 def test_pure_import_thousand_defaults_does_not_inherit_review_hundred_group_limit(service):
     rows = prepare(service.mapper, [row(n, reference=f"fictional-{n}") for n in range(1, 1001)])
-    current = install(service, rows, {key: dict(decision="ACCEPT") for key in rows})
+    # All 1000 distinct business keys have the same exact cash core. Explicit
+    # informed NEW consent is separate from the unchanged transaction budget.
+    current = install(service, rows, {key: dict(decision="ACCEPT", resolution="NEW", acknowledge_new_risk=True) for key in rows})
     disclosure = batch(service, current, list(rows))
     ImportBatchPreviewPO(**disclosure)
     assert disclosure["can_confirm"] and disclosure["budget"]["review_groups"] == 1000
     assert len(disclosure["effects"]["new_original_defaults"]) == 1000
     assert disclosure["effects"]["by_currency"][0]["cash_out_amount"] == 40_000_000
+    assert all(pair["duplicate_hint"]["candidate_count"] == 999 for pair in disclosure["pairs"])
     assert count(service.mapper, TransactionFact) == 0
 
 

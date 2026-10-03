@@ -33,6 +33,22 @@ class RowChoice(RowIdentity):
     decision: Literal["ACCEPT", "SKIP"]
     recheck: StrictBool = False
     account_ref_id: NonnegativeId | None = None
+    resolution: Literal["AUTO", "NEW", "LINK_EXISTING", "DUPLICATE"] = "AUTO"
+    target: EvidenceTarget | None = None
+    acknowledge_new_risk: StrictBool = False
+
+    @model_validator(mode="after")
+    def explicit_intent(self):
+        paired = self.resolution in {"LINK_EXISTING", "DUPLICATE"}
+        if paired != (self.target is not None):
+            raise ValueError("only an explicit pair may carry a target, and a pair requires one")
+        if self.decision == "SKIP" and (self.resolution != "AUTO" or self.acknowledge_new_risk):
+            raise ValueError("SKIP cannot carry a financial resolution or risk consent")
+        if self.acknowledge_new_risk and (self.decision != "ACCEPT" or self.resolution != "NEW"):
+            raise ValueError("risk consent requires explicit NEW/ACCEPT")
+        if self.resolution == "LINK_EXISTING" and self.account_ref_id is not None:
+            raise ValueError("evidence-only linking cannot override the original account")
+        return self
 
 
 class PreviewExpected(ImportInput):

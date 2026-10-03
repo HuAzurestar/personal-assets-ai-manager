@@ -1,7 +1,7 @@
 """Bounded page/batch risk hints across the entire current preview context."""
 from collections import defaultdict
 
-from backend.core.import_risk import risk_signature, hint_scope
+from backend.core.import_risk import risk_signature, hint_scope, require_new_risk_confirmation
 from backend.core.import_evidence import target_locator
 from backend.mapper.import_batch_mapper import fingerprint, fail
 from backend.mapper.trusted_relation_mapper import TrustedRelationMapper
@@ -12,6 +12,14 @@ class ImportRiskService:
         # Reuse the caller's mapper/Session/deadline when this becomes part of
         # preflight or locked revalidation. Do not start a financial transaction.
         self.mapper = mapper
+
+    @staticmethod
+    def validate_new_cash(candidate, choice, risk):
+        # A persisted Fact or a proven manual link adds only source evidence.
+        # DUP's separate source/financial planner grants its own eligibility;
+        # its new real ROW keeper is checked independently in the same scope.
+        if not candidate["fact_id"] and not candidate.get("evidence_link") and not candidate.get("duplicate_plan"):
+            require_new_risk_confirmation(choice, risk["hint"])
 
     def plan(self, rows, candidates, requested):
         keys = list(requested)
