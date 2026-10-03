@@ -74,12 +74,19 @@ def run():
                         if request.method=='POST' and request.url.endswith('/confirm') else None)
                     page.on('request',lambda request:pairs.append(request.post_data_json)
                         if request.method=='POST' and request.url.endswith('/pairing-preview') else None)
-                    page.on('response',lambda response:responses.append(response.json()['body'])
-                        if response.request.method=='POST' and response.url.endswith('/confirm') and response.status==200 else None)
+
+                    def confirm_visible_batch():
+                        with page.expect_response(lambda response:response.request.method=='POST'
+                                and response.url.endswith('/confirm'),timeout=15000) as submitted:
+                            page.locator('[data-batch-confirm]').click()
+                        response=submitted.value
+                        assert response.status==200,(response.status,response.text())
+                        responses.append(response.json()['body'])
+                        expect(page.locator('[data-batch-selection]')).to_contain_text('本次明确选择 0 行',timeout=15000)
 
                     def upload(files):
                         page.goto(base+'/#workbench/import')
-                        page.locator('[data-action="import-step"][data-step="2"]').last.click()
+                        page.locator('.import-step[data-step="2"]').click()
                         form=page.locator('[data-form="import-preview"]')
                         form.locator('[name="files"]').set_input_files(files)
                         with page.expect_response(lambda response:response.request.method=='POST'
@@ -217,9 +224,9 @@ def run():
                     page.locator('[data-batch-save]').click()
                     expect(page.locator('[data-batch-plan]')).to_be_enabled(timeout=15000)
                     assert len(puts)==1 and len(puts[0]['choices'])==33
-                    assert sum(row['resolution']=='LINK_EXISTING' for row in puts[0]['choices'])==31
+                    assert sum(row.get('resolution','AUTO')=='LINK_EXISTING' for row in puts[0]['choices'])==31
                     assert all(not row.get('acknowledge_new_risk',False) for row in puts[0]['choices'])
-                    assert len({row['target']['transaction_id'] for row in puts[0]['choices'] if row['resolution']=='LINK_EXISTING'})==31
+                    assert len({row['target']['transaction_id'] for row in puts[0]['choices'] if row.get('resolution','AUTO')=='LINK_EXISTING'})==31
                     page.locator('[data-batch-plan]').click()
                     expect(page.locator('[data-import-operation]')).to_contain_text('未解决',timeout=15000)
                     expect(page.locator('[data-batch-confirm]')).to_be_disabled()
@@ -230,15 +237,16 @@ def run():
                         option=page.locator('[data-batch-file] option').filter(has_text=filename).get_attribute('value')
                         page.locator('[data-batch-file]').select_option(option)
                         expect(page.locator('[data-batch-row]')).to_have_count(1,timeout=15000)
-                        page.locator('[data-row-select]').uncheck()
+                        current_row=page.locator(f'[data-batch-row^="{option}:"]')
+                        expect(current_row).to_have_count(1,timeout=15000)
+                        current_row.locator('[data-row-select]').uncheck()
                     expect(page.locator('[data-batch-selection]')).to_contain_text('31 行')
                     page.locator('[data-batch-save]').click()
                     expect(page.locator('[data-batch-plan]')).to_be_enabled(timeout=15000)
                     page.locator('[data-batch-plan]').click()
                     expect(page.locator('[data-import-operation]')).to_contain_text('可规划 1 批',timeout=15000)
                     expect(page.locator('[data-batch-confirm]')).to_be_enabled()
-                    page.locator('[data-batch-confirm]').click()
-                    expect(page.locator('[data-batch-selection]')).to_contain_text('0 行',timeout=15000)
+                    confirm_visible_batch()
                     assert len(writes)==len(responses)==1
                     assert responses[0]['manual_linked_count']==31
                     assert all(row['transaction_id'] in seed_ids and row['created_review_id']==row['created_ledger_id']==0 for row in responses[0]['processed_rows'])
@@ -263,8 +271,7 @@ def run():
                     expect(page.locator('[data-import-operation]')).to_contain_text('可规划 1 批',timeout=15000)
                     page.locator('[data-plan-batch]').click()
                     expect(page.locator('[data-plan-batch-detail]')).to_contain_text('新重复 Fact 30')
-                    page.locator('[data-batch-confirm]').click()
-                    expect(page.locator('[data-batch-selection]')).to_contain_text('0 行',timeout=15000)
+                    confirm_visible_batch()
                     assert len(writes)==len(responses)==2
                     processed=responses[-1]['processed_rows']
                     assert len(processed)==30 and len({row['duplicate_kept_transaction_id'] for row in processed})==30
