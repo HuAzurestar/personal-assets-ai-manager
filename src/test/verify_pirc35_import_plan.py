@@ -51,8 +51,7 @@ def run():
                     page.on("request", lambda request: writes.append(request.url)
                         if request.method == "POST" and request.url.endswith("/confirm") else None)
                     page.goto(base + "/#workbench/import")
-                    page.set_viewport_size({"width":1280,"height":900})
-                    page.locator('[data-action="import-step"][data-step="2"]').first.click()
+                    page.locator('[data-action="import-step"][data-step="2"]').last.click()
                     upload = page.locator('[data-form="import-preview"]')
                     expect(upload).to_be_visible()
                     header = "建设银行个人交易明细\n账号：990000000000001234\n姓名：Mock测试用户\n币种：人民币\n摘要,币别,交易日期,交易金额,账户余额,交易地点/附言,对方账号与户名\n"
@@ -75,10 +74,12 @@ def run():
                     page.locator('[data-batch-select-scope]').click()
                     expect(page.locator('[data-batch-status]')).to_contain_text("原选择保留",timeout=30000)
                     expect(page.locator('[data-batch-selection]')).to_contain_text("0 行")
+                    expect(page.locator('[data-batch-select-scope]')).to_be_enabled(timeout=15000)
                     assert puts == writes == [] and snapshot() == before
                     page.unroute(pattern,fail_second)
                     page.locator('[data-batch-select-scope]').click()
-                    expect(page.locator('[data-batch-selection]')).to_contain_text("2500 行",timeout=30000)
+                    expect(page.locator('[data-batch-select-scope]')).to_be_enabled(timeout=30000)
+                    assert "2500 行" in page.locator('[data-batch-selection]').inner_text(), page.locator('[data-batch-status]').inner_text()
                     expect(page.locator('[data-batch-plan]')).to_be_disabled()
                     expect(page.locator('[data-batch-confirm]')).to_be_disabled()
                     page.locator('[data-batch-save]').click()
