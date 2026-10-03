@@ -72,8 +72,12 @@ export async function mountImportBatch(host, initial, changed) {
     <div class="actions"><button type="button" data-batch-prev>上一页</button><span data-batch-page></span><button type="button" data-batch-next>下一页</button></div>
     <div data-batch-operation></div><div data-batch-verification></div></div>`;
   const find = selector => host.querySelector(selector);
-  const status = message => { if (host.isConnected) find("[data-batch-status]").textContent = message; };
   const live = () => host.isConnected && !signal.aborted;
+  const status = message => {
+    if (!live()) return;
+    const slot = find('[data-batch-status]');
+    if (slot) slot.textContent = message;
+  };
   // Whole-plan execution has separate informed approval. The old button stays
   // single-batch <=1000, never silently promoting a paged action to all rows.
   const filtersFor = (range = false) => {

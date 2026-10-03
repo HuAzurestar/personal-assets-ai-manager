@@ -77,6 +77,40 @@ async function scenario(expired = false) {
   assert.equal(stored, null);
   assert.equal(writes, 0);
 }
+async function retiredRefresh(reuseHost) {
+  const nodes = new Map();
+  let retired = false, rejectRead, writes = 0;
+  const element = () => ({ disabled: false, value: '', textContent: '', innerHTML: '' });
+  const host = { isConnected: true, innerHTML: '', querySelector(selector) {
+    if (retired && !reuseHost) return null;
+    if (selector === '[data-batch-observed]') return null;
+    if (!nodes.has(selector)) nodes.set(selector, element());
+    return nodes.get(selector);
+  }, querySelectorAll(selector) {
+    return selector === 'button,input,select' ? [...nodes.values()] : [];
+  } };
+  const plan = { token: 'retired-token', status: 'READY', files: [],
+    counts: { new: 0, existing: 0, processed: 0 }, issue_count: 0, preview_digest: 'mock-digest' };
+  const sandbox = vm.createContext({ AbortController, URLSearchParams, esc: String,
+    localStorage: { getItem: () => null },
+    jsonRequest: async () => { writes++; throw Error('unexpected financial write'); },
+    request: async url => url.includes('/row/list') ? { items: [], total: 0, page_size: 20 }
+      : new Promise((resolve, reject) => { rejectRead = reject; }),
+  });
+  vm.runInContext(source + '\nglobalThis.mount = mountImportBatch; globalThis.stop = stopImportRead;', sandbox);
+  await sandbox.mount(host, plan, () => {});
+  const replacement = host.querySelector('[data-batch-status]');
+  const refresh = host.querySelector('[data-batch-refresh]').onclick();
+  assert.equal(typeof rejectRead, 'function');
+  sandbox.stop();
+  retired = true;
+  replacement.textContent = 'replacement view untouched';
+  rejectRead(Object.assign(Error('late read failure after route change'), { name: 'AbortError' }));
+  await assert.doesNotReject(refresh);
+  assert.equal(replacement.textContent, 'replacement view untouched');
+  assert.equal(writes, 0);
+}
 Promise.resolve().then(() => scenario()).then(() => scenario(true))
+  .then(() => retiredRefresh(false)).then(() => retiredRefresh(true))
   .then(() => console.log('PASS CONFIRMING_BLOCKED=1 CLICK_GUARD=1 FAILED_REVERIFY_BLOCKED=1 TERMINAL_OBSERVED=1 NO_POST_RETRY=1'))
   .catch(error => { console.error(error); process.exitCode = 1; });

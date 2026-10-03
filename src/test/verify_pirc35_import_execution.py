@@ -49,7 +49,7 @@ def run():
                     browser = playwright.chromium.launch(channel="msedge" if os.name == "nt" else None, headless=True)
                     page = browser.new_page(viewport={"width": 1280, "height": 900})
                     errors, approvals, writes, replies = [], [], [], []
-                    page.on("pageerror", lambda error: errors.append(str(error)))
+                    page.on("pageerror", lambda error: errors.append(error.stack or str(error)))
                     def track(request):
                         if request.method != "POST":
                             return
