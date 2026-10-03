@@ -29,6 +29,7 @@ from backend.parser.bounded_statement import parse_statement
 from backend.schema.list_query import FilterFieldExpression
 from backend.service.import_confirmation_service import ImportConfirmationService
 from backend.service.import_duplicate_service import ImportDuplicateService
+from backend.service.import_match_service import ImportMatchService
 
 
 class ImportBatchService:
@@ -397,3 +398,17 @@ class ImportBatchService:
         start = (request.page_index - 1) * request.page_size
         return dict(items=[self.row_po(key, candidate, state.choices.get(key)) for key, candidate in items[start:start + request.page_size]],
                     total=len(items), page_index=request.page_index, page_size=request.page_size)
+
+    def match_page(self, token, digest, key, kind, request):
+        state = self.store.get(token)
+        if digest != self.digest(state):
+            fail("PREVIEW_CHANGED")
+        expected_updated_time = state.updated_time
+        try:
+            result = ImportMatchService(self.db).page(state, key, kind, request)
+            latest = self.store.get(token)
+            if latest.updated_time != expected_updated_time or self.digest(latest) != digest:
+                fail("PREVIEW_CHANGED")
+            return result
+        finally:
+            self.db.rollback()

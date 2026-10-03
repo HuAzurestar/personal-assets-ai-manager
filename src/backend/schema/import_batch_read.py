@@ -5,7 +5,8 @@ from pydantic import Field
 from backend.schema.review_read import PO, ReviewReadPO
 from backend.schema.review_command import ExpectedReview
 from backend.schema.import_command import RowChoice, RowIdentity, EvidenceTarget
-from backend.schema.response import SuccessResponse
+from backend.schema.response import SuccessResponse, ListResponse
+from backend.schema.candidate import CurrentReviewPO
 
 
 class ActivityRange(PO):
@@ -89,6 +90,23 @@ class PreviewRowListPO(PO):
     total: int
     page_index: int
     page_size: int
+
+
+class ImportMatchCandidatePO(PO):
+    transaction_id: int
+    occurred_time: datetime
+    amount: int
+    currency_code: str
+    cash_direction: Literal["IN", "OUT"]
+    summary_masked: str
+    source_label_masked: str
+    current_review_summaries: list[CurrentReviewPO] = Field(max_length=4000)
+    eligible_actions: list[Literal["LINK_EXISTING", "DUPLICATE"]] = Field(max_length=2)
+    reason_codes: list[str]
+
+
+class ImportMatchListResponse(ListResponse[ImportMatchCandidatePO]):
+    pass
 
 
 class ConfirmFile(ImportProgress):

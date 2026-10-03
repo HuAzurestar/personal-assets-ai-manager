@@ -1,14 +1,18 @@
 """Single v1 import adapter: explicit choices and selected-row confirmation."""
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from typing import Literal
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 from backend.router.dependency import get_db, validate_query_parameter_names
 from backend.router.error import DomainErrorRoute
 from backend.error import TargetIntakeError
 from backend.schema.intake import IntakePreviewRequest
-from backend.schema.import_command import ImportConfirmInput, ImportConfirmPreviewInput, ImportReviseInput, PreviewRowListRequest
+from backend.schema.import_command import (ImportConfirmInput, ImportConfirmPreviewInput, ImportReviseInput,
+                                          PreviewRowListRequest, ImportMatchListRequest)
+from backend.schema.identifier import SQLITE_ID_MAX
 from backend.schema.import_batch_read import (ImportPreviewResponse, PreviewRowListResponse,
-                                            ImportConfirmResponse, ImportCancelResponse, ImportBatchPreviewResponse)
+                                            ImportConfirmResponse, ImportCancelResponse, ImportBatchPreviewResponse,
+                                            ImportMatchListResponse)
 from backend.schema.list_query import parse_list_request
 from backend.service.target_intake_service import TargetIntakeService
 
@@ -49,6 +53,18 @@ def rows(token: str, http_request: Request, preview_digest: str = Query(pattern=
 @router.post("/preview/{token}/confirm", response_model=ImportConfirmResponse)
 def confirm(token: str, payload: ImportConfirmInput, db: Session = Depends(get_db)):
     return ImportConfirmResponse(status=200, message="ok", body=TargetIntakeService(db).confirm(token, payload))
+
+
+@router.get("/preview/{token}/match/list", response_model=ImportMatchListResponse)
+def matches(token: str, http_request: Request, preview_digest: str = Query(pattern=r"^[0-9a-f]{64}$"),
+            file_id: int = Query(ge=1, le=SQLITE_ID_MAX), source_row_number: int = Query(ge=1, le=SQLITE_ID_MAX),
+            kind: Literal["SAME_SOURCE", "CROSS_SOURCE"] = Query(),
+            page_index: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+            db: Session = Depends(get_db)):
+    validate_query_parameter_names(http_request, {"preview_digest", "file_id", "source_row_number", "kind", "page_index", "page_size"})
+    request = ImportMatchListRequest(page_index=page_index, page_size=page_size)
+    return ImportMatchListResponse(status=200, message="ok", body=TargetIntakeService(db).match_page(token, preview_digest,
+        (file_id, source_row_number), kind, request))
 
 
 @router.post("/preview/{token}/confirm-preview", response_model=ImportBatchPreviewResponse)

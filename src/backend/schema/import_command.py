@@ -73,3 +73,7 @@ class ImportConfirmInput(ImportConfirmPreviewInput):
 
 class PreviewRowListRequest(ListRequest):
     pass
+
+
+class ImportMatchListRequest(ListRequest):
+    """Exact source-row scope; no additional text/filter/sort capability."""
