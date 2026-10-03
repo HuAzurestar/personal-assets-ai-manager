@@ -319,3 +319,5 @@ def run():
 
 if __name__ == "__main__":
     run()
+    from import_restart_browser import run_import_restart
+    run_import_restart()

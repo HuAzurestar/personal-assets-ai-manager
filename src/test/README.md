@@ -16,7 +16,7 @@ node src/test/tag_assignment_ui.cjs
 不要继承真实服务的数据库、凭据或调度配置。Docker 测试进程应指定独立
 `PAAM_DATA_DIR`、`PAAM_SQL_WEB_ENABLED=0`、`PAAM_AUTOTAG_REAL_ANALYSIS=1`，
 使用 `--network none`；测试通过夹具模拟模型。这些参数仅用于测试容器，
-不能用来覆盖正在运行的应用。默认 pytest 跳过 `test_browser.py` 注册的 browser 用例，当前为十八组。
+不能用来覆盖正在运行的应用。默认 pytest 跳过 `test_browser.py` 注册的 browser 用例，当前为二十二组。
 
 ## CI 浏览器回归
 
@@ -31,10 +31,12 @@ Windows 场景使用本机 Edge。`test_browser.py` 按场景启动独立 Python
 不继承 `PAAM_*` 部署配置，每组使用临时 SQLite、虚构密钥及数据。默认禁止
 真实模型调用。失败通过 pytest 报告；浏览器 JUnit 由 CI 保存。
 
-十八个场景保留独立入口：`verify_pr9_fix.py`、`verify_automation_repair.py`、
+二十二个场景保留独立入口：`verify_pr9_fix.py`、`verify_automation_repair.py`、
 `verify_refresh_ui.py`、`verify_automation_presentation.py`、`verify_m2_ui.py`、
 `verify_pirc35_account.py`、`verify_pirc35_account_scope.py`、`verify_pirc35_position.py`、
-`verify_pirc35_import.py`、`verify_pirc35_import_plan.py`、`verify_pirc35_flow.py`、
+`verify_pirc35_import.py`、`verify_pirc35_import_plan.py`、`verify_pirc35_import_execution.py`、
+`verify_pirc35_import_choice.py`、`verify_pirc35_import_bulk.py`、`verify_pirc35_import_pairing.py`、
+`verify_pirc35_flow.py`、
 `verify_pirc35_review.py`、`verify_pirc35_draft.py`、`verify_pirc35_unit.py`、
 `verify_pirc35_filter.py`、`verify_pirc35_scene.py`、`verify_pirc35_member.py`、
 `verify_pirc35_flow_state.py`。保留子进程是为了
@@ -48,6 +50,17 @@ Windows 场景使用本机 Edge。`test_browser.py` 按场景启动独立 Python
 验证完整读取失败不部分加入、取消/迟到/总数变化拒绝、范围完整性及本地分页。
 完整范围读取有30秒整体预算，包含未返回的GET；页面提供停止读取按钮。
 实际浏览器另验证第二页挂起至30秒及主动停止均保留原选择、恢复控件且无金融写入。
+
+`verify_pirc35_import_execution.py`另验证实际2500行一次批准的1000/1000/500金融提交、
+在途停止/丢响应核对、真实前提变化和SQLite写锁失败后的剩余重新批准。
+同一注册场景调用`import_restart_browser.py`：真正停止独立应用进程并以同一虚构库重启，
+旧token实际410，相同文件重传、只读核对原已提交1000行、剩余1行新明确批准，原行/默认不变。
+这个辅助入口也可单独运行定位故障，但不另计第23个注册场景，不替代全部浏览器矩阵。
+
+`test_pirc35_import_budget.py`使用实际持久标签字典验证100组复合提交、50000标签的真实
+成功或deadline回滚后明确新范围恢复、50001拒绝以及独立SQLite持锁超时。
+被动事件计时截至驱动commit调用前，不是持久提交SLA；容量上限不是全负载成功保证。
+其他不适用业务组合的高维边界明确使用规划fixture，不冒称端到端金融容量。
 
 以下是扩展/历史入口，不属于上述固定浏览器回归：
 
