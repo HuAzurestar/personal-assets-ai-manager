@@ -1,4 +1,4 @@
-"""Explicit bounded import choices, not a whole-plan version/replay contract."""
+"""Explicit bounded import choices and ephemeral approval; no version/replay store."""
 from datetime import datetime, timezone
 from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictBool, model_validator
@@ -90,6 +90,20 @@ class ImportConfirmInput(ImportConfirmPreviewInput):
 class ImportOperationPreviewInput(ImportConfirmPreviewInput):
     """One informed operation, not an enlarged financial transaction."""
     selected_rows: list[RowIdentity] = Field(min_length=1, max_length=20000)
+
+
+class ImportOperationApproveInput(ImportOperationPreviewInput):
+    operation_preview_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class ImportOperationConfirmInput(ImportConfirmInput):
+    operation_preview_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    batch_index: StrictInt = Field(ge=0, lt=20000)
+    batch_preview_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class ImportOperationStopInput(ImportInput):
+    operation_preview_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class ImportBindingPreviewInput(ImportReviseInput):

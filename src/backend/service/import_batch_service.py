@@ -1,6 +1,6 @@
 """Bounded v1 import use case, prepared for the single runtime cutover.
 
-No receipt store, whole-plan confirmation or implicit unaccepted-row choices.
+No receipt store, persistent execution queue or implicit unaccepted-row choices.
 """
 import base64
 from collections import Counter, defaultdict
@@ -33,6 +33,7 @@ from backend.service.import_match_service import ImportMatchService
 from backend.service.import_pairing_service import ImportPairingService
 from backend.service.import_risk_service import ImportRiskService
 from backend.service.import_operation_service import ImportOperationService
+from backend.service.import_serial_service import ImportSerialService
 from backend.core.import_evidence import target_locator
 
 
@@ -229,6 +230,7 @@ class ImportBatchService:
             if stored and stored["row_status"] in {2, 3} and not choice.recheck:
                 fail("ROW_RECHECK_REQUIRED")
         state.candidates.update(candidates)
+        state.operation = None
         self.db.rollback()
         removed = self.store.replace(state, payload.expected_updated_time)
         self.release_files(removed)
@@ -258,7 +260,7 @@ class ImportBatchService:
         finally:
             self.db.rollback()
 
-    def operation_preview(self, token, payload):
+    def operation_preview(self, token, payload, *, freeze=None):
         """Disclose the complete operation; no financial write or cache queue."""
         state = self.store.get(token)
         if state.status == "CONFIRMING":
@@ -280,7 +282,8 @@ class ImportBatchService:
             if remaining <= 0:
                 fail("QUERY_BUSY", 503)
             with query_budget(self.db, seconds=remaining):
-                result = ImportOperationService(self.mapper, deadline=started + 30).plan(state, order, candidates, risks, payload.preview_digest)
+                result = ImportOperationService(self.mapper, deadline=started + 30).plan(
+                    state, order, candidates, risks, payload.preview_digest, freeze=freeze)
             latest = self.store.get(token)
             if latest.updated_time != payload.expected_updated_time or latest.status == "CONFIRMING" or self.digest(latest) != payload.preview_digest:
                 fail("STALE_PREVIEW")
@@ -288,8 +291,46 @@ class ImportBatchService:
         finally:
             self.db.rollback()
 
+    def approve_operation(self, token, payload):
+        """Approve the disclosed complete plan in bounded RAM; zero financial writes."""
+        frozen = {}
+        result = self.operation_preview(token, payload, freeze=frozen)
+        if not result["can_confirm"] or result["operation_preview_digest"] != payload.operation_preview_digest:
+            fail("STALE_PREVIEW")
+        with self.store.claim(token, payload.expected_updated_time) as lease:
+            state = lease.state
+            if state.digest() != payload.preview_digest:
+                fail("STALE_PREVIEW")
+            targets = {str(choice["target"]["transaction_id"]) for row in payload.selected_rows
+                if (choice := state.choices.get((row.file_id, row.source_row_number))) and
+                (choice.get("target") or {}).get("kind") == "FACT"}
+            state.operation = frozen | dict(digest=result["operation_preview_digest"], next=0, stopped=False,
+                refs={}, proofs={}, rule_effects={}, targets=sorted(targets))
+            lease.publish()
+            return dict(token=token, updated_time=state.updated_time, preview_digest=state.digest(),
+                operation_preview_digest=result["operation_preview_digest"], batch_count=len(frozen["batches"]),
+                selected_count=result["selected_count"])
+
+    def stop_operation(self, token, payload):
+        return self.store.stop_operation(token, payload.operation_preview_digest)
+
     @observed("IMPORT_BATCH")
     def confirm(self, token, payload, *, fault=None):
+        try:
+            return self._confirm(token, payload, fault=fault)
+        except Exception:
+            # This includes stale cache claims and invalid child scopes before
+            # BEGIN. No rejected child leaves approval for an automatic next.
+            digest = getattr(payload, "operation_preview_digest", None)
+            if digest:
+                try:
+                    self.store.stop_operation(token, digest)
+                except TargetIntakeError:
+                    pass
+            raise
+
+    def _confirm(self, token, payload, *, fault=None):
+        operation_digest = getattr(payload, "operation_preview_digest", None)
         with self.store.claim(token, payload.expected_updated_time) as lease:
             state = lease.state
             if self.digest(state) != payload.preview_digest:
@@ -299,6 +340,14 @@ class ImportBatchService:
                 fail("PREVIEW_ROW_NOT_FOUND", 404)
             rows = {key: state.rows[key] for key in order}
             choices = {key: state.choices[key] for key in order if key in state.choices}
+            serial = ImportSerialService(self.mapper, state) if operation_digest else None
+            if serial:
+                serial.child(payload, order)
+                self.store.ensure_operation(token, operation_digest)
+            elif state.operation and not state.operation["stopped"]:
+                fail("STALE_PREVIEW")
+            # Full preview accounting stays outside the financial transaction.
+            retained_room = self.store.single_bytes - state.byte_size() if serial else 0
             advanced = any(choice.get("resolution", "AUTO") != "AUTO" or choice.get("acknowledge_new_risk")
                            for choice in choices.values())
             if advanced and payload.batch_preview_digest is None:
@@ -312,11 +361,15 @@ class ImportBatchService:
                 current = self.mapper.match(rows, choices)
                 # Processed-row errors have a distinct action from stale inputs.
                 self.mapper.validate_selection(current, choices, processed_only=True)
-                if any(current[key]["premise_hash"] != state.candidates[key]["premise_hash"] for key in order):
+                normalized = serial.candidates(current, choices) if serial else current
+                if any(normalized[key]["premise_hash"] != state.candidates[key]["premise_hash"] for key in order):
                     fail("STALE_PREVIEW")
                 self.mapper.validate_selection(current, choices)
+                capture = {}
                 if payload.batch_preview_digest is not None:
-                    batch = ImportConfirmationService(self.mapper).plan(state, order, current, payload.preview_digest)
+                    batch = ImportConfirmationService(self.mapper).plan(state, order, normalized,
+                        serial.guard["source_digest"] if serial else payload.preview_digest,
+                        normalize_rules=serial.rules if serial else None, capture=capture)
                     if batch["batch_preview_digest"] != payload.batch_preview_digest or not batch["can_confirm"]:
                         fail("STALE_PREVIEW")
                 else:
@@ -332,6 +385,10 @@ class ImportBatchService:
                 result = self.mapper.write_batch(current, choices, order, fault=fault, defer_duplicate=duplicate)
                 if duplicate:
                     duplicate_service.publish(current, choices, order, result, batch, before_context, fault=fault)
+                if serial:
+                    growth = serial.record(current, result, capture.get("rules", []))
+                    if growth > retained_room:
+                        fail("INPUT_LIMIT", 413)
                 if monotonic() - self.mapper.write_started > 2:
                     fail("WRITE_BUSY", 503)
                 if fault:
@@ -344,11 +401,18 @@ class ImportBatchService:
                     fault("after_commit")
                 state.candidates.update(self.mapper.match(rows, choices))
                 self.db.rollback()
+                if serial and serial.guard["next"] == len(serial.guard["batches"]):
+                    state.operation = None
                 lease.publish()
                 result["preview_updated_time"] = state.updated_time
+                if serial:
+                    result.update(preview_digest=state.digest(), operation_preview_digest=operation_digest,
+                        next_batch_index=serial.guard["next"], complete=serial.guard["next"] == len(serial.guard["batches"]))
                 return result
             except Exception as error:
                 self.db.rollback()
+                if operation_digest:
+                    self.store.stop_operation(token, operation_digest)
                 if committed or commit_attempted:
                     observability.metric("import_result_unknown_count", "IMPORT_BATCH")
                     fail("RESULT_UNKNOWN", 503)

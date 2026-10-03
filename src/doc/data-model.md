@@ -65,6 +65,10 @@ Position标准list/search的只读条目扩展为PositionListItem：原PositionP
 
 先落PENDING、事务外限时解析，再明确选择≤1000行同事务确认；Raw不改，只改状态/Fact关联。上限20MiB/20,000行/100文件。ACCEPTED=1、SKIPPED=2、INVALID=3、UNKNOWN=0，未处理=total−前三者之和；完成不等于全有效。相同来源只补证据，不按商户/金额猜相同Fact，不恢复Review。
 
+导入整次选择仍≤20,000行；`operation-preview`完整披露不可拆关联组、逐批效果/预算/撤销范围及阻断项。`operation-approve`只在现有有界预览缓存批准完全相同的计划，不写财务；`operation-confirm`每次仍≤1000行，携原操作摘要、准确批下标及本批摘要，在原短写锁内重验后只提交这一批。应用进程不派发后台批次、不新增表/持久队列/回执；缓存淘汰或重启后必须重新定位和核对，不能恢复自动执行。`operation-stop`撤销后续批准，正在执行的一批仍须等真实提交结果，不能把停止当撤销已提交金融。
+
+后续批只将已成功前批在同一写事务内产生的精确可靠来源ref、指定Fact的新原证据证明和规则epoch/游标重置归一到原批准前提；证书只含实际ID/完整字段或原文hash，不含重放结果。来源换组/改名/状态/微秒token、额外非本次证据、规则/标签或当前解释变化仍使旧摘要失效。任何子批拒绝/失败/提交结果未知撤销后续批准，已经提交的批保留；继续须明确刷新剩余选择并批准新完整计划。缓存内容仍受单24MiB/总64MiB，容量不因批准扩大。默认输出批量取数据库真实ID，以精确Ledger字段归组建立Fact关联，不依赖RETURNING顺序或预猜ID；唯一原默认、现金覆盖和同事务回滚口径不变。
+
 v1共用规范PO。标准列表 `{items,total,page_index,page_size}`、页≤100、同快照COUNT/Page并先验可信关系。金额排序先按单位分组，账户只Filter。文本/search串行literal NFC/casefold、total未知、空命中可继续、游标绑定条件，无累计50,000条截断。详情超过合计4000关系/2MiB明确拒绝，改用scoped关系页。Raw仅显式读单SourceRow，不随列表/汇总加载。
 
 CandidatePO增加只读`current_reviews`：当前有效ReviewPO及`member_count`、`allocated_cash_amount`（本Fact在该Review内的完整现金分配量，单位沿候选cash_currency_code）。原`default_review`仍定位历史原系统默认，不冒充当前人工解释。先取本页≤100 Fact，再一次联读当前摘要；成员数按该Review全部不同Fact计算，不按当前页/筛选计数，不逐Fact SQL。同Review多个拆分合并为一项，遗留多Review分配逐项披露，新写仍要求每Review完整覆盖所选Fact。摘要标题脱敏；本页摘要组超过4000或响应超过2MiB明确DETAIL_LIMIT，建议减小页量，不返回截断当前归属。

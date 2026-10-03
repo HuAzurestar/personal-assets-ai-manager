@@ -354,6 +354,38 @@ class ImportOperationPreviewResponse(SuccessResponse[ImportOperationPreviewPO]):
     pass
 
 
+class ImportOperationApprovalPO(PO):
+    token: str
+    updated_time: datetime
+    preview_digest: str
+    operation_preview_digest: str
+    batch_count: int
+    selected_count: int
+
+
+class ImportOperationApprovalResponse(SuccessResponse[ImportOperationApprovalPO]):
+    pass
+
+
+class ImportOperationConfirmPO(ImportConfirmPO):
+    preview_digest: str
+    operation_preview_digest: str
+    next_batch_index: int
+    complete: bool
+
+
+class ImportOperationConfirmResponse(SuccessResponse[ImportOperationConfirmPO]):
+    pass
+
+
+class ImportOperationStopPO(PO):
+    stopped: Literal[True]
+
+
+class ImportOperationStopResponse(SuccessResponse[ImportOperationStopPO]):
+    pass
+
+
 class ImportCancelPO(PO):
     cancelled: bool
 

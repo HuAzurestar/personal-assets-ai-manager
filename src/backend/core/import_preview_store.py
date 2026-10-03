@@ -30,6 +30,8 @@ class ImportPreviewState:
     updated_time: datetime = field(default_factory=utc_now)
     timeout: timedelta = field(default_factory=lambda: timedelta(minutes=IMPORT_PREVIEW_TIMEOUT_MINUTES))
     status: str = "READY"
+    # Ephemeral human-approved guards, not a queue, receipt or replayable result.
+    operation: dict | None = None
 
     @property
     def timed_out(self):
@@ -40,7 +42,8 @@ class ImportPreviewState:
         value = dict(token=self.token, files=self.files,
             rows=[dict(identity=list(identity), value=row) for identity, row in sorted(self.rows.items())],
             candidates=[dict(identity=list(identity), value=row) for identity, row in sorted(self.candidates.items())],
-            choices=[dict(identity=list(identity), value=row) for identity, row in sorted(self.choices.items())])
+            choices=[dict(identity=list(identity), value=row) for identity, row in sorted(self.choices.items())],
+            operation=self.operation)
         return len(canonical_json(value).encode("utf-8"))
 
     def digest(self):
@@ -171,12 +174,34 @@ class ImportPreviewStore:
                 fail("PREVIEW_CHANGED", "execution ownership expired")
             # A confirmation shrinks/updates its own bounded candidate rows.
             # Growth must not unexpectedly evict other pending-file contexts.
+            current = self._states[state.token]
+            # A stop arriving during an in-flight financial child may not abort
+            # that commit, but must never be overwritten by its detached lease.
+            if current.operation and current.operation.get("stopped") and state.operation and (
+                    current.operation["digest"] == state.operation["digest"]):
+                state.operation = None
+                size = self._size(state)
             if sum(self._sizes.values()) - self._sizes[state.token] + size > self.total_bytes:
                 fail("INPUT_LIMIT", "updated preview exceeds cache capacity", 413)
-            current = self._states[state.token]
             state.updated_time = max(utc_now(), current.updated_time + timedelta(microseconds=1))
             self._states[state.token] = copy.deepcopy(state)
             self._sizes[state.token] = size
+
+    def stop_operation(self, token, digest):
+        """Revoke future children without cancelling or replaying an in-flight write."""
+        with self._lock:
+            state = self._states.get(token)
+            if state is None:
+                fail("PREVIEW_UNAVAILABLE", "preview is no longer resident", 410)
+            if state.operation and state.operation["digest"] == digest:
+                state.operation["stopped"] = True
+            return dict(stopped=True)
+
+    def ensure_operation(self, token, digest):
+        with self._lock:
+            state = self._states.get(token)
+            if state is None or not state.operation or state.operation["digest"] != digest or state.operation["stopped"]:
+                fail("STALE_PREVIEW", "operation approval is no longer active")
 
     def remove(self, token):
         with self._lock:

@@ -110,7 +110,7 @@ class ImportConfirmationService:
             states.append(dict(before=public, after_status=public["status"]))
         return states
 
-    def plan(self, state, order, candidates, source_digest, *, prepared=None):
+    def plan(self, state, order, candidates, source_digest, *, prepared=None, normalize_rules=None, capture=None):
         order = sorted(order)
         choices = {key: state.choices[key] for key in order if key in state.choices}
         # Only selected signatures are re-read; the O(R) local dictionary keeps
@@ -165,6 +165,10 @@ class ImportConfirmationService:
             default_tag_ids = {item.tag_id for item in default_tags}
             tag_rows = [row for row in (prepared["tag_rows"] if prepared is not None else self.mapper.tag_dictionary()) if row["id"] in default_tag_ids]
         rules = (prepared["rules"] if prepared is not None else self.mapper.named_rows("rules", {item.view_id for item in default_tags}, "view_id")) if duplicate else []
+        if capture is not None:
+            capture["rules"] = rules
+        if normalize_rules is not None:
+            rules = normalize_rules(rules)
         if tag_count + len(rules) > 50000:
             fail("TAG_IMPACT_LIMIT", 413)
         tag_meta = {row["id"]: row for row in tag_rows}

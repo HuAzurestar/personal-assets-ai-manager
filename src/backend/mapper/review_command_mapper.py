@@ -1,4 +1,5 @@
 """Set-oriented persistence for immutable publication; no replay/history writes."""
+from collections import defaultdict, deque
 from datetime import timedelta
 from time import monotonic
 
@@ -219,7 +220,35 @@ class ReviewCommandMapper:
         if len(facts) != len(set(fact_ids)) or self.allocations_for_facts(fact_ids):
             raise TargetEconomicError(409, "initial default requires new unallocated Facts", code="DEFAULT_IDENTITY_REQUIRED")
         account_refs = account_refs or {}
-        drafts = [dict(type=0, title="", allocations=[dict(transaction_id=fact_id, entry_type=0,
-                       cash_amount=facts[fact_id]["amount"], account_ref_id=account_refs.get(fact_id, 0))],
-                       new_positions=[], legs=[], position_allocations=[]) for fact_id in sorted(facts)]
-        return self.publish(drafts, facts, {}, {})
+        order, now = sorted(facts), utc_now()
+        if not order:
+            return [], [], [], []
+        # All new system Reviews have identical content and no relationships
+        # yet. Assign their actual returned IDs only after insertion; do not
+        # request per-input ordered RETURNING (SQLite executes that rowwise).
+        reviews = sorted(self.db.scalars(insert(ReviewCase).returning(ReviewCase), [dict(
+            behavior_type=0, status=0, title="", created_time=now, updated_time=now) for _ in order]), key=lambda row: row.id)
+        values = [dict(entry_type=0, entry_direction=facts[id]["cash_direction"], amount=facts[id]["amount"],
+            currency_code=facts[id]["currency_code"], account_ref_id=account_refs.get(id, 0),
+            account_code=facts[id]["account_code"], counterparty_account_ref=facts[id]["counterparty_account_ref"],
+            occurred_time=facts[id]["occurred_time"], created_time=now, updated_time=now) for id in order]
+        outputs = self.db.scalars(insert(LedgerEntry).returning(LedgerEntry), values).all()
+        fields = ("entry_type", "entry_direction", "amount", "currency_code", "account_ref_id",
+                  "account_code", "counterparty_account_ref", "occurred_time", "created_time", "updated_time")
+        by_value = defaultdict(deque)
+        for row in sorted(outputs, key=lambda row: row.id):
+            by_value[tuple(getattr(row, name) for name in fields)].append(row)
+        ledgers = []
+        for value in values:
+            matching = by_value[tuple(value[name] for name in fields)]
+            if not matching:
+                raise TargetEconomicError(409, "default outputs do not match their exact input", code="DEFAULT_IDENTITY_REQUIRED")
+            ledgers.append([matching.popleft()])
+        if len(reviews) != len(order) or any(by_value.values()):
+            raise TargetEconomicError(409, "default output scope changed", code="DEFAULT_IDENTITY_REQUIRED")
+        allocations = [dict(review_id=review.id, transaction_id=id, ledger_id=ledger[0].id,
+            cash_amount=facts[id]["amount"], cash_currency_code=facts[id]["currency_code"],
+            created_time=now, updated_time=now) for id, review, ledger in zip(order, reviews, ledgers)]
+        for offset in range(0, len(allocations), 400):
+            self.db.execute(insert(ReviewAllocation.__table__), allocations[offset:offset + 400])
+        return reviews, [[] for _ in order], ledgers, [[] for _ in order]

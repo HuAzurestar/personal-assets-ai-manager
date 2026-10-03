@@ -9,12 +9,14 @@ from backend.error import TargetIntakeError
 from backend.schema.intake import IntakePreviewRequest
 from backend.schema.import_command import (ImportConfirmInput, ImportConfirmPreviewInput, ImportReviseInput,
                                           PreviewRowListRequest, ImportMatchListRequest, ImportOperationPreviewInput,
-                                          ImportBindingPreviewInput, ImportPairingPreviewInput)
+                                          ImportBindingPreviewInput, ImportPairingPreviewInput,
+                                          ImportOperationApproveInput, ImportOperationConfirmInput, ImportOperationStopInput)
 from backend.schema.identifier import SQLITE_ID_MAX
 from backend.schema.import_batch_read import (ImportPreviewResponse, PreviewRowListResponse,
                                             ImportConfirmResponse, ImportCancelResponse, ImportBatchPreviewResponse,
                                             ImportMatchListResponse, ImportOperationPreviewResponse, ImportBindingPreviewResponse,
-                                            ImportPairingPreviewResponse)
+                                            ImportPairingPreviewResponse, ImportOperationApprovalResponse,
+                                            ImportOperationConfirmResponse, ImportOperationStopResponse)
 from backend.schema.list_query import parse_list_request
 from backend.service.target_intake_service import TargetIntakeService
 
@@ -77,6 +79,24 @@ def confirm_preview(token: str, payload: ImportConfirmPreviewInput, db: Session 
 @router.post("/preview/{token}/operation-preview", response_model=ImportOperationPreviewResponse)
 def operation_preview(token: str, payload: ImportOperationPreviewInput, db: Session = Depends(get_db)):
     return ImportOperationPreviewResponse(status=200, message="ok", body=TargetIntakeService(db).operation_preview(token, payload))
+
+
+@router.post("/preview/{token}/operation-approve", response_model=ImportOperationApprovalResponse)
+def operation_approve(token: str, http_request: Request, payload: ImportOperationApproveInput, db: Session = Depends(get_db)):
+    validate_query_parameter_names(http_request, set())
+    return ImportOperationApprovalResponse(status=200, message="ok", body=TargetIntakeService(db).approve_operation(token, payload))
+
+
+@router.post("/preview/{token}/operation-confirm", response_model=ImportOperationConfirmResponse)
+def operation_confirm(token: str, http_request: Request, payload: ImportOperationConfirmInput, db: Session = Depends(get_db)):
+    validate_query_parameter_names(http_request, set())
+    return ImportOperationConfirmResponse(status=200, message="ok", body=TargetIntakeService(db).confirm(token, payload))
+
+
+@router.post("/preview/{token}/operation-stop", response_model=ImportOperationStopResponse)
+def operation_stop(token: str, http_request: Request, payload: ImportOperationStopInput, db: Session = Depends(get_db)):
+    validate_query_parameter_names(http_request, set())
+    return ImportOperationStopResponse(status=200, message="ok", body=TargetIntakeService(db).stop_operation(token, payload))
 
 
 @router.delete("/preview/{token}", response_model=ImportCancelResponse)

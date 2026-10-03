@@ -104,7 +104,7 @@ class ImportOperationService:
         return dict(defaults={id: self.context["defaults"][id] for id in sorted(ids)}, bundle=bundle,
             **{name: [self.tables[name][id] for id in sorted(values)] for name, values in selected.items()})
 
-    def plan(self, state, order, candidates, risks, source_digest):
+    def plan(self, state, order, candidates, risks, source_digest, *, freeze=None):
         self.check_budget()
         accepted = set()
         for key in order:
@@ -186,4 +186,10 @@ class ImportOperationService:
         if len(canonical_json(result).encode("utf-8")) > MAX_OPERATION_BYTES:
             fail("DETAIL_LIMIT", 413)
         self.check_budget()
+        if freeze is not None:
+            # Only per-child guards and the rule baseline are retained. Never
+            # duplicate complete public financial output/history into a queue.
+            freeze.update(source_digest=source_digest, rules=rules,
+                batches=[dict(rows=item["preview"]["selected_rows"],
+                    digest=item["preview"]["batch_preview_digest"]) for item in batches])
         return result

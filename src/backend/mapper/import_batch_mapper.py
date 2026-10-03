@@ -536,10 +536,16 @@ class ImportBatchMapper(ReviewCommandMapper):
             if choices[key]["decision"] == "ACCEPT" and not candidate["fact_id"] and not candidate.get("evidence_link"):
                 new_by_key.setdefault(candidate["values"]["fact_key"], (candidate["values"], candidate["account"]))
                 new_anchor.setdefault(candidate["values"]["fact_key"], key)
-        new = [TransactionFact(**values, created_time=now, updated_time=now) for values, _account in new_by_key.values()]
-        self.db.add_all(new)
-        self.db.flush()
-        facts = {fact.fact_key: fact.id for fact in new}
+        new = [values | dict(created_time=now, updated_time=now) for values, _account in new_by_key.values()]
+        facts = {}
+        for offset in range(0, len(new), 400):
+            # Core bulk RETURNING avoids ORM's per-row ordered ID flush.
+            # Correlate by the immutable key, never RETURNING order or a guessed
+            # SQLite ID. Every original default still uses these actual IDs.
+            facts.update({key: id for id, key in self.db.execute(insert(TransactionFact.__table__).returning(
+                TransactionFact.id, TransactionFact.fact_key), new[offset:offset + 400])})
+        if set(facts) != set(new_by_key):
+            fail("IDENTITY_CHANGED")
         reliable = self.accounts.create_reliable_refs({tuple(account["auto_identity"]) for _values, account in new_by_key.values()
                                                       if account["auto_identity"] is not None})
         refs = {facts[key]: reliable[tuple(account["auto_identity"])]["id"] if account["auto_identity"] else account["ref_id"]
@@ -573,7 +579,7 @@ class ImportBatchMapper(ReviewCommandMapper):
             if old:
                 updates.append(dict(id=old["id"], **values, updated_time=max(now, old["updated_time"] + timedelta(microseconds=1))))
             else:
-                new_rows.append(TransactionImportRow(**values, transaction_import_file_id=key[0], source_row_number=key[1],
+                new_rows.append(dict(**values, transaction_import_file_id=key[0], source_row_number=key[1],
                     source_reference=self._input_rows[key].get("reference", ""), raw_hash=candidate["raw_hash"],
                     raw_payload=candidate["raw_payload"], created_time=now, updated_time=now))
             outcomes[key] = dict(file_id=key[0], source_row_number=key[1], row_status=status, transaction_id=fact_id,
@@ -583,8 +589,8 @@ class ImportBatchMapper(ReviewCommandMapper):
                     new_anchor.get(candidate["values"]["fact_key"]) != key) else
                                   "NEW_REAL" if accepted else "NONE",
                 duplicate_kept_transaction_id=0)
-        self.db.add_all(new_rows)
-        self.db.flush()
+        for offset in range(0, len(new_rows), 400):
+            self.db.execute(insert(TransactionImportRow.__table__), new_rows[offset:offset + 400])
         if updates:
             self.db.execute(update(TransactionImportRow), updates)
         if fault:
