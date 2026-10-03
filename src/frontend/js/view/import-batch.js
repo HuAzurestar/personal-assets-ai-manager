@@ -8,7 +8,7 @@ import { openImportBulk, importRangeFilter, mountImportDraftRows } from '../comp
 import { openImportBinding, readImportBinding } from '../component/import-binding.js';
 import { openImportPairing } from '../component/import-pairing.js';
 import { importReconciliationInput, validateImportReconciliation, reconciliationRowLabel, reconciliationOutputLabel } from '../component/import-reconciliation.js';
-import { createImportExecution } from '../component/import-execution.js';
+import { createImportExecution, importKnownFailureMessage } from '../component/import-execution.js';
 
 const pendingKey = "paam.import.pending.v1";
 const remainingKey = 'paam.import.remaining.v1';
@@ -563,7 +563,7 @@ export async function mountImportBatch(host, initial, changed) {
           context.unknown=state.unknown || (state.stage === 'LOCAL_RESULT' && !!pending());context.dirty=!!context.selected.size;
           if (!context.unknown) localStorage.removeItem(pendingKey);
           context.verificationMessage=context.unknown ? '本批提交结果尚待核对；后续已停止，保留本批定位与未提交范围，不自动重发。' : null;
-          status(context.unknown ? context.verificationMessage : `${error.code || '操作已停止'}：${error.message}；已完成批保留，剩余须重新核验和批准。`);
+          status(context.unknown ? context.verificationMessage : importKnownFailureMessage(error));
         },
         progress:state=>{
           context.executionProgress=state;

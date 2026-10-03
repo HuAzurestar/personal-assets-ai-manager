@@ -4,7 +4,15 @@ const {pathToFileURL}=require('node:url');
 const path=require('node:path');
 
 async function run() {
-  const {createImportExecution,validateImportChild}=await import(pathToFileURL(path.join(__dirname,'../frontend/js/component/import-execution.js')).href);
+  const {createImportExecution,validateImportChild,importKnownFailureMessage}=await import(pathToFileURL(path.join(__dirname,'../frontend/js/component/import-execution.js')).href);
+  assert.equal(typeof importKnownFailureMessage,'function');
+  for (const [code,reason] of [['STALE_PREVIEW','原计划已失效'],['WRITE_BUSY','数据库正忙']]) {
+    const copy=importKnownFailureMessage(Object.assign(Error(code),{code}));
+    for (const text of [reason,'本批未提交','已完成批保留','保存选择并重新核验','再次明确批准','不会自动重发',code]) assert.ok(copy.includes(text),copy);
+    assert.ok(!copy.includes(`${code}：${code}`),copy);
+  }
+  assert.ok(importKnownFailureMessage(Object.assign(Error('Mock source conflict'),{code:'IDENTITY_CHANGED'})).includes('Mock source conflict'));
+  assert.ok(importKnownFailureMessage(Error('Mock preparation failed')).includes('Mock preparation failed'));
   const policy={max_batch_rows:1000,serial:true,retain_committed:true,automatic_post_replay:false,stop_on:['CANCEL','FAILURE','STALE_PREVIEW','RESULT_UNKNOWN']};
   const rows=Array.from({length:2500},(_,i)=>({file_id:1,source_row_number:i+1}));
   const stamp=i=>`2026-10-03T00:00:00.${String(i).padStart(6,'0')}Z`;

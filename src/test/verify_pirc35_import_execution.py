@@ -265,6 +265,9 @@ def run():
                         try:
                             page.locator('[data-batch-execute]').click()
                             expect(page.locator('[data-batch-status]')).to_contain_text(code,timeout=35000)
+                            expect(page.locator('[data-batch-status]')).to_contain_text('原计划已失效' if code=='STALE_PREVIEW' else '数据库正忙')
+                            for text in ('本批未提交','保存选择并重新核验','再次明确批准','不会自动重发'):
+                                expect(page.locator('[data-batch-status]')).to_contain_text(text)
                             expect(page.locator('[data-batch-execution]')).to_contain_text('后续已停止',timeout=35000)
                             expect(page.locator('[data-batch-execution]')).to_contain_text('1000 行')
                             expect(page.locator('[data-batch-execution]')).not_to_contain_text('本批结果未知')
