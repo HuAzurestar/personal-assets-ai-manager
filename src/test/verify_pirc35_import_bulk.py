@@ -1,4 +1,4 @@
-"""Actual paged ranges and bulk draft decisions; isolated fictional SQLite."""
+"""Actual ranges, draft decisions and checked bulk source binding; fictional SQLite."""
 import base64
 import json
 import os
@@ -29,6 +29,7 @@ def run():
     with tempfile.TemporaryDirectory(prefix='paam-import-bulk-') as temporary:
         app = prepare_app(Path(temporary))
         from backend.core import target_database
+        from backend.entity import LedgerAccountRef
         from backend.service.configured_llm_analyzer import ConfiguredLlmAnalyzer
         from test_pirc35_import_duplicate import manifest
         provider_calls = []
@@ -38,6 +39,17 @@ def run():
             raise AssertionError('Fictional import must not call a model provider')
 
         ConfiguredLlmAnalyzer.analyze = forbid_provider
+
+        # Metadata-only fictional fixture, before any frozen assertions. Two
+        # complete reliable identities have the same displayed tail; they are
+        # not interchangeable and no Fact is repaired or merged by this seed.
+        with target_database.SessionLocal() as db:
+            card = LedgerAccountRef(name='Mock批量来源A',source_namespace='ccb:statement-v1',
+                source_identity='990000000000001234',identity_strength=1)
+            same_tail = LedgerAccountRef(name='Mock不同完整身份同尾号',source_namespace='ccb:statement-v1',
+                source_identity='880000000000001234',identity_strength=1)
+            db.add_all([card,same_tail]);db.commit()
+            card_id,wrong_id=card.id,same_tail.id
 
         def snapshot():
             with target_database.SessionLocal() as db:
@@ -76,7 +88,7 @@ def run():
                 with sync_playwright() as playwright:
                     browser = playwright.chromium.launch(channel='msedge' if os.name == 'nt' else None,headless=True)
                     page = browser.new_page(viewport={'width':1280,'height':900})
-                    errors,puts,writes,reads = [],[],[],[]
+                    errors,puts,writes,reads,bindings = [],[],[],[],[]
                     page.on('pageerror',lambda error:errors.append(str(error)))
                     page.on('request',lambda request: puts.append(request.post_data_json)
                         if request.method == 'PUT' and '/paam/import/v1/preview/' in request.url else None)
@@ -84,12 +96,15 @@ def run():
                         if request.method == 'POST' and request.url.endswith('/confirm') else None)
                     page.on('request',lambda request:reads.append(request.url)
                         if request.method == 'GET' and '/preview/' in request.url and '/row/list?' in request.url else None)
+                    page.on('request',lambda request:bindings.append(request.post_data_json)
+                        if request.method == 'POST' and request.url.endswith('/binding-preview') else None)
                     page.goto(base+'/#workbench/import')
                     page.locator('[data-action="import-step"][data-step="2"]').last.click()
                     upload = page.locator('[data-form="import-preview"]')
                     upload.locator('[name="files"]').set_input_files([
                         {'name':'Mock-A.csv','mimeType':'text/csv','buffer':content},
                         {'name':'Mock-B.csv','mimeType':'text/csv','buffer':statement('990000000000009876',2,'Mock批量B')},
+                        {'name':'Mock-unknown.csv','mimeType':'text/csv','buffer':statement('',1,'Mock未知来源')},
                     ])
                     upload.locator('[data-action="preview-import"]').click()
                     expect(page.locator('[data-batch-row]')).to_have_count(20,timeout=30000)
@@ -135,6 +150,75 @@ def run():
                     # status. Explicitly keep this draft SKIP using the visible
                     # row decision; bulk recheck must later preserve it.
                     page.locator('[data-batch-row]').first.locator('[data-row-decision]').select_option('SKIP')
+
+                    def open_binding(target):
+                        expect(page.locator('[data-batch-bind]')).to_be_enabled(timeout=15000)
+                        page.locator('[data-batch-bind]').click()
+                        current=page.locator('dialog[open]')
+                        current.locator(f'[data-picker-id="{target}"]').click()
+                        expect(current.locator('[data-binding-read]')).to_be_enabled()
+                        return current
+
+                    # Same masked tail does not bind to another complete source
+                    # identity. The original old SKIP is a separate exception.
+                    dialog=open_binding(wrong_id)
+                    dialog.locator('[data-binding-read]').click()
+                    expect(dialog.locator('[data-binding-count]')).to_contain_text('可修改 0 行，例外 101 行',timeout=15000)
+                    expect(dialog.locator('[data-binding-apply]')).to_be_disabled()
+                    expect(dialog.locator('[data-binding-exceptions] .import-bulk-record')).to_have_count(20)
+                    dialog.locator('[data-binding-exceptions] [data-bulk-next]').click()
+                    expect(dialog.locator('[data-binding-exceptions]')).to_contain_text('21–40 / 101')
+                    dialog.locator('[data-workbench-close]').click()
+                    assert puts == writes == [] and snapshot() == before
+                    dialog=open_binding(card_id)
+                    dialog.locator('[data-binding-read]').click()
+                    expect(dialog.locator('[data-binding-count]')).to_contain_text('可修改 100 行，例外 1 行',timeout=15000)
+                    dialog.locator('[data-binding-apply]').click()
+                    expect(dialog.locator('[data-binding-status]')).to_contain_text('先明确核对')
+                    dialog.locator('[data-workbench-close]').click() # Cancel after a complete successful read.
+                    assert puts == writes == [] and snapshot() == before
+
+                    # A whole read failure and an exact-time mismatch never
+                    # turn the prior successful check into an applied prefix.
+                    binding_pattern='**/paam/import/v1/preview/*/binding-preview'
+                    def fail_binding(route):
+                        route.fulfill(status=503,content_type='application/json',body=json.dumps(dict(
+                            status=503,message='Mock readonly binding failed',body=dict(code='QUERY_BUSY'))))
+                    page.route(binding_pattern,fail_binding)
+                    dialog=open_binding(card_id)
+                    dialog.locator('[data-binding-read]').click()
+                    expect(dialog.locator('[data-binding-status]')).to_contain_text('QUERY_BUSY')
+                    expect(dialog.locator('[data-binding-apply]')).to_be_disabled()
+                    dialog.locator('[data-workbench-close]').click()
+                    page.unroute(binding_pattern,fail_binding)
+                    def wrong_time(route):
+                        response=route.fetch()
+                        value=response.json()
+                        value['body']['expected_updated_time']='2026-10-03T00:00:00.000001Z'
+                        route.fulfill(response=response,json=value)
+                    page.route(binding_pattern,wrong_time)
+                    dialog=open_binding(card_id)
+                    dialog.locator('[data-binding-read]').click()
+                    expect(dialog.locator('[data-binding-status]')).to_contain_text('不一致')
+                    expect(dialog.locator('[data-binding-apply]')).to_be_disabled()
+                    dialog.locator('[data-workbench-close]').click()
+                    page.unroute(binding_pattern,wrong_time)
+                    assert puts == writes == [] and snapshot() == before
+                    dialog=open_binding(card_id)
+                    dialog.locator('[data-binding-read]').click()
+                    expect(dialog.locator('[data-binding-count]')).to_contain_text('可修改 100 行，例外 1 行',timeout=15000)
+                    dialog.locator('[data-binding-exclude-ack]').check()
+                    for width in (1440,1280,820,390):
+                        page.set_viewport_size({'width':width,'height':900})
+                        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+                        assert dialog.evaluate('node => node.scrollWidth <= node.clientWidth')
+                        viewport_evidence(page,f'fix-import-binding-dialog-{width}')
+                    dialog.locator('[data-binding-apply]').click()
+                    expect(dialog).to_have_count(0)
+                    expect(page.locator('[data-batch-status]')).to_contain_text('已应用 100 行来源草稿')
+                    expect(page.locator('[data-batch-bulk]')).to_be_enabled(timeout=15000)
+                    assert puts == writes == [] and snapshot() == before
+
                     page.locator('[data-batch-bulk]').click()
                     dialog = page.locator('dialog[open]')
                     expect(dialog).to_contain_text('已选 101 行')
@@ -177,6 +261,8 @@ def run():
                     assert {row['source_row_number'] for row in choices} == set(range(6,107))
                     assert choices[0]['decision'] == 'SKIP' and choices[0].get('acknowledge_new_risk',False) is False
                     assert all(row['resolution'] == 'NEW' and row['acknowledge_new_risk'] is True for row in choices[1:])
+                    assert choices[0].get('account_ref_id') is None
+                    assert all(row['account_ref_id'] == card_id for row in choices[1:])
                     assert writes == [] and snapshot() == before
                     # Recheck retains SKIP rather than silently accepting the old
                     # row. All other rows are exceptions and keep their intents.
@@ -195,6 +281,40 @@ def run():
                     assert len(puts) == 2
                     assert puts[1]['choices'][0]['decision'] == 'SKIP' and puts[1]['choices'][0]['recheck'] is True
                     assert all(row['resolution'] == 'NEW' and row['acknowledge_new_risk'] for row in puts[1]['choices'][1:])
+                    # Whole selected scope now includes two conflicting B rows
+                    # and one valid unknown-source row. Exceptions stay selected
+                    # and unchanged; explicit manual assignment is a new boundary
+                    # acknowledgement, not new-cash consent or reliable identity.
+                    page.set_viewport_size({'width':1280,'height':900})
+                    page.locator('[data-batch-file]').select_option('')
+                    expect(page.locator('[data-batch-page]')).to_contain_text('178 行',timeout=15000)
+                    page.locator('[data-batch-select-scope]').click()
+                    expect(page.locator('[data-batch-selection]')).to_contain_text('178 行',timeout=15000)
+                    dialog=open_binding(card_id)
+                    dialog.locator('[data-binding-read]').click()
+                    expect(dialog.locator('[data-binding-count]')).to_contain_text('可修改 176 行，例外 2 行',timeout=15000)
+                    expect(dialog.locator('[data-binding-count]')).to_contain_text('来源身份未知 1 行')
+                    dialog.locator('[data-binding-exclude-ack]').check()
+                    dialog.locator('[data-binding-apply]').click()
+                    expect(dialog.locator('[data-binding-status]')).to_contain_text('未知来源')
+                    dialog.locator('[data-binding-unknown-ack]').check()
+                    dialog.locator('[data-binding-apply]').click()
+                    expect(page.locator('[data-batch-selection]')).to_contain_text('178 行')
+                    expect(page.locator('[data-batch-save]')).to_be_enabled(timeout=15000)
+                    page.locator('[data-batch-save]').click()
+                    expect(page.locator('[data-batch-plan]')).to_be_enabled(timeout=15000)
+                    assert len(puts) == 3 and len(puts[2]['choices']) == 178
+                    # Read the current upload, not the earlier SKIP seed token.
+                    # Actual request locators determine its authoritative scope.
+                    last_binding=bindings[-1]
+                    current=client.get('/paam/import/v1/preview/'+urlsplit(reads[-1]).path.split('/')[5]).json()['body']
+                    file_ids={file['filename']:file['file_id'] for file in current['files']}
+                    saved=puts[2]['choices']
+                    assert all(item['account_ref_id'] == card_id for item in saved if item['file_id'] != file_ids['Mock-B.csv'])
+                    assert all(item.get('account_ref_id') is None for item in saved if item['file_id'] == file_ids['Mock-B.csv'])
+                    assert all(not item.get('acknowledge_new_risk',False) for item in saved if item['file_id'] != int(file_option))
+                    assert len(last_binding['choices']) == 178 and last_binding['account_ref_id'] == card_id
+                    assert writes == [] and snapshot() == before
                     # Sticky commands remain usable deep in the long list;
                     # the narrow toolbar must not consume most of the viewport.
                     page.locator('[data-batch-page-size]').select_option('100')
@@ -212,7 +332,7 @@ def run():
                     assert errors == [] and writes == [] and snapshot() == before
                     assert provider_calls == []
                     browser.close()
-            print('PASS 20/50/100 pages, exact half-open named file ranges, failed page no prefix, bulk cancel/risk/exception/recheck guards, bounded exceptions, sticky four-width toolbar; zero finance and provider calls')
+            print('PASS ranges, draft decisions and full-scope source binding: same-tail conflict, old-state exceptions, cancel/failure/exact-time guard, unknown-source consent, 20-item exception paging and four-width sticky toolbar; zero finance and provider calls')
         finally:
             server.should_exit = True
             worker.join(timeout=10)

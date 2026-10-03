@@ -1,11 +1,16 @@
 import {request} from '../api/client.js';
-import {esc,resourceId} from '../util/core.js';
+import {resourceId} from '../util/core.js';
 import {workbenchDialog,mountPicker,metadataLabel} from './workbench.js';
 import {importRowIdentity,importRowLabel} from './import-choice.js';
 import {mountImportDraftRows} from './import-bulk.js';
 
-export function validateImportBinding(result, selected, ref, digest) {
-  if (!selected.size || selected.size > 20000 || result.source_preview_digest !== digest
+export function validateImportBinding(result, selected, ref, digest, time) {
+  if (ref !== null) {
+    if (typeof ref !== 'number') throw new Error('来源策略定位不精确');
+    resourceId(ref,{allowZero:true});
+  }
+  if (typeof time !== 'string' || !time || !selected.size || selected.size > 20000
+      || result?.source_preview_digest !== digest || result.expected_updated_time !== time
       || result.account_ref_id !== ref || result.selected_count !== selected.size || !Array.isArray(result.items)
       || result.items.length !== selected.size) throw new Error('来源绑定核验范围或目标不一致，未应用草稿');
   const seen = new Set();
@@ -13,7 +18,7 @@ export function validateImportBinding(result, selected, ref, digest) {
     if (typeof item.row?.file_id !== 'number' || typeof item.row?.source_row_number !== 'number') throw new Error('来源行定位不精确');
     resourceId(item.row.file_id);resourceId(item.row.source_row_number);
     const key = importRowIdentity(item.row);
-    if (!selected.has(key) || seen.has(key) || typeof item.applicable !== 'boolean'
+    if (!selected.has(key) || importRowIdentity(selected.get(key).row) !== key || seen.has(key) || typeof item.applicable !== 'boolean'
         || !['RELIABLE','UNKNOWN'].includes(item.source_state) || !Array.isArray(item.reason_codes)
         || item.reason_codes.some(code => typeof code !== 'string' || !code)
         || item.applicable === !!item.reason_codes.length) throw new Error('来源绑定核验不完整或例外状态不一致');
@@ -22,15 +27,16 @@ export function validateImportBinding(result, selected, ref, digest) {
   return result;
 }
 
-export function projectImportBinding(selected,result,ref,label,digest) {
-  validateImportBinding(result,selected,ref,digest);
+export function projectImportBinding(selected,result,ref,label,digest,time) {
+  validateImportBinding(result,selected,ref,digest,time);
   const updated = new Map(selected);
   for (const item of result.items) {
     if (!item.applicable) continue;
     const key = importRowIdentity(item.row), previous = selected.get(key);
     // Even a malformed positive backend result cannot bind an existing Fact
     // or a local LINK intent. Never alter decisions, risk consent or pair targets.
-    if (previous.row.classification === 'PROCESSED' || previous.row.persisted_row_status === 1
+    if (['PROCESSED','EXISTING'].includes(previous.row.classification) || previous.row.persisted_row_status === 1
+        || previous.row.existing_transaction_id
         || previous.choice.resolution === 'LINK_EXISTING') throw new Error('已接受或补证据行不能覆盖来源');
     updated.set(key,{...previous,refLabel:ref ? label : null,choice:{...previous.choice,account_ref_id:ref,
       ...(previous.choice.target ? {target:{...previous.choice.target}} : {})}});
@@ -98,14 +104,17 @@ export function openImportBinding({selected,files,token,digest,time,signal,valid
     readController=new AbortController();
     const cancelRead=()=>readController?.abort();local.signal.addEventListener('abort',cancelRead,{once:true});
     busy=true;result=null;find('[data-binding-exclude-ack]').checked=false;find('[data-binding-unknown-ack]').checked=false;
+    find('[data-binding-count]').textContent='';find('[data-binding-exceptions]').textContent='';
+    find('[data-binding-exclude]').hidden=true;find('[data-binding-unknown]').hidden=true;
     find('[data-binding-status]').textContent='正在只读核验全部已选行；未修改草稿或入账';controls();
     try {
       const next = await readImportBinding(readSignal=>request(`/paam/import/v1/preview/${token}/binding-preview`,{
         method:'POST',signal:readSignal,headers:{'Content-Type':'application/json'},body:JSON.stringify({
-          expected_updated_time:time,preview_digest:digest,account_ref_id:target,choices:[...frozen.values()].map(item=>item.choice)})}),
+          expected_updated_time:time,preview_digest:digest,account_ref_id:target,choices:[...frozen.values()].map(item=>({...item.choice,
+            file_id:item.row.file_id,source_row_number:item.row.source_row_number}))})}),
         {signal:readController.signal,valid:()=>alive() && issued===generation && ref===target});
       if(!alive() || issued!==generation || ref!==target) return;
-      result=validateImportBinding(next,frozen,target,digest);
+      result=validateImportBinding(next,frozen,target,digest,time);
       const exceptions=result.items.filter(item=>!item.applicable), unknown=result.items.filter(item=>item.applicable && item.source_state==='UNKNOWN');
       find('[data-binding-count]').textContent=`完整核验 ${result.selected_count} 行；可修改 ${result.selected_count-exceptions.length} 行，例外 ${exceptions.length} 行，适用行中来源身份未知 ${unknown.length} 行。仍需保存与完整金融预览。`;
       find('[data-binding-exceptions]').textContent='';
@@ -125,7 +134,7 @@ export function openImportBinding({selected,files,token,digest,time,signal,valid
     try {
       if(result.items.some(item=>!item.applicable) && !find('[data-binding-exclude-ack]').checked) throw new Error('请先明确核对并排除本次修改的例外');
       if(ref>0 && result.items.some(item=>item.applicable && item.source_state==='UNKNOWN') && !find('[data-binding-unknown-ack]').checked) throw new Error('请明确未知来源的手工归属边界');
-      apply(projectImportBinding(frozen,result,ref,label,digest));dialog.close();
+      apply(projectImportBinding(frozen,result,ref,label,digest,time));dialog.close();
     } catch(error){find('[data-binding-status]').textContent=error.message;}
   };
   return dialog;

@@ -14,6 +14,7 @@ import pytest
     "import_plan.cjs",
     "import_choice.cjs",
     "import_bulk.cjs",
+    "import_binding.cjs",
     "write_failure.cjs",
     "tag_impact.cjs",
     "resource_id.cjs",
