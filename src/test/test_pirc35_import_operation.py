@@ -201,8 +201,8 @@ def test_late_choice_change_invalidates_complete_operation_read(service, monkeyp
     from backend.service.import_operation_service import ImportOperationService
     rows, current = independent(service, 2)
     original = ImportOperationService.plan
-    def changed(self, state, order, candidates, risks, digest):
-        result = original(self, state, order, candidates, risks, digest)
+    def changed(self, state, order, candidates, risks, digest, **kwargs):
+        result = original(self, state, order, candidates, risks, digest, **kwargs)
         latest = service.store.get(current["token"])
         latest.choices[next(iter(rows))]["decision"] = "SKIP"
         service.store.replace(latest, latest.updated_time)

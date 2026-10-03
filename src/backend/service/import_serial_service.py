@@ -117,7 +117,8 @@ class ImportSerialService:
             # Only the exact actual accepted row ID is certified, never a count.
             proof = dict(row_id=row["row_id"], file_id=key[0], file_sha256=file["sha256"],
                 file_format=file["file_format"], source_row_number=key[1], raw_hash=candidate["raw_hash"],
-                evidence_hash=fingerprint(candidate["raw_payload"]))
+                evidence_hash=candidate["premise"]["stored"]["evidence_hash"] if candidate["stored"]
+                    else fingerprint(candidate["raw_payload"]))
             if id not in self.guard["proofs"]:
                 growth += len(id) + 6
             retain(self.guard["proofs"].setdefault(id, {}), str(row["row_id"]), proof)

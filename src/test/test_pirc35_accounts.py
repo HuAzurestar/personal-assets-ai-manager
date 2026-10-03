@@ -16,6 +16,7 @@ from backend.error import TargetEconomicError
 from backend.target_main import app
 from backend.parser.statement_parser import parse_statement
 from backend.schema.intake import IntakePreviewRequest, IntakeConfirmRequest
+from backend.schema.import_command import ImportReviseInput, ImportConfirmInput, ImportConfirmPreviewInput
 from backend.service.target_intake_service import TargetIntakeService
 from backend.error import TargetIntakeError
 
@@ -162,7 +163,21 @@ def test_reliable_import_reuses_ref_default_atomic_weak_stays_unknown():
         assert all(row["source_account"]["identity_strength"] == "WEAK" for row in parsed["rows"])
         weak = upload(service, weak_content)
         assert weak["issue_count"] == 0
-        confirm_service_batch(service, weak)
+        before = db.scalar(select(func.count()).select_from(TransactionFact))
+        with pytest.raises(TargetIntakeError) as error:
+            confirm_service_batch(service, weak)
+        assert error.value.code == "IMPORT_REVIEW_REQUIRED"
+        assert db.scalar(select(func.count()).select_from(TransactionFact)) == before
+        state = service.store.get(weak["token"])
+        keys = sorted(state.rows)
+        current = service.revise(weak["token"], ImportReviseInput(expected_updated_time=state.updated_time,
+            choices=[dict(file_id=key[0], source_row_number=key[1], decision="ACCEPT", resolution="NEW",
+                acknowledge_new_risk=True) for key in keys]))
+        payload = dict(expected_updated_time=current["updated_time"], preview_digest=current["preview_digest"],
+            selected_rows=[dict(file_id=key[0], source_row_number=key[1]) for key in keys])
+        disclosed = service.confirm_preview(weak["token"], ImportConfirmPreviewInput(**payload))
+        assert disclosed["can_confirm"]
+        service.confirm(weak["token"], ImportConfirmInput(**payload, batch_preview_digest=disclosed["batch_preview_digest"]))
         assert db.scalar(select(func.count()).select_from(LedgerAccountRef)) == 1
         assert db.scalar(select(func.count()).select_from(LedgerEntry).where(LedgerEntry.account_ref_id == 0)) == 24
 

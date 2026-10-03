@@ -252,15 +252,31 @@ def test_serial_public_dtos_are_strict_and_preserve_1000_row_financial_limit(ser
         ("operation-approve", "operation-confirm", "operation-stop"))
 
 
-def links(service):
+def links(service, *, recheck=False):
     origin = prepare(service.mapper, [row(reference="")])
     id = accept(service.mapper, origin)["processed_rows"][0]["transaction_id"]
     first = prepare(service.mapper, [row(reference="")] + [row(i, reference=f"skip-{i}") for i in range(2, 1001)], sha="b" * 64)
     last = prepare(service.mapper, [row(reference="")], sha="c" * 64)
     keys = [min(first), min(last)]
+    if recheck:
+        skipped = {keys[0]: first[keys[0]]}
+        skipped_choices = {keys[0]: dict(decision="SKIP")}
+        service.mapper.begin_write()
+        try:
+            service.mapper.write_batch(service.mapper.match(skipped, skipped_choices), skipped_choices, keys[:1])
+            service.db.commit()
+        finally:
+            service.mapper.end_write()
+            service.db.rollback()
+        # A parser-context revision can leave all normalized source/core fields
+        # equal. Recheck must retain the original stored envelope, not this new
+        # proposed parser envelope, when certifying our accepted proof append.
+        first[keys[0]] = first[keys[0]] | dict(_document=dict(parser_version=2, source_timezone="UTC"))
     choices = {key: dict(decision="SKIP") for key in first | last}
     for key in keys:
         choices[key] = dict(decision="ACCEPT", resolution="LINK_EXISTING", target=dict(kind="FACT", transaction_id=id))
+    if recheck:
+        choices[keys[0]]["recheck"] = True
     rows = first | last
     return rows, install(service, rows, choices), id
 
@@ -278,6 +294,19 @@ def test_own_appended_source_proof_is_exactly_certified_across_children_without_
     after = manifest(service)
     for name in ("transaction_fact", "review_case", "ledger_entry", "review_transaction_ledger_allocation"):
         assert after[name] == before[name]
+
+
+def test_rechecked_source_certifies_original_stored_envelope_not_new_parser_context(service):
+    rows, current, id = links(service, recheck=True)
+    original = service.db.scalar(select(TransactionImportRow).where(TransactionImportRow.row_status == 2))
+    raw = original.raw_payload
+    disclosure, approved = approve(service, current, list(rows))
+    first = commit_child(service, disclosure, approved, 0)
+    service.db.expire_all()
+    assert service.db.get(TransactionImportRow, original.id).raw_payload == raw
+    service.db.rollback()
+    final = commit_child(service, disclosure, first, 1)
+    assert final["complete"] and final["manual_linked_count"] == 1
 
 
 def test_unowned_evidence_append_does_not_get_rebased_with_our_own_proof(service):
