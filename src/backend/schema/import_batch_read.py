@@ -2,8 +2,9 @@
 from datetime import datetime
 from typing import Literal
 from pydantic import Field
-from backend.schema.review_read import PO
-from backend.schema.import_command import RowChoice
+from backend.schema.review_read import PO, ReviewReadPO
+from backend.schema.review_command import ExpectedReview
+from backend.schema.import_command import RowChoice, RowIdentity, EvidenceTarget
 from backend.schema.response import SuccessResponse
 
 
@@ -133,6 +134,106 @@ class PreviewRowListResponse(SuccessResponse[PreviewRowListPO]):
 
 
 class ImportConfirmResponse(SuccessResponse[ImportConfirmPO]):
+    pass
+
+
+class ImportBatchCounts(PO):
+    new_real_fact: int
+    new_duplicate_fact: int
+    evidence_only: int
+    skipped: int
+    invalid: int
+    unresolved: int
+
+
+class ImportPairComparison(PO):
+    occurred_time: datetime | None
+    amount: int | None
+    currency_code: str | None
+    cash_direction: Literal["IN", "OUT"] | None
+    exact_match: bool
+
+
+class ImportPreviewPair(PO):
+    row: RowIdentity
+    target: EvidenceTarget | None
+    resolution: Literal["AUTO", "NEW", "LINK_EXISTING", "DUPLICATE"]
+    source_labels_masked: list[str] = Field(max_length=2)
+    comparison: ImportPairComparison
+    reason_codes: list[str]
+
+
+class ImportCurrencyEffect(PO):
+    currency_code: str
+    cash_in_amount: int
+    cash_out_amount: int
+    excluded_in_amount: int
+    excluded_out_amount: int
+
+
+class ImportReviewStateEffect(PO):
+    before: ReviewReadPO
+    after_status: Literal["CONFIRMED", "REVOKED"]
+
+
+class ImportPlannedDefault(PO):
+    row: RowIdentity
+    output_index: int
+    type: Literal["NORMAL_TRANSACTION"]
+    economic_type: Literal["TRANSACTION"]
+    cash_direction: Literal["IN", "OUT"]
+    amount: int
+    currency_code: str
+    occurred_time: datetime
+    account_ref_id: int | None
+    source_label_masked: str
+
+
+class ImportDefaultTag(PO):
+    view_id: int
+    tag_id: int
+    view_name_masked: str
+    tag_name_masked: str
+
+
+class ImportTagEffect(PO):
+    new_output_count: int
+    affected_view_ids: list[int]
+    default_assignments: list[ImportDefaultTag]
+    projected_assignment_count: int
+
+
+class ImportBatchEffects(PO):
+    by_currency: list[ImportCurrencyEffect]
+    before_after_review_states: list[ImportReviewStateEffect] = Field(max_length=4000)
+    new_original_defaults: list[ImportPlannedDefault] = Field(max_length=1000)
+    new_duplicate_reviews: list[dict] = Field(max_length=100)
+    tag_effect: ImportTagEffect
+
+
+class ImportBatchBudget(PO):
+    selected_rows: int
+    review_groups: int
+    facts: int
+    outputs: int
+    position_links: int
+    tag_changes: int
+
+
+class ImportBatchPreviewPO(PO):
+    source_preview_digest: str
+    batch_preview_digest: str
+    selected_rows: list[RowIdentity] = Field(max_length=1000)
+    expected_reviews: list[ExpectedReview] = Field(max_length=4000)
+    counts: ImportBatchCounts
+    pairs: list[ImportPreviewPair] = Field(max_length=1000)
+    effects: ImportBatchEffects
+    budget: ImportBatchBudget
+    can_confirm: bool
+    issues: list[PreviewIssue] = Field(max_length=1000)
+
+
+class ImportBatchPreviewResponse(SuccessResponse[ImportBatchPreviewPO]):
     pass
 
 

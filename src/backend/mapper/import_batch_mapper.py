@@ -479,10 +479,12 @@ class ImportBatchMapper(ReviewCommandMapper):
     def write_batch(self, candidates, choices, order, *, fault=None):
         self.validate_selection(candidates, choices)
         now = utc_now()
-        new_by_key = {}
-        for key, candidate in candidates.items():
+        new_by_key, new_anchor = {}, {}
+        for key in sorted(candidates):
+            candidate = candidates[key]
             if choices[key]["decision"] == "ACCEPT" and not candidate["fact_id"] and not candidate.get("evidence_link"):
                 new_by_key.setdefault(candidate["values"]["fact_key"], (candidate["values"], candidate["account"]))
+                new_anchor.setdefault(candidate["values"]["fact_key"], key)
         new = [TransactionFact(**values, created_time=now, updated_time=now) for values, _account in new_by_key.values()]
         self.db.add_all(new)
         self.db.flush()
@@ -526,7 +528,8 @@ class ImportBatchMapper(ReviewCommandMapper):
             outcomes[key] = dict(file_id=key[0], source_row_number=key[1], row_status=status, transaction_id=fact_id,
                 created_review_id=0 if link else defaults.get(fact_id, (0, 0))[0],
                 created_ledger_id=0 if link else defaults.get(fact_id, (0, 0))[1],
-                resolution_effect="EVIDENCE_ONLY" if accepted and (link or candidate["fact_id"]) else
+                resolution_effect="EVIDENCE_ONLY" if accepted and (link or candidate["fact_id"] or
+                    new_anchor.get(candidate["values"]["fact_key"]) != key) else
                                   "NEW_REAL" if accepted else "NONE",
                 duplicate_kept_transaction_id=0)
         self.db.add_all(new_rows)

@@ -17,6 +17,18 @@ class RowIdentity(ImportInput):
     source_row_number: Positive
 
 
+class FactEvidenceTarget(ImportInput):
+    kind: Literal["FACT"]
+    transaction_id: Positive
+
+
+class RowEvidenceTarget(RowIdentity):
+    kind: Literal["ROW"]
+
+
+EvidenceTarget = Annotated[FactEvidenceTarget | RowEvidenceTarget, Field(discriminator="kind")]
+
+
 class RowChoice(RowIdentity):
     decision: Literal["ACCEPT", "SKIP"]
     recheck: StrictBool = False
@@ -44,7 +56,7 @@ class ImportReviseInput(PreviewExpected):
         return self
 
 
-class ImportConfirmInput(PreviewExpected):
+class ImportConfirmPreviewInput(PreviewExpected):
     preview_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     selected_rows: list[RowIdentity] = Field(min_length=1, max_length=1000)
 
@@ -53,6 +65,10 @@ class ImportConfirmInput(PreviewExpected):
         if len({(row.file_id, row.source_row_number) for row in self.selected_rows}) != len(self.selected_rows):
             raise ValueError("duplicate selected row")
         return self
+
+
+class ImportConfirmInput(ImportConfirmPreviewInput):
+    batch_preview_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
 class PreviewRowListRequest(ListRequest):

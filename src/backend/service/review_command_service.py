@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 
 from backend.entity.base import utc_now
 from backend.core.tag_semantics import tag_effect
+from backend.core.review_default import original_defaults
 from backend.core.feature_observability import observed, observability
 from backend.error import TargetEconomicError
 from backend.mapper.auto_tag_rule_mapper import AutoTagRuleMapper
@@ -125,26 +126,11 @@ class ReviewCommandService:
         facts = {row["id"]: row for row in self.mapper.named_rows("facts", affected | raw_ids)}
         if set(facts) != affected | raw_ids:
             reject("FACT_NOT_FOUND", "selected Fact not found", status=409)
-        by_review, by_default = defaultdict(list), defaultdict(list)
+        by_review = defaultdict(list)
         ledger_rows = {row["id"]: row for row in full["ledger_entries"]}
         for allocation in full["allocations"]:
             by_review[allocation["review_id"]].append(allocation)
-        for allocation in defaults:
-            by_default[allocation["transaction_id"]].append(allocation)
-        leg_review_ids = {row["review_id"] for row in full["position_legs"]}
-        default_by_fact, default_refs = {}, {}
-        for fact_id in affected | raw_ids:
-            candidates = by_default[fact_id]
-            if len(candidates) != 1:
-                reject("DEFAULT_IDENTITY_REQUIRED", "Fact must have one proven original default", status=409)
-            allocation = candidates[0]
-            ledger = ledger_rows[allocation["ledger_id"]]
-            fact = facts[fact_id]
-            if (len(by_review[allocation["review_id"]]) != 1 or allocation["review_id"] in leg_review_ids
-                or ledger["entry_type"] != 0 or allocation["cash_amount"] != fact["amount"]):
-                reject("DEFAULT_IDENTITY_REQUIRED", "original default structure is damaged", status=409)
-            default_by_fact[fact_id] = allocation["review_id"]
-            default_refs[fact_id] = ledger["account_ref_id"]
+        default_by_fact, default_refs = original_defaults(facts, defaults, full)
         current = self.mapper.allocations_for_facts(affected | raw_ids, active=True)
         current_bundle = self.mapper.bundle({row["review_id"] for row in current})
         current_ledgers = current_bundle["ledger_entries"]

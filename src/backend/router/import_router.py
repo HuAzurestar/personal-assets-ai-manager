@@ -6,9 +6,9 @@ from backend.router.dependency import get_db, validate_query_parameter_names
 from backend.router.error import DomainErrorRoute
 from backend.error import TargetIntakeError
 from backend.schema.intake import IntakePreviewRequest
-from backend.schema.import_command import ImportConfirmInput, ImportReviseInput, PreviewRowListRequest
+from backend.schema.import_command import ImportConfirmInput, ImportConfirmPreviewInput, ImportReviseInput, PreviewRowListRequest
 from backend.schema.import_batch_read import (ImportPreviewResponse, PreviewRowListResponse,
-                                            ImportConfirmResponse, ImportCancelResponse)
+                                            ImportConfirmResponse, ImportCancelResponse, ImportBatchPreviewResponse)
 from backend.schema.list_query import parse_list_request
 from backend.service.target_intake_service import TargetIntakeService
 
@@ -49,6 +49,11 @@ def rows(token: str, http_request: Request, preview_digest: str = Query(pattern=
 @router.post("/preview/{token}/confirm", response_model=ImportConfirmResponse)
 def confirm(token: str, payload: ImportConfirmInput, db: Session = Depends(get_db)):
     return ImportConfirmResponse(status=200, message="ok", body=TargetIntakeService(db).confirm(token, payload))
+
+
+@router.post("/preview/{token}/confirm-preview", response_model=ImportBatchPreviewResponse)
+def confirm_preview(token: str, payload: ImportConfirmPreviewInput, db: Session = Depends(get_db)):
+    return ImportBatchPreviewResponse(status=200, message="ok", body=TargetIntakeService(db).confirm_preview(token, payload))
 
 
 @router.delete("/preview/{token}", response_model=ImportCancelResponse)

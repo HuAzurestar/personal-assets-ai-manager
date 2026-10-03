@@ -27,6 +27,7 @@ from backend.mapper.trusted_relation_mapper import TrustedRelationMapper
 from backend.mapper.bounded_query_mapper import query_budget
 from backend.parser.bounded_statement import parse_statement
 from backend.schema.list_query import FilterFieldExpression
+from backend.service.import_confirmation_service import ImportConfirmationService
 
 
 class ImportBatchService:
@@ -212,6 +213,30 @@ class ImportBatchService:
         self.release_files(removed)
         return self.current(token)
 
+    def confirm_preview(self, token, payload):
+        state = self.store.get(token)
+        if state.status == "CONFIRMING":
+            fail("PREVIEW_BUSY")
+        if state.updated_time != payload.expected_updated_time or self.digest(state) != payload.preview_digest:
+            fail("STALE_PREVIEW")
+        order = [(row.file_id, row.source_row_number) for row in payload.selected_rows]
+        if any(key not in state.rows for key in order):
+            fail("PREVIEW_ROW_NOT_FOUND", 404)
+        choices = {key: state.choices[key] for key in order if key in state.choices}
+        rows = {key: state.rows[key] for key in order}
+        try:
+            current = self.mapper.match(rows, choices)
+            if any(current[key]["premise_hash"] != state.candidates[key]["premise_hash"] for key in order):
+                fail("STALE_PREVIEW")
+            with query_budget(self.db):
+                result = ImportConfirmationService(self.mapper).plan(state, order, current, payload.preview_digest)
+            latest = self.store.get(token)
+            if latest.updated_time != payload.expected_updated_time or latest.status == "CONFIRMING" or self.digest(latest) != payload.preview_digest:
+                fail("STALE_PREVIEW")
+            return result
+        finally:
+            self.db.rollback()
+
     @observed("IMPORT_BATCH")
     def confirm(self, token, payload, *, fault=None):
         with self.store.claim(token, payload.expected_updated_time) as lease:
@@ -223,6 +248,10 @@ class ImportBatchService:
                 fail("PREVIEW_ROW_NOT_FOUND", 404)
             rows = {key: state.rows[key] for key in order}
             choices = {key: state.choices[key] for key in order if key in state.choices}
+            advanced = any(choice.get("resolution", "AUTO") != "AUTO" or choice.get("acknowledge_new_risk")
+                           for choice in choices.values())
+            if advanced and payload.batch_preview_digest is None:
+                fail("IMPORT_REVIEW_REQUIRED", 422)
             committed = False
             commit_attempted = False
             began = False
@@ -235,6 +264,10 @@ class ImportBatchService:
                 if any(current[key]["premise_hash"] != state.candidates[key]["premise_hash"] for key in order):
                     fail("STALE_PREVIEW")
                 self.mapper.validate_selection(current, choices)
+                if payload.batch_preview_digest is not None:
+                    batch = ImportConfirmationService(self.mapper).plan(state, order, current, payload.preview_digest)
+                    if batch["batch_preview_digest"] != payload.batch_preview_digest or not batch["can_confirm"]:
+                        fail("STALE_PREVIEW")
                 result = self.mapper.write_batch(current, choices, order, fault=fault)
                 if monotonic() - self.mapper.write_started > 2:
                     fail("WRITE_BUSY", 503)
