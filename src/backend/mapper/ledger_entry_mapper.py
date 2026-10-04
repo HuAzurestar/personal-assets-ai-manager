@@ -205,8 +205,8 @@ class LedgerEntryMapper:
             LedgerEntry.id,
             LedgerEntry.entry_type,
             LedgerEntry.entry_direction,
-            LedgerEntry.amount,
-            LedgerEntry.currency_code,
+            LedgerEntry.amount.label("amount"),
+            LedgerEntry.currency_code.label("currency_code"),
             LedgerEntry.occurred_time,
         ).where(*clauses).limit(50001)
 
