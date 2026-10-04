@@ -661,7 +661,7 @@ class ImportBatchService:
                     source_preview_digest=payload.preview_digest,expected_updated_time=payload.expected_updated_time)
                 if len(canonical_json(result).encode("utf-8")) > 24 * 1024 * 1024:
                     fail("DETAIL_LIMIT",413)
-                self.store.ensure_current(token,payload.expected_updated_time,payload.preview_digest)
+                self.store.ensure_current(token,payload.expected_updated_time,payload.preview_digest,require_idle=True)
             return result
         finally:
             self.db.rollback()

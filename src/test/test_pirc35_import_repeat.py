@@ -12,6 +12,7 @@ from test_pirc35_import_batch import prepare, row, accept
 from test_pirc35_import_confirm_preview import install, input_for, batch
 from test_pirc35_import_duplicate import manifest
 from test_pirc35_import_pairing import choice
+from test_pirc35_import_api import client, BASE, page
 
 
 def exports(service, count=2, changes=None):
@@ -130,3 +131,60 @@ def test_repeat_preview_rejects_stale_and_unknown_rows_without_writes(service):
         read(service,current,{(999,1):row()})
     assert error.value.code == "PREVIEW_ROW_NOT_FOUND"
     assert manifest(service) == before
+
+
+def test_repeat_preview_claimed_while_reading_never_returns_actionable_groups(service,monkeypatch):
+    from backend.service.import_repeat_service import ImportRepeatService
+    current,rows = exports(service)
+    before = manifest(service)
+    original = ImportRepeatService.propose
+    lease = service.store.claim(current["token"],current["updated_time"])
+    def claimed(instance,state,choices):
+        result = original(instance,state,choices)
+        lease.__enter__()
+        return result
+    monkeypatch.setattr(ImportRepeatService,"propose",claimed)
+    try:
+        with pytest.raises(TargetIntakeError) as error:
+            read(service,current,rows)
+        assert error.value.code == "PREVIEW_BUSY"
+    finally:
+        lease.__exit__(None,None,None)
+    assert manifest(service) == before
+
+
+def test_actual_http_repeat_proposal_complete_typed_and_readonly(client):
+    import base64
+    from pathlib import Path
+    from backend.core import target_database
+    from sqlalchemy import select
+    content = (Path(__file__).parent / "fixtures/pirc35/ccb-2.csv").read_bytes()
+    response = client.post(BASE+"/preview",json=dict(files=[dict(filename=f"Mock repeated {n}.csv",
+        content_base64=base64.b64encode(content+b"\n"*n).decode()) for n in (0,1)]))
+    assert response.status_code == 200,response.text
+    current = response.json()["body"]
+    rows = page(client,current,page_size=100)["items"]
+    assert len(rows) == 48
+    def snapshot():
+        with target_database.SessionLocal() as db:
+            return {table.name:tuple(tuple(row) for row in db.execute(select(table).order_by(table.c.id)))
+                for table in target_database.TargetBase.metadata.sorted_tables}
+    before = snapshot()
+    payload = dict(expected_updated_time=current["updated_time"],preview_digest=current["preview_digest"],
+        choices=[dict(file_id=row["file_id"],source_row_number=row["source_row_number"],decision="SKIP") for row in rows])
+    route = BASE+f'/preview/{current["token"]}/repeat-preview'
+    response = client.post(route,json=payload)
+    assert response.status_code == 200,response.text
+    result = response.json()["body"]
+    ImportRepeatPreviewPO(**result)
+    assert result["selected_count"] == 48 and len(result["groups"]) == 24
+    assert all(item["state"] == "GROUPED" for item in result["items"])
+    assert snapshot() == before
+    unchanged = client.get(BASE+f'/preview/{current["token"]}').json()["body"]
+    assert unchanged["updated_time"] == current["updated_time"] and unchanged["preview_digest"] == current["preview_digest"]
+    assert all(row["choice"] is None for row in page(client,current,page_size=100)["items"])
+    schema = client.get("/openapi.json").json()
+    assert "ImportRepeatPreviewInput" in str(schema["paths"][BASE+"/preview/{token}/repeat-preview"])
+    for choices in ([],payload["choices"][:1]*2):
+        assert client.post(route,json=payload|dict(choices=choices)).status_code == 422
+    assert snapshot() == before

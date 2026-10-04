@@ -20,6 +20,7 @@ import pytest
     "import_bulk.cjs",
     "import_binding.cjs",
     "import_pairing.cjs",
+    "import_repeat.cjs",
     "import_reconciliation.cjs",
     "import_execution.cjs",
     "write_failure.cjs",

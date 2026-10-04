@@ -115,7 +115,7 @@ class ImportPreviewStore:
             result.status = "CONFIRMING" if token in self._claims else "READY"
             return result
 
-    def ensure_current(self, token, expected_updated_time, expected_digest):
+    def ensure_current(self, token, expected_updated_time, expected_digest, *, require_idle=False):
         """Check the full guard under the cache lock; expose no mutable state.
 
         List callers already hold their detached copy. Copying every original
@@ -127,6 +127,8 @@ class ImportPreviewStore:
             state = self._states.get(token)
             if state is None:
                 fail('PREVIEW_UNAVAILABLE','preview is no longer resident',410)
+            if require_idle and token in self._claims:
+                fail('PREVIEW_BUSY','preview is executing')
             if state.updated_time != expected_updated_time or state.digest() != expected_digest:
                 fail('PREVIEW_CHANGED','preview input changed')
 
