@@ -1,4 +1,5 @@
 import { currencyPrecision, unitPrecision } from './unit-dictionary.js';
+import { financialStateLabel } from './financial-copy.js';
 export { currencyPrecision, unitPrecision };
 
 export const $ = (selector, root = document) => root.querySelector(selector);
@@ -164,7 +165,7 @@ export const roleNames = {};
 
 export const statusNames = {
   0: "已确认", 1: "已撤销",
-  PENDING: "待确认", CONFIRMED: "已确认", REVOKED: "已撤销",
+  PENDING: "待确认", CONFIRMED: financialStateLabel('review','CONFIRMED',false), REVOKED: financialStateLabel('review','REVOKED',false),
   REJECTED: "已忽略", DEFAULT: "默认", COMPLETE: "完整",
   PARTIAL: "部分", CONFLICT: "冲突", ACTIVE: "启用中", ARCHIVED: "已归档",
 };

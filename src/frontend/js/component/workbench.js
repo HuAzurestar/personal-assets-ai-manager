@@ -1,5 +1,6 @@
 import { request, isUnknownWrite } from "../api/client.js";
 import { esc } from "../util/core.js";
+import { financialIssueMessage } from '../util/financial-copy.js';
 import { candidateScan, scanControls } from "../util/candidate-scan.js";
 import { mountLocalPicker } from './local-choice.js';
 
@@ -94,7 +95,7 @@ export function writeFailure(host, error) {
     ? "提交结果未知。请查询当前对象和审查记录，不要重发命令。"
     : error.code === "WRITE_BUSY"
       ? "本次未提交，输入已保留。稍后重新预览，再由你确认提交；不会自动重发。"
-      : `${error.code || "操作失败"}：${error.message}；重新读取并预览后再提交。`;
+      : `${financialIssueMessage(error)}；本次未提交，重新读取并预览后再提交。`;
   return unknown;
 }
 

@@ -120,7 +120,7 @@ def run():
                 expect(old_row).to_contain_text("已停用历史")
                 expect(old_row.locator('[data-action="flow-review-inspect"]')).to_have_attribute("data-id", str(old_rid))
                 old_row.locator('[data-action="flow-review-inspect"]').click()
-                expect(drawer).to_contain_text("已撤销")
+                expect(drawer).to_contain_text("解释已停用")
                 assert drawer.locator('[data-action="economic-review-transition"]').count() == 0
                 drawer.locator('[data-close]').click()
                 viewport_evidence(page, "fix-r19-history-flow")
@@ -164,7 +164,7 @@ def run():
                 assert old_row.bounding_box()["height"] <= 190, old_row.bounding_box()
                 assert old_row.locator('[data-action="flow-review-inspect"]').bounding_box()["height"] >= 44
                 old_row.locator('[data-action="flow-review-inspect"]').click()
-                expect(drawer).to_contain_text("已撤销")
+                expect(drawer).to_contain_text("解释已停用")
                 drawer.locator('[data-close]').click()
                 # Invalid URL mode never broadens the query to all history.
                 before_reads = len([url for url in reads if "/flow/list?" in url])

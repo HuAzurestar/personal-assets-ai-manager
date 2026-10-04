@@ -1,3 +1,5 @@
+import { financialIssueReason } from './financial-copy.js';
+
 // Infer only an unchosen draft. Saved/user choices remain authoritative;
 // this is not permission to bypass duplicate risk or confirm a financial write.
 export function importRowChoice(row, selectedChoice) {
@@ -34,15 +36,5 @@ export function importRiskLabel(row) {
 }
 
 export function importIssueMessage(code) {
-  return ({IMPORT_REVIEW_REQUIRED:'新增现金风险尚未明确：核对候选后选择跳过、具名配对，或明确确认另一笔真实交易',
-    ROW_INVALID:'来源行会计字段无效，不能接受；可跳过并保留原证据',
-    NON_POSTED_EVIDENCE:'交易尚未入账，不能作为真实现金接受；跳过保留原证据',
-    NEUTRAL_EVIDENCE:'这是非现金变动的来源证据，不能作为真实现金接受；跳过保留原证据',
-    ROW_RECHECK_REQUIRED:'旧跳过／问题行需明确重新检查',
-    FACT_CONFLICT:'来源身份与已有事实冲突，不能覆盖旧事实',
-    IDENTITY_AMBIGUOUS:'来源身份不唯一，须核对而不能自动选择',
-    SOURCE_IDENTITY_REQUIRED:'来源身份不足，不能自动认定同一交易',
-    STALE_PREVIEW:'来源、账户或账务前提已变化，须重新核验',
-    PREVIEW_CHANGED:'预览已变化，须读取最新预览并重新核验',
-    WRITE_BUSY:'本批未提交：数据库忙或写入预算不足，稍后重新核验后由你再次确认'}[code]) || '未通过导入校验，请按完整计划中的文件和行号核对';
+  return financialIssueReason(code,'未通过导入校验，请按完整计划中的文件和行号核对');
 }

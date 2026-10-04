@@ -10,6 +10,7 @@ async function main() {
   const moduleUrl = file => pathToFileURL(path.join(__dirname, '../frontend/js', file)).href;
   const { isUnknownWrite } = await import(moduleUrl('api/client.js'));
   const { writeFailure } = await import(moduleUrl('component/workbench.js'));
+  const copy = await import(moduleUrl('util/financial-copy.js'));
   const cases = [
     [{ status: 503, code: 'WRITE_BUSY' }, false],
     [{ status: 409, code: 'WRITE_BUSY' }, false],
@@ -37,7 +38,7 @@ async function main() {
       affected_account_ref_ids: [], affected_position_ids: [], dependent_position_leg_ids: [], tag_ledger_ids: [] },
       tag_effect: {}, new_reviews: [], position_changes: [], coverage: [],
       blocking_issues: [], expected_reviews: [], preview_digest: 'mock-digest' };
-    const context = vm.createContext({ writeFailure, esc: String,
+    const context = vm.createContext({ ...copy, writeFailure, esc: String,
       jsonRequest: async url => {
         if (url.endsWith('/preview')) { previews++; return plan; }
         writes++; throw Object.assign(Error('mock failure'), failure);

@@ -4,6 +4,7 @@ import { table } from "../component/table.js";
 import { input, select, workbenchDialog, writeFailure, namedChoice, bindNamedChoice } from "../component/workbench.js";
 import { candidateScan, scanControls } from '../util/candidate-scan.js';
 import { unitChoices, unitLabel } from '../util/unit-dictionary.js';
+import { financialStateLabel } from '../util/financial-copy.js';
 
 const base = "/paam/financial/v1/position";
 export const usages = ["GENERAL", "PERSONAL-LENDING", "SHARED-SETTLEMENT", "STORED-VALUE", "DEPOSIT-PLEDGE", "REIMBURSEMENT", "CREDIT-CARD", "FORMAL-LOAN", "INVESTMENT"];
@@ -54,8 +55,8 @@ export async function positionPage(params) {
     ]);
     detail = `<section class="panel" data-position-detail="${row.id}"><h2>#${row.id} ${esc(row.title)}</h2>
       <p>${esc(row.type)} · ${esc(row.usage_scenario)} · ${esc(row.status)} · 本方个人 #${row.party_id} · ${esc(row.counterparty)}</p>
-      <p data-position-quantity>数量：${row.quantity_state === "KNOWN" ? `${quantityDecimal(row.quantity, row.unit_code)} ${esc(row.unit_code)}` : row.quantity_state === "UNKNOWN" ? "UNKNOWN（没有数量证据，不是零）" : "NEEDS_REVIEW（来源失效，保留实际后续动作）"}</p>
-      <p>成本状态：${esc(row.cost_state)}。本页不计算净值、行情或账户余额。</p><p>${esc(row.description)}</p>
+      <p data-position-quantity>数量：${esc(positionQuantityLabel(row))}</p>
+      <p>成本状态：${esc(financialStateLabel('cost',row.cost_state))}。本页不计算净值、行情或账户余额。</p><p>${esc(row.description)}</p>
       <a href="#workbench/review?position=${row.id}">新增数量变化 / 款项审查</a>
       ${table(["原始腿与审查", "精确数量", "来源腿", "款项归因（不是第二笔现金）"], legs.items.map(leg => `<tr><td>#${leg.id} · ${esc(leg.type)}<br>Review #${leg.review_id} ${esc(leg.review.status)}<br>${esc(date(leg.occurred_time))}<br>${esc(leg.basis)}</td><td>${esc(leg.leg_direction)} ${quantityDecimal(leg.leg_amount, leg.unit_code)} ${esc(leg.unit_code)}</td><td>#${leg.source_position_leg_id || "无（IN）"}</td><td>${leg.position_allocations.map(link => `Ledger #${link.ledger_id}：${esc(money(link))}`).join("<br>") || "无"}</td></tr>`))}
       <div class="actions">${legs.page_index > 1 ? `<a href="${esc(href(params, { leg_page: legs.page_index - 1 }))}">腿上一页</a>` : ""}<span>腿 ${legs.total} 项 · 第 ${legs.page_index} 页</span>${legs.page_index * legs.page_size < legs.total ? `<a href="${esc(href(params, { leg_page: legs.page_index + 1 }))}">腿下一页</a>` : ""}</div></section>`;
@@ -67,8 +68,7 @@ export async function positionPage(params) {
 }
 
 export function positionQuantityLabel(row) {
-  if (row.quantity_state === 'UNKNOWN') return 'UNKNOWN（没有数量证据，不是零）';
-  if (row.quantity_state === 'NEEDS_REVIEW') return 'NEEDS_REVIEW（来源失效，需核对）';
+  if (['UNKNOWN','NEEDS_REVIEW'].includes(row.quantity_state)) return financialStateLabel('quantity',row.quantity_state);
   if (row.quantity_state !== 'KNOWN' || !Number.isSafeInteger(row.quantity)) throw new Error('数量摘要不完整，请重新读取');
   return `${quantityDecimal(row.quantity, row.unit_code)} ${row.unit_code}`;
 }
@@ -79,7 +79,7 @@ export function positionRows(items, params, scanning = false) {
     <td data-label="性质 / 用途">${esc(row.type)}<small>${esc(row.usage_scenario)}</small></td>
     <td data-label="本方 / 对方">${esc(row.party_name)}<small>对方：${esc(row.counterparty || '未注明')}</small></td>
     <td data-label="有据数量" data-position-row-quantity>${esc(positionQuantityLabel(row))}<small>单位：${esc(row.unit_code)}</small></td>
-    <td data-label="元数据状态">${esc(row.status)}</td><td data-label="操作"><button data-position-edit="${row.id}">维护元数据</button></td></tr>`)
+    <td data-label="元数据状态">${esc(financialStateLabel('position',row.status))}</td><td data-label="操作"><button data-position-edit="${row.id}">维护元数据</button></td></tr>`)
     : [`<tr><td colspan="6">${scanning ? '尚无命中；空批次不代表扫描结束。' : '没有匹配项。'}</td></tr>`];
 }
 

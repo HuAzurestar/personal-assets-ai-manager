@@ -105,6 +105,8 @@ def run():
                     # R02: the shared Fact picker gives the summary the main width.
                     review.locator('[data-scene-selection-summary]').click()
                     candidate = review.locator("[data-fact-picker] [data-picker-items] article").first
+                    expect(candidate.locator('span')).to_contain_text('金额已完整分配')
+                    expect(candidate.locator('span')).to_contain_text('原系统默认唯一')
                     assert candidate.get_attribute("class") == "picker-list-row"
                     assert candidate.locator("span").bounding_box()["width"] > candidate.bounding_box()["width"] * .65
                     expect(candidate.locator("button")).to_have_count(2)
@@ -179,6 +181,7 @@ def run():
                     before = counts()
                     review.locator("[data-review-preview]").click()
                     expect(review.locator("[data-review-impact]")).to_contain_text("INVALID_DUPLICATE")
+                    expect(review.locator("[data-review-impact]")).to_contain_text('仍计现金的保留交易')
                     expect(review.locator("[data-review-command]")).to_be_disabled()
                     assert counts() == before
 

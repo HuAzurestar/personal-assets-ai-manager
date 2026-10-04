@@ -586,7 +586,7 @@ export async function mountImportBatch(host, initial, changed) {
       context.dirty = false;
       context.revalidationRequired = false;
       await readPlan();
-    } catch (error) { context.dirty = true; status(`${error.code || "保存失败"}：${error.message}。读取最新预览后重新选择。`); }
+    } catch (error) { context.dirty = true; status(`${error.code ? importIssueMessage(error.code) : error.message}（${error.code || "保存失败"}）。读取最新预览后重新选择。`); }
     finally { context.busy = false; update(); }
   };
   // One explicitly requested read/save/preflight chain. Never acknowledge new
@@ -630,7 +630,7 @@ export async function mountImportBatch(host, initial, changed) {
       invalidatePlan();context.preflightFailure=error.code || 'CONFIRM_FAILED';
       if (!context.unknown) localStorage.removeItem(pendingKey);
       status(context.unknown ? "提交结果未知。先核对所选行当前持久状态；禁止自动重发。"
-        : `${error.code || '提交失败'}：${importIssueMessage(error.code)}。选择已保存并保留，请重新核验；不会自动重发。`);
+        : `本批未提交：${importIssueMessage(error.code)}（${error.code || '提交失败'}）。选择已保存并保留，请重新核验；不会自动重发。`);
     } finally { context.busy = false; update(); }
   };
   find('[data-batch-consent]').onchange=update;

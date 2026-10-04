@@ -79,6 +79,7 @@ def run():
                 viewport_evidence(page, 'fix-r07-normal-scene')
                 form.locator('[data-review-preview]').click()
                 expect(form.locator('[data-review-command]')).to_be_enabled()
+                expect(form.locator('[data-financial-scope-note]')).to_contain_text('不代表业务已核对正确')
                 first = previews[-1]['new_reviews'][0]
                 assert first['case_code'] == 'NORMAL'
                 assert first['parameters']['legs'] == first['parameters']['new_positions'] == first['parameters']['position_allocations'] == []

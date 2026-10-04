@@ -11,6 +11,7 @@ import { currentReviewLabel } from '../util/review-member.js';
 import { openCurrentReviews, openReviewMembers } from '../component/review-member.js';
 import { mountAccountCorrection } from './account-correction.js';
 import { mountSourceCompletion } from './source-completion.js';
+import { financialStateLabel, financialIssueMessage, financialScopeNote } from '../util/financial-copy.js';
 
 const base = "/paam/ledger/v1/review";
 const cases = [["NORMAL", "普通收支"], ["REFUND", "退款"], ["SHARED_PAYMENT", "共同费用 / AA"], ["INTERNAL_TRANSFER", "真实内部转账"], ["BORROW_REPAY", "借出、借入、收回、偿还"], ["DUPLICATE", "同一交易的重复证据"], ["POS_OPENING", "对象期初数量"], ["POS_POSITION_OPEN", "对象增加（可无现金）"], ["POS_POSITION_SETTLE", "对象减少（显式来源）"], ["POS_CREDIT_PURCHASE", "信用消费"], ["POS_CREDIT_REPAY", "信用还本"]];
@@ -19,13 +20,13 @@ export function stopReviewRead() { controller?.abort(); }
 const ids = values => values.length ? values.map(id => `#${id}`).join("、") : "无";
 
 function previewMarkup(plan, facts = new Map(), positions = new Map(), labels = new Map()) {
-  return `<h3>服务端预览（尚未发布）</h3><p>整体停用冲突 Review：${ids(plan.impact.conflicting_review_ids)}；恢复原始系统默认：${ids(plan.impact.restored_default_review_ids)}</p>
+  return `<h3>服务端预览（尚未发布）</h3><p data-financial-scope-note>${esc(financialScopeNote)}</p><p>整体停用冲突 Review：${ids(plan.impact.conflicting_review_ids)}；恢复原始系统默认：${ids(plan.impact.restored_default_review_ids)}</p>
     <p>账户来源：${ids(plan.impact.affected_account_ref_ids)}；对象：${ids(plan.impact.affected_position_ids)}；可能失效的后续腿：${ids(plan.impact.dependent_position_leg_ids)}</p>
     <p>标签影响 Ledger：${ids(plan.impact.tag_ledger_ids)}；涉及 ${(plan.tag_effect.affected_views || []).length} 个视图、${(plan.tag_effect.affected_rule_ids || []).length} 条规则。旧标签保留，异步请求随账务状态失效。</p>
     <p>将失效的建议：${plan.tag_effect.invalidated_request_count ?? 0}；扫描状态：${esc(plan.tag_effect.scan_state || "NOT_NEEDED")}。只有完整含义相同且新旧各唯一的输出延续标签。</p>
     ${(plan.tag_effect.mappings || []).length ? `<section class="panel" data-tag-mappings><h4>新旧标签对照</h4>
       <div data-tag-impact></div></section>` : ""}
-    ${plan.blocking_issues.map(issue => `<p class="error">${esc(issue.code)}：${esc(issue.message)}</p>`).join("")}
+    ${plan.blocking_issues.map(issue => `<p class="error">${esc(financialIssueMessage(issue))}</p>`).join("")}
     ${plan.new_reviews.map(row => `<section class="panel"><h4>${esc(row.case_code)} → ${esc(reviewTypeNames[row.type] || row.type)} · ${esc(row.title)}</h4>
       ${row.allocations.map(allocation => {
         const fact = facts.get(allocation.transaction_id);
@@ -37,7 +38,7 @@ function previewMarkup(plan, facts = new Map(), positions = new Map(), labels = 
         return `<p>数量腿 ${index + 1} → ${position ? esc(position.title) : leg.existing_position_id ? `对象 #${leg.existing_position_id}` : `新对象 ${leg.new_position_index + 1}`}：${esc(leg.type)} · ${esc(leg.leg_direction)} ${position ? `${quantityDecimal(leg.leg_amount, position.unit_code)} ${esc(position.unit_code)}` : `${leg.leg_amount} 最小量`} · ${esc(labels.get(`source:${leg.source}`) || `来源腿 #${leg.source}`)} · ${esc(date(leg.occurred_time))} · ${esc(leg.basis)}</p>`;
       }).join("")}
       ${row.position_allocations.map(link => `<p>现金行 ${link.allocation_index + 1} → 数量腿 ${link.leg_index + 1}：${esc(money(link))}（款项归因，不是额外现金）</p>`).join("")}</section>`).join("")}
-    ${plan.position_changes.map(change => `<p>对象 ${change.position_id ? `#${change.position_id}` : `新对象 ${change.new_position_index + 1}`}：${esc(change.before.quantity_state)} ${change.before.quantity ?? "—"} → ${esc(change.after.quantity_state)} ${change.after.quantity ?? "—"}（单位最小量；来源失效不能当作有据数量）</p>`).join("")}
+    ${plan.position_changes.map(change => `<p>对象 ${change.position_id ? `#${change.position_id}` : `新对象 ${change.new_position_index + 1}`}：${esc(financialStateLabel('quantity',change.before.quantity_state))} ${change.before.quantity ?? "—"} → ${esc(financialStateLabel('quantity',change.after.quantity_state))} ${change.after.quantity ?? "—"}（单位最小量；来源失效不能当作有据数量）</p>`).join("")}
     ${plan.coverage.map(row => `<p>Fact #${row.transaction_id}：事实 ${row.cash_amount}／生效覆盖 ${row.effective_cash_amount}（同币种最小单位）</p>`).join("")}`;
 }
 
@@ -80,7 +81,7 @@ function bindPublication(form, build, facts, completed, positions = new Map(), l
       // Scene pages keep narrow-screen actions within reach; bring the actual
       // complete server impact into view before the user can confirm it.
       form.querySelector('[data-review-step="preview"]')?.scrollIntoView({block:'start'});
-    } catch (error) { if (form.isConnected && issued === generation) status.textContent = `${error.code || "预览失败"}：${error.message}`; }
+    } catch (error) { if (form.isConnected && issued === generation) status.textContent = `${financialIssueMessage(error)}；未取得可确认预览。`; }
     finally { previewing = false; if (form.isConnected) previewButton.disabled = uncertain; }
   };
   form.onsubmit = async event => {
@@ -90,7 +91,7 @@ function bindPublication(form, build, facts, completed, positions = new Map(), l
     try {
       const result = await jsonRequest(`${base}/command`, "POST", { ...frozen, expected_reviews: plan.expected_reviews, preview_digest: plan.preview_digest });
       plan = null; frozen = null;
-      status.textContent = "发布成功。正在读取当前对象…";
+      status.textContent = "解释已发布并生效；不代表业务已核对正确。正在读取当前对象…";
       await completed(result);
     } catch (error) {
       plan = null; frozen = null;
@@ -167,7 +168,7 @@ export async function mountReviewWorkbench(root, params, completed) {
   const form = host.querySelector("form"), cashRoot = form.querySelector("[data-cash-rows]"), legRoot = form.querySelector("[data-leg-rows]"), draftRoot = form.querySelector("[data-position-drafts]"), linkRoot = form.querySelector("[data-link-rows]"), duplicateRoot = form.querySelector("[data-duplicate-rows]");
   const value = (node, name) => node.querySelector(`[name="${name}"]`).value;
   const nodes = (node, selector) => [...node.querySelectorAll(selector)];
-  const fail = error => { form.querySelector("[data-review-status]").textContent = `${error.code || "输入错误"}：${error.message}`; };
+  const fail = error => { form.querySelector("[data-review-status]").textContent = financialIssueMessage(error); };
   let draftSerial = 0, selectingGroup = false, currentGroupSignature = '';
   const refReads = new Map();
   const readRef = id => {
@@ -405,7 +406,7 @@ const row = article(cashRoot, "cashRow", `<h3>现金拆分行 ${index} · Fact #
     if (pickerMounted || !reviewScene(sceneCode).cash) return;
     pickerMounted = true;
     await mountPicker(form.querySelector("[data-fact-picker]"), { url: "/paam/ledger/v1/candidate", searchKeys: ["summary"], signal,
-    describe: fact => `Fact #${fact.transaction_id} ${fact.summary} / ${money(fact)} ${fact.cash_direction} / 当前覆盖 ${fact.coverage.state} / 原默认身份 ${fact.coverage.default_identity_state} / ${fact.current_reviews.length === 1 ? `当前事项：${currentReviewLabel(fact.current_reviews[0])}` : `当前有效事项 ${fact.current_reviews.length} 个`}`,
+    describe: fact => `Fact #${fact.transaction_id} ${fact.summary} / ${money(fact)} ${fact.cash_direction} / ${financialStateLabel('coverage',fact.coverage.state,false)} / ${financialStateLabel('default',fact.coverage.default_identity_state,false)} / ${fact.current_reviews.length === 1 ? `当前事项：${currentReviewLabel(fact.current_reviews[0])}` : `当前有效事项 ${fact.current_reviews.length} 个`}`,
     selected: fact => selected.has(fact.transaction_id), choose,
     actions: fact => fact.current_reviews.length ? [{label:`查看当前事项（${fact.current_reviews.length}）`,choose:row => openCurrentReviews(row,groupOptions())}] : [],
     });

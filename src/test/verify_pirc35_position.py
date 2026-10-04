@@ -78,6 +78,7 @@ def run():
                     main_row = page.locator('[data-position-list] [data-position-row="1"]')
                     expect(main_row).to_contain_text('Mock person')
                     expect(main_row.locator('[data-position-row-quantity]')).to_contain_text('UNKNOWN')
+                    expect(main_row.locator('[data-position-row-quantity]')).to_contain_text('没有数量证据，不是零')
                     page.get_by_role("link", name="#1 Mock loan position", exact=True).click()
                     expect(page.locator("[data-position-quantity]")).to_contain_text("UNKNOWN")
                     page.goto(base + "/#workbench/review?position=1&case_code=POS_OPENING")
@@ -92,6 +93,7 @@ def run():
                     review.locator("[data-review-preview]").click()
                     expect(review.locator("[data-review-command]")).to_be_enabled()
                     expect(review.locator("[data-review-impact]")).to_contain_text("UNKNOWN")
+                    expect(review.locator('[data-financial-scope-note]')).to_contain_text('不代表业务已核对正确')
                     # An edit invalidates the exact server approval.
                     leg.locator('[name="basis"]').fill("Mock corrected opening evidence")
                     expect(review.locator("[data-review-command]")).to_be_disabled()

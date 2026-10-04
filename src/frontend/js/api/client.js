@@ -1,4 +1,5 @@
 import { assertExactResourceIds } from "../util/core.js";
+import { financialIssueReason } from '../util/financial-copy.js';
 
 const connectionCopy = {
   checking: "正在检查本地账本",
@@ -52,7 +53,11 @@ async function readResponse(url, options, includeEnvelope) {
     const text = Array.isArray(detail)
       ? detail.map((item) => typeof item === "string" ? item : item?.msg).filter(Boolean).join("；")
       : detail || `请求失败（${response.status}）`;
-    const error = new Error(text);
+    const code = payload?.body?.code;
+    const financial = /^\/paam\/(?:ledger|financial|import)\/v1\//.test(url);
+    const humanText = typeof text === 'string' && /[\u4e00-\u9fff]/.test(text)
+      ? text : '操作未通过校验，请核对当前选择和完整计划';
+    const error = new Error(financial ? financialIssueReason(code,humanText) : text);
     error.code = payload?.body?.code;
     error.details = payload?.body?.details;
     error.traceId = payload?.body?.details?.trace_id || response.headers.get("X-PAAM-Trace-ID");

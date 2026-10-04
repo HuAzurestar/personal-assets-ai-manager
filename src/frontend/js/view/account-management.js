@@ -3,6 +3,7 @@ import { esc, date, resourceId } from "../util/core.js";
 import { table } from "../component/table.js";
 import { namedChoice, bindNamedChoice, metadataLabel, mountPicker } from '../component/workbench.js';
 import { candidateScan, scanControls } from '../util/candidate-scan.js';
+import { financialIssueMessage } from '../util/financial-copy.js';
 
 const base = "/paam/ledger/v1";
 const endpoint = { party: "account-party", account: "account", ref: "account-ref" };
@@ -152,7 +153,7 @@ function writeError(node, error) {
   node.querySelector("[role=status]").textContent = uncertain
     ? "提交结果未知。先关闭窗口并查询当前对象 / 列表，不要重发创建或变更。"
     : error.code === "WRITE_BUSY" ? "本次未提交，输入已保留。稍后重新读取或预览，再由你提交；不会自动重发。"
-    : `${error.code || "操作失败"}：${error.message}`;
+    : `${financialIssueMessage(error)}；本次未提交。`;
   node.querySelectorAll("[type=submit]").forEach((button) => { button.disabled = uncertain; });
   node.querySelectorAll('[data-choice-pick], [data-choice-clear]').forEach(button => {button.disabled = uncertain;});
 }

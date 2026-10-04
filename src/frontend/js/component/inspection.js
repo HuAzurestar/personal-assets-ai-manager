@@ -2,6 +2,7 @@ import { request } from "../api/client.js";
 import { workbenchDialog } from "./workbench.js";
 import { preserveView } from "../util/view_state.js?v=20260928.6";
 import { esc, money, quantityDecimal, date as when, typeNames, statusNames, reviewTypeNames } from "../util/core.js";
+import { financialStateLabel, financialScopeNote } from '../util/financial-copy.js';
 
 const names = { fact: "事实流水", ledger: "账本流水", review: "审查记录", file: "导入文件" };
 const sources = { 0: "来源未识别", 1: "手工录入", 101: "支付宝", 102: "微信支付", 201: "建设银行", 202: "农业银行", 203: "招商银行" };
@@ -225,6 +226,7 @@ function describe(kind, data) {
     const allocated = active.reduce((sum, row) => sum + row.cash_amount, 0);
     body = metrics([["有效解释覆盖", amount({ ...item, amount: allocated }), "accent"], ["尚未解释", amount({ ...item, amount: item.amount - allocated })], ["来源行", data.import_evidence.length]])
       + '<p>分占覆盖包含 DUPLICATE 证据，不等于现金统计。现金计量须核对有效且非重复的 Ledger；多个来源行不是多笔现金。</p>'
+      + `<p data-financial-scope-note>${esc(financialScopeNote)}</p>`
       + '<div class="inspection-dashboard">'
       + card("交易概览", fields([["摘要", item.summary], ["交易对手", item.counterparty_name], ["本方账户", readableAccount(item.account_code)], ["发生时间", when(item.occurred_time)]]), { tone: "accent" })
       + card(`来源行 · ${data.import_evidence.length}`, p.collection(data.import_evidence, evidenceRow, "行来源证据"))
@@ -244,7 +246,7 @@ function describe(kind, data) {
       + card("当前账户归属（不改来源事实）", fields([["来源 ID", item.account_ref_id], ["分组", ownerText], ["原账单账户（脱敏）", fact?.account_code]]))
       + card("分类标签", p.collection(data.tags, tag => `<article class="inspection-flow"><strong>${esc(tag.tag_name)}</strong><p>${esc(tag.view_name)} · ${esc(tag.view_status)} / ${esc(tag.tag_status)}</p><small>${tag.source_type === "AUTO_RULE" ? `自动规则 #${esc(tag.rule_id)} · Rev ${esc(tag.rule_revision)} · Request #${esc(tag.request_id)}` : tag.tag_system_name === "unclassified" ? "默认未分类" : "UNKNOWN（现有证据不能证明来源）"}</small></article>`))
       + allocationSection(p, data.allocations, data.facts, [item], data.reviews, { kind, id: item.id })
-      + card(`数量身份 · ${data.position_identity_state}`, p.collection(data.positions, row => `<article class="inspection-flow"><a href="#workbench/position?id=${row.id}">Position #${row.id} ${esc(row.title)}</a><p>${esc(row.type)} · ${esc(row.unit_code)} · ${esc(row.status)}</p></article>`))
+      + card(`数量身份 · ${financialStateLabel('identity',data.position_identity_state)}`, p.collection(data.positions, row => `<article class="inspection-flow"><a href="#workbench/position?id=${row.id}">Position #${row.id} ${esc(row.title)}</a><p>${esc(row.type)} · ${esc(row.unit_code)} · ${esc(financialStateLabel('position',row.status))}</p></article>`))
       + card("原始数量腿（只读）", p.collection(data.position_legs, row => `<article class="inspection-flow"><strong>${esc(row.leg_direction)} ${quantityDecimal(row.leg_amount, row.unit_code)} ${esc(row.unit_code)}</strong><p>Leg #${row.id} · Review #${row.review_id} · ${esc(row.type)} · 来源腿 #${row.source_position_leg_id}</p><p>${esc(row.basis)}</p></article>`))
       + card("现金到数量腿归因（不是额外现金）", p.collection(data.position_allocations, row => `<article class="inspection-flow"><strong>${esc(amount(row))}</strong><p>Link #${row.id} · Leg #${row.position_leg_id}</p>${relationButton("review", row.review_id, `Review #${row.review_id}`)}</article>`)) + "</div>";
     actions = data.active ? `<button data-action="edit-ledger-account" data-id="${item.id}">用新解释更正账户</button><button data-action="edit-tags" data-id="${item.id}">编辑标签</button>` : "原审查已停用，关系仅供读取";
@@ -253,6 +255,7 @@ function describe(kind, data) {
     title = businessTitle(item);
     subtitle = `${reviewTypeNames[item.type] || item.type} · ${statusNames[item.status] || item.status}`;
     body = metrics([["涉及事实", new Set(item.allocations.map(row => row.transaction_id)).size], ["原始现金结果", item.ledger_entries.length, "accent"], ["原始数量腿", item.position_legs.length], ["最近状态更新", when(item.updated_time)]])
+      + `<p data-financial-scope-note>${esc(financialScopeNote)}</p>`
       + '<p>内容不可变；停用仍保留原始结果与关系。DUPLICATE 保留证据金额但不计现金；款项归因不是第二笔现金。</p><div class="inspection-dashboard">'
       + card("原始现金结果", p.collection(item.ledger_entries, row => `<article class="inspection-flow"><strong>${esc(money(row))}</strong><p>${esc(typeNames[row.economic_type])} · ${esc(row.cash_direction)} · 来源卡 #${row.account_ref_id} · ${esc(when(row.occurred_time))}</p>${relationButton("ledger", row.id, `Ledger #${row.id}`)}</article>`), { tone: "accent" })
       + card("Fact → Ledger 完整关系", p.collection(item.allocations, row => `<article class="inspection-flow"><strong>${esc(money(row))}</strong><p>Allocation #${row.id} · Review #${row.review_id}</p>${relationButton("fact", row.transaction_id, `Fact #${row.transaction_id}`)}${relationButton("ledger", row.ledger_id, `Ledger #${row.ledger_id}`)}</article>`, "条原始关系"))

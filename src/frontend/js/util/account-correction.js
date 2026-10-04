@@ -1,4 +1,5 @@
 import {esc, money, date, quantityDecimal, resourceId, typeNames} from './core.js';
+import {financialStateLabel, financialIssueMessage, financialScopeNote} from './financial-copy.js';
 
 export function accountCorrectionIntent(ledgerId, target, originalRef, duplicateIds, keepers) {
   if (target === '') throw new Error('请明确选择新来源卡，或明确设为来源未识别。');
@@ -12,13 +13,13 @@ export function accountCorrectionIntent(ledgerId, target, originalRef, duplicate
 const requireComplete = condition => {if (!condition) throw new Error('完整原组与更正预览不一致或状态已改变；请重新读取，不能确认。');};
 const quantityState = (row, unit) => row.quantity_state === 'KNOWN'
   ? `${quantityDecimal(row.quantity, unit)} ${unit}`
-  : row.quantity_state === 'UNKNOWN' ? '未知（没有数量证据）' : '待核对（来源失效，不当作零）';
+  : financialStateLabel('quantity',row.quantity_state);
 
 // Join immutable originals for presentation only. All effects come from the
 // server; no client-derived financial projection or command outputs are sent.
 export function accountCorrectionMarkup(plan, originals, labels) {
   const issues = plan.blocking_issues || [];
-  if (issues.length) return issues.map(row => `<p class="error">${esc(row.code)}：${esc(row.message)}</p>`).join('');
+  if (issues.length) return issues.map(row => `<p class="error">${esc(financialIssueMessage(row))}</p>`).join('');
   const drafts = plan.new_reviews || [];
   requireComplete(drafts.length > 0);
   const positions = new Map();
@@ -72,6 +73,7 @@ export function accountCorrectionMarkup(plan, originals, labels) {
   }).join('');
   const mappings = plan.tag_effect.mappings || [], needsReview = mappings.filter(row => row.disposition === 'REVIEW_REQUIRED').length;
   return `<section data-correction-business><h2>更正结果预览（尚未发布）</h2><p>只改变明确指定的来源；现金金额、方向、币种和时间保持。完整复制 ${drafts.length} 个事项，旧证据不删除。</p>
+    <p data-financial-scope-note>${esc(financialScopeNote)}</p>
     ${quantities}${needsReview ? `<p>有 ${needsReview} 项标签含义不能判为唯一等义，新输出使用默认标签、待人工核对；旧标签保留。数量来源 ID 重连也可能影响标签继承。</p>` : '<p>标签按服务端的完整等义规则处理；旧标签保留。</p>'}
     ${groups}${mappings.length ? '<details><summary>完整标签影响（只读）</summary><div data-tag-impact></div></details>' : ''}</section>`;
 }
