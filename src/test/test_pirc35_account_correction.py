@@ -160,6 +160,35 @@ def test_same_group_multi_ledger_correction_does_not_copy_it_twice(db):
     assert len(result['created_reviews'])==1
 
 
+def test_bulk_unknown_source_completion_keeps_unselected_groups_and_facts(db):
+    refs(db)
+    service=ReviewCommandService(db)
+    facts=[tuple(row) for row in db.execute(select(TransactionFact.__table__).order_by(TransactionFact.id))]
+    originals={id:service.detail(id) for id in (1,2,3,4)}
+    change=dict(account_corrections=[dict(ledger_id=id,account_ref_id=2) for id in (1,3)])
+    preview=service.preview(ReviewChangeInput(**change));assert not preview['blocking_issues']
+    assert [tuple(row) for row in db.execute(select(TransactionFact.__table__).order_by(TransactionFact.id))]==facts
+    assert len(preview['new_reviews'])==2
+    result=service.command(ReviewCommandInput(**change,expected_reviews=preview['expected_reviews'],preview_digest=preview['preview_digest']))
+    assert len(result['created_reviews'])==2
+    for id in (2,4):assert service.detail(id)==originals[id]
+    for id in (1,3):
+        preserved=service.detail(id);assert preserved['status']=='REVOKED'
+        for key in ('allocations','ledger_entries','position_legs','position_allocations','positions'):assert preserved[key]==originals[id][key]
+    for created in result['created_reviews']:
+        current=service.detail(created['id']);assert len(current['ledger_entries'])==1
+        assert current['ledger_entries'][0]['account_ref_id']==2
+        assert current['ledger_entries'][0]['cash_amount']==originals[current['allocations'][0]['transaction_id']]['ledger_entries'][0]['cash_amount']
+    assert [tuple(row) for row in db.execute(select(TransactionFact.__table__).order_by(TransactionFact.id))]==facts
+
+
+def test_bulk_source_command_preserves_existing_100_selection_budget():
+    from pydantic import ValidationError
+    rows=[dict(ledger_id=id,account_ref_id=2) for id in range(1,101)]
+    assert len(ReviewChangeInput(account_corrections=rows).account_corrections)==100
+    with pytest.raises(ValidationError):ReviewChangeInput(account_corrections=rows+[dict(ledger_id=101,account_ref_id=2)])
+
+
 def test_correction_requires_exact_fresh_duplicate_keeper_and_revalidates_sources(db):
     refs(db)
     from test_pirc35_review_command import normal

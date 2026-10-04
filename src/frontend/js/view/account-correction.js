@@ -94,6 +94,7 @@ export async function mountAccountCorrection(host, params, {signal, publication}
       return accountCorrectionMarkup(plan,new Map(rows.map(row => [row.id,row])),labels);
     }});
   bindNamedChoice(form,'account_ref_id',{url:'/paam/ledger/v1/account-ref',title:'选择新来源卡',signal,
+    canChange:() => valid() && !published && !invalidate.state().writing && !invalidate.state().uncertain,
     allowZero:true,zeroLabel:'明确设为来源未识别',initialize:false,filter:{key:'status',op:'=',val:'ACTIVE'},
     changed:row => {if (row) labels.set(row.id,metadataLabel(row));}});
   updateKeepers(duplicateIds);

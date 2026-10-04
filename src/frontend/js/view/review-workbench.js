@@ -10,6 +10,7 @@ import { reviewScene, incompatibleSceneInputs } from '../util/review-scene.js';
 import { currentReviewLabel } from '../util/review-member.js';
 import { openCurrentReviews, openReviewMembers } from '../component/review-member.js';
 import { mountAccountCorrection } from './account-correction.js';
+import { mountSourceCompletion } from './source-completion.js';
 
 const base = "/paam/ledger/v1/review";
 const cases = [["NORMAL", "普通收支"], ["REFUND", "退款"], ["SHARED_PAYMENT", "共同费用 / AA"], ["INTERNAL_TRANSFER", "真实内部转账"], ["BORROW_REPAY", "借出、借入、收回、偿还"], ["DUPLICATE", "同一交易的重复证据"], ["POS_OPENING", "对象期初数量"], ["POS_POSITION_OPEN", "对象增加（可无现金）"], ["POS_POSITION_SETTLE", "对象减少（显式来源）"], ["POS_CREDIT_PURCHASE", "信用消费"], ["POS_CREDIT_REPAY", "信用还本"]];
@@ -143,6 +144,7 @@ export async function mountReviewWorkbench(root, params, completed) {
   const signal = controller.signal, route = location.hash;
   const host = root.querySelector("[data-review-workflow]");
   if (!host) return;
+  if (params.has('complete_source')) return mountSourceCompletion(host, params, {signal, publication:bindPublication});
   if (params.has('correct_ledger')) return mountAccountCorrection(host, params, {signal, publication:bindPublication});
   let sceneCode = params.get('case_code') || 'NORMAL';
   reviewScene(sceneCode);

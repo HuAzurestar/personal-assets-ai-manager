@@ -121,7 +121,7 @@ export async function accountManagementPage(params) {
         <div class="actions"><button type="button" data-account-create="party">新建个人</button><button type="button" data-account-create="account">新建集合</button></div>
         <small>维护个人和集合无需先建卡。来源身份、登记账号与交易订单号不同；关闭不删除历史现金。</small>
       </div></details></aside>
-      <section class="panel account-card-surface"><div class="account-card-head"><div><h1>具体来源卡</h1><p>${scope.unassigned ? '未分组：不归属任何个人或集合。' : `${esc(party?.name || '全部个人')} / ${esc(account?.name || '全部集合')}`}</p></div><button type="button" data-account-create="ref">新建来源卡</button></div>
+      <section class="panel account-card-surface"><div class="account-card-head"><div><h1>具体来源卡</h1><p>${scope.unassigned ? '未分组：不归属任何个人或集合。' : `${esc(party?.name || '全部个人')} / ${esc(account?.name || '全部集合')}`}</p></div><div class="actions"><a href="#workbench/review?complete_source=1" data-account-complete-source>补齐历史流水来源</a><button type="button" data-account-create="ref">新建来源卡</button></div></div>
         <form data-account-filter class="account-filter"><label class="account-word">字面搜索<input name="word" value="${esc(scope.word)}" maxlength="128" placeholder="机构、名称、遮罩号或归属"></label>
           <label>状态<select name="status">${[['','全部状态'],['ACTIVE','ACTIVE'],['CLOSED','CLOSED']].map(([value,text])=>`<option value="${value}" ${scope.status === value ? 'selected' : ''}>${text}</option>`).join('')}</select></label>
           <label>每页<select name="page_size">${[20,50,100].map(value=>`<option value="${value}" ${scope.pageSize === value ? 'selected' : ''}>${value}项</option>`).join('')}</select></label>

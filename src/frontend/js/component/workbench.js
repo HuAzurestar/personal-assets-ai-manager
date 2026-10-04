@@ -50,14 +50,14 @@ export function bindLocalChoice(host, name, { choices, title, signal }) {
 // user-facing fields; selection and an explicit zero/clear action are distinct.
 export function bindNamedChoice(host, name, { url, title, signal, describe = metadataLabel, searchKeys = ['display_label'],
   allowZero = false, zeroLabel = '尚未选择', pickerAttribute = 'data-choice-picker', initialize = true,
-  load = id => request(`${url}/${id}`, { signal }), changed = () => {}, filter }) {
+  load = id => request(`${url}/${id}`, { signal }), changed = () => {}, filter, canChange = () => true }) {
   const field = host.querySelector(`[data-named-choice="${name}"]`);
   const apply = (id, text, row) => {
-    if (!host.isConnected || signal?.aborted) return;
+    if (!host.isConnected || signal?.aborted || !canChange()) return;
     setNamedChoice(host, name, id, text); changed(row);
   };
   field.querySelector('[data-choice-pick]').onclick = () => {
-    if (!host.isConnected || signal?.aborted) return;
+    if (!host.isConnected || signal?.aborted || !canChange()) return;
     const dialog = workbenchDialog(title, `<div ${pickerAttribute}></div>`);
     const abort = () => {if (dialog.open) dialog.close();};
     signal?.addEventListener('abort', abort, {once: true});

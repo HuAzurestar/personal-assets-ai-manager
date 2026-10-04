@@ -2042,6 +2042,19 @@
 .account-correction-list li { display:grid; gap:3px; padding:8px 0; border-bottom:1px solid var(--line); }
 .account-correction-list li span { color:var(--muted); font-size:12px; }
 .account-correction-shell details { margin:8px 0; }
+.source-completion-filter { display:flex; flex-wrap:wrap; align-items:end; gap:10px; }
+.source-completion-filter > label { flex:1 1 140px; min-width:0; }
+.source-completion-filter .date-time-range-filter { flex:2 1 240px; min-width:0; }
+.source-completion-row { display:grid; grid-template-columns:20px minmax(0,1fr) minmax(110px,auto) 100px; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--line); font-size:13px; }
+.source-completion-row input { width:18px; height:18px; margin:0; }
+.source-completion-row small { display:block; font-size:11px; color:var(--muted); margin-top:3px; }
+.source-completion-row span { min-width:0; overflow-wrap:anywhere; }
+@media(max-width:600px) {
+  .account-card-head { flex-wrap:wrap; }
+  .source-completion-row { grid-template-columns:20px minmax(0,1fr) minmax(80px,auto); gap:7px; }
+  .source-completion-row > small { grid-column:2/-1; }
+  .source-completion-filter > * { max-width:100%; }
+}
 
 /* Position summaries are evidence quantities, not valuation or account cash. */
 .position-list-surface [data-position-list] table { min-width:0; table-layout:fixed; }

@@ -20,6 +20,7 @@ import pytest
     "verify_pirc35_history.py",
     "verify_pirc35_navigation.py",
     "verify_pirc35_account_correction.py",
+    "verify_pirc35_source_completion.py",
     "verify_pirc35_position.py",
     "verify_pirc35_import.py",
     "verify_pirc35_import_default.py",
