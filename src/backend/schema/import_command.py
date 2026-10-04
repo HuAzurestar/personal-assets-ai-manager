@@ -120,6 +120,12 @@ class ImportPairingPreviewInput(ImportReviseInput):
     choices: list[RowChoice] = Field(min_length=1, max_length=20000)
 
 
+class ImportRepeatPreviewInput(ImportReviseInput):
+    """Readonly complete repeat-export suggestions; never saves intent."""
+    preview_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    choices: list[RowChoice] = Field(min_length=1, max_length=20000)
+
+
 class PreviewRowListRequest(ListRequest):
     pass
 

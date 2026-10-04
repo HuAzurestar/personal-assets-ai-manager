@@ -9,13 +9,13 @@ from backend.error import TargetIntakeError
 from backend.schema.intake import IntakePreviewRequest
 from backend.schema.import_command import (ImportConfirmInput, ImportConfirmPreviewInput, ImportReviseInput,
                                           PreviewRowListRequest, ImportMatchListRequest, ImportOperationPreviewInput,
-                                          ImportBindingPreviewInput, ImportPairingPreviewInput,
+                                          ImportBindingPreviewInput, ImportPairingPreviewInput, ImportRepeatPreviewInput,
                                           ImportOperationApproveInput, ImportOperationConfirmInput, ImportOperationStopInput)
 from backend.schema.identifier import SQLITE_ID_MAX
 from backend.schema.import_batch_read import (ImportPreviewResponse, PreviewRowListResponse,
                                             ImportConfirmResponse, ImportCancelResponse, ImportBatchPreviewResponse,
                                             ImportMatchListResponse, ImportOperationPreviewResponse, ImportBindingPreviewResponse,
-                                            ImportPairingPreviewResponse, ImportOperationApprovalResponse,
+                                            ImportPairingPreviewResponse, ImportRepeatPreviewResponse, ImportOperationApprovalResponse,
                                             ImportOperationConfirmResponse, ImportOperationStopResponse)
 from backend.schema.list_query import parse_list_request
 from backend.service.target_intake_service import TargetIntakeService
@@ -112,3 +112,8 @@ def binding_preview(token: str, payload: ImportBindingPreviewInput, db: Session 
 @router.post("/preview/{token}/pairing-preview", response_model=ImportPairingPreviewResponse)
 def pairing_preview(token: str, payload: ImportPairingPreviewInput, db: Session = Depends(get_db)):
     return ImportPairingPreviewResponse(status=200, message="ok", body=TargetIntakeService(db).pairing_preview(token, payload))
+
+
+@router.post("/preview/{token}/repeat-preview", response_model=ImportRepeatPreviewResponse)
+def repeat_preview(token: str, payload: ImportRepeatPreviewInput, db: Session = Depends(get_db)):
+    return ImportRepeatPreviewResponse(status=200, message="ok", body=TargetIntakeService(db).repeat_preview(token, payload))

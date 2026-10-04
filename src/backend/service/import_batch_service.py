@@ -32,6 +32,7 @@ from backend.service.import_confirmation_service import ImportConfirmationServic
 from backend.service.import_duplicate_service import ImportDuplicateService
 from backend.service.import_match_service import ImportMatchService
 from backend.service.import_pairing_service import ImportPairingService
+from backend.service.import_repeat_service import ImportRepeatService
 from backend.service.import_risk_service import ImportRiskService
 from backend.service.import_operation_service import ImportOperationService
 from backend.service.import_serial_service import ImportSerialService
@@ -640,6 +641,27 @@ class ImportBatchService:
                 latest = self.store.get(token)
                 if latest.updated_time != payload.expected_updated_time or latest.status == "CONFIRMING" or self.digest(latest) != payload.preview_digest:
                     fail("PREVIEW_CHANGED")
+            return result
+        finally:
+            self.db.rollback()
+
+    def repeat_preview(self, token, payload):
+        """Readonly full suspected export groups; no draft/cash publication."""
+        state = self.store.get(token)
+        if state.status == "CONFIRMING":
+            fail("PREVIEW_BUSY")
+        if state.updated_time != payload.expected_updated_time or self.digest(state) != payload.preview_digest:
+            fail("PREVIEW_CHANGED")
+        choices = {(choice.file_id,choice.source_row_number):choice.model_dump() for choice in payload.choices}
+        if any(key not in state.rows for key in choices):
+            fail("PREVIEW_ROW_NOT_FOUND",404)
+        try:
+            with query_budget(self.db,seconds=30):
+                result = ImportRepeatService(self.db).propose(state,choices) | dict(
+                    source_preview_digest=payload.preview_digest,expected_updated_time=payload.expected_updated_time)
+                if len(canonical_json(result).encode("utf-8")) > 24 * 1024 * 1024:
+                    fail("DETAIL_LIMIT",413)
+                self.store.ensure_current(token,payload.expected_updated_time,payload.preview_digest)
             return result
         finally:
             self.db.rollback()

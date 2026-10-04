@@ -475,5 +475,56 @@ class ImportPairingPreviewResponse(SuccessResponse[ImportPairingPreviewPO]):
     pass
 
 
+class ImportRepeatGroup(PO):
+    kind: Literal["SUSPECTED_EXPORT"]
+    keeper_row: RowIdentity
+    repeated_rows: list[RowIdentity] = Field(min_length=1, max_length=19999)
+    parsed: PreviewParsed
+    source_label_masked: str
+
+
+class ImportRepeatRow(PO):
+    row: RowIdentity
+    state: Literal["GROUPED", "UNCHANGED", "EXCEPTION"]
+    reason_codes: list[str]
+    keeper_row: RowIdentity | None
+
+
+class ImportRepeatPreviewPO(PO):
+    source_preview_digest: str
+    expected_updated_time: datetime
+    selected_count: StrictInt = Field(ge=1, le=20000)
+    groups: list[ImportRepeatGroup] = Field(max_length=10000)
+    items: list[ImportRepeatRow] = Field(max_length=20000)
+
+    @model_validator(mode="after")
+    def complete(self):
+        identity = lambda row:(row.file_id,row.source_row_number)
+        items = {identity(item.row):item for item in self.items}
+        if len(items) != self.selected_count or len(self.items) != self.selected_count:
+            raise ValueError("repeat preview must describe every unique selected row")
+        grouped = {}
+        for group in self.groups:
+            keeper = identity(group.keeper_row)
+            members = [keeper] + [identity(row) for row in group.repeated_rows]
+            if len(set(members)) != len(members) or len({key[0] for key in members}) != len(members) or keeper != min(members):
+                raise ValueError("repeat group must be one row per file with a stable first")
+            for key in members:
+                if key not in items or key in grouped:
+                    raise ValueError("repeat groups must be complete, disjoint and inside the selected scope")
+                grouped[key] = keeper
+        for key,item in items.items():
+            if item.state == "GROUPED":
+                if key not in grouped or item.keeper_row is None or identity(item.keeper_row) != grouped[key] or item.reason_codes:
+                    raise ValueError("grouped row must name exactly its complete group keeper")
+            elif key in grouped or item.keeper_row is not None or not item.reason_codes:
+                raise ValueError("unchanged/exception row cannot be silently included in a group")
+        return self
+
+
+class ImportRepeatPreviewResponse(SuccessResponse[ImportRepeatPreviewPO]):
+    pass
+
+
 class ImportCancelResponse(SuccessResponse[ImportCancelPO]):
     pass
