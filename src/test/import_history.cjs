@@ -27,7 +27,11 @@ let calls = [];
 const countFor = url => new URL(url, 'http://fictional.test').searchParams.has('filter') ? 1 : 6;
 const context = vm.createContext({
   URLSearchParams, AbortController, clearTimeout,
-  state: {page: 'import-history', historyRequestVersion: 0}, interactionVersion: 0,
+  state: {page: 'import-history', params:new URLSearchParams({source_type:'102',status:'1',page:'2'}), historyRequestVersion: 0}, interactionVersion: 0,
+  resourceId:value => {const number = Number(value); if (!Number.isSafeInteger(number) || number < 1) throw Error('invalid page'); return number;},
+  canonicalHash:(_page, params) => `workbench/import/history${params.size ? '?'+params : ''}`,
+  history: {state:{}, replaceState(_state, _title, route) {this.route = route;}},
+  navigationView:{remember(){},mounted(){}}, renderedRoute:null,
   $: selector => nodes[selector],
   sourceLabels: {101: '支付宝', 102: '微信'}, statusLabels: {1: '已导入'},
   esc: value => String(value), preserveView: (_root, render) => render(),
@@ -55,6 +59,9 @@ function assertSameFilter(requests, expected) {
   ]};
   const markup = await context.importHistoryPage();
   assertSameFilter(calls, both);
+  assert.equal(new URL(calls[0], 'http://fictional.test').searchParams.get('page_index'), '2');
+  assert.match(markup, /data-page="2"/);
+  assert.match(markup, /value="102" selected/);
   assert.match(markup, /<strong>1<\/strong>/);
   assert.doesNotMatch(markup, /<strong>6<\/strong>/);
   for (const [sourceType, status, expected] of [
@@ -67,6 +74,8 @@ function assertSameFilter(requests, expected) {
     calls = [];
     await context.refreshHistoryResults(form, 1);
     assertSameFilter(calls, expected);
+    assert.equal(context.state.params.get('source_type'), sourceType || null);
+    assert.equal(context.state.params.get('status'), status || null);
     assert.match(nodes['[data-history-summary]'].innerHTML, expected ? /<strong>1<\/strong>/ : /<strong>6<\/strong>/);
   }
   // Zero matches must clear both list and statistics, including background refresh.

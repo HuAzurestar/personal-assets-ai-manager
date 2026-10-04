@@ -2,7 +2,7 @@
 // editable form values, cached server records or executable commands.
 const stateKey = 'paamView';
 const rowAttributes = ['data-fact-row', 'data-economic-row', 'data-review-row',
-  'data-import-file-row', 'data-ref-id', 'data-batch-row', 'data-rule-row',
+  'data-import-file-row', 'data-history-file', 'data-ref-id', 'data-batch-row', 'data-rule-row',
   'data-tag-request-row'];
 const rowSelector = rowAttributes.map(name => `[${name}]`).join(',');
 const coordinate = value => Number.isFinite(value) && Math.abs(value) <= 1e9;

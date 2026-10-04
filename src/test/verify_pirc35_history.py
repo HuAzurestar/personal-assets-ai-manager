@@ -20,7 +20,8 @@ def run():
         from backend.core import target_database
         from backend.entity import TransactionImportFile
         with target_database.SessionLocal() as db:
-            for index, (source, status) in enumerate([(101, 1), (101, 3), (102, 1), (201, 1), (201, 1), (201, 1)], 1):
+            samples = [(101, 1), (101, 3), (102, 1), (201, 1), (201, 1), (201, 1)] + [(203, 1)] * 30
+            for index, (source, status) in enumerate(samples, 1):
                 db.add(TransactionImportFile(filename=f"Mock history {index}.csv", source_type=source,
                     status=status, file_format=1, sha256=f"{index:064x}"))
             db.commit()
@@ -54,8 +55,8 @@ def run():
                     form = page.locator('[data-form="history-filter"]')
                     files = page.locator('[data-action="import-file-detail"]')
                     metric = page.locator('[data-history-summary] .history-metric').first.locator('strong')
-                    expect(files).to_have_count(6)
-                    expect(metric).to_have_text('6')
+                    expect(files).to_have_count(10)
+                    expect(metric).to_have_text('36')
                     form.locator('[name="source_type"]').select_option('102')
                     expect(files).to_have_count(1)
                     expect(metric).to_have_text('1')
@@ -75,11 +76,43 @@ def run():
                     latest_summary = next(url for url in reversed(reads) if '/import_file/summary' in url)
                     assert parse_qs(urlparse(latest_summary).query)['filter'] == parse_qs(urlparse(latest_list).query)['filter']
                     assert set(parse_qs(urlparse(latest_summary).query)) == {'filter'}
-                    form.locator('[name="source_type"]').select_option('')
+                    form.locator('[name="source_type"]').select_option(value=[''])
                     expect(files).to_have_count(1)
-                    form.locator('[name="status"]').select_option('')
-                    expect(files).to_have_count(6)
-                    expect(metric).to_have_text('6')
+                    form.locator('[name="status"]').select_option(value=[''])
+                    expect(files).to_have_count(10)
+                    expect(metric).to_have_text('36')
+                    form.locator('[name="source_type"]').select_option('203')
+                    expect(metric).to_have_text('30')
+                    page.locator('[data-action="history-page"][data-value="2"]').click()
+                    expect(form).to_have_attribute('data-page', '2')
+                    expect(page.locator('[data-history-results] .range')).to_contain_text('11–20')
+                    origin = page.url
+                    assert 'source_type=203' in origin and 'page=2' in origin
+                    target = files.nth(4)
+                    target_id = target.get_attribute('data-id')
+                    target.evaluate('row => window.scrollBy(0,row.getBoundingClientRect().top - 160)')
+                    page.wait_for_function('history.state?.paamView?.y > 0')
+                    top = target.bounding_box()['y']
+                    target.click()
+                    page.locator('.inspection-workspace[open] [data-close]').click()
+                    assert abs(target.bounding_box()['y'] - top) < 3
+                    # Route directly without scrolling to the topbar first.
+                    page.evaluate("location.hash = '#workbench/account'")
+                    expect(page.locator('[data-account-management]')).to_be_visible()
+                    page.go_back()
+                    expect(files).to_have_count(10)
+                    expect(form).to_have_attribute('data-page', '2')
+                    expect(form.locator('[name="source_type"]')).to_have_value('203')
+                    expect(metric).to_have_text('30')
+                    expect(page.locator('#page-content')).not_to_have_attribute('aria-busy', 'true')
+                    assert page.url == origin
+                    target = page.locator(f'[data-history-file="{target_id}"]')
+                    assert abs(target.bounding_box()['y'] - top) < 3
+                    page.reload()
+                    expect(form).to_have_attribute('data-page', '2')
+                    expect(metric).to_have_text('30')
+                    expect(page.locator('#page-content')).not_to_have_attribute('aria-busy', 'true')
+                    assert abs(target.bounding_box()['y'] - top) < 3
                     page.set_viewport_size({"width": 390, "height": 844})
                     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
                     viewport_evidence(page, 'dev17-import-history-filtered')
@@ -87,7 +120,7 @@ def run():
                     browser.close()
                 after = {path: client.get(path).json()["body"]["total"] for path in before}
                 assert before == after
-                print("PASS actual import history all/source/status/AND/zero/clear/background/narrow; zero UI writes")
+                print("PASS actual import history all/source/status/AND/zero/clear/background/page-two/detail/back/reload/narrow; zero UI writes")
         finally:
             server.should_exit = True
             worker.join(timeout=10)

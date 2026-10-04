@@ -22,7 +22,7 @@ import {
 } from "../component/date-time-range.js?v=20260928.6";
 import { state } from "../state/ledger.js";
 import {
-  $, $$, currencyPrecision, date, decimalAmount, esc, key, money,
+  $, $$, currencyPrecision, date, decimalAmount, esc, key, money, resourceId,
   reviewTypeNames, roleNames, statusNames, typeNames,
   selectedCalendarDate, selectedImportTimeZone, selectedTimeZone,
   setSelectedImportTimeZone, setSelectedTimeZone, zonedISOString,
@@ -727,7 +727,7 @@ function historySummaryUrl(params) {
   return `/paam/import/v1/import_file/summary${filter ? `?${new URLSearchParams({ filter })}` : ""}`;
 }
 function historyResultsMarkup(result) {
-  const fileCards = result.items.map((item) => `<button type="button" class="batch-card" data-action="import-file-detail" data-id="${item.id}" aria-label="查看导入文件 ${item.id}：${esc(item.filename)}"><span class="file-type-icon">${esc(fileExtension(item.filename))}</span><span class="batch-file"><span class="history-id">Import File #${item.id}</span><strong>${esc(item.filename)}</strong><small>${esc(sourceLabels[item.source_type] || item.source_type)}</small></span><span class="batch-field batch-account"><small>文件格式</small><span>${esc(fileFormatLabels[item.file_format] || item.file_format)}</span></span><span class="batch-field"><small>成功 / 总数</small><span class="progress-count"><strong>${item.success_count}</strong> / ${item.total_count}</span></span><span class="batch-field"><small>状态</small><span><span class="badge ${item.status === 1 ? "" : "warn"}">${esc(statusLabels[item.status] || item.status)}</span></span></span><span class="batch-field batch-time"><small>导入时间</small><span>${date(item.created_time)}</span></span><span class="batch-chevron" aria-hidden="true">›</span></button>`);
+  const fileCards = result.items.map((item) => `<button type="button" class="batch-card" data-history-file="${item.id}" data-action="import-file-detail" data-id="${item.id}" aria-label="查看导入文件 ${item.id}：${esc(item.filename)}"><span class="file-type-icon">${esc(fileExtension(item.filename))}</span><span class="batch-file"><span class="history-id">Import File #${item.id}</span><strong>${esc(item.filename)}</strong><small>${esc(sourceLabels[item.source_type] || item.source_type)}</small></span><span class="batch-field batch-account"><small>文件格式</small><span>${esc(fileFormatLabels[item.file_format] || item.file_format)}</span></span><span class="batch-field"><small>成功 / 总数</small><span class="progress-count"><strong>${item.success_count}</strong> / ${item.total_count}</span></span><span class="batch-field"><small>状态</small><span><span class="badge ${item.status === 1 ? "" : "warn"}">${esc(statusLabels[item.status] || item.status)}</span></span></span><span class="batch-field batch-time"><small>导入时间</small><span>${date(item.created_time)}</span></span><span class="batch-chevron" aria-hidden="true">›</span></button>`);
   const pages = Math.max(1, Math.ceil(result.total / result.page_size));
   const start = result.total ? (result.page_index - 1) * result.page_size + 1 : 0;
   const end = Math.min(result.page_index * result.page_size, result.total);
@@ -738,29 +738,46 @@ function historyResultsMarkup(result) {
 }
 
 async function importHistoryPage() {
-  const previous = $('[data-form="history-filter"]');
+  const sourceType = state.params.get('source_type') || '';
+  const status = state.params.get('status') || '';
+  if (sourceType && !Object.hasOwn(sourceLabels, sourceType)) throw new Error('导入历史来源条件无效');
+  if (status && !['0','1','2','3'].includes(status)) throw new Error('导入历史状态条件无效');
+  const page = resourceId(state.params.get('page') || 1);
+  if (page > Math.floor(Number.MAX_SAFE_INTEGER / 10)) throw new Error('导入历史页码超出精确范围');
   const initialQuery = new URLSearchParams({
-    page_index: previous?.dataset.page || "1",
+    page_index: String(page),
     page_size: "10",
     sorter: JSON.stringify([{ key: "created_time", direction: "desc" }]),
   });
-  if (previous) {
-    const expressions = ['source_type', 'status'].filter((name) => previous.elements[name].value !== '')
-      .map((name) => ({ key: name, op: '=', val: Number(previous.elements[name].value) }));
-    if (expressions.length) initialQuery.set('filter', JSON.stringify(expressions.length === 1 ? expressions[0] : { op: 'AND', expression: expressions }));
-  }
+  const expressions = [['source_type', sourceType], ['status', status]].filter(([,value]) => value !== '')
+    .map(([key,value]) => ({key, op:'=', val:Number(value)}));
+  if (expressions.length) initialQuery.set('filter', JSON.stringify(expressions.length === 1 ? expressions[0] : {op:'AND',expression:expressions}));
   const [result, summary] = await Promise.all([
     request(`/paam/import/v1/import_file/list?${initialQuery}`),
     request(historySummaryUrl(initialQuery)),
   ]);
-  const sourceOptions = Object.entries(sourceLabels).map(([value, label]) => `<option value="${esc(value)}">${esc(label)}</option>`).join("");
-  const statusOptions = [0, 1, 2, 3].map((value) => `<option value="${value}">${esc(statusLabels[value])}</option>`).join("");
-  return `<div class="history-summary" data-history-summary>${historySummaryMarkup(summary)}</div><section class="panel history-panel"><div class="section-head"><div><h2>导入文件</h2><p class="import-section-help">来源和状态筛选同时更新统计与列表。</p></div><button class="primary" data-page="import">＋ 导入新数据</button></div><form class="toolbar history-toolbar" data-form="history-filter"><label>来源<select name="source_type"><option value="">全部来源</option>${sourceOptions}</select></label><label>状态<select name="status"><option value="">全部状态</option>${statusOptions}</select></label><span class="history-updating" data-history-updating aria-live="polite"></span></form><div data-history-results>${historyResultsMarkup(result)}</div></section>`;
+  const sourceOptions = Object.entries(sourceLabels).map(([value, label]) => `<option value="${esc(value)}" ${value === sourceType ? 'selected' : ''}>${esc(label)}</option>`).join("");
+  const statusOptions = [0, 1, 2, 3].map(value => `<option value="${value}" ${String(value) === status ? 'selected' : ''}>${esc(statusLabels[value])}</option>`).join("");
+  return `<div class="history-summary" data-history-summary>${historySummaryMarkup(summary)}</div><section class="panel history-panel"><div class="section-head"><div><h2>导入文件</h2><p class="import-section-help">来源和状态筛选同时更新统计与列表。</p></div><button class="primary" data-page="import">＋ 导入新数据</button></div><form class="toolbar history-toolbar" data-form="history-filter" data-page="${page}"><label>来源<select name="source_type"><option value="">全部来源</option>${sourceOptions}</select></label><label>状态<select name="status"><option value="">全部状态</option>${statusOptions}</select></label><span class="history-updating" data-history-updating aria-live="polite"></span></form><div data-history-results>${historyResultsMarkup(result)}</div></section>`;
+}
+
+function syncHistoryRoute(form, page) {
+  const params = new URLSearchParams();
+  for (const name of ['source_type', 'status']) {
+    const value = form.elements[name].value;
+    if (value !== '') params.set(name, value);
+  }
+  if (page > 1) params.set('page', String(page));
+  const route = `#${canonicalHash('import-history', params)}`;
+  navigationView.remember();
+  history.replaceState(history.state, '', route);
+  state.params = params;
+  renderedRoute = route;
+  navigationView.mounted(route);
 }
 
 async function refreshHistoryResults(form, page = 1, background = false) {
   const interaction = interactionVersion;
-  form.dataset.page = String(page);
   clearTimeout(state.historyFilterTimer);
   state.historyRequestController?.abort();
   const controller = new AbortController();
@@ -792,6 +809,8 @@ async function refreshHistoryResults(form, page = 1, background = false) {
     ]);
     if (requestVersion !== state.historyRequestVersion || state.page !== "import-history") return;
     if (!form.isConnected || (background && (interaction !== interactionVersion || !canRefreshPage()))) return;
+    form.dataset.page = String(result.page_index);
+    syncHistoryRoute(form, result.page_index);
     preserveView($('#page-content'), () => {
       if (summaryRoot) summaryRoot.innerHTML = historySummaryMarkup(summary);
       if (resultsRoot) { resultsRoot.innerHTML = historyResultsMarkup(result); bindPage(resultsRoot); }
