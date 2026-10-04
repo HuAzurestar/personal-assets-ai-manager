@@ -212,7 +212,10 @@ def run():
                     expect(tools).to_be_visible()
                     assert tools.bounding_box()['height'] <= 160
                     assert tools.evaluate("node => getComputedStyle(node).backgroundColor") != 'rgba(0, 0, 0, 0)'
-                    assert dialog.locator('[data-member-items] article').first.bounding_box()['height'] <= 110
+                    member_row = dialog.locator('[data-member-items] article').first
+                    assert member_row.bounding_box()['height'] <= 110, member_row.bounding_box()
+                    assert member_row.locator('strong').evaluate('node => parseFloat(getComputedStyle(node).fontSize)') >= 14
+                    assert member_row.locator('span').first.evaluate('node => parseFloat(getComputedStyle(node).fontSize)') >= 12
                     page.locator('dialog[open] [data-workbench-close]').click()
                     expect(form.locator('[data-cash-row]')).to_have_count(0)
                     # Legacy partial groups must not be reduced to an arbitrary
