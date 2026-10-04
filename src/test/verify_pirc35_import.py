@@ -200,7 +200,24 @@ def run():
                     expect(page.locator('[data-batch-selection]')).to_contain_text('选择已保存')
                     expect(page.locator('[data-plan-issue-summary]')).to_contain_text('未解决 1 行')
                     assert len(confirmations) == 2  # Invalid manual acceptance is blocked before POST.
+                    # Hold the preview metadata read while the old rows remain
+                    # visible. Refresh must lock edits before that first await.
+                    page.evaluate("""() => {
+                        const original = window.fetch;
+                        window.fetch = async (url, options) => {
+                            if (/^\\/paam\\/import\\/v1\\/preview\\/[^/]+$/.test(String(url))
+                                    && (!options?.method || options.method === 'GET')) {
+                                window.fetch = original;
+                                await new Promise(resolve => { window.releaseImportRefresh = resolve; });
+                            }
+                            return original(url, options);
+                        };
+                    }""")
                     page.locator('[data-batch-refresh]').click()
+                    expect(rows.first.locator('[data-row-decision]')).to_be_disabled()
+                    expect(page.locator('[data-batch-save]')).to_be_disabled()
+                    page.evaluate('window.releaseImportRefresh()')
+                    expect(rows.first.locator('[data-row-decision]')).to_be_enabled()
                     expect(rows.first.locator('[data-row-decision]')).to_have_value('ACCEPT')
                     expect(rows.nth(1).locator('[data-row-decision]')).to_have_value('SKIP')
                     rows.first.locator('[data-row-decision]').select_option('SKIP')

@@ -269,14 +269,24 @@ export async function mountImportBatch(host, initial, changed) {
   };
   const refresh = async () => {
     if (context.busy) return;
+    // Refresh is one read operation: freeze edits before the metadata GET,
+    // not only after it resolves and starts replacing the visible row page.
+    context.busy = true;
+    update();
+    let loaded = false;
     try {
       const plan = await request(`/paam/import/v1/preview/${context.plan.token}`, { signal });
       if (!live()) return;
       if (plan.preview_digest !== context.plan.preview_digest) { context.revalidationRequired = !!context.selected.size; invalidatePlan(); }
       context.plan = plan;
       changed(plan);
-      await readPage(1);
-    } catch (error) { status(`${error.code || "读取失败"}：${error.message}；如预览已丢失，重新上传原文件以继续未持久行。`); }
+      loaded = true;
+    } catch (error) {
+      if (live() && error.name !== 'AbortError') status(`${error.code || "读取失败"}：${error.message}；如预览已丢失，重新上传原文件以继续未持久行。`);
+    } finally { context.busy = false; update(); }
+    // No await between releasing the metadata read and acquiring the page
+    // read; an edit cannot enter between these two halves of the refresh.
+    if (loaded && live()) await readPage(1);
   };
   const verify = async () => {
     if (context.busy) return;

@@ -79,7 +79,7 @@ async function scenario(expired = false) {
 }
 async function retiredRefresh(reuseHost) {
   const nodes = new Map();
-  let retired = false, rejectRead, writes = 0;
+  let retired = false, rejectRead, writes = 0, metadataReads = 0;
   const element = () => ({ disabled: false, value: '', textContent: '', innerHTML: '' });
   const host = { isConnected: true, innerHTML: '', querySelector(selector) {
     if (retired && !reuseHost) return null;
@@ -95,13 +95,18 @@ async function retiredRefresh(reuseHost) {
     localStorage: { getItem: () => null },
     jsonRequest: async () => { writes++; throw Error('unexpected financial write'); },
     request: async url => url.includes('/row/list') ? { items: [], total: 0, page_size: 20 }
-      : new Promise((resolve, reject) => { rejectRead = reject; }),
+      : new Promise((resolve, reject) => { metadataReads++; rejectRead = reject; }),
   });
   vm.runInContext(source + '\nglobalThis.mount = mountImportBatch; globalThis.stop = stopImportRead;', sandbox);
   await sandbox.mount(host, plan, () => {});
   const replacement = host.querySelector('[data-batch-status]');
   const refresh = host.querySelector('[data-batch-refresh]').onclick();
   assert.equal(typeof rejectRead, 'function');
+  assert.equal(host.querySelector('[data-batch-refresh]').disabled, true);
+  assert.equal(host.querySelector('[data-batch-save]').disabled, true);
+  // Even a programmatic second invocation cannot race the first metadata read.
+  await host.querySelector('[data-batch-refresh]').onclick();
+  assert.equal(metadataReads, 1);
   sandbox.stop();
   retired = true;
   replacement.textContent = 'replacement view untouched';

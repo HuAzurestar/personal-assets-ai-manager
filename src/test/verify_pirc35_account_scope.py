@@ -192,7 +192,9 @@ def run():
                     root.locator('[data-account-filter] [name="status"]').select_option("CLOSED")
                     expect(rows).to_have_count(1)
                     expect(rows).to_contain_text("Mock B closed card")
-                    root.locator('[data-account-filter] [name="status"]').select_option("")
+                    # Playwright 1.45 treats a bare empty string as deselect-all.
+                    # Select the actual "all statuses" option, not no option.
+                    root.locator('[data-account-filter] [name="status"]').select_option(value=[""])
                     try:
                         expect(rows).to_have_count(24)
                     except AssertionError:
