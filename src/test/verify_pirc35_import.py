@@ -269,6 +269,64 @@ def run():
                     page.set_viewport_size({"width": 390, "height": 844})
                     page.goto(base + "/#workbench/import")
                     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+                    # Reliable wallets follow exactly the ordinary guided UI:
+                    # no per-row card choice, person/group creation or SQL repair.
+                    from backend.entity import LedgerAccountRef, LedgerAccount, LedgerAccountParty
+                    for index, (filename, source, own_header, label, identity) in enumerate([
+                        ("alipay-6.csv", "alipay", "支付宝账户：mock@example.invalid", "支付宝", "mock@example.invalid"),
+                        ("wechat-3.csv", "wechat", "微信昵称：[Mock昵称]\n微信号：MockWallet001", "微信", "MockWallet001"),
+                    ]):
+                        page.set_viewport_size({"width": 1280, "height": 800})
+                        text = (fixtures / filename).read_text(encoding="utf-8").splitlines()
+                        content = (text[0] + "\n" + own_header + "\n" + "\n".join(text[2:]) + "\n").replace(
+                            "2024-", f"{2040 + index}-").encode()
+                        with target_database.SessionLocal() as db:
+                            prior_refs = db.scalar(select(func.count(LedgerAccountRef.id)))
+                            prior_facts = db.scalar(select(func.count(TransactionFact.id)))
+                        page.locator('[data-action="import-step"][data-step="2"]').first.click()
+                        upload.locator('[name="files"]').set_input_files({"name": f"Mock {source}.csv",
+                            "mimeType": "text/csv", "buffer": content})
+                        upload.locator('[data-action="preview-import"]').click()
+                        expect(rows).to_have_count(20, timeout=15000)
+                        page.locator('[data-batch-guide]').click()
+                        expect(page.locator('[data-batch-selection]')).to_contain_text('24 行', timeout=35000)
+                        expect(page.locator('[data-batch-confirm]')).to_be_enabled(timeout=35000)
+                        with target_database.SessionLocal() as db:
+                            assert db.scalar(select(func.count(LedgerAccountRef.id))) == prior_refs
+                            assert db.scalar(select(func.count(TransactionFact.id))) == prior_facts
+                        page.locator('[data-batch-confirm]').click()
+                        expect(page.locator('[data-batch-files]')).to_contain_text('已接受 24', timeout=15000)
+                        assert len(confirmations) == 4 + index
+                        with target_database.SessionLocal() as db:
+                            ref = db.execute(select(LedgerAccountRef).where(
+                                LedgerAccountRef.source_namespace == f"{source}:statement-v1")).scalar_one()
+                            assert ref.source_identity == identity and ref.account_id == 0 and ref.identity_strength == 1
+                            assert db.scalar(select(func.count(LedgerAccountRef.id))) == prior_refs + 1
+                            assert db.scalar(select(func.count(TransactionFact.id))) == prior_facts + 24
+                            assert db.scalar(select(func.count(LedgerEntry.id)).where(LedgerEntry.account_ref_id == ref.id)) == 24
+                            assert db.scalar(select(func.count(LedgerAccount.id))) == 0
+                            assert db.scalar(select(func.count(LedgerAccountParty.id))) == 0
+                        page.goto(base + '/#workbench/account')
+                        card_rows = page.locator('[data-account-list] tbody tr[data-ref-id]')
+                        expect(card_rows).to_have_count(prior_refs + 1)
+                        card = card_rows.filter(has_text=label)
+                        expect(card).to_have_count(1)
+                        expect(card).to_contain_text('未分组')
+                        expect(card).to_contain_text('可靠来源')
+                        assert identity not in card.inner_text(), "own identity must be masked in card lists"
+                        page.set_viewport_size({"width": 390, "height": 844})
+                        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+                        viewport_evidence(page, f'dev17-wallet-{source}-card-390')
+                        # Same bytes are current accepted evidence, never a
+                        # second card or another default cash chain.
+                        page.goto(base + '/#workbench/import')
+                        page.locator('[data-action="import-step"][data-step="2"]').first.click()
+                        upload.locator('[name="files"]').set_input_files({"name": f"Mock {source}.csv",
+                            "mimeType": "text/csv", "buffer": content})
+                        upload.locator('[data-action="preview-import"]').click()
+                        expect(page.locator('[data-batch-files]')).to_contain_text('已接受 24', timeout=15000)
+                        expect(page.locator('[data-batch-confirm]')).to_be_disabled()
+                        assert len(confirmations) == 4 + index
                     assert errors == [], errors
                     browser.close()
                 print("PIRC-35 fictional selected import, raw detail and lost-response browser workflow passed")

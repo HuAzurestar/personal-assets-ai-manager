@@ -22,6 +22,7 @@ from backend.parser.file_import import (
 )
 from backend.core.money import amount_from_decimal
 from backend.core.source_provider import PROVIDER_LABELS as LABELS
+from backend.core.source_account_identity import reliable_identity
 from backend.parser.provider_template import PROVIDER_TEMPLATES, normalise_header
 
 BANKS = {"ccb", "abc", "cmb"}
@@ -414,6 +415,22 @@ def _parse_document(indexed_rows, preamble, provider, filename, sha, extension, 
         else re.search(r"微信昵称[：:]\[?([^\]\n]+)", preamble)
     )
     profile = profile_match.group(1).strip() if profile_match else ""
+    wallet_source = None
+    if provider in {"alipay", "wechat"}:
+        label = "支付宝账户" if provider == "alipay" else "微信号"
+        # An explicit own header is the only automatic wallet source. In
+        # particular, 微信昵称 and the funding bank's tail never qualify.
+        identities = set(re.findall(r"(?:^|\n)[ \t]*" + label + r"[：:][ \t]*([^\s\n]+)", preamble))
+        if len(identities) > 1:
+            raise ValueError("同一账单段含多个本方账号，不能可靠分配来源身份")
+        identity = next(iter(identities), "")
+        strong = reliable_identity(provider, identity)
+        wallet_source = dict(source_namespace=f"{provider}:statement-v1" if strong else "",
+            source_identity=identity if strong else "",
+            identity_strength="RELIABLE" if strong else "WEAK" if profile or identity else "UNKNOWN")
+        if provider == "wechat" and strong:
+            # Full own 微信号, not nickname, scopes platform transaction IDs.
+            profile = identity
     number = number_match.group(1) if number_match else ""
     if provider in BANKS:
         numbers = set(re.findall(r"(?:卡号/账号|账号|账户)[：:]([\d*]{10,30})(?!\d)", compact))
@@ -439,6 +456,7 @@ def _parse_document(indexed_rows, preamble, provider, filename, sha, extension, 
                 account,
                 source_timezone,
                 document_currency=document_currency.group(1) if document_currency else "",
+                wallet_source=wallet_source,
             )
             row.update(row_number=n, raw=raw, error=None)
         except ValueError as error:
@@ -482,7 +500,7 @@ def normalise_statement_row(
     profile: str,
     account: dict,
     source_timezone: tzinfo,
-    *, document_currency: str = "",
+    *, document_currency: str = "", wallet_source: dict | None = None,
 ) -> dict:
     bank = provider in BANKS
 
@@ -629,7 +647,7 @@ def normalise_statement_row(
         "note": note,
         "reference": reference,
         "currency": "CNY",
-        "source_account": {
+        "source_account": dict(wallet_source) if wallet_source is not None else {
             "source_namespace": f"{provider}:statement-v1" if bank else "",
             "source_identity": account["number"] if bank and re.fullmatch(r"[0-9]{10,30}", account["number"]) else "",
             "identity_strength": "RELIABLE" if bank and re.fullmatch(r"[0-9]{10,30}", account["number"])

@@ -20,6 +20,14 @@ FINANCIAL_TABLES = ("transaction_fact", "review_case", "ledger_entry",
                     "review_transaction_ledger_allocation", "transaction_import_row")
 
 
+def fixture_python():
+    # Windows venv python.exe is a redirector: its PID is not the serving
+    # Python PID, and terminating it leaves the child holding the log/port.
+    # Keep the inherited environment (including the isolated PYTHONPATH),
+    # but launch the actual interpreter so the exact Popen handle owns it.
+    return sys._base_executable if os.name == "nt" else sys.executable
+
+
 def snapshot(database, directory):
     """Read all twenty fixture tables in one actual SQLite read transaction."""
     database = database.resolve()
@@ -55,7 +63,7 @@ def run_import_restart():
         def start():
             log = (directory / f"fixture-process-{len(processes)}.log").open("wb")
             logs.append(log)
-            process = subprocess.Popen([sys.executable, str(source), "--data-dir", str(directory),
+            process = subprocess.Popen([fixture_python(), str(source), "--data-dir", str(directory),
                 "--host", "127.0.0.1", "--port", str(port)], cwd=source.parents[2], env=env,
                 stdout=log, stderr=subprocess.STDOUT,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
