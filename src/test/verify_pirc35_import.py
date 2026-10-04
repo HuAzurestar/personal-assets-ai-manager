@@ -356,8 +356,8 @@ def run():
                         if request.method=='POST' and request.url.endswith('/paam/ledger/v1/account-ref') else None)
                     weak_ids=[]
                     for index,suffix in enumerate(('A','B')):
-                        open_import_advanced(page)
-                        page.locator('[data-batch-bind]').click()
+                        expect(page.locator('[data-batch-source-guide]')).to_be_enabled()
+                        page.locator('[data-batch-source-guide]').click()
                         binding=page.locator('dialog[open]').last
                         binding.locator('[data-binding-create-panel] summary').click()
                         create=binding.locator('[data-binding-create]')
@@ -439,8 +439,9 @@ def run():
                         assert all(ref.source_namespace==ref.source_identity=='' for ref in manual)
                         assert all(db.scalar(select(func.count(LedgerEntry.id)).where(LedgerEntry.account_ref_id==ref.id))==24 for ref in manual)
                         assert db.scalar(select(func.count(LedgerAccount.id)))==db.scalar(select(func.count(LedgerAccountParty.id)))==0
-                        raw=db.scalars(select(TransactionImportRow.raw_payload).where(
-                            TransactionImportRow.transaction_import_file_id.in_(weak_ids)))
+                        raw=list(db.scalars(select(TransactionImportRow.raw_payload).where(
+                            TransactionImportRow.transaction_import_file_id.in_(weak_ids))))
+                        assert len(raw)==48
                         assert all(json.loads(value)['normalized']['source_account']['identity_strength']=='WEAK' for value in raw)
                     assert errors == [], errors
                     browser.close()

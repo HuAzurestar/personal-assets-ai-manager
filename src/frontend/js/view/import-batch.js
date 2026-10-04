@@ -59,7 +59,7 @@ export async function mountImportBatch(host, initial, changed) {
     <ol class="import-guide-steps"><li>检查文件与默认决定</li><li>核验并处理例外</li><li>核对计划后确认入账</li></ol>
     <p>正常记录默认接受，异常或疑似重复默认跳过；跳过保留原证据。先点击“核验当前筛选”，无需逐条选择来源卡或记录；不会自动入账。</p>
     <div data-batch-files></div><p data-batch-summary></p>
-    <p data-batch-guide-hint></p><div class="import-batch-toolbar" data-batch-toolbar><p data-batch-selection></p><small data-batch-selected-scope></small>
+    <p data-batch-guide-hint></p><div class="actions" data-batch-source-help><small>可靠本方身份在接受时自动建卡／复用。只有昵称或遮罩账号时，核验后可按文件一次确认来源；无需逐条操作，也无需先建个人、集合。</small><button type="button" data-batch-source-guide>按文件确认来源（可选，不入账）</button></div><div class="import-batch-toolbar" data-batch-toolbar><p data-batch-selection></p><small data-batch-selected-scope></small>
       <div class="actions"><button type="button" class="primary" data-batch-guide>核验当前筛选（不入账）</button>
       <button type="button" data-batch-save>核验导入（保存已选记录，不入账）</button><button type="button" class="primary" data-batch-confirm>确认并写入本批</button>
       <button type="button" data-batch-restore>重新读取已保留的剩余范围</button><button type="button" class="primary" data-batch-execute>批准完整计划并依次入账</button><button type="button" data-batch-stop-execution>停止后续批次</button></div>
@@ -144,7 +144,7 @@ export async function mountImportBatch(host, initial, changed) {
       || !context.selected.size || !context.disclosure?.can_confirm || !find('[data-batch-consent]').checked;
     find('[data-batch-execute]').hidden=!context.disclosure || !!context.executor;
     find('[data-batch-consent-panel]').hidden=!context.disclosure || !!context.executor;
-    for (const selector of ['[data-batch-select-page]','[data-batch-bulk]','[data-batch-bind]','[data-batch-pair]','[data-batch-save]','[data-batch-plan]','[data-batch-confirm]']) find(selector).hidden=!!context.executor;
+    for (const selector of ['[data-batch-select-page]','[data-batch-bulk]','[data-batch-bind]','[data-batch-source-help]','[data-batch-pair]','[data-batch-save]','[data-batch-plan]','[data-batch-confirm]']) find(selector).hidden=!!context.executor;
     find('[data-batch-confirm]').hidden ||= context.disclosure?.batches.length > 1;
     find('[data-batch-stop-execution]').disabled=!context.executor || context.executor.state.stop_requested;
     find('[data-batch-stop-execution]').hidden=!context.executor;
@@ -156,6 +156,7 @@ export async function mountImportBatch(host, initial, changed) {
     if (find('[data-batch-stop-scope]')) find('[data-batch-stop-scope]').disabled = !context.scopeReading;
     find('[data-batch-bulk]').disabled ||= !context.selected.size || plan.status === 'CONFIRMING';
     find('[data-batch-bind]').disabled ||= !context.selected.size || plan.status === 'CONFIRMING';
+    find('[data-batch-source-guide]').disabled = context.busy || context.unknown || context.restoreRequired || !!context.guiding || !!context.executor || !context.selected.size || plan.status === 'CONFIRMING';
     find('[data-batch-pair]').disabled ||= !context.selected.size || plan.status === 'CONFIRMING';
     if (context.restoreRequired) for (const selector of ['[data-batch-save]','[data-batch-plan]','[data-batch-bulk]','[data-batch-bind]','[data-batch-pair]']) find(selector).disabled=true;
     find("[data-batch-prev]").disabled ||= context.page <= 1;
@@ -444,11 +445,11 @@ export async function mountImportBatch(host, initial, changed) {
       }});
   };
   find('[data-batch-bind]').onclick = () => {
-    if (!live() || context.busy || context.unknown || !context.selected.size || context.plan.status === 'CONFIRMING') return;
+    if (!live() || context.busy || context.unknown || context.restoreRequired || context.guiding || context.executor || !context.selected.size || context.plan.status === 'CONFIRMING') return;
     const frozen = {digest:context.plan.preview_digest,time:context.plan.updated_time,generation:context.generation,selected:context.selected};
     openImportBinding({selected:context.selected,files:context.plan.files,token:context.plan.token,
       digest:frozen.digest,time:frozen.time,signal,
-      valid:() => live() && !context.busy && !context.unknown && context.plan.preview_digest === frozen.digest
+      valid:() => live() && !context.busy && !context.unknown && !context.restoreRequired && !context.guiding && !context.executor && context.plan.preview_digest === frozen.digest
         && context.plan.updated_time === frozen.time && context.generation === frozen.generation && context.selected === frozen.selected && context.plan.status !== 'CONFIRMING',
       apply:(selected,{modified,exceptions}) => {
         context.selected = selected;
@@ -457,6 +458,7 @@ export async function mountImportBatch(host, initial, changed) {
         void readPage(context.page);
       }});
   };
+  find('[data-batch-source-guide]').onclick = find('[data-batch-bind]').onclick;
   find('[data-batch-pair]').onclick = () => {
     if (!live() || context.busy || context.unknown || !context.selected.size || context.plan.status === 'CONFIRMING') return;
     const frozen = {digest:context.plan.preview_digest,time:context.plan.updated_time,generation:context.generation,selected:context.selected};

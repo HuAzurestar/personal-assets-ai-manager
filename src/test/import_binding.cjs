@@ -137,9 +137,17 @@ const vm = require('node:vm');
     request:async()=>({items:[],total:0,page_size:20}),jsonRequest:async()=>{writes++;}});
   vm.runInContext(source+'\nglobalThis.mount=mountImportBatch;globalThis.contexts=contexts;',sandbox);
   await sandbox.mount(host,plan,()=>{});
+  assert.match(host.innerHTML,/data-batch-source-guide/,'weak source groups need a normal visible entry, not only advanced controls');
   const context=sandbox.contexts.get(plan.token);
   context.selected=selected;
-  host.querySelector('[data-batch-bind]').onclick();
+  const normal=host.querySelector('[data-batch-source-guide]');
+  assert.equal(normal.onclick,host.querySelector('[data-batch-bind]').onclick);
+  for (const flag of ['busy','unknown','restoreRequired','guiding']) {
+    context[flag]=true;options=undefined;normal.onclick();assert.equal(options,undefined,flag);
+    context[flag]=false;
+  }
+  context.plan.status='CONFIRMING';normal.onclick();assert.equal(options,undefined);
+  context.plan.status='READY';normal.onclick();
   assert.ok(options.valid());
   const cloned=projectImportBinding(new Map([...selected].map(([key,item])=>[key,{...item,choice:{...item.choice}}])),
     result,9,'Named',digest,time);
