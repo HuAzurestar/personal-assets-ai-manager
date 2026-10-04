@@ -30,7 +30,7 @@ const financialReasons = {
   STALE_PREVIEW:'来源、账户或账务前提已变化，须重新核验',
   PREVIEW_CHANGED:'预览已变化，须读取最新预览并重新核验',
   WRITE_BUSY:'数据库正忙，或本次处理超过写入预算；请稍后重新读取并核验',
-  QUERY_BUSY:'读取暂时繁忙，或超过读取预算；请缩小范围后重新读取',
+  QUERY_BUSY:'读取暂时繁忙，或超过读取预算；可稍后重读，范围过大时请缩小范围',
   READ_BUDGET_EXCEEDED:'完整结果超过本次读取预算；请缩小范围，不会把截断内容当完整计划',
   DETAIL_LIMIT:'完整详情超过本次容量；请缩小读取范围，不会静默截断',
   RELATION_BROKEN:'账务引用或覆盖关系不完整；不能隐藏问题或继续提交，请核对相关原事项',
@@ -71,6 +71,7 @@ export function financialIssueMessage(error, fallback) {
   // Unknown English server diagnostics are not useful business guidance and
   // may contain private details. Preserve Chinese local validation guidance.
   const local = !code && /[\u4e00-\u9fff]/.test(error?.message || '') ? error.message : undefined;
-  const reason = financialIssueReason(code,local || fallback);
+  const unknown = error?.status >= 500 ? '请求未取得可靠结果；请重新读取当前状态核对' : undefined;
+  const reason = financialIssueReason(code,local || fallback || unknown);
   return `${reason}${code ? `（${code}）` : ''}`;
 }

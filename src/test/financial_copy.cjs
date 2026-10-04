@@ -52,8 +52,19 @@ const {pathToFileURL} = require('node:url');
       assert.equal(error.status,statusCode); assert.equal(error.code,code);
       assert.equal(error.details.safe_locator,7);
       assert.ok(/[\u4e00-\u9fff]/.test(error.message)); assert.doesNotMatch(error.message,/PRIVATE/);
+      if(code === 'NEW_SERVER_CODE') assert.match(error.message,/读取失败.*重新读取/);
       assert.equal(isUnknownWrite(error),code === 'RESULT_UNKNOWN' || statusCode >= 500 && code !== 'WRITE_BUSY');
       return true;
+    });
+  }
+  global.document.dispatchEvent=()=>{};
+  global.CustomEvent=class {};
+  for (const [statusCode,phrase] of [[503,'读取当前状态核对'],[422,'未通过校验']]) {
+    global.fetch=async () => ({ok:false,status:statusCode,headers:new Headers(),
+      json:async () => ({message:'PRIVATE unknown write diagnostic',body:{code:'NEW_SERVER_CODE'}})});
+    await assert.rejects(request('/paam/ledger/v1/review/command',{method:'POST'}), error => {
+      assert.ok(error.message.includes(phrase)); assert.doesNotMatch(error.message,/PRIVATE/);
+      assert.equal(isUnknownWrite(error),statusCode === 503); return true;
     });
   }
   console.log('PASS truthful coverage/publication/quantity states, shared Chinese financial reasons, safe unknowns and unchanged write uncertainty');

@@ -55,8 +55,11 @@ async function readResponse(url, options, includeEnvelope) {
       : detail || `请求失败（${response.status}）`;
     const code = payload?.body?.code;
     const financial = /^\/paam\/(?:ledger|financial|import)\/v1\//.test(url);
-    const humanText = typeof text === 'string' && /[\u4e00-\u9fff]/.test(text)
-      ? text : '操作未通过校验，请核对当前选择和完整计划';
+    const reading = ['GET','HEAD'].includes((options.method || 'GET').toUpperCase());
+    const humanText = typeof text === 'string' && /[\u4e00-\u9fff]/.test(text) ? text
+      : reading ? '读取失败，当前结果未核实；请稍后重新读取'
+        : response.status >= 500 ? '请求未取得可靠结果；请读取当前状态核对，不自动重发'
+          : '操作未通过校验，请核对当前选择和完整计划';
     const error = new Error(financial ? financialIssueReason(code,humanText) : text);
     error.code = payload?.body?.code;
     error.details = payload?.body?.details;

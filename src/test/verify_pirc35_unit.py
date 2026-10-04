@@ -67,7 +67,8 @@ def run():
                         route.continue_()
                 page.route('**/paam/ledger/v1/unit', intercept)
                 page.goto(base + '/#details/transaction-fact')
-                expect(page.locator('#page-content')).to_contain_text('Mock unit dictionary read failure')
+                expect(page.locator('#page-content')).to_contain_text('读取暂时繁忙')
+                expect(page.locator('#page-content')).not_to_contain_text('Mock unit dictionary read failure')
                 page.locator('[data-action="reload"]').click()
                 fact_form = page.locator('[data-form="fact-filter"]')
                 currency_codes = {row['code'] for row in dictionary if row['dimension'] == 'CURRENCY'}
