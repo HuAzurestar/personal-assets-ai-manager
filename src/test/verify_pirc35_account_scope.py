@@ -68,6 +68,11 @@ def run():
                     page.goto(base + f"/#workbench/account?party={people[0]['id']}")
                     root = page.locator("[data-account-management]")
                     expect(root).to_be_visible()
+                    note = root.locator('.account-metadata-note')
+                    expect(note).to_contain_text('有据数量另见')
+                    expect(note).to_contain_text('不是账户余额或市场估值')
+                    expect(note).not_to_contain_text('数量和余额另见')
+                    expect(note.locator('a')).to_have_attribute('href', '#workbench/position')
                     # This assertion fails on the original UI even with the new API:
                     # a party-only scope used to include B and unassigned cards.
                     expect(root).not_to_contain_text("Mock B closed card")

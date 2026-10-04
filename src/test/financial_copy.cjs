@@ -83,5 +83,21 @@ const {pathToFileURL} = require('node:url');
       assert.equal(isUnknownWrite(error),statusCode === 503); return true;
     });
   }
-  console.log('PASS truthful coverage/publication/quantity states, shared Chinese financial reasons, safe unknowns and unchanged write uncertainty');
+  // Check the actual page template as well as the shared formatter: a fixed
+  // note must not offer Position as an account-balance or valuation feature.
+  global.location={hash:'#workbench/account'};
+  const accountReads=[];
+  global.fetch=async (url,options={}) => {
+    assert.match(url,/^\/paam\/ledger\/v1\/account-ref\/list\?/);
+    assert.equal(options.method || 'GET','GET'); accountReads.push(url);
+    return {ok:true,status:200,headers:new Headers(),json:async()=>({status:200,
+      body:{items:[],total:0,page_index:1,page_size:20}})};
+  };
+  const {accountManagementPage}=await load('view/account-management.js');
+  const accountMarkup=await accountManagementPage(new URLSearchParams());
+  assert.match(accountMarkup,/有据数量另见/);
+  assert.match(accountMarkup,/不是账户余额或市场估值/);
+  assert.doesNotMatch(accountMarkup,/数量和余额另见/);
+  assert.equal(accountReads.length,1);
+  console.log('PASS truthful page and formatter quantity states, shared Chinese financial reasons, safe unknowns and unchanged write uncertainty');
 })().catch(error=>{console.error(error);process.exitCode=1;});

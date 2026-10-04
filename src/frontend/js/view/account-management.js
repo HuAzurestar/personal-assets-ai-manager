@@ -128,7 +128,7 @@ export async function accountManagementPage(params) {
           <label>每页<select name="page_size">${[20,50,100].map(value=>`<option value="${value}" ${scope.pageSize === value ? 'selected' : ''}>${value}项</option>`).join('')}</select></label>
           <button type="submit">查找</button><button type="button" data-account-clear-search>清空搜索</button></form>
         <div class="account-ref-table" data-account-list>${cardList(result, !!scope.word)}</div>
-        <p class="account-metadata-note">归属按卡的当前真实集合筛选；数量和余额另见<a href="#workbench/position">资产负债对象</a>。来源日期为历史证据入库时间，不是余额更新。</p>
+        <p class="account-metadata-note">归属按卡的当前真实集合筛选；有据数量另见<a href="#workbench/position">资产负债对象</a>，不是账户余额或市场估值。来源日期为历史证据入库时间，不是余额更新。</p>
       </section>
     </div></div>`;
 }
