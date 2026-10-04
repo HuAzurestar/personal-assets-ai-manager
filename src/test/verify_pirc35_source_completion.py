@@ -81,7 +81,13 @@ def run():
                     legs=[dict(existing_position_id=pid,type='MOVEMENT',leg_direction='OUT',leg_amount=20000,source=source,
                         occurred_time='2032-01-01T00:00:00Z',basis='Mock bulk repayment')],
                     position_allocations=[dict(allocation_index=0,leg_index=0,cash_amount=20000,cash_currency_code='CNY')]))]))['created_reviews'][0]['id']
-                old_out=get(f'/paam/ledger/v1/review/{repayment}');before=snapshot()
+                old_out=get(f'/paam/ledger/v1/review/{repayment}')
+                # The common browser helper intentionally seeds two additional
+                # CNY flows with tags. They belong to the visible all/CNY scope;
+                # preserve and verify them, rather than silently excluding them.
+                seeded=[get(f'/paam/ledger/v1/review/{get(f"/paam/ledger/v1/flow/{id}")["reviews"][0]["id"]}') for id in (1,2)]
+                assert len(seeded)==2 and all(row['ledger_entries'][0]['account_ref_id']==0 for row in seeded)
+                before=snapshot()
                 with sync_playwright() as playwright:
                     browser=playwright.chromium.launch(channel='msedge' if os.name=='nt' else None,headless=True)
                     page=browser.new_page(viewport={'width':1280,'height':800});errors=[];commands=[]
@@ -91,7 +97,7 @@ def run():
                     page.goto(base+'/#workbench/account')
                     page.locator('[data-account-complete-source]').click()
                     form=page.locator('[data-source-completion-form]');expect(form).to_be_visible()
-                    expect(form.locator('[data-source-count]')).to_contain_text('当前已应用筛选 107 条')
+                    expect(form.locator('[data-source-count]')).to_contain_text('当前已应用筛选 109 条')
                     assert form.locator('[name="cash_amount"], [name="case_code"], [name="leg_amount"]').count()==0
                     form.locator('[data-source-select-page]').click()
                     expect(form.locator('[data-source-count]')).to_contain_text('已选 20 条')
@@ -106,9 +112,9 @@ def run():
                     assert not commands and snapshot()==before
                     form.locator('[name="currency"]').select_option('CNY')
                     form.locator('[data-source-search]').click()
-                    expect(form.locator('[data-source-count]')).to_contain_text('当前已应用筛选 2 条')
+                    expect(form.locator('[data-source-count]')).to_contain_text('当前已应用筛选 4 条')
                     form.locator('[data-source-select-all]').click()
-                    expect(form.locator('[data-source-count]')).to_contain_text('已选 2 条')
+                    expect(form.locator('[data-source-count]')).to_contain_text('已选 4 条')
                     def choose(ref):
                         form.locator('[data-named-choice="account_ref_id"] [data-choice-pick]').click()
                         page.locator(f'dialog[open] [data-picker-id="{ref}"]').click()
@@ -124,7 +130,7 @@ def run():
                     assert not commands and snapshot()==before
                     page.unroute(original_url,fail_original)
                     form.locator('[data-review-preview]').click();expect(form.locator('[data-review-command]')).to_be_enabled()
-                    business=form.locator('[data-correction-business]');expect(business.locator('[data-correction-cash]')).to_have_count(4)
+                    business=form.locator('[data-correction-business]');expect(business.locator('[data-correction-cash]')).to_have_count(6)
                     expect(business).to_contain_text('100.00 CNY → 100.00 CNY')
                     expect(business).to_contain_text('KRW');expect(business).to_contain_text('Mock bulk source 2')
                     for width in (1280,820,390):
@@ -144,8 +150,8 @@ def run():
                     assert snapshot()==before and len(commands)==1
                     form.locator('[data-review-preview]').click();expect(form.locator('[data-review-command]')).to_be_enabled()
                     with page.expect_response('**/paam/ledger/v1/review/command') as response:form.locator('[data-review-command]').click()
-                    result=response.value.json()['body'];assert len(result['created_reviews'])==2
-                    expect(form.locator('[data-review-status]')).to_contain_text('所选 2 条来源补齐已发布')
+                    result=response.value.json()['body'];assert len(result['created_reviews'])==4
+                    expect(form.locator('[data-review-status]')).to_contain_text('所选 4 条来源补齐已发布')
                     copied=[get(f'/paam/ledger/v1/review/{row["id"]}') for row in result['created_reviews']]
                     new=next(row for row in copied if row['title']==old['title']);new_out=next(row for row in copied if row['title']==old_out['title'])
                     for original,current in ((old,new),(old_out,new_out)):
@@ -155,8 +161,14 @@ def run():
                         preserved=get(f'/paam/ledger/v1/review/{original["id"]}');assert preserved['status']=='REVOKED'
                         for key in ('allocations','ledger_entries','position_legs','position_allocations','positions'):assert preserved[key]==original[key]
                     assert new_out['position_legs'][0]['source_position_leg_id']==new['position_legs'][0]['id']
+                    for original in seeded:
+                        current=next(row for row in copied if row['allocations'][0]['transaction_id']==original['allocations'][0]['transaction_id'])
+                        expected=signature(original);expected[0][:]=[cash[:6]+(2,) for cash in expected[0]]
+                        assert signature(current)==expected
+                        preserved=get(f'/paam/ledger/v1/review/{original["id"]}');assert preserved['status']=='REVOKED'
+                        for key in ('allocations','ledger_entries','position_legs','position_allocations','positions'):assert preserved[key]==original[key]
                     form.locator('[data-source-current]').click()
-                    expect(form.locator('[data-source-current-result]')).to_contain_text('完整只读核对 2 条')
+                    expect(form.locator('[data-source-current-result]')).to_contain_text('完整只读核对 4 条')
                     expect(form.locator('[data-source-current-result]')).to_contain_text('已停用，内容保留')
 
                     # Remaining KRW source completes in another explicitly chosen
@@ -181,7 +193,7 @@ def run():
                     form.locator('[data-source-select-all]').evaluate('node=>node.click()')
                     assert len(commands)==count==3 and snapshot()==committed
                     assert all(set(cmd)=={'account_corrections','correction_duplicates','expected_reviews','preview_digest'} for cmd in commands)
-                    assert len(commands[1]['account_corrections'])==2 and len(commands[2]['account_corrections'])==1
+                    assert len(commands[1]['account_corrections'])==4 and len(commands[2]['account_corrections'])==1
                     assert before['transaction_fact']==committed['transaction_fact']
                     assert before['ledger_account_ref']==committed['ledger_account_ref']
                     assert before['transaction_import_row']==committed['transaction_import_row']
