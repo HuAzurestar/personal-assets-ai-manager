@@ -59,11 +59,13 @@ export async function mountImportBatch(host, initial, changed) {
     <ol class="import-guide-steps"><li>检查文件与默认决定</li><li>核验并处理例外</li><li>核对计划后确认入账</li></ol>
     <p>正常记录默认接受，异常或疑似重复默认跳过；跳过保留原证据。先点击“核验当前筛选”，无需逐条选择来源卡或记录；不会自动入账。</p>
     <div data-batch-files></div><p data-batch-summary></p>
-    <div class="import-batch-toolbar" data-batch-toolbar><p data-batch-selection></p><small data-batch-selected-scope></small>
-      <p data-batch-guide-hint></p><div class="actions"><button type="button" class="primary" data-batch-guide>核验当前筛选（不入账）</button><button type="button" data-batch-select-page>选择本页未接受行</button><button type="button" data-batch-bulk>批量修改意图／决定</button><button type="button" data-batch-bind>批量绑定来源</button><button type="button" data-batch-pair>具名批配对</button>
-      <button type="button" data-batch-save>核验导入（保存选择，不入账）</button><button type="button" data-batch-plan>查看完整处理计划（不写入）</button><button type="button" class="primary" data-batch-confirm>确认并写入本批</button>
+    <p data-batch-guide-hint></p><div class="import-batch-toolbar" data-batch-toolbar><p data-batch-selection></p><small data-batch-selected-scope></small>
+      <div class="actions"><button type="button" class="primary" data-batch-guide>核验当前筛选（不入账）</button>
+      <button type="button" data-batch-save>核验导入（保存已选记录，不入账）</button><button type="button" class="primary" data-batch-confirm>确认并写入本批</button>
       <button type="button" data-batch-restore>重新读取已保留的剩余范围</button><button type="button" class="primary" data-batch-execute>批准完整计划并依次入账</button><button type="button" data-batch-stop-execution>停止后续批次</button></div>
-    </div><label class="import-operation-consent" data-batch-consent-panel><input type="checkbox" data-batch-consent>我已核对完整计划，理解各批独立提交；停止／失败／未知时保留已完成批，剩余须重新核对和批准。</label><p role="status" data-batch-execution></p>
+    </div><details data-batch-advanced><summary>高级操作：部分选择、批量修改、来源绑定与配对</summary><div class="actions">
+      <button type="button" data-batch-select-page>选择本页未接受行</button><button type="button" data-batch-bulk>批量修改意图／决定</button><button type="button" data-batch-bind>批量绑定来源</button><button type="button" data-batch-pair>具名批配对</button><button type="button" data-batch-plan>重新读取完整处理计划（不写入）</button>
+    </div></details><label class="import-operation-consent" data-batch-consent-panel><input type="checkbox" data-batch-consent>我已核对完整计划，理解各批独立提交；停止／失败／未知时保留已完成批，剩余须重新核对和批准。</label><p role="status" data-batch-execution></p>
     <div class="actions import-batch-filter"><label>文件<select data-batch-file><option value="">全部文件</option>${initial.files.map(file => `<option value="${file.file_id}">${esc(file.filename)} · #${file.file_id}</option>`).join("")}</select></label>
       <label>分类<select data-batch-classification><option value="">全部分类</option>${Object.entries(classifications).map(([key, label]) => `<option value="${key}">${label}</option>`).join("")}</select></label>
       <label>每页<select data-batch-page-size>${[20,50,100].map(size => `<option value="${size}" ${context.pageSize === size ? 'selected' : ''}>${size}行</option>`).join('')}</select></label><button type="button" data-batch-refresh>读取当前预览</button>

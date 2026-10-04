@@ -15,6 +15,7 @@ from playwright.sync_api import Error as BrowserError, expect, sync_playwright
 
 from serve_m2_ui import prepare_app
 from browser_artifact import viewport_evidence
+from import_browser_action import open_import_advanced
 
 
 def statement(account, amounts, prefix):
@@ -153,6 +154,7 @@ def run():
                         # Risk defaults are SKIP; explicitly request accepted
                         # drafts before asking for pairing suggestions. This
                         # grants no NEW cash consent and retains all negatives.
+                        open_import_advanced(page)
                         page.locator('[data-batch-bulk]').click()
                         bulk=page.locator('dialog[open]')
                         bulk.locator('[data-bulk-action]').select_option('ACCEPT')
@@ -161,6 +163,7 @@ def run():
 
                     def open_pair(kind='SAME_SOURCE'):
                         expect(page.locator('[data-batch-pair]')).to_be_enabled(timeout=15000)
+                        open_import_advanced(page)
                         page.locator('[data-batch-pair]').click()
                         current=page.locator('dialog.import-pairing-dialog[open]')
                         current.locator('[data-pairing-kind]').select_option(kind)
@@ -283,6 +286,7 @@ def run():
                     assert sum(row.get('resolution','AUTO')=='LINK_EXISTING' for row in puts[0]['choices'])==31
                     assert all(not row.get('acknowledge_new_risk',False) for row in puts[0]['choices'])
                     assert len({row['target']['transaction_id'] for row in puts[0]['choices'] if row.get('resolution','AUTO')=='LINK_EXISTING'})==31
+                    open_import_advanced(page)
                     page.locator('[data-batch-plan]').click()
                     expect(page.locator('[data-import-operation]')).to_contain_text('未解决',timeout=15000)
                     expect(page.locator('[data-batch-confirm]')).to_be_disabled()
@@ -299,6 +303,7 @@ def run():
                     expect(page.locator('[data-batch-selection]')).to_contain_text('31 行')
                     page.locator('[data-batch-save]').click()
                     expect(page.locator('[data-batch-plan]')).to_be_enabled(timeout=15000)
+                    open_import_advanced(page)
                     page.locator('[data-batch-plan]').click()
                     expect(page.locator('[data-import-operation]')).to_contain_text('可规划 1 批',timeout=15000)
                     expect(page.locator('[data-batch-confirm]')).to_be_enabled()
@@ -323,6 +328,7 @@ def run():
                     expect(page.locator('[data-batch-plan]')).to_be_enabled(timeout=15000)
                     assert all(row['resolution']=='DUPLICATE' and not row.get('acknowledge_new_risk',False) for row in puts[-1]['choices'])
                     assert snapshot()==before_cross
+                    open_import_advanced(page)
                     page.locator('[data-batch-plan]').click()
                     expect(page.locator('[data-import-operation]')).to_contain_text('可规划 1 批',timeout=15000)
                     page.locator('[data-plan-batch]').click()

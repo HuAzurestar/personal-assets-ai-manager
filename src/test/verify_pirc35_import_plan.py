@@ -14,6 +14,7 @@ import uvicorn
 from playwright.sync_api import expect, sync_playwright
 from serve_m2_ui import prepare_app
 from browser_artifact import viewport_evidence
+from import_browser_action import open_import_advanced
 
 
 def run():
@@ -154,6 +155,7 @@ def run():
                     assert min(row["source_row_number"] for body in puts for row in body["choices"]) == 6
                     assert max(row["source_row_number"] for body in puts for row in body["choices"]) == 2505
                     expect(page.locator('[data-batch-confirm]')).to_be_disabled()
+                    open_import_advanced(page)
                     page.locator('[data-batch-plan]').click()
                     plan = page.locator('[data-import-operation]')
                     expect(plan).to_contain_text("本次明确选择 2500 行",timeout=30000)
@@ -210,6 +212,7 @@ def run():
                         row.locator('[data-row-decision]').select_option('ACCEPT')
                     page.locator('[data-batch-save]').click()
                     expect(page.locator('[data-batch-plan]')).to_be_enabled()
+                    open_import_advanced(page)
                     page.locator('[data-batch-plan]').click()
                     expect(page.locator('[data-import-operation]')).to_contain_text("存在阻断或未解决事项",timeout=15000)
                     expect(page.locator('[data-batch-confirm]')).to_be_disabled()

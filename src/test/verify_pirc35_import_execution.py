@@ -12,6 +12,7 @@ import uvicorn
 from playwright.sync_api import expect, sync_playwright
 from serve_m2_ui import prepare_app
 from browser_artifact import viewport_evidence
+from import_browser_action import open_import_advanced
 
 
 def run():
@@ -75,6 +76,7 @@ def run():
                     expect(page.locator('[data-batch-select-scope]')).to_be_enabled(timeout=35000)
                     page.locator('[data-batch-save]').click()
                     expect(page.locator('[data-batch-plan]')).to_be_enabled(timeout=35000)
+                    open_import_advanced(page)
                     page.locator('[data-batch-plan]').click()
                     expect(page.locator('[data-import-operation]')).to_contain_text("本次明确选择 2500 行", timeout=35000)
                     expect(page.locator('[data-plan-batches] [data-plan-batch]')).to_have_count(3)
@@ -149,6 +151,7 @@ def run():
                         expect(page.locator('[data-batch-select-scope]')).to_be_enabled(timeout=35000)
                         page.locator('[data-batch-save]').click()
                         expect(page.locator('[data-batch-plan]')).to_be_enabled(timeout=35000)
+                        open_import_advanced(page)
                         page.locator('[data-batch-plan]').click()
                         expect(page.locator('[data-plan-batches] [data-plan-batch]')).to_have_count(2,timeout=35000)
                         page.locator('[data-batch-consent]').check()
@@ -187,6 +190,7 @@ def run():
                     assert len(writes)==4
                     page.locator('[data-batch-save]').click()
                     expect(page.locator('[data-batch-plan]')).to_be_enabled(timeout=35000)
+                    open_import_advanced(page)
                     page.locator('[data-batch-plan]').click()
                     expect(page.locator('[data-plan-batches] [data-plan-batch]')).to_have_count(1,timeout=35000)
                     expect(page.locator('[data-batch-execute]')).to_be_disabled()
@@ -307,6 +311,7 @@ def run():
                         # never replayed under the old whole-plan approval.
                         page.locator('[data-batch-save]').click()
                         expect(page.locator('[data-batch-plan]')).to_be_enabled(timeout=35000)
+                        open_import_advanced(page)
                         page.locator('[data-batch-plan]').click()
                         expect(page.locator('[data-plan-batches] [data-plan-batch]')).to_have_count(1,timeout=35000)
                         expect(page.locator('[data-batch-execute]')).to_be_disabled()

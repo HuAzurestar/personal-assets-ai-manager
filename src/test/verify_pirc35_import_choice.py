@@ -15,6 +15,7 @@ from playwright.sync_api import expect, sync_playwright
 
 from serve_m2_ui import prepare_app
 from browser_artifact import viewport_evidence
+from import_browser_action import open_import_advanced
 
 
 def statement(account, name, amount='-123.45'):
@@ -164,6 +165,7 @@ def run():
                     for name, records in before.items():
                         if name not in ('transaction_import_file',):
                             assert pending_state[name] == records, name
+                    open_import_advanced(page)
                     page.locator('[data-batch-plan]').click()
                     expect(page.locator('[data-import-operation]')).to_contain_text('可规划 1 批', timeout=15000)
                     page.locator('[data-plan-batch]').click()

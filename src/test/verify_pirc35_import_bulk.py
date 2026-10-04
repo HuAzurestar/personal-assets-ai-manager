@@ -16,6 +16,7 @@ from playwright.sync_api import expect, sync_playwright
 
 from serve_m2_ui import prepare_app
 from browser_artifact import viewport_evidence
+from import_browser_action import open_import_advanced
 
 
 def statement(account, count, prefix):
@@ -153,6 +154,7 @@ def run():
 
                     def open_binding(target):
                         expect(page.locator('[data-batch-bind]')).to_be_enabled(timeout=15000)
+                        open_import_advanced(page)
                         page.locator('[data-batch-bind]').click()
                         current=page.locator('dialog[open]')
                         current.locator(f'[data-picker-id="{target}"]').click()
@@ -219,6 +221,7 @@ def run():
                     expect(page.locator('[data-batch-bulk]')).to_be_enabled(timeout=15000)
                     assert puts == writes == [] and snapshot() == before
 
+                    open_import_advanced(page)
                     page.locator('[data-batch-bulk]').click()
                     dialog = page.locator('dialog[open]')
                     expect(dialog).to_contain_text('已选 101 行')
@@ -229,6 +232,7 @@ def run():
                     assert puts == writes == [] and snapshot() == before
                     # Merely selecting NEW is not cash consent. Explicit consent
                     # plus exception exclusion changes only the named 100 drafts.
+                    open_import_advanced(page)
                     page.locator('[data-batch-bulk]').click()
                     dialog = page.locator('dialog[open]')
                     dialog.locator('[data-bulk-action]').select_option('NEW')
@@ -266,6 +270,7 @@ def run():
                     assert writes == [] and snapshot() == before
                     # Recheck retains SKIP rather than silently accepting the old
                     # row. All other rows are exceptions and keep their intents.
+                    open_import_advanced(page)
                     page.locator('[data-batch-bulk]').click()
                     dialog = page.locator('dialog[open]')
                     dialog.locator('[data-bulk-action]').select_option('RECHECK')

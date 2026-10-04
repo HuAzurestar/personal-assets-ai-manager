@@ -13,6 +13,7 @@ from playwright.sync_api import expect, sync_playwright
 
 from serve_m2_ui import prepare_app
 from browser_artifact import viewport_evidence
+from import_browser_action import open_import_advanced
 
 
 def statements():
@@ -89,6 +90,7 @@ def run():
                     expect(page.locator('[data-batch-row]')).to_have_count(20, timeout=30000)
                     expect(page.locator('[data-batch-summary]')).to_contain_text('拟新增 802')
                     expect(page.locator('[data-batch-summary]')).to_contain_text('行问题 9')
+                    assert not page.locator('[data-batch-advanced]').evaluate('node => node.open')
                     assert len(previews) == 1
                     token = previews[0]['token']
                     original = snapshot()
@@ -104,6 +106,7 @@ def run():
                     assert writes == [] and snapshot() == original
                     # Reproduce 802 ACCEPT / 9 SKIP with deliberate UI edits;
                     # defaults never silently grant cash consent to those risks.
+                    open_import_advanced(page)
                     page.locator('[data-batch-bulk]').click()
                     dialog = page.locator('dialog[open]')
                     dialog.locator('[data-bulk-action]').select_option('ACCEPT')

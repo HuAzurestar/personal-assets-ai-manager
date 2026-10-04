@@ -11,6 +11,7 @@ import uvicorn
 from playwright.sync_api import expect, sync_playwright
 from serve_m2_ui import prepare_app
 from browser_artifact import viewport_evidence
+from import_browser_action import open_import_advanced
 
 
 def run():
@@ -62,6 +63,7 @@ def run():
                         expect(rows.first.locator("[data-row-decision]")).to_be_visible()
                     page.set_viewport_size({"width": 1280, "height": 800})
                     expect(page.locator("[data-batch-confirm]")).to_be_disabled()
+                    open_import_advanced(page)
                     page.locator("[data-batch-select-page]").click()
                     expect(page.locator("[data-batch-selection]")).to_contain_text("20 行")
                     page.locator("[data-batch-save]").click()
@@ -100,6 +102,7 @@ def run():
                     candidate.locator("button").click()
                     expect(rows.first.locator("[data-row-ref]")).to_contain_text("建设银行")
                     expect(rows.first.locator("[data-row-ref]")).to_contain_text("****1234")
+                    open_import_advanced(page)
                     page.locator("[data-batch-select-page]").click()
                     page.locator("[data-batch-save]").click()
                     expect(page.locator("[data-batch-confirm]")).to_be_enabled()
@@ -191,6 +194,7 @@ def run():
                     expect(page.locator('[data-batch-summary]')).to_contain_text('行问题 2')
                     expect(rows.first.locator('[data-row-decision]')).to_have_value('SKIP')
                     expect(rows.nth(1).locator('[data-row-decision]')).to_have_value('ACCEPT')
+                    open_import_advanced(page)
                     page.locator('[data-batch-select-page]').click()
                     # The user may explicitly change either inferred decision.
                     rows.first.locator('[data-row-decision]').select_option('ACCEPT')
