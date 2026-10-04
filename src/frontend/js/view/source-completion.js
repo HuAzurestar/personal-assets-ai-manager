@@ -11,7 +11,7 @@ const base='/paam/ledger/v1';
 
 export async function mountSourceCompletion(host, params, {signal,publication}) {
   const route=location.hash,valid=()=>host.isConnected && !signal.aborted && location.hash===route;
-  let selected=new Map(),result,appliedScope,reading=false,currentReading=false,published=false,generation=0,readController;
+  let selected=new Map(),result,appliedScope,reading=false,currentReading=false,published=false,generation=0,selectionGeneration=0,readController;
   let duplicateIds=[];const keepers=new Map(),labels=new Map([[0,'来源未识别']]);
   host.innerHTML=`<section class="panel account-correction-shell source-completion-shell" data-source-completion><h1>补齐历史流水来源</h1>
     <p>只选择当前有效且来源未识别的流水，一次指定来源卡。不会按昵称、尾号或交易对手猜卡，也不会创建个人或集合。</p>
@@ -58,7 +58,8 @@ export async function mountSourceCompletion(host, params, {signal,publication}) 
       catch(error) {readStatus.textContent=error.message;paint();}
     };});
   };
-  const selectionChanged=()=>{duplicateIds=[];keepers.clear();form.querySelector('[data-source-keepers]').hidden=true;
+  const selectionChanged=()=>{++selectionGeneration;duplicateIds=[];keepers.clear();form.querySelector('[data-source-keepers]').hidden=true;
+    form.querySelector('[data-source-current-result]').textContent=currentReading ? '本次选择已变更，请重新读取当前状态；迟到结果不会覆盖新范围。' : '';
     invalidate();form.querySelector('[data-review-impact]').innerHTML='';paint();};
   const updateKeepers=ids=>{
     duplicateIds=[...new Set(ids.map(id=>resourceId(id)))];
@@ -67,11 +68,11 @@ export async function mountSourceCompletion(host, params, {signal,publication}) 
     section.querySelector('[data-source-keeper-items]').innerHTML=duplicateIds.map(id=>`<p>重复交易 #${id} → <span data-source-kept="${id}">${esc(keepers.has(id) ? describe(keepers.get(id)) : '尚未选择保留交易')}</span> <button type="button" data-source-pick="${id}">查找保留交易</button></p>`).join('');
     section.querySelectorAll('[data-source-pick]').forEach(button=>{button.onclick=()=>{
       if (!valid() || locked() || reading) return;
-      const id=resourceId(button.dataset.sourcePick),issued=generation;
+      const id=resourceId(button.dataset.sourcePick),issued=selectionGeneration;
       const picker=workbenchDialog('明确保留的真实交易','<div data-source-kept-picker></div>');
       signal.addEventListener('abort',()=>{if (picker.open) picker.close();},{once:true});
       mountPicker(picker.querySelector('[data-source-kept-picker]'),{url:`${base}/candidate`,searchKeys:['summary'],signal,describe,
-        choose:row=>{if (valid() && !locked() && !reading && issued===generation && duplicateIds.includes(id)) {
+        choose:row=>{if (valid() && !locked() && !reading && issued===selectionGeneration && duplicateIds.includes(id)) {
           keepers.set(id,row);updateKeepers(duplicateIds);invalidate();}picker.close();}});
     };});
   };
@@ -142,7 +143,7 @@ export async function mountSourceCompletion(host, params, {signal,publication}) 
     const output=form.querySelector('[data-source-current-result]'),button=form.querySelector('[data-source-current]');
     if(!selected.size){output.textContent='没有本次选择；请先选择待补齐流水。';return;}
     currentReading=true;button.disabled=true;output.textContent='只读核对所选原流水及交易的当前事项…';
-    const rows=[...selected.values()];
+    const rows=[...selected.values()],issued=selectionGeneration;
     try{
       const state=await boundedSourceRead(async readSignal=>{
         const flows=[],reviews=new Map();let next=0;
@@ -160,11 +161,11 @@ export async function mountSourceCompletion(host, params, {signal,publication}) 
         const originals=reviews.size ? await sourceCompletionOriginals({new_reviews:[...reviews.keys()].map(id=>({source_review_id:id}))},readSignal) : new Map();
         return {flows,originals};
       },signal);
-      if(!valid())return;
+      if(!valid() || issued!==selectionGeneration)return;
       output.innerHTML=`<p>完整只读核对 ${state.flows.length} 条原流水；没有重发命令，也不据此解锁未知提交。</p>
         ${state.flows.sort((a,b)=>a.row.id-b.row.id).map(item=>`<p>流水 #${item.row.id} · ${esc(item.row.summary)}：${item.active ? '仍有效' : '已停用，内容保留'}</p>`).join('')}
         ${[...state.originals.values()].map(row=>`<section><h3>${esc(row.title || '当前事项')} · ${row.status==='CONFIRMED' ? '当前有效' : '已停用'}</h3><ul class="account-correction-list">${row.ledger_entries.map(flow=>`<li>${esc(money(flow))} ${esc(flow.cash_currency_code)} · ${flow.cash_direction==='IN' ? '收入' : '支出'} · ${esc(labels.get(flow.account_ref_id) || (flow.account_ref_id ? `来源卡 #${flow.account_ref_id}` : '来源未识别'))} · 流水 #${flow.id}</li>`).join('')}</ul></section>`).join('')}`;
-    }catch(error){if(valid() && error.name!=='AbortError')output.textContent=`查询失败：${error.message}；没有推断提交结果或重发。`;}
+    }catch(error){if(valid() && issued===selectionGeneration && error.name!=='AbortError')output.textContent=`查询失败：${error.message}；没有推断提交结果或重发。`;}
     finally{currentReading=false;if(valid())button.disabled=false;}
   };
   host.querySelector('[data-source-back]').onclick=()=>history.back();

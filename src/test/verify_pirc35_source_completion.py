@@ -120,6 +120,28 @@ def run():
                         page.locator(f'dialog[open] [data-picker-id="{ref}"]').click()
                         expect(form.locator('[name="account_ref_id"]')).to_have_value(str(ref))
                     choose(2)
+                    # A late readonly result must not repaint an old selected
+                    # scope after the user explicitly clears that selection.
+                    page.evaluate('''() => {
+                      window.sourceOriginalFetch=window.fetch;
+                      let held=false;
+                      window.fetch=(url,options) => window.sourceOriginalFetch(url,options).then(response => {
+                        if(!held && String(url).includes('/paam/ledger/v1/flow/')) {
+                          held=true;return new Promise(resolve => {window.releaseSourceCurrent=()=>resolve(response);});
+                        }
+                        return response;
+                      });
+                    }''')
+                    form.locator('[data-source-current]').click()
+                    page.wait_for_function('typeof window.releaseSourceCurrent === "function"')
+                    form.locator('[data-source-clear]').click()
+                    page.evaluate('() => {window.releaseSourceCurrent();window.fetch=window.sourceOriginalFetch;}')
+                    expect(form.locator('[data-source-current-result]')).to_contain_text('本次选择已变更')
+                    expect(form.locator('[data-source-current]')).to_be_enabled()
+                    expect(form.locator('[data-source-count]')).to_contain_text('已选 0 条')
+                    assert not commands and snapshot()==before
+                    form.locator('[data-source-select-all]').click()
+                    expect(form.locator('[data-source-count]')).to_contain_text('已选 4 条')
                     def fail_original(route):
                         route.fulfill(status=503,content_type='application/json',body=json.dumps(dict(status=503,message='Mock full original unavailable',body=dict(code='QUERY_BUSY'))))
                     original_url=f'**/paam/ledger/v1/review/{rid}'
@@ -191,6 +213,9 @@ def run():
                     expect(form.locator('[data-source-current-result]')).to_contain_text('Mock bulk source 2')
                     form.evaluate('node=>node.requestSubmit()');form.locator('[data-review-preview]').evaluate('node=>node.click()')
                     form.locator('[data-source-select-all]').evaluate('node=>node.click()')
+                    form.locator('[data-named-choice="account_ref_id"] [data-choice-pick]').evaluate('node=>node.onclick()')
+                    form.locator('[data-source-select-all]').evaluate('node=>node.onclick()')
+                    assert page.locator('dialog[open]').count()==0
                     assert len(commands)==count==3 and snapshot()==committed
                     assert all(set(cmd)=={'account_corrections','correction_duplicates','expected_reviews','preview_digest'} for cmd in commands)
                     assert len(commands[1]['account_corrections'])==4 and len(commands[2]['account_corrections'])==1
