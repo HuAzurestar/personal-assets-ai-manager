@@ -27,6 +27,7 @@ from backend.schema.setting import (
     ModelSecretStateRead,
 )
 from backend.schema.response import ResponseWarning
+from backend.service.model_call_service import synchronized_authorization
 
 
 DEFAULT_DISCLOSURE: dict[str, Any] = {
@@ -54,6 +55,7 @@ class SettingService:
         value, updated_time = self._value_and_time(setting)
         return self._automation_read(value, updated_time)
 
+    @synchronized_authorization
     def update_automation(
         self,
         payload: AutomationSettingUpdateRequest,
@@ -176,6 +178,7 @@ class SettingService:
             self.mapper.rollback()
             raise
 
+    @synchronized_authorization
     def update_model_secret(
         self,
         model_id: int,
@@ -185,6 +188,7 @@ class SettingService:
         self.secret_store.set(model_id, secret)
         return ModelSecretStateRead(model_id=model_id, key_configured=True)
 
+    @synchronized_authorization
     def delete_model_secret(self, model_id: int) -> ModelSecretStateRead:
         self._require_model(model_id)
         self.secret_store.delete(model_id)

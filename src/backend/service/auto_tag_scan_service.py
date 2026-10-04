@@ -10,6 +10,8 @@ from typing import Protocol
 
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
+from sqlalchemy import text
+import json
 
 from backend.core.job_scheduler import JobCallback, JobRunContext
 from backend.error import LlmAdapterError
@@ -28,6 +30,7 @@ from backend.schema.llm_analysis import (
 )
 from backend.service.llm_privacy_service import LlmPrivacyService
 from backend.service.llm_prompt_audit_service import PromptAuditContext
+from backend.service.model_call_service import AUTHORIZATION_LOCK
 
 
 class TagAnalyzer(Protocol):
@@ -100,13 +103,19 @@ class AutoTagScanService:
         return await self._run(rule_id, context, build)
 
     async def run_protected(self, rule_id: int, context: JobRunContext, privacy: LlmPrivacyService, *, synthetic_only: bool = False) -> ScanRunReport:
+        selected_privacy = privacy
+        policy_resolved = False
         def build(page: ScanPage, ledger_id: int):
+            nonlocal selected_privacy, policy_resolved
+            if page.execution_snapshot is not None and not policy_resolved:
+                selected_privacy = privacy.with_disclosure(json.loads(page.execution_snapshot.disclosure_json))
+                policy_resolved = True
             with self._sessions() as db:
                 source = AutoTagScanMapper(db).read_protected_source(ledger_id, synthetic_only=synthetic_only)
-            return privacy.build_payload(page, source) if source is not None else None
+            return selected_privacy.build_payload(page, source) if source is not None else None
 
         def validate(suggestions: tuple, amount_mode: int):
-            privacy.validate_suggestions(suggestions, amount_mode=amount_mode)
+            selected_privacy.validate_suggestions(suggestions, amount_mode=amount_mode)
 
         return await self._run(
             rule_id, context, build, suggestion_validator=validate, stop_on_provider_error=True,
@@ -118,6 +127,8 @@ class AutoTagScanService:
     ) -> ScanRunReport:
         counts = _Counts()
         last_error_code = None
+        current_call_id = None
+        current_validation = "REJECTED"
 
         def report(reason):
             context.progress(phase="FINISH", **asdict(counts))
@@ -149,15 +160,39 @@ class AutoTagScanService:
         def commit(ledger_id, kind, suggestions=()):
             context.progress(phase="COMMIT", **asdict(counts))
             try:
-                return self._commit(token, ledger_id, kind, suggestions)
+                with AUTHORIZATION_LOCK:
+                    with context.commit_guard() as allowed:
+                        if not allowed:
+                            if current_call_id is not None and hasattr(self._analyzer, "prevent_recovery"):
+                                self._analyzer.prevent_recovery(current_call_id)
+                            return ScanCommitResult("STALE", "RULE_TOKEN_CHANGED")
+                        if current_call_id is not None and hasattr(self._analyzer, "validate_commit"):
+                            if not self._analyzer.validate_commit(current_call_id):
+                                self._record_business(rule_id, ledger_id, current_call_id, current_validation, "STALE")
+                                return ScanCommitResult("STALE", "RULE_TOKEN_CHANGED")
+                        if current_call_id is not None:
+                            business = self._business(ledger_id, current_call_id, current_validation, "PENDING")
+                            self._record_business(rule_id, ledger_id, current_call_id, current_validation, "PENDING")
+                            result = self._commit(token, ledger_id, kind, suggestions,
+                                                  allow_paused=context.control is not None, business=business)
+                            if result.status == "STALE":
+                                self._record_business(rule_id, ledger_id, current_call_id, current_validation, "STALE")
+                            return result
+                        if context.control is not None:
+                            return self._commit(token, ledger_id, kind, suggestions, allow_paused=True)
+                        return self._commit(token, ledger_id, kind, suggestions)
             except OverflowError:
                 emit("COUNTER_EXHAUSTED", ledger_id, phase="COMMIT")
                 return ScanCommitResult("STALE", "COUNTER_EXHAUSTED")
             except Exception:  # No raw DB exception/parameters enter diagnostics.
+                if current_call_id is not None:
+                    self._record_business(rule_id, ledger_id, current_call_id, current_validation, "FAILED")
                 emit("COMMIT_FAILED", ledger_id, phase="COMMIT")
                 return ScanCommitResult("STALE", "COMMIT_FAILED")
 
         for ledger_id in page.ledger_ids:
+            current_call_id = None
+            current_validation = "REJECTED"
             if not context.may_start_work():
                 return report("SOFT_BUDGET_EXHAUSTED")
             counts.inspected_count += 1
@@ -216,18 +251,21 @@ class AutoTagScanService:
                 raw_analysis = await self._analyze_with_policy(
                     payload, rule_id=rule_id, model_id=page.model_id, context=context,
                     ledger_id=ledger_id, rule_revision=token.rule_revision,
+                    execution_snapshot=page.execution_snapshot,
                 )
             except _RetryDeferred:
                 emit("RETRY_DEFERRED", ledger_id, phase="RETRY_WAIT")
                 return report("RETRY_DEFERRED")
             except LlmAdapterError as error:
-                if error.code in {"AUTH_ERROR", "CONFIG_ERROR", "AUDIT_STORAGE_ERROR"}:
+                current_call_id = error.details.get("call_id")
+                if error.code in {"AUTH_ERROR", "CONFIG_ERROR", "MODEL_DISABLED", "AUDIT_STORAGE_ERROR", "AUDIT_FINISH_FAILED", "OPERATION_BLOCKED", "CANCELLED"}:
                     emit(error.code, ledger_id, phase="CALL")
                     return report(error.code)
                 kind = "ITEM_FAILURE"
                 failure = error.code
                 detail = error.details.get("reason_code")
             else:
+                current_call_id = getattr(raw_analysis, "_call_id", None)
                 # Only malformed output is an item failure. Unexpected analyzer
                 # exceptions must retain the current durable checkpoint.
                 try:
@@ -242,6 +280,7 @@ class AutoTagScanService:
                     suggestions = tuple(analysis.suggestions)
                     if suggestion_validator is not None:
                         suggestion_validator(suggestions, page.amount_mode)
+                    current_validation = "PASSED"
                 except LlmAdapterError as error:
                     kind = "ITEM_FAILURE"
                     failure = error.code
@@ -253,7 +292,10 @@ class AutoTagScanService:
 
             # A paused/replaced registration must not commit an in-flight response.
             # Budget expiry alone is soft and does allow this item's atomic commit.
-            if not context.is_active():
+            if not context.may_commit():
+                if current_call_id is not None and hasattr(self._analyzer, "prevent_recovery"):
+                    self._analyzer.prevent_recovery(current_call_id)
+                    self._record_business(rule_id, ledger_id, current_call_id, current_validation, "CANCELLED")
                 return report("RULE_TOKEN_CHANGED")
             result = commit(ledger_id, kind, suggestions)
             if result.status == "STALE":
@@ -288,6 +330,7 @@ class AutoTagScanService:
     async def _analyze_with_policy(
         self, payload: LlmAnalysisInput, *, rule_id: int, model_id: int, context: JobRunContext,
         ledger_id: int, rule_revision: int,
+        execution_snapshot=None,
     ) -> LlmAnalysisResult:
         for attempt in range(1, 4):
             if not context.may_start_work():
@@ -300,6 +343,8 @@ class AutoTagScanService:
                         run_id=context.run_id, rule_id=rule_id,
                         rule_revision=rule_revision, ledger_id=ledger_id,
                         model_id=model_id, attempt=attempt,
+                        run_control=context,
+                        execution_snapshot=execution_snapshot,
                     ),
                 )
             except LlmAdapterError as error:
@@ -333,13 +378,26 @@ class AutoTagScanService:
 
     def _read_page(self, rule_id: int, limit: int) -> ScanPage | None:
         with self._sessions() as db:
+            if db.bind is not None and db.bind.dialect.name == "sqlite":
+                db.execute(text("BEGIN"))
             return AutoTagScanMapper(db).read_page(rule_id, limit=limit)
 
-    def _commit(self, token, ledger_id, kind, suggestions):
+    def _commit(self, token, ledger_id, kind, suggestions, *, allow_paused=False, business=None):
         with self._sessions() as db:
             return AutoTagScanMapper(db).commit_item(
-                token, ledger_id=ledger_id, kind=kind, suggestions=suggestions,
+                token, ledger_id=ledger_id, kind=kind, suggestions=suggestions, allow_paused=allow_paused, business=business,
             )
+
+    @staticmethod
+    def _business(ledger_id, call_id, validation, commit):
+        return dict(ledger_id=ledger_id, call_id=call_id, validation=validation, commit=commit)
+
+    def _record_business(self, rule_id, ledger_id, call_id, validation, commit):
+        with self._sessions() as db:
+            mapper = AutoTagScanMapper(db)
+            mapper._begin_write()
+            mapper.record_business(rule_id, self._business(ledger_id, call_id, validation, commit))
+            db.commit()
 
     @staticmethod
     def _initial_skip_reason(page: ScanPage, ledger_id: int) -> str | None:

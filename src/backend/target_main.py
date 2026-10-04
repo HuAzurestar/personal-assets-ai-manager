@@ -30,6 +30,8 @@ from backend.router.ledger_transaction_fact import (
     router as ledger_transaction_fact_router,
 )
 from backend.router.system import router as system_router
+from backend.router.system_config import router as system_config_router
+from backend.router.llm_management import router as llm_management_router
 from backend.router.system_setting import router as system_setting_router
 from backend.router.tag import router as tag_router
 from backend.router.tag_assignment import router as tag_assignment_router
@@ -40,6 +42,7 @@ from backend.service.auto_tag_schedule_service import AutoTagScheduleService
 from backend.service.configured_llm_analyzer import provider_secret_reader
 from backend.service.target_economic_service import TargetEconomicService
 from backend.service.target_intake_service import TargetIntakeService
+from backend.service.runtime_config_service import RuntimeConfigService
 
 if SQL_WEB_ENABLED:
     from a2wsgi import WSGIMiddleware
@@ -71,15 +74,23 @@ async def lifespan(application: FastAPI):
         synthetic_acceptance_enabled=AUTOTAG_SYNTHETIC_ACCEPTANCE,
         real_analysis_enabled=AUTOTAG_REAL_ANALYSIS,
     )
-    auto_tag_schedule.register_persisted()
+    runtime_config = RuntimeConfigService(target_database.SessionLocal, auto_tag_schedule)
+    runtime_config.reconcile()
+    application.state.runtime_config = runtime_config
     application.state.auto_tag_schedule = auto_tag_schedule
+    async def reconcile_configuration(context):
+        await context.run_sync(runtime_config.reconcile)
+    job_scheduler.register_interval("system:config-reconcile", seconds=60, callback=reconcile_configuration)
     await job_scheduler.start()
     try:
         yield
     finally:
         await job_scheduler.shutdown()
+        await auto_tag_schedule.close()
         if hasattr(application.state, "auto_tag_schedule"):
             del application.state.auto_tag_schedule
+        if hasattr(application.state, "runtime_config"):
+            del application.state.runtime_config
 
 
 app = FastAPI(
@@ -105,4 +116,6 @@ app.include_router(tag_router)
 app.include_router(tag_assignment_router)
 app.include_router(tag_assignment_request_router)
 app.include_router(system_router)
+app.include_router(system_config_router)
+app.include_router(llm_management_router)
 app.include_router(system_setting_router)

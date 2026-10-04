@@ -76,14 +76,20 @@ function disclosureSummaryMarkup() {
 }
 
 function scanControlMarkup() {
-  const enabled = setting.scan_enabled;
+  const config = setting.config_state;
+  const section = config?.sections?.find((item) => item.section === "scan-control");
+  const enabled = section?.effective_value ?? setting.scan_enabled;
   const available = setting.scan_available;
   const label = !available ? "部署层已关闭" : enabled ? "已开启" : "已关闭";
   const detail = !available
     ? "部署环境禁止自动分析；需要管理员调整启动配置并重建容器。"
     : enabled ? "启用的规则会按计划自动分析，可能产生模型费用。"
       : "规则和模型配置会保留，但不会自动分析。";
-  return `<div class="automation-notice compact"><strong>自动分析：${label}</strong><span>${detail}</span><button type="button" data-action="scan-toggle" ${available ? "" : "disabled"}>${!available ? "请调整部署配置" : enabled ? "关闭自动分析" : "开启自动分析"}</button></div>`;
+  const configurationDetail = section?.overridden
+    ? `已保存：${setting.scan_enabled ? "开启" : "关闭"}；有效值由部署覆盖：${enabled ? "开启" : "关闭"}。`
+    : "";
+  const applyDetail = config?.apply?.status === "FAILED" ? "配置应用失败，自动分析已暂停。" : config?.apply?.status === "PENDING" ? "配置已保存，等待应用。" : config?.apply?.status === "NEEDS_RESTART" ? "配置已保存，需要重启。" : "";
+  return `<div class="automation-notice compact"><strong>自动分析：${label}</strong><span>${detail} ${configurationDetail} ${applyDetail}</span><button type="button" data-action="scan-toggle" ${available && !section?.overridden ? "" : "disabled"}>${!available || section?.overridden ? "请调整部署配置" : enabled ? "关闭自动分析" : "开启自动分析"}</button></div>`;
 }
 
 export async function automationSettingsPage() {
@@ -101,6 +107,7 @@ export async function automationSettingsPage() {
       <div class="disclosure-card" data-auto-disclosure>${disclosureSummaryMarkup()}</div>
     </section>
     <section class="automation-section"><h3>自动分析开关</h3><div data-auto-scan-control>${scanControlMarkup()}</div></section>
+    <section class="automation-section"><h3>公共 Prompt</h3><p>部署文件资产只读；规则指引仍在各条规则中独立编辑。</p><button type="button" class="quiet" data-action="prompt-library">查看模板与虚构预览</button></section>
     <section class="automation-section"><h3>运行概况</h3><div data-auto-notice>${scheduleNotice()}</div>${freshnessMarkup}
       <nav class="automation-links"><a href="#details/auto-rule">管理规则 →</a><a href="#workbench/tag-review">查看待审建议 →</a></nav>
       <section class="automation-runtime"><h3>任务队列</h3><div data-auto-runtime>${runtimeMarkup(scheduleStatus)}</div><div data-auto-diagnostics>${diagnosticsMarkup(diagnostics)}</div></section></section>
@@ -331,7 +338,7 @@ function openDialog(title, body) {
 }
 
 function extrasFor(model) {
-  const { model: _model, api_base: _base, proxy_url: _proxy, temperature: _temperature, max_tokens: _tokens, timeout: _timeout, ...extra } = model?.litellm_params || {};
+  const { model: _model, api_base: _base, proxy_url: _proxy, allow_insecure_http: _http, temperature: _temperature, max_tokens: _tokens, timeout: _timeout, ...extra } = model?.litellm_params || {};
   return Object.keys(extra).length ? JSON.stringify(extra, null, 2) : "";
 }
 
@@ -358,7 +365,8 @@ function modelDialog(model = null) {
     <label>供应商<select name="provider">${Object.entries(providerPresets).map(([id, preset]) => `<option value="${id}" ${provider === id ? "selected" : ""}>${preset.label}</option>`).join("")}</select><small>分类会向所选供应商发送经隐私处理的账目内容；OpenCode 部分免费模型可能记录输入或用于改进模型，使用前请核对隐私条款。</small></label>
     <label>LiteLLM 模型名<input name="model" list="model-catalog-${value.id}" required maxlength="512" value="${esc(params.model || "")}" placeholder="${providerPresets[provider].example}"><datalist id="model-catalog-${value.id}"></datalist><small>选择列表中的模型会自动补上 LiteLLM 的 openai/ 前缀；也可手动输入。</small></label>
     <div><button type="button" class="quiet" data-model-catalog>获取模型列表</button><small data-model-catalog-status role="status">只读取供应商模型清单，不调用推理；先填写 API Key，或使用已保存的密钥。</small></div>
-    <label>HTTPS API 地址<input name="api_base" type="url" required maxlength="2048" pattern="https://.*" value="${esc(params.api_base || "")}" placeholder="https://api.example.test/v1"></label>
+    <label>API 地址<input name="api_base" type="url" required maxlength="2048" pattern="https?://.*" value="${esc(params.api_base || "")}" placeholder="https://api.example.test/v1"></label>
+    <label class="check-row"><input name="allow_insecure_http" type="checkbox" ${params.allow_insecure_http ? "checked" : ""}>明确允许此目标使用明文 HTTP（例如本地模型；内容和凭据可能被网络读取）</label>
     <label>HTTP(S) 代理（可选）<input name="proxy_url" type="url" maxlength="2048" value="${esc(params.proxy_url || "")}" placeholder="http://host.docker.internal:7890"><small>Docker 内不能用 127.0.0.1 访问宿主机代理；可用 host.docker.internal。留空使用部署级 PAAM_LLM_PROXY。</small></label>
     <details class="model-advanced"><summary>高级参数</summary><div class="form-grid three"><label>温度<input name="temperature" type="number" step="any" value="${params.temperature ?? ""}" placeholder="供应商默认"></label><label>最大输出长度<input name="max_tokens" type="number" min="1" step="1" value="${params.max_tokens ?? ""}" placeholder="供应商默认"></label><label>超时（秒）<input name="timeout" type="number" min="0.001" step="any" value="${params.timeout ?? ""}" placeholder="供应商默认"></label></div>
     <label>其他供应商参数（JSON 对象）<textarea name="extras" rows="5" placeholder='{"extra_body":{"enable_thinking":false}}'>${esc(extrasFor(value))}</textarea><small>保留 0 / false；禁止在这里写 api_key、password 或 secret。</small></label>
@@ -395,6 +403,22 @@ function modelDialog(model = null) {
   form.addEventListener("submit", submitModel);
 }
 
+async function promptLibrary() {
+  const templates = await request("/paam/system/v1/llm/prompt/list");
+  const dialog = openDialog("公共 Prompt（只读）", `<div class="stack">${templates.map((t) => `<section><h3>${esc(t.name)}</h3><small>${esc(t.id)} · SHA-256 ${esc(t.fingerprint)}</small><button type="button" class="quiet" data-prompt-preview="${esc(t.id)}">虚构预览（不调用模型）</button></section>`).join("")}<pre data-prompt-content></pre></div>`);
+  dialog.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-prompt-preview]");
+    if (!button || button.disabled) return;
+    button.disabled = true;
+    try {
+      const base = `/paam/system/v1/llm/prompt/${encodeURIComponent(button.dataset.promptPreview)}`;
+      const [preview, references] = await Promise.all([jsonRequest(base + "/preview", "POST", {}), request(base + "/reference")]);
+      $('[data-prompt-content]', dialog).textContent = JSON.stringify({ synthetic: true, fingerprint: preview.fingerprint, references, messages: preview.messages }, null, 2);
+    } catch (error) { $('[data-prompt-content]', dialog).textContent = error.message || "无法读取模板"; }
+    finally { button.disabled = false; }
+  });
+}
+
 async function loadModelCatalog(form) {
   const button = $('[data-model-catalog]', form);
   const status = $('[data-model-catalog-status]', form);
@@ -409,6 +433,7 @@ async function loadModelCatalog(form) {
   try {
     const result = await jsonRequest("/paam/system/v1/setting/automation/model/catalog", "POST", {
       provider, api_base: apiBase, proxy_url: proxyUrl || null,
+      allow_insecure_http: $('[name="allow_insecure_http"]', form).checked,
       ...(secret ? { secret } : existing ? { model_id: id } : {}),
     });
     if (!form.isConnected) return;
@@ -437,6 +462,7 @@ function modelParameters(data) {
   }
   if (!extra || Array.isArray(extra) || typeof extra !== "object") throw new Error("其他供应商参数必须是 JSON 对象");
   return { ...extra, model: String(data.get("model")), api_base: String(data.get("api_base")),
+    ...(data.get("allow_insecure_http") ? { allow_insecure_http: true } : {}),
     proxy_url: String(data.get("proxy_url") || "").trim() || null,
     temperature: numberOrNull(data.get("temperature")), max_tokens: numberOrNull(data.get("max_tokens"), true), timeout: numberOrNull(data.get("timeout")) };
 }
@@ -1073,6 +1099,7 @@ export function bindAutomation(root, rerender, notify, navigate) {
       if (action === "model-new") modelDialog();
       if (action === "model-edit") modelDialog(setting.models.find((item) => item.id === id));
       if (action === "model-test") await testModel(button);
+      if (action === "prompt-library") await promptLibrary();
       if (action === "scan-toggle") {
         const next = !setting.scan_enabled;
         const prompt = next

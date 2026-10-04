@@ -61,7 +61,7 @@ def install(client, model_id: int, *, apply: bool = False):
                     raise ValueError("Existing Tag conflicts with the preset; no overwrite")
             existing = [row for row in rules if row["view_id"] == view["id"]]
         rule_spec = spec["rule"]
-        config = {"schema_version": 1, "model_id": model_id, "prompt": rule_spec["prompt"]}
+        config = {"schema_version": 1, "model_id": model_id, "prompt": rule_spec["prompt"], "prompt_id": "tag-suggestion"}
         if len(existing) > 1 or any(
             row["name"] != rule_spec["name"] or row["method_config"] != config
             or row["amount_mode"] != rule_spec["amount_mode"] or row["cron"] != rule_spec["cron"]

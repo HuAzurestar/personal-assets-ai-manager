@@ -36,6 +36,7 @@ def decode_method_config(method_config_json: str) -> dict[str, object]:
     if not isinstance(value, dict):
         raise ValueError("method_config_json must be a JSON object")
     try:
+        value.setdefault("prompt_id", "tag-suggestion")
         validated = AutoTagMethodConfig.model_validate(value).model_dump(mode="json")
     except ValidationError as error:
         raise ValueError("method_config_json does not match schema version 1") from error
@@ -56,6 +57,17 @@ def encode_method_config(value: dict[str, object]) -> str:
 
 
 class AutoTagRuleMapper:
+    def prompt_references(self, prompt_id):
+        return [dict(rule_id=row.id, name=row.name) for row in self.db.execute(select(
+            AutoTagRule.id, AutoTagRule.name,
+        ).where(func.coalesce(func.json_extract(AutoTagRule.method_config_json, "$.prompt_id"),
+                              "tag-suggestion") == prompt_id).order_by(AutoTagRule.id).limit(1000))]
+
+    def config_schedules(self):
+        return [dict(row) for row in self.db.execute(select(
+            AutoTagRule.id, AutoTagRule.enabled, AutoTagRule.cron,
+        ).order_by(AutoTagRule.id)).mappings()]
+
     """Explicit-column persistence for automatic tag rules."""
 
     def __init__(self, db: Session):

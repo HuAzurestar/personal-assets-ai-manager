@@ -9,11 +9,15 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from backend.core.job_scheduler import JobRunContext
 
 from sqlalchemy.orm import Session
 
 from backend.error import LlmAdapterError
 from backend.mapper.llm_prompt_audit_mapper import LlmPromptAuditMapper
+from backend.schema.execution_snapshot import ExecutionSnapshot
 
 MAX_CAPTURED_RESPONSE_BYTES = 256 * 1024
 
@@ -26,6 +30,8 @@ class PromptAuditContext:
     ledger_id: int
     model_id: int
     attempt: int
+    run_control: JobRunContext | None = None
+    execution_snapshot: ExecutionSnapshot | None = None
 
 
 class LlmPromptAuditService:

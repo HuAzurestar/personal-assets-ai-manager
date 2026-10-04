@@ -10,6 +10,7 @@ from backend.schema.disclosure_preview import (
     DisclosurePreviewRequest,
     DisclosurePreviewResponse,
 )
+from backend.schema.runtime_config import RuntimeConfigRead
 from backend.schema.setting import (
     AutomationSettingResponse,
     AutomationSettingUpdateRequest,
@@ -44,13 +45,18 @@ def _service(
 
 @router.get("", response_model=AutomationSettingResponse)
 def get_automation_setting(
+    request: Request,
     db: Session = Depends(get_db),
     secret_store: ProtectedSecretStore = Depends(get_protected_secret_store),
 ):
+    body = _service(db, secret_store).get_automation()
+    runtime_config = getattr(request.app.state, "runtime_config", None)
+    if runtime_config is not None:
+        body.config_state = RuntimeConfigRead.model_validate(runtime_config.describe())
     return AutomationSettingResponse(
         status=200,
         message="ok",
-        body=_service(db, secret_store).get_automation(),
+        body=body,
     )
 
 
@@ -61,12 +67,15 @@ def update_automation_setting(
     db: Session = Depends(get_db),
     secret_store: ProtectedSecretStore = Depends(get_protected_secret_store),
 ):
-    schedule = getattr(request.app.state, "auto_tag_schedule", None)
+    schedule = getattr(request.app.state, "runtime_config", None) or getattr(request.app.state, "auto_tag_schedule", None)
     service = SettingService(
         db, secret_store,
-        on_scan_setting_changed=getattr(schedule, "sync_enabled", None),
+        on_scan_setting_changed=getattr(schedule, "reconcile", None) or getattr(schedule, "sync_enabled", None),
     )
     body = service.update_automation(payload)
+    runtime_config = getattr(request.app.state, "runtime_config", None)
+    if runtime_config is not None:
+        body.config_state = RuntimeConfigRead.model_validate(runtime_config.describe())
     return AutomationSettingResponse(
         status=200,
         message="ok",

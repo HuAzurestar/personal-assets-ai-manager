@@ -88,6 +88,7 @@ def test_automation_sql_contracts_reject_invalid_persisted_values(tmp_path):
         }
         assert {column["name"] for column in database.get_columns("auto_tag_rule")} == {
             "id", "name", "view_id", "method", "method_config_json",
+            "last_analysis_json",
             "enabled", "cron", "amount_mode", "rule_revision",
             "scan_after_ledger_id", "scan_epoch", "analyzed_count",
             "failed_count", "suggested_count", "accepted_count",
@@ -98,6 +99,7 @@ def test_automation_sql_contracts_reject_invalid_persisted_values(tmp_path):
             for column in database.get_columns("tag_assignment_request")
         } == {
             "id", "rule_id", "rule_revision", "ledger_id", "view_id",
+            "call_id",
             "proposed_tag_id", "status", "reason_summary", "created_time",
             "updated_time",
         }
@@ -198,6 +200,7 @@ def test_automation_mappers_round_trip_and_survive_restart(tmp_path):
             "schema_version": 1,
             "model_id": 7,
             "prompt": "synthetic only",
+            "prompt_id": "tag-suggestion",
         }
         assert request is not None
         assert request["status"] == 1

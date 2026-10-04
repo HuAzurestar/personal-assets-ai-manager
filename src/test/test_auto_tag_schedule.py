@@ -258,9 +258,9 @@ def test_persisted_enabled_rules_are_restored_and_ticks_use_shared_fifo(tmp_path
         ((0, 0, 0, 0), "MODEL_DISABLED", 0, "FAILED", "MODEL_DISABLED"),
         ((0, 0, 0, 0), "RULE_DISABLED", 0, "FAILED", "RULE_DISABLED"),
         ((0, 0, 0, 0), "VIEW_INACTIVE", 0, "FAILED", "VIEW_INACTIVE"),
-        ((0, 0, 0, 0), "SOFT_BUDGET_EXHAUSTED", 0, "PARTIAL_FAILURE", "SOFT_BUDGET_EXHAUSTED"),
-        ((2, 2, 2, 0), "SOFT_BUDGET_EXHAUSTED", 0, "PARTIAL_FAILURE", "SOFT_BUDGET_EXHAUSTED"),
-        ((1, 1, 0, 1), "SOFT_BUDGET_EXHAUSTED", 0, "PARTIAL_FAILURE", "SOFT_BUDGET_EXHAUSTED"),
+        ((0, 0, 0, 0), "SOFT_BUDGET_EXHAUSTED", 0, "YIELDED", "SOFT_BUDGET_EXHAUSTED"),
+        ((2, 2, 2, 0), "SOFT_BUDGET_EXHAUSTED", 0, "YIELDED", "SOFT_BUDGET_EXHAUSTED"),
+        ((1, 1, 0, 1), "SOFT_BUDGET_EXHAUSTED", 0, "YIELDED", "SOFT_BUDGET_EXHAUSTED"),
         ((2, 1, 1, 1), "PAGE_COMPLETE", 1, "PARTIAL_FAILURE", "ITEM_FAILURE"),
         ((1, 0, 0, 1), "PAGE_COMPLETE", 1, "FAILED", "ITEM_FAILURE"),
     ],
@@ -297,7 +297,7 @@ def test_scan_outcome_is_visible_in_shared_scheduler(
                     break
                 await asyncio.sleep(0.01)
             assert task.last_result == expected_result
-            assert task.last_error_code == expected_code
+            assert (task.last_outcome_code if expected_result == "YIELDED" else task.last_error_code) == expected_code
         finally:
             await scheduler.shutdown()
 

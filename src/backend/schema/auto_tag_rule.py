@@ -31,6 +31,7 @@ class AutoTagMethodConfig(BaseModel):
     schema_version: Literal[1]
     model_id: int = Field(strict=True, ge=1)
     prompt: str = Field(min_length=1)
+    prompt_id: Literal["tag-suggestion"] = "tag-suggestion"
 
     @field_validator("prompt")
     @classmethod

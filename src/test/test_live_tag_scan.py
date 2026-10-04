@@ -24,6 +24,8 @@ from backend.error import LlmAdapterError
 from backend.mapper.auto_tag_scan_mapper import ProtectedScanSource
 from backend.router import system as system_router
 from backend.service import llm_adapter
+from backend import bootstrap
+from middleware.llm.provider import LiteLlmProvider
 from backend.service.auto_tag_schedule_service import AutoTagScheduleService
 from backend.service.llm_privacy_service import LlmPrivacyService
 
@@ -55,7 +57,7 @@ def _install_runtime(monkeypatch, runtime, completion):
     monkeypatch.setattr(target_main, "provider_secret_reader", SimpleNamespace(
         get_for_provider=lambda _: "offline-test-key",
     ))
-    monkeypatch.setattr(llm_adapter, "_direct_litellm_completion", completion)
+    monkeypatch.setattr(bootstrap, "LiteLlmProvider", lambda *_args, **_kwargs: LiteLlmProvider(completion))
     target_intake_preview_store.clear()
     return scheduler
 
@@ -161,7 +163,7 @@ def test_import_cron_json_request_reject_restart_and_pause_are_separate(
         _import(client, "fourth-while-disabled")
         time.sleep(1.2)
         assert len(calls) == 3 and len(_requests(client)) == 3
-        assert not any(task.task_key == f"tag-scan:{rule['id']}" for task in scheduler.snapshot().tasks)
+        assert next(task for task in scheduler.snapshot().tasks if task.task_key == f"tag-scan:{rule['id']}").queue_state == "PAUSED"
     target_intake_preview_store.clear()
 
 

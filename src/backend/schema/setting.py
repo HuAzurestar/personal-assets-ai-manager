@@ -16,6 +16,7 @@ from pydantic import (
 
 from backend.core.money import MAX_ABS_AMOUNT, normalize_currency_code
 from backend.schema.response import SuccessResponse
+from backend.schema.runtime_config import RuntimeConfigRead
 
 
 _FORBIDDEN_PARAMETER_KEYS = {
@@ -85,6 +86,7 @@ class LiteLLMParams(BaseModel):
     model: str = Field(min_length=1, max_length=512)
     api_base: str = Field(min_length=1, max_length=2048)
     proxy_url: str | None = Field(default=None, max_length=2048)
+    allow_insecure_http: bool = Field(default=False, strict=True, exclude_if=lambda v: not v)
     temperature: float | None = Field(default=None, strict=True)
     max_tokens: int | None = Field(default=None, strict=True, ge=1)
     timeout: float | None = Field(default=None, strict=True, gt=0)
@@ -108,7 +110,7 @@ class LiteLLMParams(BaseModel):
     def validate_api_base(cls, value: str) -> str:
         parsed = urlsplit(value)
         if (
-            parsed.scheme != "https"
+            parsed.scheme not in {"http", "https"}
             or not parsed.hostname
             or parsed.username is not None
             or parsed.password is not None
@@ -116,8 +118,14 @@ class LiteLLMParams(BaseModel):
             or parsed.query
             or re.search(r"[\s%]", value)
         ):
-            raise ValueError("api_base must be an HTTPS URL without credentials or fragment")
+            raise ValueError("api_base must be an HTTP(S) URL without credentials or fragment")
         return value
+
+    @model_validator(mode="after")
+    def require_http_authorization(self):
+        if urlsplit(self.api_base).scheme == "http" and not self.allow_insecure_http:
+            raise ValueError("HTTP requires explicit authorization for this connection")
+        return self
 
     @field_validator("proxy_url")
     @classmethod
@@ -228,6 +236,7 @@ class AutomationSettingRead(BaseModel):
     scan_enabled: bool
     scan_available: bool
     updated_time: datetime | None
+    config_state: RuntimeConfigRead | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class AutomationSettingResponse(SuccessResponse[AutomationSettingRead]):
@@ -262,6 +271,7 @@ class ModelCatalogRequest(BaseModel):
     provider: Literal["custom", "siliconflow", "deepseek", "opencode_console"]
     api_base: str = Field(min_length=1, max_length=2048)
     proxy_url: str | None = Field(default=None, max_length=2048)
+    allow_insecure_http: bool = Field(default=False, strict=True)
     model_id: int | None = Field(default=None, strict=True, ge=1)
     secret: str | None = Field(default=None, max_length=8192)
 
@@ -269,6 +279,12 @@ class ModelCatalogRequest(BaseModel):
     @classmethod
     def validate_api_base(cls, value: str) -> str:
         return LiteLLMParams.validate_api_base(value)
+
+    @model_validator(mode="after")
+    def require_http_authorization(self):
+        if urlsplit(self.api_base).scheme == "http" and not self.allow_insecure_http:
+            raise ValueError("HTTP requires explicit authorization for this connection")
+        return self
 
     @field_validator("proxy_url")
     @classmethod

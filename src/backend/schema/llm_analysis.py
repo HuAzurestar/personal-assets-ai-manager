@@ -122,3 +122,4 @@ class LlmAnalysisResult(BaseModel):
     kind: Literal["SUGGESTED", "NO_SUGGESTION"]
     item: str
     suggestions: list[LlmResolvedSuggestion]
+    _call_id: int | None = PrivateAttr(default=None)
