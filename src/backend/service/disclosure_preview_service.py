@@ -18,7 +18,9 @@ from backend.schema.disclosure_preview import (
     DisclosurePreviewRequest,
     DisclosurePreviewSample,
 )
-from backend.service.llm_adapter import build_messages
+from backend.service.auto_tag_task import AUTO_TAG_TASK, build_messages
+from backend.middleware.service.prompt_service import PromptService
+from backend.middleware.task import TaskRegistry
 from backend.service.llm_privacy_service import LlmPrivacyService
 from backend.service.setting_service import DEFAULT_DISCLOSURE
 
@@ -36,8 +38,9 @@ class DisclosurePreviewService:
     def __init__(self, db: Session):
         # Preview reads only the setting, never credentials or ledger rows.
         self.mapper = SettingMapper(db)
+        self.prompts = PromptService(db, TaskRegistry((AUTO_TAG_TASK,)))
 
-    def preview(self, request: DisclosurePreviewRequest) -> DisclosurePreviewRead:
+    def preview(self, request: DisclosurePreviewRequest, *, prompt=None) -> DisclosurePreviewRead:
         try:
             setting = self.mapper.get()
         except (TypeError, ValueError) as error:
@@ -85,5 +88,6 @@ class DisclosurePreviewService:
             warnings.append("该币种未配置区间，省略金额；不套用其他币种阈值。")
         return DisclosurePreviewRead(
             sample_id=request.sample, sample=sample, input_eligible=payload is not None,
-            messages=build_messages(payload) if payload is not None else [], warnings=warnings,
+            messages=build_messages(payload, prompt=prompt or self.prompts.resolve(AUTO_TAG_TASK.key))
+            if payload is not None else [], warnings=warnings,
         )

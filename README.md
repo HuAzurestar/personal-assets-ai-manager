@@ -56,6 +56,7 @@ PAAM/
     │   └── js/                 # api、util、component、state、view
     └── backend/
         ├── core/
+        ├── middleware/         # AI 任务、Prompt、调用审计与共享平台入口
         ├── entity/
         ├── schema/
         ├── mapper/
@@ -84,8 +85,9 @@ Import File 标记为 `FAILED`，仍在当前进程中的预览仍可继续修�
 - [Docker 模型凭据](src/doc/model-credential-deployment.md)
 - [标签分类配置](src/doc/tag-classification.md)
 - [模型调用审计](src/doc/llm-prompt-audit.md)
+- [中间件与 AI 任务二开](src/doc/middleware.md)：统一执行入口、Prompt 管理和新任务接入。
 - [PIRC-24 最终验收](src/report/pirc24-acceptance.md)
-- [14 表逐字段字典](src/doc/data-model.md)
+- [16 表逐字段字典](src/doc/data-model.md)
 - [SQL 重构清单](src/doc/sql-query-refactor.md)
 - [测试入口与人工验收边界](src/test/README.md)
 
@@ -101,7 +103,7 @@ node --check src/frontend/target-ledger.js
 ```
 
 浏览器测试需安装 Playwright 和浏览器，完整命令见测试说明。普通 `pytest`
-默认跳过这四组浏览器集成测试；CI 单独运行并保存 JUnit 结果。运维工具保留在
+默认跳过这五组浏览器集成测试；CI 单独运行并保存 JUnit 结果。运维工具保留在
 `src/script`，可重复的测试和夹具统一位于 `src/test`。原始截图、XML 等生成物
 放到被 Git 忽略的 `artifacts/`；历史验收过程可通过 Git 历史恢复。
 

@@ -32,6 +32,7 @@ class AutoTagScheduleService:
         *,
         synthetic_acceptance_enabled: bool = False,
         real_analysis_enabled: bool = False,
+        ai_runtime=None,
     ):
         if synthetic_acceptance_enabled and real_analysis_enabled:
             raise ValueError("Real analysis and synthetic acceptance are exclusive")
@@ -39,7 +40,7 @@ class AutoTagScheduleService:
         self._scheduler = scheduler
         self._synthetic_acceptance_enabled = synthetic_acceptance_enabled
         self._real_analysis_enabled = real_analysis_enabled
-        analyzer = ConfiguredLlmAnalyzer(sessions, secret_store)
+        analyzer = ConfiguredLlmAnalyzer(sessions, secret_store, runtime=ai_runtime)
         self._scan = AutoTagScanService(sessions, analyzer)
 
     def register_persisted(self) -> bool:

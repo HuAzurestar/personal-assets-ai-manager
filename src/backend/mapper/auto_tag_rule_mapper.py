@@ -308,10 +308,11 @@ class AutoTagRuleMapper:
         now: datetime,
         amount_bands_changed: bool = False,
         date_granularity_changed: bool = False,
+        prompt_changed: bool = False,
     ) -> tuple[datetime, list[int]]:
         """Invalidate each affected rule once for an atomic setting update."""
 
-        if not model_ids and not amount_bands_changed and not date_granularity_changed:
+        if not model_ids and not amount_bands_changed and not date_granularity_changed and not prompt_changed:
             return now, []
         rows = self.db.execute(select(
             AutoTagRule.id,
@@ -327,6 +328,7 @@ class AutoTagRuleMapper:
             method_config = decode_method_config(row["method_config_json"])
             if not (
                 method_config["model_id"] in model_ids
+                or prompt_changed
                 or date_granularity_changed
                 or (amount_bands_changed and row["amount_mode"] == AMOUNT_MODE_BAND)
             ):

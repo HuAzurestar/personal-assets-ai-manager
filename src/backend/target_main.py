@@ -15,6 +15,7 @@ from backend.core.config import (
     SQL_WEB_ENABLED,
 )
 from backend.core.job_scheduler import JobRunContext, job_scheduler
+from backend.middleware.composition import create_middleware
 from backend.router.auto_tag_rule import router as auto_tag_rule_router
 from backend.router.error import register_error_handlers
 from backend.router.import_conflict import router as import_conflict_router
@@ -30,6 +31,7 @@ from backend.router.ledger_transaction_fact import (
     router as ledger_transaction_fact_router,
 )
 from backend.router.system import router as system_router
+from backend.router.system_ai import router as system_ai_router
 from backend.router.system_setting import router as system_setting_router
 from backend.router.tag import router as tag_router
 from backend.router.tag_assignment import router as tag_assignment_router
@@ -54,12 +56,16 @@ async def _sweep_timed_out_import_previews(_: JobRunContext) -> None:
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     target_database.init_target_db()
+    middleware = create_middleware(target_database.SessionLocal, provider_secret_reader, job_scheduler)
+    with target_database.SessionLocal() as db:
+        middleware.prompt(db).seed()
+    application.state.middleware = middleware
     if SQL_WEB_ENABLED:
         initialize_sql_web()
     with target_database.SessionLocal() as db:
         TargetIntakeService(db).fail_orphaned_pending_files()
         TargetEconomicService(db).backfill_defaults()
-    job_scheduler.register_interval(
+    middleware.platform.scheduler.register_interval(
         "system:import-preview-timeout",
         seconds=IMPORT_PREVIEW_SWEEP_INTERVAL_SECONDS,
         callback=_sweep_timed_out_import_previews,
@@ -70,6 +76,7 @@ async def lifespan(application: FastAPI):
         provider_secret_reader,
         synthetic_acceptance_enabled=AUTOTAG_SYNTHETIC_ACCEPTANCE,
         real_analysis_enabled=AUTOTAG_REAL_ANALYSIS,
+        ai_runtime=middleware.ai,
     )
     auto_tag_schedule.register_persisted()
     application.state.auto_tag_schedule = auto_tag_schedule
@@ -80,6 +87,8 @@ async def lifespan(application: FastAPI):
         await job_scheduler.shutdown()
         if hasattr(application.state, "auto_tag_schedule"):
             del application.state.auto_tag_schedule
+        if hasattr(application.state, "middleware"):
+            del application.state.middleware
 
 
 app = FastAPI(
@@ -105,4 +114,5 @@ app.include_router(tag_router)
 app.include_router(tag_assignment_router)
 app.include_router(tag_assignment_request_router)
 app.include_router(system_router)
+app.include_router(system_ai_router)
 app.include_router(system_setting_router)

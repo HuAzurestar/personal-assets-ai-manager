@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
 from backend.core import ProtectedSecretStore
-from backend.router.dependency import get_db, get_protected_secret_store
+from backend.router.dependency import get_db, get_protected_secret_store, get_platform_middleware
 from backend.router.error import DomainErrorRoute
 from backend.schema.disclosure_preview import (
     DisclosurePreviewRequest,
@@ -38,19 +38,21 @@ router = APIRouter(
 def _service(
     db: Session,
     secret_store: ProtectedSecretStore,
+    platform,
 ) -> SettingService:
-    return SettingService(db, secret_store)
+    return platform.setting(db, secret_store=secret_store)
 
 
 @router.get("", response_model=AutomationSettingResponse)
 def get_automation_setting(
     db: Session = Depends(get_db),
     secret_store: ProtectedSecretStore = Depends(get_protected_secret_store),
+    platform=Depends(get_platform_middleware),
 ):
     return AutomationSettingResponse(
         status=200,
         message="ok",
-        body=_service(db, secret_store).get_automation(),
+        body=_service(db, secret_store, platform).get_automation(),
     )
 
 
@@ -60,10 +62,11 @@ def update_automation_setting(
     request: Request,
     db: Session = Depends(get_db),
     secret_store: ProtectedSecretStore = Depends(get_protected_secret_store),
+    platform=Depends(get_platform_middleware),
 ):
     schedule = getattr(request.app.state, "auto_tag_schedule", None)
-    service = SettingService(
-        db, secret_store,
+    service = platform.setting(
+        db, secret_store=secret_store,
         on_scan_setting_changed=getattr(schedule, "sync_enabled", None),
     )
     body = service.update_automation(payload)
@@ -96,11 +99,12 @@ def update_model_secret(
     payload: ModelSecretUpdateRequest,
     db: Session = Depends(get_db),
     secret_store: ProtectedSecretStore = Depends(get_protected_secret_store),
+    platform=Depends(get_platform_middleware),
 ):
     return ModelSecretStateResponse(
         status=200,
         message="ok",
-        body=_service(db, secret_store).update_model_secret(
+        body=_service(db, secret_store, platform).update_model_secret(
             model_id,
             payload.secret,
         ),
@@ -127,11 +131,12 @@ def delete_model_secret(
     model_id: int,
     db: Session = Depends(get_db),
     secret_store: ProtectedSecretStore = Depends(get_protected_secret_store),
+    platform=Depends(get_platform_middleware),
 ):
     return ModelSecretStateResponse(
         status=200,
         message="ok",
-        body=_service(db, secret_store).delete_model_secret(model_id),
+        body=_service(db, secret_store, platform).delete_model_secret(model_id),
     )
 
 
@@ -143,11 +148,12 @@ def test_model_connection(
     model_id: int,
     db: Session = Depends(get_db),
     secret_store: ProtectedSecretStore = Depends(get_protected_secret_store),
+    platform=Depends(get_platform_middleware),
 ):
     return ModelConnectionTestResponse(
         status=200,
         message="ok",
-        body=_service(db, secret_store).test_model_connection(model_id),
+        body=_service(db, secret_store, platform).test_model_connection(model_id),
     )
 
 

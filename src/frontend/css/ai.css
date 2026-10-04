@@ -1,0 +1,7 @@
+[data-ai-page] .automation-card { min-width: 0; }
+[data-ai-page] pre,
+dialog[data-ai-dialog] pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; }
+[data-ai-page] .table-wrap { width: 100%; overflow-x: auto; }
+dialog[data-ai-dialog] label { display: grid; gap: 8px; margin-bottom: 16px; }
+dialog[data-ai-dialog] textarea { width: 100%; box-sizing: border-box; padding: 12px; resize: vertical; min-height: 180px; }
+dialog[data-ai-dialog] [data-ai-error] { color: var(--danger, #e25b65); }

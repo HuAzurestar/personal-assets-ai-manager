@@ -1,4 +1,5 @@
 import { checkConnection, request, jsonRequest } from "../api/client.js";
+import { aiPage, bindAi } from "./ai.js?v=20261003.1";
 import { preserveView } from "../util/view_state.js?v=20260928.6";
 import { toast } from "../component/toast.js";
 import { table } from "../component/table.js";
@@ -18,7 +19,7 @@ import {
 } from "../util/core.js";
 import {
   canonicalHash, parseHash, shellMarkup, syncNavigation,
-} from "../navigation.js?v=20260928.6";
+} from "../navigation.js?v=20261003.1";
 import {
   accountsMarkup, cursorFromParam, monthBounds,
 } from "./account.js?v=20260917.10";
@@ -122,6 +123,7 @@ const pageInfo = {
   reviews: ["账单审查", "选择待审查事实，配置 Fact 与 Ledger 的关系，预览后生成账本流水。"],
   "tag-review": ["打标签审查", ""],
   settings: ["设置", ""],
+  ai: ["AI 管理", ""],
 };
 const validPages = new Set(Object.keys(pageInfo));
 
@@ -208,6 +210,7 @@ async function render({ background = false } = {}) {
       reviews: reviewCreatePage,
       "tag-review": () => tagReviewPage(state.params),
       settings: automationSettingsPage,
+      ai: () => aiPage(state.params),
     })[page]();
     if (renderVersion !== state.renderVersion || page !== state.page || routeKey !== location.hash) return;
     if (background && (interaction !== interactionVersion || !canRefreshPage())) return;
@@ -1256,6 +1259,7 @@ function closeInlineTag(form) {
 
 function bindPage(root) {
   bindAutomation(root, render, toast, route);
+  bindAi(root, render, toast);
   $$('button[data-page], a[data-page]', root).forEach((button) => button.onclick = () => {
     if (button.closest("dialog")) closeDialogs();
     route(button.dataset.page);

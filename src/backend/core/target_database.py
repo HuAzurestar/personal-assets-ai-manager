@@ -42,6 +42,8 @@ TARGET_TABLE_NAMES = (
     "auto_tag_rule",
     "tag_assignment_request",
     "llm_prompt_audit",
+    "ai_prompt",
+    "ai_invocation",
 )
 
 SQL_ASSET_DIR = Path(__file__).resolve().parents[2] / "asset" / "sql"

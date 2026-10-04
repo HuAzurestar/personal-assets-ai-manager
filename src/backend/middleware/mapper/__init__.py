@@ -1,0 +1,1 @@
+"""Middleware explicit-column persistence."""

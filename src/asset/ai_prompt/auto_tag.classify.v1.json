@@ -1,0 +1,5 @@
+{
+  "key": "auto_tag.classify",
+  "version": 1,
+  "instruction": "仅提出标签建议。"
+}

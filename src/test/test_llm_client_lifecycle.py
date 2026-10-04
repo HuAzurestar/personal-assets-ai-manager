@@ -8,7 +8,7 @@ from time import sleep
 import httpx
 import pytest
 
-from backend.service import llm_adapter
+from backend.middleware import provider as llm_adapter
 
 
 @pytest.fixture

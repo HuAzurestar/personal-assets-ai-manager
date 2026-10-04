@@ -42,6 +42,7 @@ const secondaryMeta = {
   ],
   settings: [
     ["settings", "自动化", "模型连接与安全披露"],
+    ["ai", "AI 管理", "任务、Prompt 与用量"],
   ],
 };
 
@@ -58,6 +59,7 @@ const pageModules = {
   "import-history": "workbench",
   "tag-review": "workbench",
   settings: "settings",
+  ai: "settings",
 };
 
 const canonicalPages = {
@@ -88,6 +90,7 @@ const pagePaths = {
   "import-history": "workbench/import/history",
   "tag-review": "workbench/tag-review",
   settings: "settings/automation",
+  ai: "settings/ai",
 };
 
 const pathPages = Object.fromEntries(Object.entries(pagePaths).map(([page, path]) => [path, page]));

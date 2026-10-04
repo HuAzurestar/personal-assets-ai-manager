@@ -25,6 +25,19 @@ def get_protected_secret_store() -> ProtectedSecretStore:
     return protected_secret_store
 
 
+def get_middleware(request: Request):
+    middleware = getattr(request.app.state, "middleware", None)
+    if middleware is None:
+        from backend.middleware.composition import create_middleware
+        from backend.core.job_scheduler import job_scheduler
+        middleware = create_middleware(target_database.SessionLocal, protected_secret_store, job_scheduler)
+    return middleware
+
+
+def get_platform_middleware(request: Request):
+    return get_middleware(request).platform
+
+
 def validate_query_parameter_names(
     request: Request,
     allowed: Collection[str],

@@ -4,7 +4,7 @@ from threading import Lock
 
 from backend.error import LlmAdapterError, SettingError
 from backend.schema.setting import ModelConnectionCheckRead
-from backend.service.llm_adapter import _direct_litellm_completion, _field, _provider_exception
+from backend.middleware.provider import _direct_litellm_completion, _field, _provider_exception
 from backend.service.setting_service import SettingService
 
 

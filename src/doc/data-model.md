@@ -230,6 +230,44 @@ Fact 只放跨来源稳定、计算必须的核心字段。客户详情、完整
 
 请求没有 UUID、来源哈希、独立 decision 或归档字段。一次分析可生成多条请求；最终状态转换、标签互斥和规则计数在后续 Service 事务中实现。
 
+## 五、AI 中间件配置与调用
+
+### 14. `llm_prompt_audit`：自动标签的原有调用正文审计
+
+保存 run_id、rule_id、rule_revision、ledger_id、model_id、attempt、model_name、
+request_json、response_text、response_truncated、status、error_code。每次尝试
+先写 STARTED，再更新 SUGGESTED/INSUFFICIENT/REJECTED/ERROR。正文不通过
+普通业务 API 返回，详细边界见 [模型调用审计](llm-prompt-audit.md)。
+
+### 15. `ai_prompt`：不可变 Prompt 内容版本
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `prompt_key` / `version` | TEXT / INTEGER | 已注册任务的 Prompt 身份及正整数版本，二者联合唯一 |
+| `instruction` / `note` | TEXT | 任务指引与版本说明；内容只新增版本，不覆盖 |
+| `state` | TEXT | DRAFT、PRODUCTION、RETIRED；每个 key 最多一个 PRODUCTION |
+
+恢复旧版本仅改变发布状态。发布在同一事务中失效相关旧业务建议与扫描 token；
+预览只用固定虚构样例。与业务表通过逻辑身份关联，无显式外键。
+
+### 16. `ai_invocation`：通用 AI 调用与用量
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `task_key` / `task_version` | TEXT / INTEGER | 任务身份及代码合同版本 |
+| `prompt_key` / `prompt_version` | TEXT / INTEGER | 本次渲染实际采用的版本 |
+| `model_id` / `model_name` | INTEGER / TEXT | 本次模型配置 ID 与供应商模型名 |
+| `run_id` / `attempt` | TEXT / INTEGER | 可选调度关联及本次尝试序号 |
+| `status` / `result_code` / `error_code` | TEXT | STARTED/SUCCEEDED/REJECTED/ERROR，业务结果机器码及安全错误码 |
+| `latency_ms` | INTEGER | 非负调用耗时 |
+| `input_tokens` / `output_tokens` / `total_tokens` / `cached_tokens` | INTEGER | 供应商用量；`-1` 为 UNKNOWN |
+| `cost_usd` | TEXT | SDK 估算费用的十进制文本；空串为 UNKNOWN，以 Decimal 汇总 |
+| `request_json` / `response_text` | TEXT | 本地正文审计，不参与 HTTP 列表读取 |
+| `response_truncated` | INTEGER | 0/1，正文超出 256 KiB 时截断 |
+
+调用前提交 STARTED，记录失败则禁止请求供应商。SUCCEEDED 表示模型输出校验成功，
+业务提交仍属于业务 Service。调用记录不要求规则或 Ledger ID。
+
 ## 热、冷与读取规则
 
 | 数据 | 热度 | 正常读取方式 |
@@ -237,6 +275,8 @@ Fact 只放跨来源稳定、计算必须的核心字段。客户详情、完整
 | `ledger_entry` | 热 | 读取已确认 Review 发布的列表、筛选和按币种汇总 |
 | `ledger_entry_tag`、`tag`、`tag_view` | 热/温 | 列表按 ID 批量取；字典独立取 |
 | `setting`、`auto_tag_rule` | 温 | 按根对象或规则 ID/View 批量读取 |
+| `ai_prompt` | 温 | 解析生产版本或分页版本列表 |
+| `ai_invocation`、`llm_prompt_audit` | 冷 | 调用列表只读元数据；正文保留本地审计 |
 | `tag_assignment_request` | 热/温 | 审查列表只读主表热字段，详情按 ID 读取 |
 | `transaction_fact` | 温 | 导入核对、审查、单条详情 |
 | `review_case`、`review_allocation` | 温 | 审查工作台与单条详情 |
@@ -246,7 +286,9 @@ Fact 只放跨来源稳定、计算必须的核心字段。客户详情、完整
 
 ## 迁移结论
 
-旧业务表和过渡表已经从模型和运行时删除。新数据库直接创建 13 张目标表；已有 10 表目标数据库通过三个幂等 `CREATE TABLE IF NOT EXISTS` 资产增量接入，既有行不改写。仍不提供更早旧业务表的原位迁移。必要语义分别进入：
+旧业务表和过渡表已经从模型和运行时删除。新数据库直接创建 16 张目标表。
+已有目标库通过幂等 `CREATE TABLE IF NOT EXISTS` 资产增量补建审计、Prompt 和
+Invocation 表，既有业务行不改写。仍不提供更早旧业务表的原位迁移。必要语义分别进入：
 
 - 文件/批次/来源/异常：`transaction_import_file + transaction_import_row`。
 - 规范流水：`transaction_fact`。
@@ -254,4 +296,4 @@ Fact 只放跨来源稳定、计算必须的核心字段。客户详情、完整
 - 正式经济结果：`ledger_entry`、三元 `review_allocation` 与标签表。
 - 自动标签配置与审查：`setting + auto_tag_rule + tag_assignment_request`。
 
-应用只创建当前结构；除从既有 10 表目标库幂等补建上述三表外，不在启动时升级或回填旧业务表。导入事务为新 Fact 同步创建 CONFIRMED Review、等额 INCOME_AND_EXPENSE 与 `review_allocation`。
+应用只创建当前结构并补齐缺失的辅助表，不在启动时升级或回填旧业务表。导入事务为新 Fact 同步创建 CONFIRMED Review、等额 INCOME_AND_EXPENSE 与 `review_allocation`。
