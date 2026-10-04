@@ -14,6 +14,7 @@ import uvicorn
 from playwright.sync_api import expect, sync_playwright
 
 from browser_artifact import viewport_evidence
+from browser_list import assert_list_readability
 from serve_m2_ui import prepare_app
 
 
@@ -22,6 +23,9 @@ def assert_common_row(page, form, currency_name, evidence):
         page.set_viewport_size({'width': width, 'height': 900})
         expect(form.locator('[name="word"]')).to_be_visible()
         expect(form.locator('[data-filter-more]')).not_to_have_attribute('open', '')
+        row = page.locator('#page-content .detail-data-table tbody tr').first
+        assert_list_readability(page, row, row.locator('.detail-primary strong'),
+            row.locator('.detail-primary small'), amount=row.locator('.fact-amount'), max_height=90)
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), width
         if width > 1100:
             common = [form.locator(selector).bounding_box() for selector in
