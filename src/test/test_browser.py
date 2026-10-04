@@ -23,6 +23,7 @@ import pytest
     "verify_pirc35_position.py",
     "verify_pirc35_import.py",
     "verify_pirc35_import_default.py",
+    "verify_pirc35_import_repeat.py",
     "verify_pirc35_import_workflow.py",
     "verify_pirc35_import_plan.py",
     "verify_pirc35_import_execution.py",
