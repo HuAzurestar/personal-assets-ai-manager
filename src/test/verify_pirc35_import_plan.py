@@ -204,6 +204,10 @@ def run():
                     risk_before = snapshot()
                     page.locator('[data-batch-select-scope]').click()
                     expect(page.locator('[data-batch-selection]')).to_contain_text("2 行")
+                    # Risk defaults now SKIP. Deliberately accept both without
+                    # NEW consent to retain this unresolved-plan negative case.
+                    for row in page.locator('[data-batch-row]').all():
+                        row.locator('[data-row-decision]').select_option('ACCEPT')
                     page.locator('[data-batch-save]').click()
                     expect(page.locator('[data-batch-plan]')).to_be_enabled()
                     page.locator('[data-batch-plan]').click()

@@ -150,6 +150,14 @@ def run():
                         expect(page.locator('[data-batch-select-scope]')).to_be_enabled(timeout=15000)
                         page.locator('[data-batch-select-scope]').click()
                         expect(page.locator('[data-batch-pair]')).to_be_enabled(timeout=15000)
+                        # Risk defaults are SKIP; explicitly request accepted
+                        # drafts before asking for pairing suggestions. This
+                        # grants no NEW cash consent and retains all negatives.
+                        page.locator('[data-batch-bulk]').click()
+                        bulk=page.locator('dialog[open]')
+                        bulk.locator('[data-bulk-action]').select_option('ACCEPT')
+                        bulk.locator('[data-bulk-apply]').click()
+                        expect(page.locator('[data-batch-pair]')).to_be_enabled(timeout=15000)
 
                     def open_pair(kind='SAME_SOURCE'):
                         expect(page.locator('[data-batch-pair]')).to_be_enabled(timeout=15000)
