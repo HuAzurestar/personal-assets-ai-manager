@@ -15,6 +15,7 @@ function rowKey(row) {
 }
 
 export function captureNavigationView(root, route) {
+  if (typeof route !== 'string' || route.length > 4096) return null;
   const visibleRows = [...root.querySelectorAll(rowSelector)].filter(row =>
     row.getClientRects().length && row.getBoundingClientRect().bottom > 0
     && row.getBoundingClientRect().top < window.innerHeight);
@@ -25,7 +26,7 @@ export function captureNavigationView(root, route) {
 }
 
 export function restoreNavigationView(root, view, route) {
-  if (!view || view.route !== route || ![view.x, view.y, view.rootX, view.rootY].every(coordinate)
+  if (!view || typeof route !== 'string' || route.length > 4096 || view.route !== route || ![view.x, view.y, view.rootX, view.rootY].every(coordinate)
       || !Array.isArray(view.anchors) || view.anchors.length > 8) return false;
   root.scrollLeft = view.rootX;
   root.scrollTop = view.rootY;
@@ -42,8 +43,10 @@ export function navigationContext(root) {
   let mountedRoute, pending, frame;
   const remember = () => {
     if (!mountedRoute || mountedRoute !== location.hash || root.getAttribute('aria-busy') === 'true') return;
+    const view = captureNavigationView(root, mountedRoute);
+    if (!view) return;
     const existing = history.state && typeof history.state === 'object' ? history.state : {};
-    try { history.replaceState({...existing, [stateKey]:captureNavigationView(root, mountedRoute)}, '', location.href); }
+    try { history.replaceState({...existing, [stateKey]:view}, '', location.href); }
     catch { /* Navigation still works if the browser refuses history storage. */ }
   };
   const schedule = event => {

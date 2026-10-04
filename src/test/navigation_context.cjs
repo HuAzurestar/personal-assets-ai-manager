@@ -38,6 +38,7 @@ const {pathToFileURL} = require('node:url');
   assert.equal(restoreNavigationView(root, view, '#other'), false);
   assert.equal(restoreNavigationView(root, {...view, y:NaN}, location.hash), false);
   assert.equal(restoreNavigationView(root, {...view, anchors:Array(9).fill({})}, location.hash), false);
+  assert.equal(captureNavigationView(root, '#'+ 'a'.repeat(4096)), null);
   const navigation = navigationContext(root);
   navigation.begin(location.hash);
   navigation.mounted(location.hash);

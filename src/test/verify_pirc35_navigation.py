@@ -22,16 +22,20 @@ def run():
         from backend.mapper.review_command_mapper import ReviewCommandMapper
         from sqlalchemy import select, func
         entities = (TransactionFact, LedgerEntry, ReviewCase)
-        with target_database.SessionLocal() as db:
-            facts = [TransactionFact(fact_key=f'mock-navigation-{index}',
-                occurred_time=datetime(2030, 1, 1, tzinfo=timezone.utc),
-                cash_direction=2, amount=1000, currency_code='CNY',
-                summary=f'Mock navigation {index}') for index in range(48)]
-            db.add_all(facts)
-            db.flush()
-            ReviewCommandMapper(db).create_initial_defaults([fact.id for fact in facts])
-            db.commit()
-            before = [db.scalar(select(func.count()).select_from(entity)) for entity in entities]
+        try:
+            with target_database.SessionLocal() as db:
+                facts = [TransactionFact(fact_key=f'mock-navigation-{index}',
+                    occurred_time=datetime(2030, 1, 1, tzinfo=timezone.utc),
+                    cash_direction=2, amount=1000, currency_code='CNY', account_code='',
+                    summary=f'Mock navigation {index}') for index in range(48)]
+                db.add_all(facts)
+                db.flush()
+                ReviewCommandMapper(db).create_initial_defaults([fact.id for fact in facts])
+                db.commit()
+                before = [db.scalar(select(func.count()).select_from(entity)) for entity in entities]
+        except Exception:
+            target_database.engine.dispose()
+            raise
         with socket.socket() as sock:
             sock.bind(('127.0.0.1', 0))
             port = sock.getsockname()[1]
