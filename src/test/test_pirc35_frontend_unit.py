@@ -12,6 +12,7 @@ import pytest
     "import_batch_unknown.cjs",
     "import_batch_issue.cjs",
     "import_decision.cjs",
+    "import_workflow.cjs",
     "import_plan.cjs",
     "import_choice.cjs",
     "import_bulk.cjs",

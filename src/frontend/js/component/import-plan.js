@@ -1,4 +1,5 @@
 import { esc, money, date, quantityDecimal, resourceId } from '../util/core.js';
+import { importIssueMessage } from '../util/import-decision.js';
 
 // This is disclosure of the server's frozen projection, never a client-side
 // financial planner. Local paging retains every record in the supplied plan.
@@ -91,7 +92,7 @@ function showBatch(host, item, signal) {
   pageList(host.querySelector('[data-plan-duplicates]'), duplicate, row =>
     `<p>拟建重复解释 ${row.review_index + 1} · ${esc(rowName(row.row))} → 保留 ${esc(targetName(row.kept_target))} · DUPLICATE ${amount(row.amount,row.currency_code)} ${esc(row.cash_direction)} · ${esc(source(row.account_ref_id))}</p>`, '拟建重复', signal);
   pageList(host.querySelector('[data-plan-revoke]'), item.duplicate_revoke_scope, row => `<p>${esc(rowName(row))}：原默认停用；撤销本批 DUP 解释会整组恢复这些原默认，不支持只撤销其中一行。</p>`, '整组撤销范围', signal);
-  pageList(host.querySelector('[data-plan-issues]'), value.issues, row => `<p class="error">${esc(rowName(row))}：${esc(row.code)}</p>`, '未解决问题', signal);
+  pageList(host.querySelector('[data-plan-issues]'), value.issues, row => `<p class="error">${esc(rowName(row))}：${esc(row.code)} · ${esc(importIssueMessage(row.code))}</p>`, '未解决问题', signal);
   pageList(host.querySelector('[data-plan-reviews]'), effect.before_after_review_states, (row,index) =>
     `<article class="panel"><h4>${esc(row.before.title)} · Review #${row.before.id} · ${esc(row.before.status)} → ${esc(row.after_status)}</h4>
       <p>${esc(row.before.type)} · 更新 ${esc(row.before.updated_time)}</p>
@@ -116,12 +117,15 @@ function showReview(host, review, signal) {
 }
 
 export function mountImportPlan(host, plan, {signal} = {}) {
+  const issues = plan.batches.flatMap(item => item.preview.issues || []);
   host.innerHTML = `<section class="panel" data-import-operation><h2>完整处理计划（只读预览）</h2>
     <p>本次明确选择 ${plan.selected_count} 行 · 可规划 ${plan.batches.length} 批 · 阻断关联组 ${plan.blocked.length} 个。</p>
     <p>每批最多1000来源行，另受完整解释／关系／标签预算约束；关联组不拆散。各批不是一个大事务。</p>
     <p>取消、失败、前提变化或结果未知时停止后续；此前成功批保留，不回滚整次操作。结果未知先查持久状态，不自动重发 POST；继续须你的明确动作并重新核对剩余计划。</p>
     <p>${plan.can_confirm ? '计划无阻断；本预览本身不会提交账务。' : '存在阻断或未解决事项；不能自动跳过后执行其余记录。'}</p>
-    <div data-plan-batches></div><div data-plan-blocked></div><div data-plan-selected-detail></div></section>`;
+    <p data-plan-issue-summary>所选完整范围未解决 ${issues.length} 行，其中新增现金风险待处理 ${issues.filter(row=>row.code === 'IMPORT_REVIEW_REQUIRED').length} 行；预算阻断组与行问题分别计算，不以零阻断组冒称可入账。</p>
+    <div data-plan-all-issues></div><div data-plan-batches></div><div data-plan-blocked></div><div data-plan-selected-detail></div></section>`;
+  pageList(host.querySelector('[data-plan-all-issues]'),issues,row=>`<p class="error">${esc(rowName(row))}：${esc(row.code)} · ${esc(importIssueMessage(row.code))}</p>`,'全部未解决来源行',signal);
   const detail = host.querySelector('[data-plan-selected-detail]');
   pageList(host.querySelector('[data-plan-batches]'), plan.batches, (item,index) =>
     `<article class="picker-list-row import-plan-record"><div><strong>第 ${item.batch_index + 1} 批 · ${item.preview.selected_rows.length} 行</strong>

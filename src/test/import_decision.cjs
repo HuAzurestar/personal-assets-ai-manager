@@ -6,7 +6,8 @@ const {pathToFileURL} = require('node:url');
 (async () => {
   const {importRowChoice} = await import(pathToFileURL(path.join(__dirname,
     '../frontend/js/util/import-decision.js')).href);
-  const row = {file_id:1, source_row_number:6, classification:'NEW', issue_codes:[], choice:null};
+  const row = {file_id:1, source_row_number:6, classification:'NEW', issue_codes:[], choice:null,
+    duplicate_hint:{state:'NONE_IN_SCOPE', candidate_count:0, scope:{source_known:true}}};
   for (const classification of ['NEW', 'EXISTING', 'PROCESSED']) {
     assert.equal(importRowChoice({...row, classification}).decision, 'ACCEPT');
   }
@@ -36,5 +37,15 @@ const {pathToFileURL} = require('node:url');
   assert.equal(second.acknowledge_new_risk, undefined);
   // Validity inference is not duplicate-risk consent or financial confirmation.
   assert.equal(importRowChoice({...row, duplicate_hint:{state:'SUSPECTED'}}).acknowledge_new_risk, undefined);
+  for (const hint of [null, {state:'SUSPECTED',candidate_count:1},
+    {state:'UNCHECKED',candidate_count:null}, {state:'NONE_IN_SCOPE',candidate_count:null},
+    {state:'NONE_IN_SCOPE',candidate_count:0,scope:{source_known:false}}]) {
+    const risky = {...row,duplicate_hint:hint};
+    assert.equal(importRowChoice(risky).decision,'SKIP');
+    assert.equal(importRowChoice(risky,explicit),explicit);
+    assert.equal(importRowChoice({...risky,choice:explicit}),explicit);
+  }
+  // Known evidence is not new cash and must not acquire an irrelevant risk gate.
+  assert.equal(importRowChoice({...row,classification:'EXISTING',duplicate_hint:{state:'UNCHECKED'}}).decision,'ACCEPT');
   console.log('PASS normal ACCEPT, invalid/ambiguous/issue SKIP, explicit precedence, no mutation or risk consent');
 })().catch(error => {console.error(error); process.exitCode = 1;});

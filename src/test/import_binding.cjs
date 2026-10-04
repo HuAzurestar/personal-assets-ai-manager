@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 
 (async () => {
+  const decisions = await import(pathToFileURL(path.join(__dirname,'../frontend/js/util/import-decision.js')).href);
   const {validateImportBinding,projectImportBinding,readImportBinding} = await import(pathToFileURL(
     path.join(__dirname,'../frontend/js/component/import-binding.js')).href);
   const time='2026-10-03T00:00:00.123456Z', digest='a'.repeat(64);
@@ -92,7 +93,7 @@ const vm = require('node:vm');
   const plan={token:'binding-node',status:'READY',files:[],counts:{new:0,existing:0,processed:0},
     preview_digest:digest,updated_time:time,issue_count:0};
   let options,writes=0;
-  const sandbox=vm.createContext({AbortController,URLSearchParams,esc:String,
+  const sandbox=vm.createContext({AbortController,URLSearchParams,esc:String,...decisions,
     localStorage:{getItem:()=>null},openImportBinding:input=>{options=input;},
     request:async()=>({items:[],total:0,page_size:20}),jsonRequest:async()=>{writes++;}});
   vm.runInContext(source+'\nglobalThis.mount=mountImportBatch;globalThis.contexts=contexts;',sandbox);

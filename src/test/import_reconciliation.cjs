@@ -5,6 +5,7 @@ const path=require('node:path');
 const vm=require('node:vm');
 const {pathToFileURL}=require('node:url');
 (async()=>{
+  const decisions = await import(pathToFileURL(path.join(__dirname,'../frontend/js/util/import-decision.js')).href);
   const module=await import(pathToFileURL(path.join(__dirname,'../frontend/js/component/import-reconciliation.js')).href);
   const {readImportBinding}=await import(pathToFileURL(path.join(__dirname,'../frontend/js/component/import-binding.js')).href);
   const {resourceId}=await import(pathToFileURL(path.join(__dirname,'../frontend/js/util/core.js')).href);
@@ -72,7 +73,7 @@ const {pathToFileURL}=require('node:url');
     let leases=0,reads=0,writes=0,fail=false;
     const plan={token:serial ? 'new-token' : 'mock-token',status:'PENDING',files:serial ? [{...retained.files[0],filename:'Mock.csv',parse_status:'READY',parsed_row_count:2,
       activity_range:{start:null,end:null},accepted:1,skipped:0,invalid:0,remaining:1}] : [],counts:{new:0,existing:0,processed:0},preview_digest:'a'.repeat(64)};
-    const sandbox=vm.createContext({AbortController,URLSearchParams,TextEncoder,resourceId,...module,readImportBinding,
+    const sandbox=vm.createContext({AbortController,URLSearchParams,TextEncoder,resourceId,...module,...decisions,readImportBinding,
       mountImportDraftRows:(node,rows)=>node.textContent=String(rows.length),esc:String,
       localStorage:{getItem:key=>key==='paam.import.remaining.v1' ? remaining : stored,
         setItem:(key,value)=>{if(key==='paam.import.remaining.v1')remaining=value;else stored=value;},

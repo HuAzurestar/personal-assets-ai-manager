@@ -150,7 +150,8 @@ def run():
                     dialog.locator('[data-intent-apply]').click()
                     page.locator('[data-batch-save]').click()
                     expect(page.locator('[data-batch-plan]')).to_be_enabled()
-                    expect(page.locator('[data-batch-confirm]')).to_be_disabled()
+                    expect(page.locator('[data-batch-confirm]')).to_be_enabled()
+                    expect(page.locator('[data-import-operation]')).to_contain_text('可规划 1 批')
                     assert writes == [] and len(puts) == 1
                     choices = puts[0]['choices']
                     assert {choice['resolution'] for choice in choices} == {'LINK_EXISTING','DUPLICATE','NEW'}
