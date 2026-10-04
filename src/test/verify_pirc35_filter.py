@@ -17,6 +17,27 @@ from browser_artifact import viewport_evidence
 from serve_m2_ui import prepare_app
 
 
+def assert_common_row(page, form, currency_name, evidence):
+    for width in (1440, 1280, 1100, 820, 390, 320):
+        page.set_viewport_size({'width': width, 'height': 900})
+        expect(form.locator('[name="word"]')).to_be_visible()
+        expect(form.locator('[data-filter-more]')).not_to_have_attribute('open', '')
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), width
+        if width > 1100:
+            common = [form.locator(selector).bounding_box() for selector in
+                ('[name="word"]', '[data-action="range-open"]', '[name="cash_direction"]',
+                 f'[name="{currency_name}"]', 'button[type="submit"]', '[data-filter-more-toggle]')]
+            assert max(box['y'] + box['height'] for box in common) - min(box['y'] + box['height'] for box in common) < 2, (width, common)
+            assert common[0]['width'] >= 300, (width, common)
+            assert form.bounding_box()['height'] <= 100, (width, form.bounding_box())
+        if width <= 600:
+            assert form.bounding_box()['height'] <= 290, (width, form.bounding_box())
+            for button in form.locator('.transaction-filter-actions button').all():
+                assert button.bounding_box()['height'] >= 44
+        viewport_evidence(page, f'{evidence}-{width}')
+    page.set_viewport_size({'width': 1440, 'height': 900})
+
+
 def run():
     with tempfile.TemporaryDirectory(prefix='paam-filter-browser-') as temporary:
         app = prepare_app(Path(temporary))
@@ -53,6 +74,9 @@ def run():
             person_id, group_id, ref_id, tag_id = person.id, group.id, refs[0].id, tags[-1].id
             counts = [db.scalar(select(func.count()).select_from(entity))
                       for entity in [TransactionFact, ReviewCase, LedgerEntry]]
+            before_tables = {table.name: tuple(tuple(row) for row in db.execute(select(table).order_by(table.c.id)))
+                for table in target_database.TargetBase.metadata.sorted_tables}
+            assert len(before_tables) == 20
         with socket.socket() as sock:
             sock.bind(('127.0.0.1', 0))
             port = sock.getsockname()[1]
@@ -80,12 +104,17 @@ def run():
                 page.goto(base + '/#details/transaction-fact')
                 form = page.locator('[data-form="fact-filter"]')
                 expect(form.locator('[name="word"]')).to_be_visible()
+                assert_common_row(page, form, 'currency_code', 'dev17-common-fact-filter')
                 viewport_evidence(page, 'fix-r12-fact-density')
+                common_word = form.locator('[name="word"]').bounding_box()
+                common_currency = form.locator('[name="currency_code"]').bounding_box()
+                assert abs(common_word['y'] + common_word['height'] - common_currency['y'] - common_currency['height']) < 2, (common_word, common_currency)
+                assert form.bounding_box()['height'] <= 100
                 assert form.locator('[name="word"]').bounding_box()['width'] >= 300
                 assert form.bounding_box()['height'] <= 150
                 assert form.locator('input[type="number"]').count() == 0
                 expect(form.locator('[data-filter-more]')).not_to_have_attribute('open', '')
-                assert form.locator('.transaction-filter-secondary > label').first.evaluate('(node) => getComputedStyle(node).whiteSpace') == 'nowrap'
+                assert form.locator('.transaction-filter-currency').evaluate('(node) => getComputedStyle(node).whiteSpace') == 'nowrap'
                 page.set_viewport_size({'width': 1280, 'height': 800})
                 assert form.locator('[name="word"]').bounding_box()['width'] >= 300
                 assert form.bounding_box()['height'] <= 150
@@ -95,6 +124,17 @@ def run():
                 expect(form.locator('[data-filter-more]')).to_have_attribute('open', '')
                 form.locator('[data-filter-more-toggle]').press('Enter')
                 expect(form.locator('[data-filter-more]')).not_to_have_attribute('open', '')
+                # Search field is advanced but its applied meaning stays visible.
+                form.locator('[data-filter-more-toggle]').click()
+                form.locator('[name="search_field"]').select_option('counterparty_name')
+                expect(form.locator('[data-search-label]')).to_have_text('交易对手搜索')
+                expect(form.locator('[name="word"]')).to_have_attribute('placeholder', '搜索交易对手（字面匹配）')
+                page.reload()
+                expect(form.locator('[data-search-label]')).to_have_text('交易对手搜索')
+                expect(form.locator('[name="search_field"]')).to_have_value('counterparty_name')
+                expect(form.locator('[data-filter-more]')).not_to_have_attribute('open', '')
+                form.locator('[data-action="detail-clear"]').click()
+                expect(form.locator('[data-search-label]')).to_have_text('摘要搜索')
                 # Observe the real five-second background timer while an
                 # unsubmitted input is blurred; it must not erase the query.
                 prior = len([url for url in reads if '/transaction_fact/list?' in url])
@@ -164,6 +204,16 @@ def run():
                     current.locator('button[type="submit"]').click()
                 expect(page.locator('#page-content')).not_to_have_attribute('aria-busy', 'true')
                 assert len([url for url in reads if '/fact/search?' in url]) > prior
+                current.locator('[name="currency_code"]').select_option('CNY')
+                expect(page.locator('[data-action="fact-detail"]')).to_have_count(3)
+                current.locator('[name="cash_direction"]').select_option('IN')
+                expect(page.locator('[data-action="fact-detail"]')).to_have_count(2)
+                expect(page.locator('[data-filter-chip="currency_code"]')).to_contain_text('CNY')
+                expect(page.locator('[data-filter-chip="cash_direction"]')).to_contain_text('收入')
+                current.locator('[name="cash_direction"]').select_option('OUT')
+                expect(page.locator('[data-action="fact-detail"]')).to_have_count(1)
+                current.locator('[name="cash_direction"]').select_option('')
+                expect(page.locator('[data-action="fact-detail"]')).to_have_count(3)
                 for width in (1280, 390):
                     page.set_viewport_size({'width': width, 'height': 900})
                     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
@@ -225,6 +275,7 @@ def run():
                 page.goto(base + '/#details/ledger')
                 flow_form = page.locator('[data-form="economic-filter"]')
                 expect(flow_form).to_be_visible()
+                assert_common_row(page, flow_form, 'cash_currency_code', 'dev17-common-flow-filter')
                 assert flow_form.locator('[name="word"]').bounding_box()['width'] >= 300
                 assert flow_form.bounding_box()['height'] <= 150
                 choose('tag_id', 'Mock late filter tag', tag_id)
@@ -244,6 +295,9 @@ def run():
                 with target_database.SessionLocal() as db:
                     assert counts == [db.scalar(select(func.count()).select_from(entity))
                                       for entity in [TransactionFact, ReviewCase, LedgerEntry]]
+                    after_tables = {table.name: tuple(tuple(row) for row in db.execute(select(table).order_by(table.c.id)))
+                        for table in target_database.TargetBase.metadata.sorted_tables}
+                    assert after_tables == before_tables, 'read-only filtering changed a business table'
                 assert not writes and not errors, (writes, errors)
                 browser.close()
             print('PASS compact Fact/Flow, named scopes, zero/clear, chips/reload/history, same-condition reread and bounded tag search; no writes/providers')

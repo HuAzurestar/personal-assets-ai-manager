@@ -96,6 +96,10 @@ def run():
                 assert new_row.bounding_box()["height"] <= 100
                 viewport_evidence(page, "fix-r19-current-flow")
                 form = page.locator('[data-form="economic-filter"]')
+                def select_visibility(value):
+                    if not form.locator('[name="active"]').is_visible():
+                        form.locator('[data-filter-more-toggle]').click()
+                    form.locator('[name="active"]').select_option(value)
                 # This scoped URL adds a real named-account condition chip.
                 # The unfiltered default still has the original <=150 bound.
                 assert form.bounding_box()["height"] <= 190, form.bounding_box()
@@ -112,7 +116,7 @@ def run():
                 assert drawer.locator('[data-action="economic-review-transition"]').count() == 0
                 drawer.locator('[data-close]').click()
                 expect(form.locator('[name="active"]')).to_have_value("true")
-                form.locator('[name="active"]').select_option("all")
+                select_visibility("all")
                 expect(page.locator('[data-action="economic-detail"]')).to_have_count(25)
                 expect(page.locator('[data-flow-status="historical"]')).to_have_count(1)
                 assert "active=all" in page.url
@@ -127,7 +131,7 @@ def run():
                 page.reload()
                 expect(form.locator('[name="active"]')).to_have_value("all")
                 expect(page.locator('[data-action="economic-detail"]')).to_have_count(25)
-                form.locator('[name="active"]').select_option("false")
+                select_visibility("false")
                 expect(page.locator('[data-action="economic-detail"]')).to_have_count(1)
                 expect(old_row).to_contain_text("已停用历史")
                 page.go_back()
@@ -139,10 +143,10 @@ def run():
                 expect(page.locator('[data-action="economic-detail"]')).to_have_count(24)
                 # Search current/history has identical explicit mode semantics.
                 form.locator('[name="word"]').fill("Mock state")
-                form.locator('[name="active"]').select_option("all")
+                select_visibility("all")
                 expect(page.locator('[data-flow-scan-status]')).to_contain_text("本次扫描结束")
                 expect(page.locator('[data-action="economic-detail"]')).to_have_count(25)
-                form.locator('[name="active"]').select_option("true")
+                select_visibility("true")
                 expect(page.locator('[data-flow-scan-status]')).to_contain_text("本次扫描结束")
                 expect(page.locator('[data-action="economic-detail"]')).to_have_count(24)
                 # Clear returns to current, not all; explicit history paginates.

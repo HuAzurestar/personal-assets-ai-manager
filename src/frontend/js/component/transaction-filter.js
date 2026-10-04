@@ -27,21 +27,24 @@ export function transactionFilter({params, flow = false, currency, sort, advance
   const word = params.get('word')?.trim() || '';
   const direction = ({'1': 'IN', '2': 'OUT'})[params.get('cash_direction')] || params.get('cash_direction') || '';
   const searchField = params.get('search_field') || 'summary';
+  const searchingCounterparty = searchField === (flow ? 'counterparty' : 'counterparty_name');
+  const searchLabel = searchingCounterparty ? '交易对手搜索' : '摘要搜索';
   const choices = scopes.filter(scope => flow || !scope.flowOnly);
   const identifiers = transactionScopeFilters(params, flow);
   const formName = flow ? 'economic-filter' : 'fact-filter';
   return `<form class="detail-filter transaction-filter" data-transaction-filter data-form="${formName}">
     <div class="transaction-filter-main">
-      <div class="transaction-filter-search"><span>字面搜索</span><div class="transaction-search-inputs">
-        <select name="search_field" aria-label="搜索字段"><option value="summary" ${searchField === 'summary' ? 'selected' : ''}>脱敏摘要</option><option value="${flow ? 'counterparty' : 'counterparty_name'}" ${searchField === (flow ? 'counterparty' : 'counterparty_name') ? 'selected' : ''}>脱敏交易对手</option></select>
-        <input name="word" maxlength="128" value="${esc(word)}" autocomplete="off" aria-label="搜索文字" placeholder="搜索摘要或交易对手（字面匹配）">
-      </div></div>
+      <label class="transaction-filter-search"><span data-search-label>${searchLabel}</span>
+        <input name="word" maxlength="128" value="${esc(word)}" autocomplete="off" aria-label="搜索文字" placeholder="${searchingCounterparty ? '搜索交易对手' : '搜索摘要'}（字面匹配）">
+      </label>
       ${dateTimeRangeControl(params.get('date_from') || '', params.get('date_to') || '')}
       <label>收支方向<select name="cash_direction"><option value="">全部方向</option>${[['IN','收入 / 流入'],['OUT','支出 / 流出']].map(([code, text]) => `<option value="${code}" ${direction === code ? 'selected' : ''}>${text}</option>`).join('')}</select></label>
-      <div class="transaction-filter-actions"><button type="submit">查找</button><button type="button" class="quiet" data-action="detail-clear" data-page-id="${flow ? 'economy' : 'ledger'}">清空</button></div>
+      <label class="transaction-filter-currency">币种${currency}</label>
+      <div class="transaction-filter-actions"><button type="submit">查找</button><button type="button" class="quiet" data-action="detail-clear" data-page-id="${flow ? 'economy' : 'ledger'}">清空</button><button type="button" data-filter-more-toggle aria-expanded="false" aria-controls="transaction-filter-more">高级条件</button></div>
     </div>
-    <div class="transaction-filter-secondary"><label>币种${currency}</label><label>排序${sort}</label>${secondary}<button type="button" data-filter-more-toggle aria-expanded="false" aria-controls="transaction-filter-more">高级条件</button></div>
-    <details id="transaction-filter-more" data-filter-more><summary>账户、标签及其他条件</summary><div class="transaction-filter-advanced">${advanced}
+    <details id="transaction-filter-more" data-filter-more><summary>搜索字段、排序、范围及账户条件</summary><div class="transaction-filter-advanced">
+      <label>搜索字段<select name="search_field"><option value="summary" ${searchField === 'summary' ? 'selected' : ''}>脱敏摘要</option><option value="${flow ? 'counterparty' : 'counterparty_name'}" ${searchingCounterparty ? 'selected' : ''}>脱敏交易对手</option></select></label>
+      <label>排序${sort}</label>${secondary}${advanced}
       ${choices.map(scope => {
         const value = identifiers.find(item => item.key === scope.name)?.val ?? '';
         const text = value === 0 ? scope.zero : value ? `#${value}（正在读取名称）` : '不限';
@@ -82,6 +85,11 @@ export function bindTransactionFilter(root) {
   const toggle = form.querySelector('[data-filter-more-toggle]');
   toggle.onclick = () => {more.open = !more.open;};
   more.addEventListener('toggle', () => toggle.setAttribute('aria-expanded', String(more.open)));
+  form.elements.namedItem('search_field').addEventListener('change', () => {
+    const counterparty = form.elements.namedItem('search_field').value !== 'summary';
+    form.querySelector('[data-search-label]').textContent = counterparty ? '交易对手搜索' : '摘要搜索';
+    form.elements.namedItem('word').placeholder = `${counterparty ? '搜索交易对手' : '搜索摘要'}（字面匹配）`;
+  });
   const value = name => form.elements.namedItem(name)?.value || '';
   const selectedText = name => {
     const field = form.elements.namedItem(name);

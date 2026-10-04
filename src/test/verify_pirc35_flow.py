@@ -171,6 +171,7 @@ def run():
                 assert "1234567890123456" not in drawer.inner_text()
                 drawer.locator('[data-close]').click()
                 page.locator('[data-form="economic-filter"] [name="word"]').fill("")
+                page.locator('[data-form="economic-filter"] [data-filter-more-toggle]').click()
                 page.locator('[data-form="economic-filter"] [name="sort"]').select_option("signed_cash_amount.asc")
                 expect(page.locator('[data-action="economic-detail"]')).to_have_count(2)
                 expect(page.locator('[data-form="economic-filter"]')).to_contain_text("带方向金额")
@@ -218,6 +219,7 @@ def run():
                 drawer.locator('[data-close]').click()
                 form = page.locator('[data-form="fact-filter"]')
                 form.locator('[name="word"]').fill('')
+                form.locator('[data-filter-more-toggle]').click()
                 form.locator('[name="sort"]').select_option('signed_amount.asc')
                 expect(page.locator('[data-action="fact-detail"]')).to_have_count(2)
                 # Full source history is never truncated into a fake complete detail.

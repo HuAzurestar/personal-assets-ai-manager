@@ -1642,21 +1642,18 @@
 .detail-filter-field > span { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:13px; line-height:normal; }
 .detail-filter-field > span i { color:var(--muted); font-size:10px; font-style:normal; font-weight:500; }
 .detail-filter-field > span i.error { color:var(--danger); }
-/* Fact/Flow share a wide primary query and compact secondary conditions.
+/* Fact/Flow share one common desktop row and folded advanced conditions.
    Scope to this component; Review/Import forms keep their own layouts. */
 .detail-filter.transaction-filter { display:grid; gap:10px; align-items:stretch; }
-.transaction-filter-main { display:grid; grid-template-columns:minmax(400px,1fr) minmax(230px,300px) 130px auto; gap:12px; align-items:end; }
+.transaction-filter-main { display:grid; grid-template-columns:minmax(300px,1fr) minmax(215px,260px) 110px 110px auto; gap:10px; align-items:end; }
 .detail-filter.transaction-filter label { min-width:0; margin:0; }
 .detail-filter.transaction-filter .detail-filter-field { min-width:0; gap:7px; }
 .transaction-filter-search { display:grid; gap:7px; min-width:0; font-size:13px; }
-.transaction-search-inputs { display:flex; gap:8px; min-width:0; }
-.transaction-search-inputs > select { flex:0 0 130px; width:130px; min-width:0; }
-.transaction-search-inputs > input { flex:1; width:0; min-width:0; }
+.transaction-filter-search input { width:100%; min-width:0; }
+.transaction-filter-main > label { white-space:nowrap; }
+.transaction-filter-main select { width:100%; min-width:0; }
 .transaction-filter-actions { display:flex; gap:8px; align-items:center; }
-.transaction-filter-secondary { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
-.detail-filter.transaction-filter .transaction-filter-secondary > label { display:flex; flex:none; flex-direction:row; align-items:center; gap:8px; white-space:nowrap; }
-.transaction-filter-secondary select { width:190px; min-width:0; }
-.transaction-filter-secondary > button { margin-left:auto; }
+.transaction-filter-actions button { white-space:nowrap; }
 .transaction-filter [data-filter-more]:not([open]) { display:none; }
 .transaction-filter [data-filter-more] > summary { cursor:pointer; color:var(--muted); margin-bottom:10px; }
 .transaction-filter-advanced { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; border-top:1px solid var(--line); padding-top:12px; }
@@ -1666,18 +1663,17 @@
 .transaction-filter-chips[hidden] { display:none; }
 .transaction-filter-chips > button { max-width:100%; min-height:30px; padding:5px 9px; text-align:left; overflow-wrap:anywhere; white-space:normal; font-weight:500; font-size:12px; }
 @media (max-width:1100px) {
-  .transaction-filter-main { grid-template-columns:minmax(0,1fr) 130px auto; }
+  .transaction-filter-main { grid-template-columns:minmax(0,1fr) 110px 110px; }
   .transaction-filter-main .transaction-filter-search { grid-column:1/-1; }
+  .transaction-filter-actions { grid-column:1/-1; justify-content:flex-end; }
   .transaction-filter-advanced { grid-template-columns:repeat(2,minmax(0,1fr)); }
 }
 @media (max-width:600px) {
-  .transaction-filter-main { grid-template-columns:minmax(0,1fr); }
-  .transaction-filter-main .transaction-filter-search { grid-column:auto; }
-  .transaction-search-inputs { flex-direction:column; }
-  .transaction-search-inputs > select, .transaction-search-inputs > input { width:100%; flex:auto; }
-  .transaction-filter-secondary { display:grid; grid-template-columns:minmax(0,1fr); }
-  .transaction-filter-secondary select { flex:1; width:0; }
-  .transaction-filter-secondary > button { margin-left:0; }
+  .transaction-filter-main { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .transaction-filter-main .transaction-filter-search,
+  .transaction-filter-main .date-time-range-filter { grid-column:1/-1; }
+  .transaction-filter-actions { justify-content:stretch; }
+  .transaction-filter-actions button { flex:1; min-width:0; min-height:44px; padding-inline:8px; }
   .transaction-filter-advanced { grid-template-columns:minmax(0,1fr); }
 }
 .date-time-range { min-width:0; }
