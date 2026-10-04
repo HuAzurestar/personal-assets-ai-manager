@@ -1754,7 +1754,7 @@
 @media (max-width:767px) {
   [data-flow-read] .detail-data-table { min-width:0; table-layout:fixed; }
   [data-flow-read] .detail-data-table tbody { display:block; }
-  [data-flow-read] .flow-list-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:4px 12px; padding:10px 12px; border-top:1px solid var(--row-line); }
+  [data-flow-read] .flow-list-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:3px 12px; padding:6px 12px; border-top:1px solid var(--row-line); }
   [data-flow-read] .flow-list-row td { display:block; min-width:0; height:auto; padding:0; border:0; }
   [data-flow-read] .flow-list-row td:nth-child(-n+3) { grid-column:1/-1; }
   [data-flow-read] .flow-list-row td:nth-child(-n+3)::before { display:none; }
