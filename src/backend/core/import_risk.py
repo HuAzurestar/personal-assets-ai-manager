@@ -2,6 +2,7 @@
 from collections import defaultdict
 from backend.core.import_identity import SOURCE_CODES, source_account_code, same_fact
 from backend.core.import_evidence import complete_source_code
+from backend.core.source_account_identity import reliable_source
 from backend.error import TargetIntakeError
 
 
@@ -35,6 +36,7 @@ def canonical_duplicate_groups(rows, candidates):
         first = min(members)
         original = candidates[first]["values"]
         if any(candidates[key].get("issue") or not rows[key].get("reference") or
+                not (source := reliable_source(rows[key])) or source[1] != source_account_code(rows[key]) or
                 not hint_scope(rows[key], candidates[key]["values"])["source_known"] or
                 not same_fact(original, candidates[key]["values"]) for key in members):
             continue

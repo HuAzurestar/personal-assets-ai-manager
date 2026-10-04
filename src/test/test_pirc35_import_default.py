@@ -41,6 +41,7 @@ def test_same_reliable_key_first_accept_later_skip_across_pages_and_filter(servi
 
 
 @pytest.mark.parametrize("changes", [dict(reference=""), dict(account=dict(number="****3456")),
+    dict(source_account=dict(identity_strength="WEAK")),
     dict(amount_minor=40000), dict(amount_minor=-39999), dict(currency="CNY_4"),
     dict(occurred_at="2024-01-01T00:00:00.000001Z")])
 def test_weak_keyless_or_conflicting_group_is_never_certain(service, changes):
@@ -128,3 +129,13 @@ def test_twenty_thousand_same_identity_is_one_complete_linear_group():
     assert len(groups) == 20000
     assert sum(group["is_keeper"] for group in groups.values()) == 1
     assert all(group["member_count"] == 20000 for group in groups.values())
+
+
+def test_wallet_nickname_or_disagreeing_own_identity_cannot_claim_certain():
+    from backend.core.import_identity import fact_values
+    for profile, source in (("Mock昵称", dict(identity_strength="WEAK")),
+            ("first@example.invalid", dict(identity_strength="RELIABLE", source_namespace="alipay:statement-v1",
+                source_identity="other@example.invalid"))):
+        rows = {(1,n):row(n,source_type="alipay", profile=profile, source_account=source) for n in (1,2)}
+        candidates = {key:dict(values=fact_values(value, "a"*64), issue=None, classification="NEW") for key,value in rows.items()}
+        assert canonical_duplicate_groups(rows,candidates) == {}
