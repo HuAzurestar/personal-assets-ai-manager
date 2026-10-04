@@ -431,6 +431,13 @@
 .target-shell .automation-card h3 { margin:4px 0 0; font-size:17px; overflow-wrap:anywhere; }
 .target-shell .automation-card header p { margin:6px 0 0; color:var(--muted); font-size:12px; overflow-wrap:anywhere; }
 .target-shell .automation-settings { gap:28px; }
+.target-shell .automation-state-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
+.target-shell .automation-state-card { min-width:0; padding:12px; border:1px solid var(--line); border-radius:12px; }
+.target-shell .automation-state-card h3 { font-size:14px; color:var(--muted); margin-bottom:8px; }
+.target-shell .automation-state-card strong { display:block; font-size:16px; overflow-wrap:anywhere; }
+.target-shell .automation-state-card p { margin:8px 0 0; font-size:13px; line-height:1.5; overflow-wrap:anywhere; }
+@media (max-width:1100px) { .target-shell .automation-state-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media (max-width:600px) { .target-shell .automation-state-grid { grid-template-columns:1fr; } }
 .target-shell .automation-settings > .automation-section { padding-bottom:28px; border-bottom:1px solid var(--line); }
 .target-shell .automation-settings > .automation-section:last-child { border-bottom:0; }
 .target-shell .automation-settings .automation-actions { margin-top:0; justify-content:flex-start; }

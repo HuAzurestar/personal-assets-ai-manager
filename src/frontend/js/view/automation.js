@@ -11,6 +11,7 @@ let setting = null;
 let rules = [];
 let views = [];
 let scheduleStatus = null;
+let serviceHealth = null;
 let stopPolling = () => {};
 let requestItems = [];
 let batchFeedback = "";
@@ -75,9 +76,12 @@ function disclosureSummaryMarkup() {
   return `<div><span>时间策略 ${helpTip("时间策略", "当前发送内容省略交易时间，此项仅保存配置。")}</span><strong>${esc(({ DAY: "精确到日", MONTH: "精确到月", NONE: "不发送时间" })[setting.disclosure?.date_granularity] || "未配置")}</strong></div><div><span>金额分档 ${helpTip("金额分档", "按金额绝对值分档，以下为换算后的日常金额。")}</span>${bands || "<strong>尚未配置</strong>"}</div>`;
 }
 
-function scanControlMarkup() {
-  const enabled = setting.scan_enabled;
-  const available = setting.scan_available;
+function scanControlMarkup(current = setting) {
+  if (typeof current?.scan_available !== 'boolean' || typeof current?.scan_enabled !== 'boolean') {
+    return '<div class="automation-notice compact"><strong>自动分析状态未知</strong><span>未读到当前开关；不会替你开启。等待重新读取设置。</span><button type="button" data-action="scan-toggle" disabled>等待状态读取</button></div>';
+  }
+  const enabled = current.scan_enabled;
+  const available = current.scan_available;
   const label = !available ? "部署层已关闭" : enabled ? "已开启" : "已关闭";
   const detail = !available
     ? "部署环境禁止自动分析；需要管理员调整启动配置并重建容器。"
@@ -86,19 +90,53 @@ function scanControlMarkup() {
   return `<div class="automation-notice compact"><strong>自动分析：${label}</strong><span>${detail}</span><button type="button" data-action="scan-toggle" ${available ? "" : "disabled"}>${!available ? "请调整部署配置" : enabled ? "关闭自动分析" : "开启自动分析"}</button></div>`;
 }
 
+// Four independent observations. Configuration is never proof of a provider
+// connection, and a disabled scan is not evidence that the service is down.
+export function automationStateMarkup(health, current, schedule) {
+  const online = health?.status === 'ok';
+  const configured = Array.isArray(current?.models);
+  const knownSwitch = typeof current?.scan_available === 'boolean' && typeof current?.scan_enabled === 'boolean';
+  const schedulerNames = { RUNNING:'调度运行', STOPPED:'调度停止' };
+  const workerNames = { HEALTHY:'执行器正常', STOPPED:'执行器停止', UNHEALTHY:'执行器异常' };
+  const knownTasks = schedulerNames[schedule?.scheduler_state] && workerNames[schedule?.worker_state]
+    && Array.isArray(schedule?.tasks) && schedule.tasks.every(task => ['RUNNING','QUEUED','IDLE','PAUSED','BLOCKED'].includes(task.queue_state));
+  const analysisState = !knownSwitch ? 'unknown' : !current.scan_available ? 'unavailable' : current.scan_enabled ? 'on' : 'off';
+  const cards = [
+    ['service', online ? 'connected' : 'unknown', '本地服务', online ? '服务在线' : '服务连接未知',
+      online ? `健康检查已响应；不代表模型或扫描正常。${health.operational_log === 'unavailable' ? '运行日志不可用。' : ''}` : '健康检查未成功；请检查本地服务。其他状态独立展示。'],
+    ['model', configured ? 'configured' : 'unknown', '模型配置', configured
+      ? `${current.models.length} 个配置 · ${current.models.filter(model => model.enabled === true && model.key_configured === true).length} 个已启用且已存密钥` : '模型配置未知',
+      '配置和密钥状态不代表真实连接已验证；下方「测试真实连接」才会调用模型，可能计费。'],
+    ['analysis', analysisState, '自动分析开关', ({ unknown:'自动分析状态未知', unavailable:'部署层已关闭', on:'自动分析已开启', off:'自动分析已关闭' })[analysisState],
+      analysisState === 'unavailable' ? '需要管理员调整部署配置；启用模型或规则不能绕过此开关。'
+        : analysisState === 'off' ? '可在本页开启；关闭不会删除配置，也不代表服务停止。'
+          : analysisState === 'on' ? '已允许自动分析；是否执行还取决于规则、数据守卫及任务状态，可能产生模型费用。' : '未读到当前开关；不能按关闭或开启处理。'],
+    ['task', knownTasks ? 'observed' : 'unknown', '任务状态', knownTasks
+      ? `${schedulerNames[schedule.scheduler_state]} · ${workerNames[schedule.worker_state]}` : '任务状态未知', knownTasks
+      ? `已注册 ${schedule.tasks.length} · 运行 ${schedule.tasks.filter(task => task.queue_state === 'RUNNING').length} · 排队 ${schedule.tasks.filter(task => task.queue_state === 'QUEUED').length}；不代表模型连接已验证。`
+      : '未取得完整任务状态；不能把读取失败显示为零任务。'],
+  ];
+  return cards.map(([kind,state,title,label,detail]) => `<article class="automation-state-card" data-automation-state="${kind}" data-state="${state}"><h3>${title}</h3><strong>${esc(label)}</strong><p>${esc(detail)}</p></article>`).join('');
+}
+
 export async function automationSettingsPage() {
-  setting = await request("/paam/system/v1/setting/automation");
-  const modelCards = setting.models.map(modelSummary).join("");
-  scheduleStatus = await request("/paam/system/v1/schedule/status").catch(() => null);
-  const diagnostics = await readScheduleDiagnostics().catch(() => null);
-  return `<div class="automation-page automation-settings" data-auto-page="settings">
+  const [currentSetting, schedule, health, diagnostics] = await Promise.all([
+    request('/paam/system/v1/setting/automation', {cache:'no-store'}).catch(() => null),
+    request("/paam/system/v1/schedule/status", {cache:'no-store'}).catch(() => null),
+    request('/api/health', {cache:'no-store'}).catch(() => null), readScheduleDiagnostics().catch(() => null),
+  ]);
+  setting = currentSetting;
+  const modelCards = setting?.models.map(modelSummary).join('');
+  scheduleStatus = schedule; serviceHealth = health;
+  return `<div class="automation-page automation-settings" data-auto-page="settings" data-settings-current="${Boolean(setting)}">
+    <section class="automation-state-grid" aria-label="独立运行状态" data-auto-states>${automationStateMarkup(serviceHealth, setting, scheduleStatus)}</section>
     <section class="automation-section" aria-labelledby="automation-model-title">
-      <div class="automation-section-head"><div><h3 id="automation-model-title">模型连接 ${helpTip("模型连接说明", "密钥保存在本机系统凭据存储。连接测试会调用模型，可能计费。")}</h3></div><button type="button" class="primary" data-action="model-new">＋ 添加模型</button></div>
-      <div class="automation-grid" data-auto-models>${modelCards || '<p>尚未配置模型。添加连接并保存密钥后，规则才可选择模型。</p>'}</div>
+      <div class="automation-section-head"><div><h3 id="automation-model-title">模型配置 ${helpTip("模型连接说明", "密钥保存在本机系统凭据存储。连接测试会调用模型，可能计费；已启用不代表已验证连接。")}</h3></div><button type="button" class="primary" data-action="model-new" ${setting ? '' : 'disabled'}>＋ 添加模型</button></div>
+      <div class="automation-grid" data-auto-models>${modelCards || (setting ? '<p>尚未配置模型。添加连接并保存密钥后，规则才可选择模型。</p>' : '<p>未读到模型配置；不能推断未配置模型。</p>')}</div>
     </section>
     <section class="automation-section" aria-labelledby="automation-disclosure-title">
-      <div class="automation-section-head"><div><h3 id="automation-disclosure-title">数据披露 ${helpTip("数据披露说明", "每条规则可选择发送金额区间、精确金额或省略金额。")}</h3></div><div class="automation-actions"><button type="button" class="quiet" data-action="disclosure-preview">查看发送示例</button><button type="button" data-action="disclosure-edit">编辑披露策略</button></div></div>
-      <div class="disclosure-card" data-auto-disclosure>${disclosureSummaryMarkup()}</div>
+      <div class="automation-section-head"><div><h3 id="automation-disclosure-title">数据披露 ${helpTip("数据披露说明", "每条规则可选择发送金额区间、精确金额或省略金额。")}</h3></div><div class="automation-actions"><button type="button" class="quiet" data-action="disclosure-preview">查看发送示例</button><button type="button" data-action="disclosure-edit" ${setting ? '' : 'disabled'}>编辑披露策略</button></div></div>
+      <div class="disclosure-card" data-auto-disclosure>${setting ? disclosureSummaryMarkup() : '披露配置读取失败；等待重新读取。'}</div>
     </section>
     <section class="automation-section"><h3>自动分析开关</h3><div data-auto-scan-control>${scanControlMarkup()}</div></section>
     <section class="automation-section"><h3>运行概况</h3><div data-auto-notice>${scheduleNotice()}</div>${freshnessMarkup}
@@ -127,7 +165,7 @@ function ruleRow(rule) {
   </tr>`;
 }
 
-function scheduleNotice() {
+function scheduleNotice(current = setting) {
   const tasks = (scheduleStatus?.tasks || []).filter((item) => item.task_key.startsWith("tag-scan:"));
   const disabled = scheduleStatus?.tag_scan_guard === "DISABLED";
   const blockedByData = scheduleStatus?.tag_scan_guard === "NON_SYNTHETIC_FACT";
@@ -140,7 +178,11 @@ function scheduleNotice() {
     : !tasks.length ? "没有已注册的自动标签任务"
     : running ? `自动扫描已就绪 · ${tasks.length} 条规则` : "自动扫描已停止";
   const explanation = !scheduleStatus ? "请检查服务连接。"
-    : disabled ? "需在服务配置中开启自动分析并重启服务；仅启用模型或规则不会开始扫描。开启后可能产生模型费用。"
+    : disabled ? current?.scan_available === true
+      ? current.scan_enabled === false ? "可在设置页开启自动分析，无需重启服务；仅启用模型或规则不会开始扫描。开启后可能产生模型费用。"
+        : "设置已允许分析，但扫描守卫仍关闭；请查看任务诊断，不能据此判断服务停止。"
+      : current?.scan_available === false ? "部署层禁止自动分析；需要管理员调整部署配置。仅启用模型或规则不会开始扫描。"
+        : "自动分析开关尚未读到；请先读取设置，不推断需要重启。"
     : blockedByData ? "验收模式仅支持纯虚构数据，请使用独立验收库。"
     : !tasks.length ? "请检查模型和规则是否已启用。"
     : !running ? "请查看运行概况中的调度器与执行器状态。"
@@ -893,8 +935,12 @@ async function loadAutomationSnapshot(page, signal) {
   const read = (url) => request(url, { signal, cache: "no-store" });
   const kind = page.dataset.autoPage;
   if (kind === "settings") {
-    const [schedule, diagnostics, currentSetting] = await Promise.all([read("/paam/system/v1/schedule/status"), diagnosticSnapshot(page, signal), read('/paam/system/v1/setting/automation')]);
-    return { schedule, diagnostics, currentSetting };
+    const optional = promise => promise.catch(error => { if (signal?.aborted || error.name === 'AbortError') throw error; return null; });
+    const [schedule, diagnostics, currentSetting, health] = await Promise.all([
+      optional(read("/paam/system/v1/schedule/status")), optional(diagnosticSnapshot(page, signal)),
+      optional(read('/paam/system/v1/setting/automation')), optional(read('/api/health')),
+    ]);
+    return { schedule, diagnostics, currentSetting, health };
   }
   if (kind === "requests") return { requests: await read(`/paam/tag/v1/assignment_request/list?${page.dataset.requestQuery}`) };
   if (kind === "request") {
@@ -928,13 +974,20 @@ function applyAutomationData(root, page, data) {
   root.dataset.autoStale = "false";
   root.querySelector('[data-refresh-error]')?.remove();
   if (page.dataset.autoPage === "settings") {
+    scheduleStatus = data.schedule; serviceHealth = data.health;
+    page.dataset.settingsCurrent = String(Boolean(data.currentSetting));
+    page.dataset.partialState = String(!data.currentSetting || !data.schedule || data.health?.status !== 'ok');
+    patchMarkup($('[data-auto-states]', root), automationStateMarkup(serviceHealth, data.currentSetting, scheduleStatus));
+    patchMarkup($('[data-auto-scan-control]', root), scanControlMarkup(data.currentSetting));
+    $$('[data-action="model-new"], [data-action="model-edit"], [data-action="model-test"], [data-action="disclosure-edit"]', root)
+      .forEach(button => { button.disabled = !data.currentSetting; });
     if (settingChanged) {
       patchMarkup($('[data-auto-models]', root), setting.models.map(modelSummary).join('') || '<p>尚未配置模型。添加连接并保存密钥后，规则才可选择模型。</p>');
       patchMarkup($('[data-auto-disclosure]', root), disclosureSummaryMarkup());
       patchMarkup($('[data-auto-scan-control]', root), scanControlMarkup());
     }
     patchMarkup($('[data-auto-runtime]', root), runtimeMarkup(data.schedule));
-    patchMarkup($('[data-auto-notice]', root), scheduleNotice());
+    patchMarkup($('[data-auto-notice]', root), scheduleNotice(data.currentSetting));
   }
   if (data.rulePage) {
     rules = data.rulePage.items;
@@ -988,12 +1041,19 @@ export function startAutomationRefresh(root, { stale = false } = {}) {
       const unknown = state === "UNKNOWN" || (state === "REFRESHING" && root.dataset.autoStale === "true");
       feedback.textContent = unknown ? `连接中断，当前状态未知 · 上次更新：${last}`
         : state === "PAUSED" ? `已暂停刷新 · ${last}`
-        : state === "CURRENT" ? `已更新 · ${last}`
+        : state === "CURRENT" ? page.dataset.partialState === 'true'
+          ? `部分状态读取失败；未知项见上方，模型配置可能为上次读取 · ${last}` : `已更新 · ${last}`
         : "状态自动更新";
       if (unknown) {
         root.dataset.autoStale = "true";
         const notice = $('[data-auto-notice]', root);
         if (notice) notice.textContent = "连接中断，扫描状态未知。";
+        if (page.dataset.autoPage === 'settings') {
+          page.dataset.settingsCurrent = 'false';
+          patchMarkup($('[data-auto-states]', root), automationStateMarkup(null, null, null));
+          patchMarkup($('[data-auto-scan-control]', root), scanControlMarkup(null));
+          $$('[data-action="model-new"], [data-action="model-edit"], [data-action="model-test"], [data-action="disclosure-edit"]', root).forEach(button => { button.disabled = true; });
+        }
         $$('[data-action="tag-request-transition"]', root).forEach((button) => { button.disabled = true; });
       }
       updateRequestActions(root);
@@ -1071,6 +1131,8 @@ export function bindAutomation(root, rerender, notify, navigate) {
     const button = event.target.closest('[data-action]');
     if (!button || !root.contains(button) || button.disabled) return;
     const action = button.dataset.action;
+    if ($('[data-auto-page="settings"]', root)?.dataset.settingsCurrent === 'false'
+      && ['scan-toggle','model-new','model-edit','model-test','disclosure-edit'].includes(action)) return;
     const id = Number(button.dataset.id);
     const params = new URLSearchParams(location.hash.split("?")[1] || "");
     try {
@@ -1090,7 +1152,8 @@ export function bindAutomation(root, rerender, notify, navigate) {
           expected_updated_time: setting.updated_time, scan_enabled: next,
         }, true);
         setting = saved.body;
-        scheduleStatus = await request("/paam/system/v1/schedule/status");
+        scheduleStatus = await request("/paam/system/v1/schedule/status").catch(() => null);
+        patchMarkup($('[data-auto-states]', root), automationStateMarkup(serviceHealth, setting, scheduleStatus));
         patchMarkup($('[data-auto-scan-control]', root), scanControlMarkup());
         patchMarkup($('[data-auto-notice]', root), scheduleNotice());
         const syncFailed = saved.warnings?.some((item) => item.code === "SCAN_SYNC_FAILED");

@@ -7,7 +7,7 @@ import pytest
 
 
 @pytest.mark.parametrize("script", [
-    "automation_ui.cjs", "automation_m2_ui.cjs",
+    "automation_ui.cjs", "automation_m2_ui.cjs", "automation_state.cjs",
     "automation_setting_form.cjs", "tag_assignment_ui.cjs",
     "import_batch_unknown.cjs",
     "import_batch_issue.cjs",
