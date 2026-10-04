@@ -96,6 +96,13 @@ class ImportDuplicateHint(PO):
         return self
 
 
+class CanonicalImportDuplicate(PO):
+    kind: Literal["SOURCE_REFERENCE"]
+    keeper_row: RowIdentity
+    member_count: StrictInt = Field(ge=2, le=20000)
+    is_keeper: bool
+
+
 class PreviewRowPO(PO):
     file_id: int
     source_row_number: int
@@ -107,6 +114,8 @@ class PreviewRowPO(PO):
     issue_codes: list[str]
     account_candidates: list[PreviewAccountCandidate] = Field(max_length=100)
     duplicate_hint: ImportDuplicateHint
+    canonical_duplicate: CanonicalImportDuplicate | None
+    default_decision: Literal["ACCEPT", "SKIP"]
 
 
 class PreviewRowListPO(PO):

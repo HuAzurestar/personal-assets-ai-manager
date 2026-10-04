@@ -47,5 +47,13 @@ const {pathToFileURL} = require('node:url');
   }
   // Known evidence is not new cash and must not acquire an irrelevant risk gate.
   assert.equal(importRowChoice({...row,classification:'EXISTING',duplicate_hint:{state:'UNCHECKED'}}).decision,'ACCEPT');
+  // Certain canonical repetitions use the whole-preview recommendation;
+  // saved/user choices win, and a server recommendation is not risk consent.
+  const repeat = {...row, default_decision:'SKIP', canonical_duplicate:{kind:'SOURCE_REFERENCE',
+    keeper_row:{file_id:1,source_row_number:1}, member_count:25,is_keeper:false}};
+  assert.equal(importRowChoice(repeat).decision,'SKIP');
+  assert.equal(importRowChoice(repeat,explicit),explicit);
+  assert.equal(importRowChoice({...repeat,choice:explicit}),explicit);
+  assert.equal(importRowChoice({...repeat, default_decision:'ACCEPT',duplicate_hint:{state:'SUSPECTED',candidate_count:1}}).decision,'SKIP');
   console.log('PASS normal ACCEPT, invalid/ambiguous/issue SKIP, explicit precedence, no mutation or risk consent');
 })().catch(error => {console.error(error); process.exitCode = 1;});

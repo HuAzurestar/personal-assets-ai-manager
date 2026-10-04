@@ -13,6 +13,7 @@ from datetime import timedelta
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 from backend.core.import_identity import fact_key, fact_values, same_fact, canonical_json
+from backend.core.import_risk import canonical_duplicate_groups, default_import_decision
 from backend.core.import_public_text import masked_summary
 from backend.core.import_preview_store import ImportPreviewState, import_preview_store
 from backend.core.config import IMPORT_PREVIEW_TIMEOUT_MINUTES
@@ -474,7 +475,7 @@ class ImportBatchService:
         return count
 
     @staticmethod
-    def row_po(key, candidate, choice, hint):
+    def row_po(key, candidate, choice, hint, group):
         values = candidate["values"]
         return dict(file_id=key[0], source_row_number=key[1], classification=candidate["classification"],
             parsed=dict(occurred_time=values["occurred_time"] if values else None,
@@ -486,6 +487,7 @@ class ImportBatchService:
             persisted_row_status=candidate["stored"]["row_status"] if candidate["stored"] else None,
             choice=choice, issue_codes=[candidate["issue"]] if candidate["issue"] else [],
             duplicate_hint=hint,
+            canonical_duplicate=group, default_decision=default_import_decision(candidate, hint, group),
             account_candidates=[dict(account_ref_id=candidate["account"]["ref_id"], label_masked="已核验来源账户")]
                 if candidate["account"]["ref_id"] else [])
 
@@ -534,8 +536,9 @@ class ImportBatchService:
         expected_updated_time = state.updated_time
         try:
             risks = ImportRiskService(self.mapper).plan(state.rows, state.candidates, [key for key, _candidate in selected]) if selected else {}
+            groups = canonical_duplicate_groups(state.rows, state.candidates) if selected else {}
             self.store.ensure_current(token,expected_updated_time,digest)
-            return dict(items=[self.row_po(key, candidate, state.choices.get(key), risks[key]["hint"]) for key, candidate in selected],
+            return dict(items=[self.row_po(key, candidate, state.choices.get(key), risks[key]["hint"], groups.get(key)) for key, candidate in selected],
                         total=len(items), page_index=request.page_index, page_size=request.page_size)
         finally:
             self.db.rollback()

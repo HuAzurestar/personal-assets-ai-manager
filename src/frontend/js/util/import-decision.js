@@ -5,7 +5,9 @@ export function importRowChoice(row, selectedChoice) {
   if (row.choice) return row.choice;
   const normal = ['NEW', 'EXISTING', 'PROCESSED'].includes(row.classification)
     && !row.issue_codes?.length && importRiskState(row) === 'NONE_IN_SCOPE';
-  return {decision:normal ? 'ACCEPT' : 'SKIP', recheck:false, account_ref_id:null};
+  // Server recommendation describes the full preview, not just this page.
+  // Never use an ACCEPT recommendation to bypass invalid fields or risk.
+  return {decision:normal && row.default_decision !== 'SKIP' ? 'ACCEPT' : 'SKIP', recheck:false, account_ref_id:null};
 }
 
 // Evidence-only/read-only rows do not create new cash. Missing or inconsistent
