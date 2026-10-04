@@ -716,6 +716,11 @@ function showImportStep(step, focusHeading = true) {
 function historySummaryMarkup(summary) {
   return `<div class="history-metric"><span>匹配文件</span><strong>${summary.import_file_count}</strong><small>当前筛选结果</small></div><div class="history-metric"><span>完整导入</span><strong>${summary.imported_file_count}</strong><small>无异常完成</small></div><div class="history-metric"><span>已写入记录</span><strong>${summary.success_count}</strong><small>当前结果合计</small></div>`;
 }
+function historySummaryUrl(params) {
+  // The aggregate shares the list's filter, not its pagination or ordering.
+  const filter = params.get("filter");
+  return `/paam/import/v1/import_file/summary${filter ? `?${new URLSearchParams({ filter })}` : ""}`;
+}
 function historyResultsMarkup(result) {
   const fileCards = result.items.map((item) => `<button type="button" class="batch-card" data-action="import-file-detail" data-id="${item.id}" aria-label="查看导入文件 ${item.id}：${esc(item.filename)}"><span class="file-type-icon">${esc(fileExtension(item.filename))}</span><span class="batch-file"><span class="history-id">Import File #${item.id}</span><strong>${esc(item.filename)}</strong><small>${esc(sourceLabels[item.source_type] || item.source_type)}</small></span><span class="batch-field batch-account"><small>文件格式</small><span>${esc(fileFormatLabels[item.file_format] || item.file_format)}</span></span><span class="batch-field"><small>成功 / 总数</small><span class="progress-count"><strong>${item.success_count}</strong> / ${item.total_count}</span></span><span class="batch-field"><small>状态</small><span><span class="badge ${item.status === 1 ? "" : "warn"}">${esc(statusLabels[item.status] || item.status)}</span></span></span><span class="batch-field batch-time"><small>导入时间</small><span>${date(item.created_time)}</span></span><span class="batch-chevron" aria-hidden="true">›</span></button>`);
   const pages = Math.max(1, Math.ceil(result.total / result.page_size));
@@ -741,11 +746,11 @@ async function importHistoryPage() {
   }
   const [result, summary] = await Promise.all([
     request(`/paam/import/v1/import_file/list?${initialQuery}`),
-    request("/paam/import/v1/import_file/summary"),
+    request(historySummaryUrl(initialQuery)),
   ]);
   const sourceOptions = Object.entries(sourceLabels).map(([value, label]) => `<option value="${esc(value)}">${esc(label)}</option>`).join("");
   const statusOptions = [0, 1, 2, 3].map((value) => `<option value="${value}">${esc(statusLabels[value])}</option>`).join("");
-  return `<div class="history-summary" data-history-summary>${historySummaryMarkup(summary)}</div><section class="panel history-panel"><div class="section-head"><div><h2>导入文件</h2><p class="import-section-help">来源和状态筛选只更新下方结果。</p></div><button class="primary" data-page="import">＋ 导入新数据</button></div><form class="toolbar history-toolbar" data-form="history-filter"><label>来源<select name="source_type"><option value="">全部来源</option>${sourceOptions}</select></label><label>状态<select name="status"><option value="">全部状态</option>${statusOptions}</select></label><span class="history-updating" data-history-updating aria-live="polite"></span></form><div data-history-results>${historyResultsMarkup(result)}</div></section>`;
+  return `<div class="history-summary" data-history-summary>${historySummaryMarkup(summary)}</div><section class="panel history-panel"><div class="section-head"><div><h2>导入文件</h2><p class="import-section-help">来源和状态筛选同时更新统计与列表。</p></div><button class="primary" data-page="import">＋ 导入新数据</button></div><form class="toolbar history-toolbar" data-form="history-filter"><label>来源<select name="source_type"><option value="">全部来源</option>${sourceOptions}</select></label><label>状态<select name="status"><option value="">全部状态</option>${statusOptions}</select></label><span class="history-updating" data-history-updating aria-live="polite"></span></form><div data-history-results>${historyResultsMarkup(result)}</div></section>`;
 }
 
 async function refreshHistoryResults(form, page = 1, background = false) {
@@ -778,7 +783,7 @@ async function refreshHistoryResults(form, page = 1, background = false) {
   try {
     const [result, summary] = await Promise.all([
       request(`/paam/import/v1/import_file/list?${params}`, { signal: controller.signal }),
-      request("/paam/import/v1/import_file/summary", { signal: controller.signal }),
+      request(historySummaryUrl(params), { signal: controller.signal }),
     ]);
     if (requestVersion !== state.historyRequestVersion || state.page !== "import-history") return;
     if (!form.isConnected || (background && (interaction !== interactionVersion || !canRefreshPage()))) return;
