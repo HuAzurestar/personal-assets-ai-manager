@@ -7,7 +7,7 @@ const vm = require('node:vm');
 
 (async () => {
   const decisions = await import(pathToFileURL(path.join(__dirname,'../frontend/js/util/import-decision.js')).href);
-  const {validateImportBinding,projectImportBinding,readImportBinding} = await import(pathToFileURL(
+  const {validateImportBinding,projectImportBinding,readImportBinding,importBindingScope,mergeImportBinding} = await import(pathToFileURL(
     path.join(__dirname,'../frontend/js/component/import-binding.js')).href);
   const time='2026-10-03T00:00:00.123456Z', digest='a'.repeat(64);
   const selected=new Map([
@@ -23,6 +23,45 @@ const vm = require('node:vm');
     items:[...selected.values()].map((item,i)=>({row:{file_id:1,source_row_number:i+1},
       source_state:i===2?'UNKNOWN':'RELIABLE',applicable:i!==1,reason_codes:i===1?['ROW_RECHECK_REQUIRED']:[]}))};
   const before=JSON.stringify([...selected]);
+  assert.equal(typeof importBindingScope,'function','source binding needs an explicit per-file group');
+  const multi=new Map(selected);
+  multi.set('2:1',{row:{file_id:2,source_row_number:1,classification:'NEW'},choice:{decision:'SKIP',resolution:'AUTO'}});
+  const group=importBindingScope(multi,1);
+  assert.equal(group.size,3);assert.equal(importBindingScope(multi,0).size,4);
+  for(const file of [true,'1',1.5,-1,3]) assert.throws(()=>importBindingScope(multi,file));
+  const merged=mergeImportBinding(multi,group,result,9,'Named group card',digest,time);
+  assert.equal(merged.size,4);assert.equal(merged.get('2:1'),multi.get('2:1'));
+  assert.equal(merged.get('1:2'),multi.get('1:2'));
+  assert.equal(merged.get('1:1').choice.account_ref_id,9);
+  assert.equal(JSON.stringify([...selected]),before);
+  const {manualSourceDraft,sourceCardCreation}=await import(pathToFileURL(
+    path.join(__dirname,'../frontend/js/component/source-card-create.js')).href);
+  assert.deepEqual(manualSourceDraft({name:'Named weak wallet',institution:'Mock wallet',reference:'',
+    source_identity:'forged',identity_strength:'RELIABLE'}),
+    {account_id:0,name:'Named weak wallet',institution:'Mock wallet',reference:''});
+  for(const value of [{name:''},{name:' '},{name:'a'.repeat(121)},{name:true},{name:'ok',reference:'a'.repeat(201)}])
+    assert.throws(()=>manualSourceDraft(value));
+  const card={id:99,account_id:0,status:'ACTIVE',identity_strength:'UNKNOWN',source_namespace:'',source_identity:''};
+  let creates=0,finish;
+  const creator=sourceCardCreation({create:async values=>{creates++;assert.equal(values.account_id,0);
+    return new Promise(resolve=>finish=resolve);}});
+  const creating=creator.submit({name:'Human named card'});
+  assert.equal(creator.busy,true);assert.equal(await creator.submit({name:'duplicate click'}),null);
+  finish(card);assert.equal(await creating,card);
+  assert.equal(creator.completed,true);assert.equal(await creator.submit({name:'another create'}),null);assert.equal(creates,1);
+  const known=sourceCardCreation({create:async()=>{throw Object.assign(new Error('busy'),{status:503,code:'WRITE_BUSY'});}});
+  await assert.rejects(known.submit({name:'Known rollback'}),/busy/);
+  assert.equal(known.unknown,false);assert.equal(known.busy,false);
+  const uncertain=sourceCardCreation({create:async()=>{creates++;throw new Error('lost transport');}});
+  await assert.rejects(uncertain.submit({name:'Unknown result'}),/lost transport/);
+  assert.equal(uncertain.unknown,true);const count=creates;
+  assert.equal(await uncertain.submit({name:'do not replay'}),null);assert.equal(creates,count);
+  const malformed=sourceCardCreation({create:async()=>({...card,identity_strength:'RELIABLE'})});
+  await assert.rejects(malformed.submit({name:'Malformed response'}),/无法核对/);
+  assert.equal(malformed.unknown,true);
+  let stillLive=true;
+  const retired=sourceCardCreation({valid:()=>stillLive,create:async()=>{stillLive=false;return card;}});
+  assert.equal(await retired.submit({name:'Close during create'}),null);assert.equal(retired.completed,true);
   assert.equal(validateImportBinding(result,selected,9,digest,time),result);
   const projected=projectImportBinding(selected,result,9,'Named card',digest,time);
   assert.equal(projected.get('1:2'),selected.get('1:2')); // Exceptions remain selected, not finance-excluded.

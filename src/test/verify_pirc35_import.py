@@ -316,6 +316,8 @@ def run():
                         assert identity not in card.inner_text(), "own identity must be masked in card lists"
                         page.set_viewport_size({"width": 390, "height": 844})
                         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+                        card.scroll_into_view_if_needed()
+                        expect(card).to_be_visible()
                         viewport_evidence(page, f'dev17-wallet-{source}-card-390')
                         # Same bytes are current accepted evidence, never a
                         # second card or another default cash chain.
@@ -327,6 +329,119 @@ def run():
                         expect(page.locator('[data-batch-files]')).to_contain_text('已接受 24', timeout=15000)
                         expect(page.locator('[data-batch-confirm]')).to_be_disabled()
                         assert len(confirmations) == 4 + index
+                    # Nickname-only exports require explicit per-file grouping.
+                    # Equal nicknames do not create/reuse a reliable identity.
+                    from test_pirc35_import_duplicate import manifest
+                    from types import SimpleNamespace
+
+                    def wallet_snapshot():
+                        with target_database.SessionLocal() as db:
+                            return manifest(SimpleNamespace(db=db))
+
+                    page.set_viewport_size({"width":1280,"height":900})
+                    page.locator('[data-action="import-step"][data-step="2"]').first.click()
+                    nickname=(fixtures/'wechat-3.csv').read_text(encoding='utf-8')
+                    weak_files=[{'name':f'Mock weak-{suffix}.csv','mimeType':'text/csv','buffer':nickname.replace(
+                        '2024-',f'{2050+index}-').replace('MOCK-wechat-',f'MOCK-weak-{suffix}-').encode()}
+                        for index,suffix in enumerate(('A','B'))]
+                    upload.locator('[name="files"]').set_input_files(weak_files)
+                    upload.locator('[data-action="preview-import"]').click()
+                    expect(rows).to_have_count(20,timeout=15000)
+                    page.locator('[data-batch-guide]').click()
+                    expect(page.locator('[data-batch-selection]')).to_contain_text('48 行',timeout=35000)
+                    expect(page.locator('[data-batch-bind]')).to_be_enabled(timeout=35000)
+                    frozen_weak=wallet_snapshot()
+                    metadata_creates=[]
+                    page.on('request',lambda request:metadata_creates.append(request.post_data_json)
+                        if request.method=='POST' and request.url.endswith('/paam/ledger/v1/account-ref') else None)
+                    weak_ids=[]
+                    for index,suffix in enumerate(('A','B')):
+                        open_import_advanced(page)
+                        page.locator('[data-batch-bind]').click()
+                        binding=page.locator('dialog[open]').last
+                        binding.locator('[data-binding-create-panel] summary').click()
+                        create=binding.locator('[data-binding-create]')
+                        create.locator('[name="name"]').fill(f'Mock明确弱来源{suffix}')
+                        create.locator('[name="institution"]').fill('微信')
+                        if index==0:
+                            create.locator('[type="submit"]').click()
+                            expect(create.locator('[data-binding-create-status]')).to_contain_text('先选择一个文件')
+                            assert metadata_creates==[] and wallet_snapshot()==frozen_weak
+                        option=binding.locator('[data-binding-file] option').filter(has_text=f'Mock weak-{suffix}.csv')
+                        file_id=int(option.get_attribute('value'))
+                        weak_ids.append(file_id)
+                        binding.locator('[data-binding-file]').select_option(str(file_id))
+                        create.locator('[type="submit"]').click()
+                        expect(create.locator('[data-binding-create-status]')).to_contain_text('请明确核对')
+                        create.locator('[data-binding-create-ack]').check()
+                        metadata_pattern='**/paam/ledger/v1/account-ref'
+                        if index==0:
+                            def known_busy(route):
+                                route.fulfill(status=503,content_type='application/json',
+                                    body='{"status":503,"message":"Mock known rollback","body":{"code":"WRITE_BUSY"}}')
+                            page.route(metadata_pattern,known_busy)
+                            create.locator('[type="submit"]').click()
+                            expect(create.locator('[data-binding-create-status]')).to_contain_text('WRITE_BUSY')
+                            expect(create.locator('[type="submit"]')).to_be_enabled()
+                            assert wallet_snapshot()==frozen_weak and len(metadata_creates)==1
+                            page.unroute(metadata_pattern,known_busy)
+                        else:
+                            def unknown_created(route):
+                                response=route.fetch()
+                                assert response.status==200,response.text()
+                                route.fulfill(status=503,content_type='application/json',
+                                    body='{"status":503,"message":"Mock lost create reply","body":{"code":"RESULT_UNKNOWN"}}')
+                            page.route(metadata_pattern,unknown_created)
+                        create.locator('[type="submit"]').click()
+                        if index==0:
+                            expect(create.locator('[data-binding-create-status]')).to_contain_text('来源卡已创建',timeout=15000)
+                        else:
+                            expect(create.locator('[data-binding-create-status]')).to_contain_text('创建结果未知',timeout=15000)
+                            expect(create.locator('[type="submit"]')).to_be_disabled()
+                            create.evaluate('form=>form.onsubmit({preventDefault(){},target:form})')
+                            assert len(metadata_creates)==3
+                            page.unroute(metadata_pattern,unknown_created)
+                            # Explicit current-state lookup, not automatic
+                            # retry or inference that equal names are unique.
+                            picker=binding.locator('[data-binding-picker-section]')
+                            picker.locator('summary').click()
+                            picker.locator('[data-picker-word]').fill(f'Mock明确弱来源{suffix}')
+                            picker.locator('[data-picker-search]').click()
+                            expect(picker.locator('[data-picker-id]')).to_have_count(1,timeout=15000)
+                            picker.locator('[data-picker-id]').click()
+                        binding.locator('[data-binding-read]').click()
+                        expect(binding.locator('[data-binding-count]')).to_contain_text('完整核验 24 行',timeout=15000)
+                        expect(binding.locator('[data-binding-count]')).to_contain_text('来源身份未知 24 行')
+                        binding.locator('[data-binding-apply]').click()
+                        expect(binding.locator('[data-binding-status]')).to_contain_text('明确未知来源')
+                        binding.locator('[data-binding-unknown-ack]').check()
+                        page.set_viewport_size({'width':390,'height':844})
+                        assert binding.evaluate('node=>node.scrollWidth<=node.clientWidth')
+                        binding.locator('[data-binding-apply]').scroll_into_view_if_needed()
+                        viewport_evidence(page,f'dev17-weak-source-{suffix}-group-390')
+                        binding.locator('[data-binding-apply]').click()
+                        expect(page.locator('[data-batch-status]')).to_contain_text('已应用 24 行来源草稿')
+                        expect(page.locator('[data-batch-selection]')).to_contain_text('48 行')
+                        state=wallet_snapshot()
+                        assert all(state[name]==frozen_weak[name] for name in state if name!='ledger_account_ref')
+                        assert len(state['ledger_account_ref'])==len(frozen_weak['ledger_account_ref'])+index+1
+                        page.set_viewport_size({'width':1280,'height':900})
+                    assert len(metadata_creates)==3 and all(value['account_id']==0 for value in metadata_creates)
+                    assert all('source_namespace' not in value and 'identity_strength' not in value for value in metadata_creates)
+                    page.locator('[data-batch-save]').click()
+                    expect(page.locator('[data-batch-confirm]')).to_be_enabled(timeout=35000)
+                    page.locator('[data-batch-confirm]').click()
+                    expect(page.locator('[data-batch-files]')).to_contain_text('剩余 0',timeout=15000)
+                    assert len(confirmations)==6 and len(confirmations[-1]['selected_rows'])==48
+                    with target_database.SessionLocal() as db:
+                        manual=list(db.scalars(select(LedgerAccountRef).where(LedgerAccountRef.name.like('Mock明确弱来源%'))))
+                        assert len(manual)==2 and all(ref.identity_strength==0 and ref.account_id==0 for ref in manual)
+                        assert all(ref.source_namespace==ref.source_identity=='' for ref in manual)
+                        assert all(db.scalar(select(func.count(LedgerEntry.id)).where(LedgerEntry.account_ref_id==ref.id))==24 for ref in manual)
+                        assert db.scalar(select(func.count(LedgerAccount.id)))==db.scalar(select(func.count(LedgerAccountParty.id)))==0
+                        raw=db.scalars(select(TransactionImportRow.raw_payload).where(
+                            TransactionImportRow.transaction_import_file_id.in_(weak_ids)))
+                        assert all(json.loads(value)['normalized']['source_account']['identity_strength']=='WEAK' for value in raw)
                     assert errors == [], errors
                     browser.close()
                 print("PIRC-35 fictional selected import, raw detail and lost-response browser workflow passed")
