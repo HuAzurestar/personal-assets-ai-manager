@@ -13,6 +13,8 @@ import uvicorn
 from playwright.sync_api import expect, sync_playwright
 from serve_m2_ui import prepare_app
 from browser_choice import choose_local
+from browser_artifact import viewport_evidence
+from browser_list import assert_list_readability
 
 
 def run():
@@ -78,6 +80,19 @@ def run():
                     page.on("pageerror", lambda error: errors.append(str(error)))
                     page.on("request", lambda request: position_writes.append(request.post_data_json)
                         if request.method == "POST" and request.url.endswith("/paam/financial/v1/position") else None)
+                    before_layout = counts()
+                    page.goto(base + '/#details/review')
+                    row = page.locator('[data-review-row]').first
+                    expect(row).to_be_visible()
+                    for width in (1440, 1280, 1100, 820, 390, 320):
+                        page.set_viewport_size({'width': width, 'height': 900})
+                        assert_list_readability(page, row, row.locator('.detail-primary strong'),
+                            row.locator('.detail-primary small'), max_height=90)
+                        row.evaluate('node => window.scrollBy(0, node.getBoundingClientRect().top - 180)')
+                        viewport_evidence(page, f'dev17-list-review-{width}')
+                    assert counts() == before_layout
+                    assert not position_writes
+                    page.set_viewport_size({'width': 1440, 'height': 900})
                     page.goto(base + "/#workbench/position")
                     page.locator("[data-position-create]").click()
                     form = page.locator("dialog[open] form")
