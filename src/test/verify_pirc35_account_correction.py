@@ -20,11 +20,10 @@ def run():
     with tempfile.TemporaryDirectory(prefix='paam-account-only-') as temporary:
         directory=Path(temporary);app=prepare_app(directory)
         from backend.core import target_database
-        from backend.entity import TransactionFact, LedgerAccountParty, LedgerAccountRef
-        from backend.entity.base import Base
-        from backend.mapper.review_command_mapper import ReviewCommandMapper
-        from sqlalchemy import select
         try:
+            from backend.entity import TransactionFact, LedgerAccountParty, LedgerAccountRef
+            from backend.mapper.review_command_mapper import ReviewCommandMapper
+            from sqlalchemy import select
             with target_database.SessionLocal() as db:
                 db.add(LedgerAccountParty(id=1,name='Mock correction owner',status='ACTIVE'))
                 db.add_all([LedgerAccountRef(id=i,account_id=0,name=f'Mock correction source {i}',status='ACTIVE') for i in (1,2)])
@@ -65,7 +64,7 @@ def run():
                 def snapshot():
                     with target_database.SessionLocal() as db:
                         return {table.name:tuple(tuple(row) for row in db.execute(select(table).order_by(table.c.id)))
-                            for table in Base.metadata.sorted_tables}
+                            for table in target_database.TargetBase.metadata.sorted_tables}
 
                 def signature(row):
                     return ([(allocation['transaction_id'],flow['economic_type'],flow['cash_amount'],flow['cash_currency_code'],
