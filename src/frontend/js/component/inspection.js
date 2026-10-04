@@ -156,7 +156,7 @@ async function mountFileRows(root, initial, bindActions) {
           const params = new URLSearchParams({ row_ids: JSON.stringify([rowId]) });
           const relations = await request(`${endpoints.file}${fileId}/row/relations?${params}`);
           if (!dialog.isConnected) return;
-          dialog.querySelector(".dialog-body").innerHTML = `<p>来源第 ${detail.row.source_row_number} 行 · ${esc(rowStates[detail.row.row_status])}</p>${detail.fact ? `<p>Fact #${detail.fact.id} · ${esc(amount(detail.fact))} · ${esc(when(detail.fact.occurred_time))}</p>` : "<p>未接受为Fact</p>"}${jsonPayload(detail.raw_payload)}<h3>当前可核验关系</h3>${relations.items.map(row => `<p>Review #${row.review_id || "无"} ${esc(row.review_status || "")} · Ledger #${row.ledger_id || "无"}</p>`).join("")}`;
+          dialog.querySelector(".dialog-body").innerHTML = `<p>来源第 ${detail.row.source_row_number} 行 · ${esc(rowStates[detail.row.row_status])}</p>${detail.fact ? `<p>Fact #${detail.fact.id} · ${esc(amount(detail.fact))} · ${esc(when(detail.fact.occurred_time))}</p>` : "<p>未接受为Fact</p>"}${jsonPayload(detail.raw_payload)}<h3>当前可核验关系</h3>${relations.items.map(row => `<p>Review #${row.review_id || "无"} ${esc(row.review_id ? financialStateLabel('review',row.review_status) : '未关联解释')} · Ledger #${row.ledger_id || "无"}</p>`).join("")}`;
         } catch (error) { if (dialog.isConnected) dialog.querySelector("[role=status]").textContent = error.message; }
       };
     });
@@ -332,9 +332,9 @@ function mountFlowRelations(root) {
         const result = await request(`${url}?page_index=${target}&page_size=20`);
         if (!panel.isConnected) return;
         page = result.page_index; total = result.total;
-        panel.querySelector('[data-rel-items]').innerHTML = result.items.map(row => isFact ? name === 'source_row' ? evidenceRow(row) : `<article class="inspection-flow"><strong>${esc(amount(row.allocation))}</strong><p>Allocation #${row.allocation.id} · ${esc(row.review.status)} · ${esc(typeNames[row.ledger_entry.economic_type])}</p>${relationButton('review',row.review.id,`Review #${row.review.id}`)}${relationButton('ledger',row.ledger_entry.id,`Ledger #${row.ledger_entry.id}`)}</article>` : isReview ? reviewRelationRow(name, row) : name === 'tag'
-          ? `<article class="inspection-flow"><strong>${esc(row.tag_name)}</strong><p>${esc(row.view_name)} · ${esc(row.view_status)} / ${esc(row.tag_status)} · ${esc(row.source_type)}</p></article>`
-          : `<article class="inspection-flow"><strong>${esc(amount(row.allocation))}</strong><p>Link #${row.allocation.id} · Leg #${row.position_leg.id} · ${esc(row.review.status)}</p><p>${esc(row.position_leg.leg_direction)} ${quantityDecimal(row.position_leg.leg_amount, row.position_leg.unit_code)} ${esc(row.position_leg.unit_code)}</p><a href="#workbench/position?id=${row.position.id}">Position #${row.position.id} ${esc(row.position.title)}</a></article>`).join('') || '<p>该集合当前页没有记录</p>';
+        panel.querySelector('[data-rel-items]').innerHTML = result.items.map(row => isFact ? name === 'source_row' ? evidenceRow(row) : `<article class="inspection-flow"><strong>${esc(amount(row.allocation))}</strong><p>Allocation #${row.allocation.id} · ${esc(financialStateLabel('review',row.review.status))} · ${esc(typeNames[row.ledger_entry.economic_type])}</p>${relationButton('review',row.review.id,`Review #${row.review.id}`)}${relationButton('ledger',row.ledger_entry.id,`Ledger #${row.ledger_entry.id}`)}</article>` : isReview ? reviewRelationRow(name, row) : name === 'tag'
+          ? `<article class="inspection-flow"><strong>${esc(row.tag_name)}</strong><p>${esc(row.view_name)} · ${esc(financialStateLabel('metadata',row.view_status))} / ${esc(financialStateLabel('metadata',row.tag_status))} · ${esc(row.source_type)}</p></article>`
+          : `<article class="inspection-flow"><strong>${esc(amount(row.allocation))}</strong><p>Link #${row.allocation.id} · Leg #${row.position_leg.id} · ${esc(financialStateLabel('review',row.review.status))}</p><p>${esc(row.position_leg.leg_direction)} ${quantityDecimal(row.position_leg.leg_amount, row.position_leg.unit_code)} ${esc(row.position_leg.unit_code)}</p><a href="#workbench/position?id=${row.position.id}">Position #${row.position.id} ${esc(row.position.title)}</a></article>`).join('') || '<p>该集合当前页没有记录</p>';
         status.textContent = `共 ${total} 项 · 第 ${page} 页（仅本页）`;
       } catch (error) { if (panel.isConnected) status.textContent = `读取失败，未更新当前页：${error.message}`; }
       finally { busy = false; if (panel.isConnected) { prev.disabled = page <= 1; next.disabled = page * 20 >= total; } }
@@ -350,7 +350,7 @@ function reviewRelationRow(name, row) {
   if (name === 'allocation') return `<article class="inspection-flow"><strong>${esc(amount(row))}</strong><p>Allocation #${row.id}</p>${relationButton('fact',row.transaction_id,`Fact #${row.transaction_id}`)}${relationButton('ledger',row.ledger_id,`Ledger #${row.ledger_id}`)}</article>`;
   if (name === 'position_leg') return `<article class="inspection-flow"><strong>${esc(row.leg_direction)} ${quantityDecimal(row.leg_amount,row.unit_code)} ${esc(row.unit_code)}</strong><p>Leg #${row.id} · ${esc(row.type)} · 来源腿 #${row.source_position_leg_id}</p><p>${esc(row.basis)}</p><a href="#workbench/position?id=${row.position_id}">Position #${row.position_id}</a></article>`;
   if (name === 'position_allocation') return `<article class="inspection-flow"><strong>${esc(amount(row))}</strong><p>Link #${row.id} · Leg #${row.position_leg_id}（不是额外现金）</p>${relationButton('ledger',row.ledger_id,`Ledger #${row.ledger_id}`)}</article>`;
-  return `<article class="inspection-flow"><a href="#workbench/position?id=${row.id}">Position #${row.id} ${esc(row.title)}</a><p>${esc(row.type)} · ${esc(row.unit_code)} · ${esc(row.status)}</p></article>`;
+  return `<article class="inspection-flow"><a href="#workbench/position?id=${row.id}">Position #${row.id} ${esc(row.title)}</a><p>${esc(financialStateLabel('positionType',row.type))} · ${esc(row.unit_code)} · ${esc(financialStateLabel('position',row.status))}</p></article>`;
 }
 
 let current = null;

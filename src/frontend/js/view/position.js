@@ -15,8 +15,8 @@ export function stopPositionRead() { controller?.abort(); positionScan.stop(); }
 export function positionFields(row = {}, metadata = false) {
   return input("title", "对象名称", row.title || "", 'required maxlength="160"')
     + `<label>说明<textarea name="description" maxlength="2000">${esc(row.description || "")}</textarea></label>`
-    + select("usage_scenario", "用途（不决定资产／负债性质）", usages, row.usage_scenario || "GENERAL")
-    + (metadata ? select("status", "状态", ["ACTIVE", "ARCHIVED", "SETTLED"], row.status)
+    + select("usage_scenario", "用途（不决定资产／负债性质）", usages.map(code=>[code,financialStateLabel('positionUsage',code)]), row.usage_scenario || "GENERAL")
+    + (metadata ? select("status", "状态", ["ACTIVE", "ARCHIVED", "SETTLED"].map(code=>[code,financialStateLabel('position',code)]), row.status)
       : select("type", "性质", [["ASSET", "资产／债权"], ["LIABILITY", "负债／债务"]], row.type || "ASSET")
         + namedChoice('party_id', '本方个人', {value: row.party_id || '', pickAttribute: 'data-pick-party', pick: '查找个人'})
         + input("counterparty", "对象对方（文字，不按同名合并）", row.counterparty || "", 'maxlength="200"')
@@ -54,15 +54,15 @@ export async function positionPage(params) {
       request(`${base}/${id}/leg/list?page_size=20&page_index=${Number(params.get("leg_page") || 1)}`, { signal: controller.signal }),
     ]);
     detail = `<section class="panel" data-position-detail="${row.id}"><h2>#${row.id} ${esc(row.title)}</h2>
-      <p>${esc(row.type)} · ${esc(row.usage_scenario)} · ${esc(row.status)} · 本方个人 #${row.party_id} · ${esc(row.counterparty)}</p>
+      <p>${esc(financialStateLabel('positionType',row.type))} · ${esc(financialStateLabel('positionUsage',row.usage_scenario))} · ${esc(financialStateLabel('position',row.status))} · 本方个人 #${row.party_id} · ${esc(row.counterparty)}</p>
       <p data-position-quantity>数量：${esc(positionQuantityLabel(row))}</p>
       <p>成本状态：${esc(financialStateLabel('cost',row.cost_state))}。本页不计算净值、行情或账户余额。</p><p>${esc(row.description)}</p>
       <a href="#workbench/review?position=${row.id}">新增数量变化 / 款项审查</a>
-      ${table(["原始腿与审查", "精确数量", "来源腿", "款项归因（不是第二笔现金）"], legs.items.map(leg => `<tr><td>#${leg.id} · ${esc(leg.type)}<br>Review #${leg.review_id} ${esc(leg.review.status)}<br>${esc(date(leg.occurred_time))}<br>${esc(leg.basis)}</td><td>${esc(leg.leg_direction)} ${quantityDecimal(leg.leg_amount, leg.unit_code)} ${esc(leg.unit_code)}</td><td>#${leg.source_position_leg_id || "无（IN）"}</td><td>${leg.position_allocations.map(link => `Ledger #${link.ledger_id}：${esc(money(link))}`).join("<br>") || "无"}</td></tr>`))}
+      ${table(["原始腿与审查", "精确数量", "来源腿", "款项归因（不是第二笔现金）"], legs.items.map(leg => `<tr><td>#${leg.id} · ${esc(leg.type)}<br>Review #${leg.review_id} ${esc(financialStateLabel('review',leg.review.status))}<br>${esc(date(leg.occurred_time))}<br>${esc(leg.basis)}</td><td>${esc(leg.leg_direction)} ${quantityDecimal(leg.leg_amount, leg.unit_code)} ${esc(leg.unit_code)}</td><td>#${leg.source_position_leg_id || "无（IN）"}</td><td>${leg.position_allocations.map(link => `Ledger #${link.ledger_id}：${esc(money(link))}`).join("<br>") || "无"}</td></tr>`))}
       <div class="actions">${legs.page_index > 1 ? `<a href="${esc(href(params, { leg_page: legs.page_index - 1 }))}">腿上一页</a>` : ""}<span>腿 ${legs.total} 项 · 第 ${legs.page_index} 页</span>${legs.page_index * legs.page_size < legs.total ? `<a href="${esc(href(params, { leg_page: legs.page_index + 1 }))}">腿下一页</a>` : ""}</div></section>`;
   }
   return `<div data-position-workbench><section class="panel position-list-surface"><h1>资产与负债对象</h1><p>账户是现金来源；Position 是独立数量对象。创建元数据不生成现金或数量；下列有据数量不是账户余额或市场估值。</p><a href="#workbench/account">个人与账户来源</a> · <a href="#workbench/review">审查工作台</a>
-    <button data-position-create>独立新建对象</button><form data-position-filter class="actions">${input("word", "名称字面搜索", word || "", 'maxlength="128"')}${select("status", "状态", [["", "全部"], "ACTIVE", "ARCHIVED", "SETTLED"], params.get("status") || "")}<button type="submit">重新查找</button></form>
+    <button data-position-create>独立新建对象</button><form data-position-filter class="actions">${input("word", "名称字面搜索", word || "", 'maxlength="128"')}${select("status", "状态", [["", "全部"], ...["ACTIVE", "ARCHIVED", "SETTLED"].map(code=>[code,financialStateLabel('position',code)])], params.get("status") || "")}<button type="submit">重新查找</button></form>
     <div data-position-list>${table(["对象身份", "性质与用途", "本方 / 对方", "有据数量", "元数据状态", "操作"], rows)}</div>
     <div data-position-footer>${word ? scanControls('position', result) : `<div class="actions">${result.page_index > 1 ? `<a href="${esc(href(params, { page: result.page_index - 1 }))}">上一页</a>` : ""}<span>共 ${result.total} 项 · 第 ${result.page_index} 页</span>${result.page_index * result.page_size < result.total ? `<a href="${esc(href(params, { page: result.page_index + 1 }))}">下一页</a>` : ""}</div>`}</div></section>${detail}</div>`;
 }
@@ -76,7 +76,7 @@ export function positionQuantityLabel(row) {
 export function positionRows(items, params, scanning = false) {
   return items.length ? items.map(row => `<tr data-position-row="${row.id}">
     <td data-label="对象"><a href="${esc(href(params, { id: row.id, leg_page: null }))}">#${row.id} ${esc(row.title)}</a></td>
-    <td data-label="性质 / 用途">${esc(row.type)}<small>${esc(row.usage_scenario)}</small></td>
+    <td data-label="性质 / 用途">${esc(financialStateLabel('positionType',row.type))}<small>${esc(financialStateLabel('positionUsage',row.usage_scenario))}</small></td>
     <td data-label="本方 / 对方">${esc(row.party_name)}<small>对方：${esc(row.counterparty || '未注明')}</small></td>
     <td data-label="有据数量" data-position-row-quantity>${esc(positionQuantityLabel(row))}<small>单位：${esc(row.unit_code)}</small></td>
     <td data-label="元数据状态">${esc(financialStateLabel('position',row.status))}</td><td data-label="操作"><button data-position-edit="${row.id}">维护元数据</button></td></tr>`)

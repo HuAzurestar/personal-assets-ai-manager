@@ -10,7 +10,12 @@ const {pathToFileURL} = require('node:url');
   installUnitDictionary([{...cash(2),code:'CNY',is_default:true}, ...Array.from({length:9}, (_,i)=>cash(i)),
     {code:'KG_3',label:'Mock kg',dimension:'MASS',quantum:'0.001',precision:3,is_default:false},
     {code:'PCS',label:'Mock pieces',dimension:'COUNT',quantum:'1',precision:0,is_default:false}]);
-  const {positionQuantityLabel,positionRows} = await module('view/position.js');
+  const {positionQuantityLabel,positionRows,positionFields,positionPage} = await module('view/position.js');
+  const fields = positionFields({status:'ACTIVE',usage_scenario:'GENERAL'},true);
+  assert.match(fields, /value="ACTIVE"[^>]*>使用中（ACTIVE）/);
+  assert.match(fields, /value="ARCHIVED"[^>]*>已归档（证据保留）（ARCHIVED）/);
+  assert.match(fields, /value="SETTLED"[^>]*>已标记结清（仍需核对当前数量）（SETTLED）/);
+  assert.match(fields, /value="PERSONAL-LENDING"[^>]*>个人借还（PERSONAL-LENDING）/);
   assert.equal(positionQuantityLabel({quantity_state:'KNOWN',quantity:10000,unit_code:'CNY'}),'100.00 CNY');
   assert.equal(positionQuantityLabel({quantity_state:'KNOWN',quantity:0,unit_code:'KG_3'}),'0.000 KG_3');
   assert.equal(positionQuantityLabel({quantity_state:'KNOWN',quantity:4,unit_code:'PCS'}),'4 PCS');
@@ -26,6 +31,29 @@ const {pathToFileURL} = require('node:url');
   assert.ok(rows[0].includes('100.00 CNY') && rows[0].includes('ARCHIVED'));
   assert.ok(rows[0].includes('Mock &lt;person&gt;') && rows[0].includes('Mock &amp; borrower'));
   assert.ok(!rows[0].includes('<img src=x>'));
+  assert.ok(rows[0].includes('资产／债权（ASSET）') && rows[0].includes('通用数量对象（GENERAL）'));
   assert.ok(positionRows([],new URLSearchParams(),true)[0].includes('空批次不代表扫描结束'));
+  global.location = {hash:'#workbench/position?id=1'};
+  const detail = {id:1,title:'Mock <position>',type:'ASSET',usage_scenario:'PERSONAL-LENDING',status:'ACTIVE',
+    party_id:1,counterparty:'Mock borrower',unit_code:'CNY',quantity_state:'KNOWN',quantity:10000,cost_state:'UNKNOWN'};
+  const evidence = {id:2,type:'MOVEMENT',review_id:3,review:{status:'CONFIRMED'},leg_direction:'IN',leg_amount:10000,
+    unit_code:'CNY',source_position_leg_id:0,occurred_time:'2024-01-01T00:00:00Z',basis:'Mock evidence',position_allocations:[]};
+  const calls = [];
+  global.fetch = async url => {
+    calls.push(String(url));
+    const body = String(url).includes('/leg/list') ? {items:[evidence],total:1,page_size:20,page_index:1}
+      : String(url).includes('/list?') ? {items:[detail],total:1,page_size:20,page_index:1} : detail;
+    return {ok:true,status:200,headers:new Headers(),json:async()=>({status:200,body})};
+  };
+  let html = await positionPage(new URLSearchParams('id=1'));
+  assert.match(html,/资产／债权（ASSET）.*个人借还（PERSONAL-LENDING）.*使用中（ACTIVE）/);
+  assert.match(html,/Review #3 解释已生效（CONFIRMED）/);
+  assert.match(html,/100.00 CNY/);
+  assert.match(html,/Mock &lt;position&gt;/);
+  evidence.review.status = 'FUTURE'; detail.status = 'FUTURE';
+  html = await positionPage(new URLSearchParams('id=1'));
+  assert.match(html,/Review #3 状态未知（FUTURE）/);
+  assert.doesNotMatch(html.slice(html.indexOf('<section class="panel" data-position-detail')),/解释已停用|已标记结清|使用中（FUTURE）/);
+  assert.equal(calls.length,6); // List, detail and legs are still three reads.
   console.log('PASS exact quantity summary, zero versus unknown, invalid response guard and identity escaping');
 })().catch(error=>{console.error(error);process.exitCode=1;});

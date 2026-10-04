@@ -10,6 +10,7 @@ async function main() {
   const { resourceId, assertExactResourceIds, esc } = await import(moduleUrl('util/core.js'));
   const { jsonRequest, isUnknownWrite } = await import(moduleUrl('api/client.js'));
   const { writeFailure } = await import(moduleUrl('component/workbench.js'));
+  const { financialStateLabel } = await import(moduleUrl('util/financial-copy.js'));
   const dictionary = await import(moduleUrl('util/unit-dictionary.js'));
   dictionary.installUnitDictionary(require('./unit_fixture.cjs').unitFixture());
   const invalid = ['', ' ', '-1', '1.0', '1e3', 'Infinity', 'NaN', '9223372036854775808',
@@ -60,7 +61,7 @@ async function main() {
   const source = fs.readFileSync(path.join(__dirname, '../frontend/js/view/position.js'), 'utf8')
     .replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '');
   let writes = 0, unknown = false;
-  const context = vm.createContext({ resourceId, writeFailure, esc, location: { hash: '#workbench/position' },
+  const context = vm.createContext({ resourceId, writeFailure, esc, financialStateLabel, location: { hash: '#workbench/position' },
     unitChoices: dictionary.unitChoices, unitLabel: dictionary.unitLabel,
     candidateScan: () => ({bind() {}, reset() {}, stop() {}}),
     input: () => '', select: () => '', namedChoice: () => '', FormData: class { [Symbol.iterator]() { return Object.entries(values)[Symbol.iterator](); } },

@@ -24,7 +24,11 @@ const {pathToFileURL} = require('node:url');
   assert.match(copy.financialStateLabel('plannedReview','REVOKED'), /拟停用.*尚未写入.*REVOKED/);
   assert.doesNotMatch(copy.financialStateLabel('plannedReview','CONFIRMED'), /已生效|已核对/);
   assert.match(copy.importPlanScopeNote, /规则校验通过.*不代表业务已核对正确.*事务内重验.*明确确认/);
-  for (const group of ['coverage','default','review','quantity','position','identity','cost','account','metadata','plannedReview','importRisk','__proto__']) {
+  assert.equal(copy.financialStateLabel('positionType','LIABILITY'),'负债／债务（LIABILITY）');
+  assert.equal(copy.financialStateLabel('positionUsage','GENERAL'),'通用数量对象（GENERAL）');
+  const {usages} = await load('view/position.js');
+  for (const code of usages) assert.doesNotMatch(copy.financialStateLabel('positionUsage',code),/状态未知/);
+  for (const group of ['coverage','default','review','quantity','position','positionType','positionUsage','identity','cost','account','metadata','plannedReview','importRisk','__proto__']) {
     for (const code of [null,undefined,'BAD','__proto__','<img>']) {
       assert.match(copy.financialStateLabel(group,code), /状态未知/);
       assert.doesNotMatch(copy.financialStateLabel(group,code), /已分配|已生效|已结清/);

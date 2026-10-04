@@ -62,6 +62,7 @@ def run():
                     expect(page.locator("[data-position-workbench]")).to_be_visible()
                     page.locator("[data-position-create]").click()
                     form = page.locator("dialog[open] form")
+                    expect(form.locator('[name="usage_scenario"] option[value="PERSONAL-LENDING"]')).to_have_text('个人借还（PERSONAL-LENDING）')
                     form.locator('[name="title"]').fill("Mock loan position")
                     form.locator('[data-pick-party]').click()
                     party_picker = page.locator("dialog[open] [data-party-picker]")
@@ -81,6 +82,8 @@ def run():
                     expect(main_row.locator('[data-position-row-quantity]')).to_contain_text('没有数量证据，不是零')
                     page.get_by_role("link", name="#1 Mock loan position", exact=True).click()
                     expect(page.locator("[data-position-quantity]")).to_contain_text("UNKNOWN")
+                    expect(page.locator('[data-position-detail="1"]')).to_contain_text('使用中（ACTIVE）')
+                    expect(page.locator('[data-position-detail="1"]')).to_contain_text('个人借还（PERSONAL-LENDING）')
                     page.goto(base + "/#workbench/review?position=1&case_code=POS_OPENING")
                     review = page.locator("[data-immutable-review]")
                     expect(review.locator("[data-position-choices]")).to_contain_text("Mock loan position")
@@ -103,6 +106,7 @@ def run():
                     expect(page.locator("[data-immutable-review]")).to_have_count(0)
                     page.goto(base + "/#workbench/position?id=1")
                     expect(page.locator("[data-position-quantity]")).to_contain_text("400.00 CNY")
+                    expect(page.locator('[data-position-detail="1"]')).to_contain_text('解释已生效（CONFIRMED）')
                     expect(main_row.locator('[data-position-row-quantity]')).to_contain_text('400.00 CNY')
                     details = client.get("/paam/financial/v1/position/1/leg/list").json()["body"]["items"]
                     source_id, opening_review_id = details[0]["id"], details[0]["review_id"]
@@ -271,6 +275,9 @@ def run():
                     # successful write invalidates the cached search window.
                     page.locator(f'[data-position-list] [data-position-edit="{sparse_id}"]').click()
                     maintenance = page.locator('dialog[open] form')
+                    expect(maintenance.locator('[name="status"] option[value="ARCHIVED"]')).to_have_text('已归档（证据保留）（ARCHIVED）')
+                    expect(maintenance.locator('[name="status"] option[value="SETTLED"]')).to_have_text('已标记结清（仍需核对当前数量）（SETTLED）')
+                    expect(maintenance.locator('[name="status"]')).to_have_value('ACTIVE')
                     maintenance.locator('[name=title]').fill('Mock sparse position edited')
                     maintenance.locator('[type=submit]').click()
                     expect(page.locator('dialog[open]')).to_have_count(0)

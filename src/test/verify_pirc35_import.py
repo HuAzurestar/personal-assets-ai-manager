@@ -137,6 +137,7 @@ def run():
                     page.locator("[data-batch-verify]").click()
                     expect(page.locator("[data-batch-verification]")).to_contain_text("已接受", timeout=15000)
                     expect(page.locator("[data-batch-verification]")).to_contain_text("CONFIRMED")
+                    expect(page.locator("[data-batch-verification]")).to_contain_text("解释已生效（CONFIRMED）")
                     assert len(confirmations) == 2
                     expect(page.locator("[data-batch-observed]")).to_be_enabled()
                     page.locator("[data-batch-observed]").click()
@@ -156,6 +157,7 @@ def run():
                     expect(page.locator(".inspection-workspace[open]")).to_be_visible()
                     page.locator("[data-source-evidence]").first.click()
                     expect(page.locator("dialog[open] .dialog-body").last).to_contain_text("当前可核验关系")
+                    expect(page.locator("dialog[open] .dialog-body").last).to_contain_text("解释已生效（CONFIRMED）")
                     expect(page.locator("dialog[open] details summary").last).to_contain_text("JSON")
                     page.locator("dialog[open] [data-workbench-close]").click()
                     page.locator(".inspection-workspace[open] [data-close]").click()

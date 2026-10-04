@@ -4,6 +4,7 @@ import {unitChoices,unitLabel} from '../util/unit-dictionary.js';
 import {namedChoice,bindNamedChoice,metadataLabel,mountPicker,workbenchDialog} from '../component/workbench.js';
 import {dateTimeRangeControl,bindDateTimeRanges} from '../component/date-time-range.js';
 import {accountCorrectionMarkup} from '../util/account-correction.js';
+import {financialStateLabel} from '../util/financial-copy.js';
 import {sourceCompletionFilter,sourceCompletionPage,sourceCompletionSelection,sourceCompletionWhole,
   sourceCompletionIntent,sourceCompletionPlan,boundedSourceRead,sourceCompletionOriginals} from '../util/source-completion.js';
 
@@ -164,7 +165,7 @@ export async function mountSourceCompletion(host, params, {signal,publication}) 
       if(!valid() || issued!==selectionGeneration)return;
       output.innerHTML=`<p>完整只读核对 ${state.flows.length} 条原流水；没有重发命令，也不据此解锁未知提交。</p>
         ${state.flows.sort((a,b)=>a.row.id-b.row.id).map(item=>`<p>流水 #${item.row.id} · ${esc(item.row.summary)}：${item.active ? '仍有效' : '已停用，内容保留'}</p>`).join('')}
-        ${[...state.originals.values()].map(row=>`<section><h3>${esc(row.title || '当前事项')} · ${row.status==='CONFIRMED' ? '当前有效' : '已停用'}</h3><ul class="account-correction-list">${row.ledger_entries.map(flow=>`<li>${esc(money(flow))} ${esc(flow.cash_currency_code)} · ${flow.cash_direction==='IN' ? '收入' : '支出'} · ${esc(labels.get(flow.account_ref_id) || (flow.account_ref_id ? `来源卡 #${flow.account_ref_id}` : '来源未识别'))} · 流水 #${flow.id}</li>`).join('')}</ul></section>`).join('')}`;
+        ${[...state.originals.values()].map(row=>`<section><h3>${esc(row.title || '当前事项')} · ${esc(financialStateLabel('review',row.status))}</h3><ul class="account-correction-list">${row.ledger_entries.map(flow=>`<li>${esc(money(flow))} ${esc(flow.cash_currency_code)} · ${flow.cash_direction==='IN' ? '收入' : '支出'} · ${esc(labels.get(flow.account_ref_id) || (flow.account_ref_id ? `来源卡 #${flow.account_ref_id}` : '来源未识别'))} · 流水 #${flow.id}</li>`).join('')}</ul></section>`).join('')}`;
     }catch(error){if(valid() && issued===selectionGeneration && error.name!=='AbortError')output.textContent=`查询失败：${error.message}；没有推断提交结果或重发。`;}
     finally{currentReading=false;if(valid())button.disabled=false;}
   };

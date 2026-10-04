@@ -11,6 +11,7 @@ import { openImportPairing } from '../component/import-pairing.js';
 import { openImportRepeat } from '../component/import-repeat.js';
 import { importReconciliationInput, validateImportReconciliation, reconciliationRowLabel, reconciliationOutputLabel } from '../component/import-reconciliation.js';
 import { createImportExecution, importKnownFailureMessage } from '../component/import-execution.js';
+import { financialStateLabel } from '../util/financial-copy.js';
 
 const pendingKey = "paam.import.pending.v1";
 const remainingKey = 'paam.import.remaining.v1';
@@ -384,7 +385,7 @@ export async function mountImportBatch(host, initial, changed) {
         }
       }
       if (!live()) return;
-      find("[data-batch-verification]").innerHTML = `<h3>当前持久状态（不是首次命令回执）</h3>${observed.map(row => `<p>文件 #${row.file_id} 第 ${row.source_row_number} 行：${row.actual ? `${statusNames[row.actual.row_status]} · Fact #${row.actual.transaction_id}` : "尚无持久结果；不证明请求未提交"}</p>`).join("")}<p>金融效果按当前Review状态核对；重复证据不是额外现金。</p>${relations.filter(row => row.review_id).map(row => `<p>第 ${row.source_row_number} 行 · Review #${row.review_id} ${esc(row.review_status)} · Ledger #${row.ledger_id} · 来源卡 #${row.account_ref_id}</p>`).join("")}${observed.every(row => row.actual && [1, 2, 3].includes(row.actual.row_status)) ? '<button type="button" data-batch-observed>我已核对这些行，开始新的明确批次</button>' : ""}`;
+      find("[data-batch-verification]").innerHTML = `<h3>当前持久状态（不是首次命令回执）</h3>${observed.map(row => `<p>文件 #${row.file_id} 第 ${row.source_row_number} 行：${row.actual ? `${statusNames[row.actual.row_status]} · Fact #${row.actual.transaction_id}` : "尚无持久结果；不证明请求未提交"}</p>`).join("")}<p>金融效果按当前Review状态核对；重复证据不是额外现金。</p>${relations.filter(row => row.review_id).map(row => `<p>第 ${row.source_row_number} 行 · Review #${row.review_id} ${esc(financialStateLabel('review',row.review_status))} · Ledger #${row.ledger_id} · 来源卡 #${row.account_ref_id}</p>`).join("")}${observed.every(row => row.actual && [1, 2, 3].includes(row.actual.row_status)) ? '<button type="button" data-batch-observed>我已核对这些行，开始新的明确批次</button>' : ""}`;
       const observedButton = find("[data-batch-observed]");
       context.verificationReady = !!observedButton && !confirming;
       if (observedButton && confirming) {

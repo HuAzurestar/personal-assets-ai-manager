@@ -189,6 +189,7 @@ def run():
                 tags = drawer.locator('[data-flow-relation="tag"]')
                 expect(tags.locator('[data-rel-status]')).to_contain_text("第 1 页（仅本页）")
                 assert len(tags.locator('.inspection-flow').all()) == 20
+                expect(tags.locator('[data-rel-items]')).to_contain_text('已归档（证据保留）（ARCHIVED）')
                 tags.locator('[data-rel-next]').click()
                 expect(tags.locator('[data-rel-status]')).to_contain_text("第 2 页（仅本页）")
                 tags.locator('[data-rel-prev]').click()
@@ -236,6 +237,8 @@ def run():
                 expect(drawer).to_contain_text('完整 Fact 详情超出预算')
                 sources = drawer.locator('[data-fact-relation="source_row"]')
                 expect(sources.locator('[data-rel-status]')).to_contain_text('共 4001 项 · 第 1 页')
+                current_allocations = drawer.locator('[data-fact-relation="allocation"]')
+                expect(current_allocations.locator('[data-rel-items]')).to_contain_text('解释已生效（CONFIRMED）')
                 sources.locator('[data-rel-next]').click()
                 expect(sources.locator('[data-rel-status]')).to_contain_text('第 2 页（仅本页）')
                 assert len(sources.locator('[data-fact-source-evidence]').all()) == 20

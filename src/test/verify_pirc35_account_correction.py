@@ -186,6 +186,19 @@ def run():
                     form.locator('[data-correction-current]').click()
                     expect(form.locator('[data-correction-current-result]')).to_contain_text('已停用，内容保留')
                     expect(form.locator('[data-correction-current-result]')).to_contain_text('Mock correction source 2')
+                    expect(form.locator('[data-correction-current-result]')).to_contain_text('解释已生效（CONFIRMED）')
+                    # Future/unrecognized read states are not falsely reported
+                    # as revoked, and cannot unlock an unknown publication.
+                    def unknown_review_state(route):
+                        response=route.fetch();payload=response.json();payload['body']['status']='FUTURE'
+                        route.fulfill(response=response,body=json.dumps(payload))
+                    page.route('**/paam/ledger/v1/review/*',unknown_review_state)
+                    form.locator('[data-correction-current]').click()
+                    expect(form.locator('[data-correction-current-result]')).to_contain_text('状态未知（FUTURE）')
+                    expect(form.locator('[data-correction-current-result]')).not_to_contain_text('解释已停用')
+                    expect(form.locator('[data-review-command]')).to_be_disabled()
+                    assert len(commands)==count and snapshot()==committed
+                    page.unroute('**/paam/ledger/v1/review/*',unknown_review_state)
                     form.evaluate('node => node.requestSubmit()')
                     form.locator('[data-review-preview]').evaluate('node => node.click()')
                     assert len(commands)==count==3 and snapshot()==committed

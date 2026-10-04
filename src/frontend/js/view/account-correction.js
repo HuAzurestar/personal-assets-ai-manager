@@ -2,6 +2,7 @@ import {request} from '../api/client.js';
 import {esc, money, date, resourceId} from '../util/core.js';
 import {accountCorrectionIntent, accountCorrectionMarkup} from '../util/account-correction.js';
 import {namedChoice, bindNamedChoice, metadataLabel, mountPicker, workbenchDialog} from '../component/workbench.js';
+import {financialStateLabel} from '../util/financial-copy.js';
 
 const base = '/paam/ledger/v1/review';
 
@@ -50,7 +51,7 @@ export async function mountAccountCorrection(host, params, {signal, publication}
       if (candidates.total !== 1 || candidates.items.length !== 1) throw new Error('当前交易无法完整定位，未判定提交结果。');
       const current = await Promise.all(candidates.items[0].current_reviews.map(row => request(`${base}/${resourceId(row.id)}`,{signal})));
       if (!valid()) return;
-      currentResult.innerHTML = `<p>原流水：${old.active ? '仍有效' : '已停用，内容保留'}。以下为当前只读状态；不会自动重发，也不据此解锁未知提交。</p>${current.map(row => `<section class="panel"><h3>${esc(row.title || '当前事项')} · ${row.status === 'CONFIRMED' ? '当前有效' : '已停用'} · #${row.id}</h3>
+      currentResult.innerHTML = `<p>原流水：${old.active ? '仍有效' : '已停用，内容保留'}。以下为当前只读状态；不会自动重发，也不据此解锁未知提交。</p>${current.map(row => `<section class="panel"><h3>${esc(row.title || '当前事项')} · ${esc(financialStateLabel('review',row.status))} · #${row.id}</h3>
         <ul class="account-correction-list">${row.ledger_entries.map(ledger => `<li>${esc(money(ledger))} ${esc(ledger.cash_currency_code)} · ${ledger.cash_direction === 'IN' ? '收入' : '支出'} · ${esc(labels.get(ledger.account_ref_id) || (ledger.account_ref_id ? `来源卡 #${ledger.account_ref_id}` : '来源未识别'))} · 流水 #${ledger.id}</li>`).join('')}</ul></section>`).join('') || '<p>当前没有有效事项，不能猜测默认已恢复。</p>'}`;
     } catch (error) {if (valid() && error.name !== 'AbortError') currentResult.textContent = `查询失败：${error.message}；提交结果仍须核对，未重发。`;}
     finally {currentReading = false; if (valid()) button.disabled = false;}

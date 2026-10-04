@@ -12,6 +12,8 @@ const financialStates = {
   identity: {KNOWN:'已关联数量对象',NEEDS_IDENTITY:'尚需关联数量对象',NOT_APPLICABLE:'不涉及数量对象'},
   cost: {UNKNOWN:'成本未知',NEEDS_REVIEW:'成本待核对'},
   position: {ACTIVE:'使用中',ARCHIVED:'已归档（证据保留）',SETTLED:'已标记结清（仍需核对当前数量）'},
+  positionType: {ASSET:'资产／债权',LIABILITY:'负债／债务'},
+  positionUsage: {GENERAL:'通用数量对象','PERSONAL-LENDING':'个人借还','SHARED-SETTLEMENT':'分摊结算','STORED-VALUE':'储值','DEPOSIT-PLEDGE':'押金／质押',REIMBURSEMENT:'报销','CREDIT-CARD':'信用卡','FORMAL-LOAN':'正式贷款',INVESTMENT:'投资'},
 };
 
 export const financialScopeNote = '金额分配完整只表示解释覆盖，包含不计现金的重复证据；解释生效只表示当前采用，不代表业务已核对正确。';

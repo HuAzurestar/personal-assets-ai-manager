@@ -211,6 +211,7 @@ def run():
                     committed=snapshot();count=len(commands)
                     form.locator('[data-source-current]').click();expect(form.locator('[data-source-current-result]')).to_contain_text('已停用，内容保留')
                     expect(form.locator('[data-source-current-result]')).to_contain_text('Mock bulk source 2')
+                    expect(form.locator('[data-source-current-result]')).to_contain_text('解释已生效（CONFIRMED）')
                     form.evaluate('node=>node.requestSubmit()');form.locator('[data-review-preview]').evaluate('node=>node.click()')
                     form.locator('[data-source-select-all]').evaluate('node=>node.click()')
                     form.locator('[data-named-choice="account_ref_id"] [data-choice-pick]').evaluate('node=>node.onclick()')
