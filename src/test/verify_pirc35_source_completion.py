@@ -14,6 +14,7 @@ import uvicorn
 from playwright.sync_api import expect, sync_playwright
 from serve_m2_ui import prepare_app
 from browser_artifact import viewport_evidence
+from browser_list import assert_list_readability
 
 
 def run():
@@ -99,6 +100,15 @@ def run():
                     form=page.locator('[data-source-completion-form]');expect(form).to_be_visible()
                     expect(form.locator('[data-source-count]')).to_contain_text('当前已应用筛选 109 条')
                     assert form.locator('[name="cash_amount"], [name="case_code"], [name="leg_amount"]').count()==0
+                    row = form.locator('[data-source-ledger]').first
+                    expect(row).to_be_visible()
+                    for width in (1440, 1280, 1100, 820, 390, 320):
+                        page.set_viewport_size({'width': width, 'height': 900})
+                        assert_list_readability(page, row, row.locator('strong'),
+                            row.locator('span').first.locator('small'), amount=row.locator('span').nth(1))
+                        row.scroll_into_view_if_needed()
+                        viewport_evidence(page, f'dev17-list-source-completion-{width}')
+                    page.set_viewport_size({'width': 1280, 'height': 800})
                     form.locator('[data-source-select-page]').click()
                     expect(form.locator('[data-source-count]')).to_contain_text('已选 20 条')
                     form.locator('[data-source-next]').click()

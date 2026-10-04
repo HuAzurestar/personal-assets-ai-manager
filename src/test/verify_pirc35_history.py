@@ -1,4 +1,5 @@
 """Actual filtered import statistics over a new fictional database; zero UI writes."""
+from datetime import datetime, timezone
 import os
 from pathlib import Path
 import socket
@@ -25,7 +26,9 @@ def run():
             for index, (source, status) in enumerate(samples, 1):
                 db.add(TransactionImportFile(filename=f"Mock history {index}" + (
                     ' 完全虚构的长中文账单文件名用于检查导入历史内容可以完整阅读而不被隐藏' if index == 35 else '') + '.csv', source_type=source,
-                    status=status, file_format=1, sha256=f"{index:064x}"))
+                    status=status, file_format=1, sha256=f"{index:064x}",
+                    created_time=datetime(2026, 9, 1, 0, index, tzinfo=timezone.utc),
+                    updated_time=datetime(2026, 9, 1, 0, index, tzinfo=timezone.utc)))
             db.commit()
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
@@ -45,6 +48,10 @@ def run():
                     time.sleep(.1)
                 else:
                     raise RuntimeError("fictional app did not start")
+                ordered = client.get('/paam/import/v1/import_file/list', params={
+                    'page_size': 10, 'sorter': '[{"key":"created_time","direction":"desc"}]'}).json()['body']['items']
+                assert ordered[0]['filename'] == 'Mock history 36.csv', ordered
+                assert ordered[1]['filename'].startswith('Mock history 35 完全虚构'), ordered
                 before = {path: client.get(path).json()["body"]["total"] for path in (
                     "/paam/import/v1/import_file/list", "/paam/ledger/v1/flow/list", "/paam/ledger/v1/transaction_fact/list")}
                 with sync_playwright() as playwright:

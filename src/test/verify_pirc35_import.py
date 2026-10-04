@@ -11,6 +11,7 @@ import uvicorn
 from playwright.sync_api import expect, sync_playwright
 from serve_m2_ui import prepare_app
 from browser_artifact import viewport_evidence
+from browser_list import assert_list_readability
 from import_browser_action import open_import_advanced
 
 
@@ -61,6 +62,13 @@ def run():
                         page.set_viewport_size({"width": width, "height": 900})
                         assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
                         expect(rows.first.locator("[data-row-decision]")).to_be_visible()
+                    for width in (1440, 1280, 1100, 820, 390, 320):
+                        page.set_viewport_size({'width': width, 'height': 900})
+                        assert_list_readability(page, rows.first, rows.first.locator('.import-batch-main strong'),
+                            rows.first.locator('.import-batch-main small'),
+                            amount=rows.first.locator('.import-batch-amount strong'), max_height=110)
+                        rows.first.scroll_into_view_if_needed()
+                        viewport_evidence(page, f'dev17-list-import-{width}')
                     page.set_viewport_size({"width": 1280, "height": 800})
                     expect(page.locator("[data-batch-confirm]")).to_be_disabled()
                     open_import_advanced(page)
@@ -98,6 +106,7 @@ def run():
                     assert candidate.locator("span").bounding_box()["width"] > candidate.bounding_box()["width"] * .65
                     assert candidate.locator("button").bounding_box()["width"] < 140
                     assert candidate.bounding_box()["height"] <= 70
+                    assert candidate.locator('span').evaluate('node => parseFloat(getComputedStyle(node).fontSize)') >= 14
                     viewport_evidence(page, "fix-batch2-source-picker")
                     candidate.locator("button").click()
                     expect(rows.first.locator("[data-row-ref]")).to_contain_text("建设银行")
