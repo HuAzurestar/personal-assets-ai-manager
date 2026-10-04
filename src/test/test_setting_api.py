@@ -90,7 +90,13 @@ def _model_payload(*, temperature: float = 0.0, name: str = "Free model"):
     }
 
 
-def test_model_configuration_secret_lifecycle_and_restart(setting_runtime, monkeypatch):
+@pytest.mark.parametrize("real_analysis_enabled", [False, True])
+def test_model_configuration_secret_lifecycle_and_restart(setting_runtime, monkeypatch, real_analysis_enabled):
+    # Availability is a runtime capability, not persisted scan_enabled. Exercise
+    # both profiles without enabling a scheduler or contacting a model provider.
+    from backend.service import setting_service
+    monkeypatch.setattr(setting_service, "AUTOTAG_REAL_ANALYSIS", real_analysis_enabled)
+    monkeypatch.setattr(setting_service, "AUTOTAG_SYNTHETIC_ACCEPTANCE", False)
     sessions, _, store = setting_runtime
     with _client(sessions, store) as client:
         initial = client.get("/paam/system/v1/setting/automation")
@@ -98,7 +104,7 @@ def test_model_configuration_secret_lifecycle_and_restart(setting_runtime, monke
         assert initial.json()["body"] == {
             "models": [],
             "scan_enabled": True,
-            "scan_available": True,
+            "scan_available": real_analysis_enabled,
             "disclosure": {
                 "date_granularity": "DAY",
                 "amount_bands": {

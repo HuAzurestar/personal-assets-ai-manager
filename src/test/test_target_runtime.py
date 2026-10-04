@@ -5,13 +5,16 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import sessionmaker
 
 from backend import target_main
 from backend.core import target_database
 from backend.core.import_preview_store import import_preview_store as target_intake_preview_store
+from backend.schema.review_command import AccountCorrection
 from import_batch_helpers import confirm_api_batch
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -86,13 +89,34 @@ def test_openapi_locks_canonical_ledger_v1_contract():
         "cash_currency_code", "created_time", "updated_time"}
 
     review_request_properties = set(schemas["ReviewChangeInput"]["properties"])
-    assert {"deactivate_review_ids", "activate_review_ids", "new_reviews", "expected_reviews", "activation_duplicates"} == review_request_properties
+    assert {"deactivate_review_ids", "activate_review_ids", "new_reviews", "expected_reviews",
+            "activation_duplicates", "account_corrections", "correction_duplicates"} == review_request_properties
     # Transient explicit keeper decisions validate historical activation; they
     # are not a content revision, persisted receipt or duplicate Fact pointer.
     activation = schemas["ReviewChangeInput"]["properties"]["activation_duplicates"]
     assert activation["maxItems"] == 2000
     assert activation["items"]["$ref"].endswith("/DuplicateTransaction")
     assert "activation_duplicates" not in schemas["ReviewChangeInput"].get("required", [])
+    corrections = schemas["ReviewChangeInput"]["properties"]["account_corrections"]
+    assert corrections["maxItems"] == 100
+    assert corrections["items"]["$ref"].endswith("/AccountCorrection")
+    correction_keepers = schemas["ReviewChangeInput"]["properties"]["correction_duplicates"]
+    assert correction_keepers["maxItems"] == 2000
+    assert correction_keepers["items"]["$ref"].endswith("/DuplicateTransaction")
+    assert {"account_corrections", "correction_duplicates"}.isdisjoint(
+        schemas["ReviewChangeInput"].get("required", []))
+    correction = schemas["AccountCorrection"]
+    assert set(correction["properties"]) == {"ledger_id", "account_ref_id"}
+    assert set(correction["required"]) == {"ledger_id", "account_ref_id"}
+    assert correction["additionalProperties"] is False
+    assert correction["properties"]["ledger_id"]["exclusiveMinimum"] == 0
+    assert correction["properties"]["account_ref_id"]["minimum"] == 0
+    # FastAPI's OpenAPI Schema.maximum is float; do not infer exact integer
+    # acceptance from that rounded documentation. The DTO remains exact below.
+    exact_correction = AccountCorrection.model_json_schema()
+    for name, field in correction["properties"].items():
+        assert field["type"] == "integer" and field["maximum"] == float(2**63 - 1)
+        assert exact_correction["properties"][name]["maximum"] == 2**63 - 1
     assert set(schemas["MoneySplitInput"]["properties"]) == {"transaction_id","economic_type","cash_amount","account_ref_id"}
     assert {"history","version","behavior_type"}.isdisjoint(schemas["ReviewReadPO"]["properties"])
     assert {"review_id","transaction_id","ledger_id","cash_amount","cash_currency_code"} <= set(schemas["FirstAllocationPO"]["properties"])
@@ -112,6 +136,18 @@ def test_openapi_locks_canonical_ledger_v1_contract():
     assert specification["paths"]["/paam/ledger/v1/review"]["post"]["tags"] == [
         "ledger-review"
     ]
+
+
+def test_account_correction_resource_ids_keep_exact_runtime_bounds():
+    maximum = 2**63 - 1
+    assert AccountCorrection.model_validate({"ledger_id": maximum, "account_ref_id": maximum}).ledger_id == maximum
+    assert AccountCorrection.model_validate({"ledger_id": 1, "account_ref_id": 0}).account_ref_id == 0
+    for field in ("ledger_id", "account_ref_id"):
+        for invalid in (True, False, 1.0, "1", -1, 2**63):
+            with pytest.raises(ValidationError):
+                AccountCorrection.model_validate({"ledger_id": 1, "account_ref_id": 0} | {field: invalid})
+    with pytest.raises(ValidationError):
+        AccountCorrection.model_validate({"ledger_id": 0, "account_ref_id": 0})
 
 
 def test_importing_target_runtime_does_not_load_legacy_database_module():
@@ -153,7 +189,24 @@ def _wechat_csv(rows=None) -> bytes:
     return stream.getvalue().encode()
 
 
-def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch):
+@pytest.mark.parametrize("real_analysis_enabled, expected_guard", [
+    (False, "DISABLED"), (True, "REAL_READY"),
+])
+def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch, real_analysis_enabled, expected_guard):
+    from backend.router import system
+    from backend.service.configured_llm_analyzer import ConfiguredLlmAnalyzer
+    provider_calls = []
+
+    async def forbid_provider(*args, **kwargs):
+        provider_calls.append(True)
+        raise AssertionError("runtime contract test must not invoke a model")
+
+    monkeypatch.setattr(ConfiguredLlmAnalyzer, "analyze", forbid_provider)
+    # These isolated flags cover registration and its read projection together;
+    # no process env, user service, model credentials or actual provider change.
+    for module in (target_main, system):
+        monkeypatch.setattr(module, "AUTOTAG_REAL_ANALYSIS", real_analysis_enabled)
+        monkeypatch.setattr(module, "AUTOTAG_SYNTHETIC_ACCEPTANCE", False)
     assert 'uvicorn.run("backend.target_main:app"' in (ROOT / "run.py").read_text(
         encoding="utf-8"
     )
@@ -230,7 +283,9 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
             schedule = client.get("/paam/system/v1/schedule/status")
             assert schedule.status_code == 200
             assert schedule.json()["body"]["scheduler_state"] == "RUNNING"
-            assert schedule.json()["body"]["tag_scan_guard"] == "REAL_READY"
+            assert schedule.json()["body"]["tag_scan_guard"] == expected_guard
+            assert not any(task["task_key"].startswith("tag-scan:")
+                           for task in schedule.json()["body"]["tasks"])
             assert 'data-action="tag-request-batch"' in automation_script.text
             inspection_script = client.get("/static/js/component/inspection.js")
             assert inspection_script.status_code == 200
@@ -301,6 +356,7 @@ def test_target_runtime_uses_only_pirc9_tables_and_routes(tmp_path, monkeypatch)
         assert set(inspect(engine).get_table_names()) == set(
             target_database.TARGET_TABLE_NAMES
         )
+        assert provider_calls == []
     finally:
         target_intake_preview_store.clear()
         engine.dispose()
