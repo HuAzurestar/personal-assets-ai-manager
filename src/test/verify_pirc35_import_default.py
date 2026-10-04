@@ -55,7 +55,9 @@ def run():
                         upload.locator('[data-action="preview-import"]').click()
                     assert response.value.status == 200, response.value.text()
                     current = response.value.json()["body"]
-                    first, second = [item["file_id"] for item in current["files"]]
+                    # File IDs are allocated by hash, not upload order. The
+                    # complete-preview first is the stable displayed row order.
+                    first, second = sorted(item["file_id"] for item in current["files"])
                     rows = page.locator('[data-batch-row]')
                     expect(rows).to_have_count(20, timeout=15000)
                     expect(rows.first.locator('[data-row-decision]')).to_have_value("ACCEPT")
