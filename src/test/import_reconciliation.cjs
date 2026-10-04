@@ -9,6 +9,8 @@ const {pathToFileURL}=require('node:url');
   const module=await import(pathToFileURL(path.join(__dirname,'../frontend/js/component/import-reconciliation.js')).href);
   const {readImportBinding}=await import(pathToFileURL(path.join(__dirname,'../frontend/js/component/import-binding.js')).href);
   const {resourceId}=await import(pathToFileURL(path.join(__dirname,'../frontend/js/util/core.js')).href);
+  const {installUnitDictionary}=await import(pathToFileURL(path.join(__dirname,'../frontend/js/util/unit-dictionary.js')).href);
+  installUnitDictionary(require('./unit_fixture.cjs').unitFixture());
   const time='2026-10-03T01:02:03.123456Z';
   const row={file_id:1,source_row_number:2};
   const intent={...row,resolution:'DUPLICATE',decision:'ACCEPT',target:{kind:'FACT',transaction_id:11}};
@@ -22,6 +24,9 @@ const {pathToFileURL}=require('node:url');
       fully_observed:true,reason_codes:['KEEPER_LOCATED_FROM_CLIENT_CONTEXT']}],facts:[fact(11),fact(22)],
     outputs:[output(1,11,'TRANSACTION','CONFIRMED',1),output(2,22,'TRANSACTION','REVOKED',2),output(3,22,'DUPLICATE','CONFIRMED',2)]};
   assert.equal(module.validateImportReconciliation(result,input),result);
+  assert.match(module.reconciliationOutputLabel(result.outputs[0]),/解释已生效（CONFIRMED）/);
+  assert.match(module.reconciliationOutputLabel(result.outputs[1]),/解释已停用（REVOKED）/);
+  assert.match(module.reconciliationOutputLabel({...result.outputs[0],review_status:'FUTURE'}),/状态未知（FUTURE）/);
   assert.match(module.reconciliationRowLabel(result.items[0]),/不是数据库首次配对回执/);
   const clone=value=>JSON.parse(JSON.stringify(value));
   for (const modify of [value=>value.rows.push(row),value=>value.intents[0].file_id=2,value=>value.files=[],
@@ -34,7 +39,7 @@ const {pathToFileURL}=require('node:url');
     value=>value.items[0].fully_observed=false,value=>value.outputs.pop(),value=>value.outputs[0].review_status='REVOKED',
     value=>value.outputs[2].account_ref_id=1,value=>value.outputs[2].cash_amount=122,
     value=>value.outputs[2].economic_type='TRANSACTION',value=>value.facts[1].occurred_time='2026-10-03T01:02:03.123457Z',
-    value=>value.outputs[2].transaction_id=99,value=>value.items[0].state='UNRESOLVED',
+    value=>value.outputs[2].transaction_id=99,value=>value.items[0].state='UNRESOLVED',value=>value.outputs[0].review_status='FUTURE',
     value=>value.outputs.push(value.outputs[0]),value=>value.outputs[2].cash_direction='IN',
     value=>value.items[0].row_status=0,value=>value.items[0].row_id=0]) {
     const value=clone(result);modify(value);assert.throws(()=>module.validateImportReconciliation(value,input));

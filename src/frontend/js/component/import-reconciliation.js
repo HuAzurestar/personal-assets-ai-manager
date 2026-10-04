@@ -1,5 +1,6 @@
 import {resourceId, money} from '../util/core.js';
 import {importRowIdentity} from './import-choice.js';
+import {financialStateLabel} from '../util/financial-copy.js';
 
 const resolutions = ['AUTO','NEW','LINK_EXISTING','DUPLICATE'];
 const states = ['NOT_PERSISTED','UNPROCESSED','SKIPPED','INVALID','ACCEPTED','EVIDENCE_LINKED',
@@ -115,4 +116,4 @@ export const reconciliationRowLabel = item => `文件 #${item.row.file_id} 第 $
   + (item.target_transaction_id ? ` · 原明确目标 Fact #${item.target_transaction_id}` : '')
   + (item.reason_codes.includes('KEEPER_LOCATED_FROM_CLIENT_CONTEXT') ? '；A目标来自客户端保留的明确意图，不是数据库首次配对回执' : '')
   + (item.reason_codes.length ? `；${item.reason_codes.join(' / ')}` : '');
-export const reconciliationOutputLabel = item => `Fact #${item.transaction_id} · 原Review #${item.review_id} ${item.review_status === 'CONFIRMED' ? '当前有效' : '已停用历史'}（${item.review_status}） · Ledger #${item.ledger_id} · ${item.economic_type} · ${item.cash_direction} ${money({cash_amount:item.cash_amount,cash_currency_code:item.cash_currency_code})} · ${item.occurred_time} · 来源卡 #${item.account_ref_id}`;
+export const reconciliationOutputLabel = item => `Fact #${item.transaction_id} · 原Review #${item.review_id} ${financialStateLabel('review',item.review_status)} · Ledger #${item.ledger_id} · ${item.economic_type} · ${item.cash_direction} ${money({cash_amount:item.cash_amount,cash_currency_code:item.cash_currency_code})} · ${item.occurred_time} · 来源卡 #${item.account_ref_id}`;
