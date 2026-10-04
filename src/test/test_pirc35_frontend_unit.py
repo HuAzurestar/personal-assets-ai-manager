@@ -11,6 +11,7 @@ import pytest
     "automation_setting_form.cjs", "tag_assignment_ui.cjs",
     "import_batch_unknown.cjs",
     "import_batch_issue.cjs",
+    "import_decision.cjs",
     "import_plan.cjs",
     "import_choice.cjs",
     "import_bulk.cjs",

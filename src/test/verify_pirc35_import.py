@@ -175,6 +175,64 @@ def run():
                     expect(page.locator('[data-batch-files]')).to_contain_text("解析成功：24 行")
                     expect(page.locator('[data-batch-files]')).to_contain_text("重新")
                     assert len(confirmations) == 2  # No extra cash, retry or implicit confirmation.
+                    # Unchosen defaults must reflect row validity on both pages
+                    # and complete scopes; explicit decisions are never reset.
+                    header = '建设银行个人交易明细\n账号：990000000000001234\n币种：人民币\n摘要,币别,交易日期,交易金额\n'
+                    mixed = header + 'Mock错误金额,CNY,2030-01-01,not-money\n'
+                    mixed += ''.join(f'Mock默认正常{i},CNY,2030-01-{i:02},-{i}.50\n' for i in range(1, 22))
+                    mixed += 'Mock错误日期,CNY,not-a-date,-99.00\n'
+                    page.locator('[data-action="import-step"][data-step="2"]').first.click()
+                    expect(upload).to_be_visible()
+                    upload.locator('[name="files"]').set_input_files({
+                        "name": "Mock defaults.csv", "mimeType": "text/csv", "buffer": mixed.encode()})
+                    upload.locator('[data-action="preview-import"]').click()
+                    expect(rows).to_have_count(20, timeout=15000)
+                    expect(page.locator('[data-batch-summary]')).to_contain_text('新事实 21')
+                    expect(page.locator('[data-batch-summary]')).to_contain_text('行问题 2')
+                    expect(rows.first.locator('[data-row-decision]')).to_have_value('SKIP')
+                    expect(rows.nth(1).locator('[data-row-decision]')).to_have_value('ACCEPT')
+                    page.locator('[data-batch-select-page]').click()
+                    # The user may explicitly change either inferred decision.
+                    rows.first.locator('[data-row-decision]').select_option('ACCEPT')
+                    rows.nth(1).locator('[data-row-decision]').select_option('SKIP')
+                    page.locator('[data-batch-save]').click()
+                    expect(page.locator('[data-batch-confirm]')).to_be_enabled()
+                    page.locator('[data-batch-refresh]').click()
+                    expect(rows.first.locator('[data-row-decision]')).to_have_value('ACCEPT')
+                    expect(rows.nth(1).locator('[data-row-decision]')).to_have_value('SKIP')
+                    rows.first.locator('[data-row-decision]').select_option('SKIP')
+                    page.locator('[data-batch-select-scope]').click()
+                    expect(page.locator('[data-batch-selection]')).to_contain_text('23 行')
+                    expect(rows.nth(1).locator('[data-row-decision]')).to_have_value('SKIP')
+                    page.locator('[data-batch-next]').click()
+                    expect(rows).to_have_count(3)
+                    expect(rows.last.locator('[data-row-decision]')).to_have_value('SKIP')
+                    page.locator('[data-batch-save]').click()
+                    expect(page.locator('[data-batch-confirm]')).to_be_enabled()
+                    from backend.core import target_database
+                    from backend.entity import TransactionFact, LedgerEntry, TransactionImportRow
+                    from sqlalchemy import select, func
+                    with target_database.SessionLocal() as db:
+                        before_facts = db.scalar(select(func.count(TransactionFact.id)))
+                        before_cash = db.scalar(select(func.count(LedgerEntry.id)))
+                    file_id = int(rows.first.get_attribute('data-batch-row').split(':')[0])
+                    viewport_evidence(page, 'fix-import-inferred-defaults')
+                    page.locator('[data-batch-confirm]').click()
+                    expect(page.locator('[data-batch-files]')).to_contain_text('已接受 20', timeout=15000)
+                    expect(page.locator('[data-batch-files]')).to_contain_text('跳过 1 · 无效记录 2 · 剩余 0')
+                    assert len(confirmations) == 3
+                    with target_database.SessionLocal() as db:
+                        assert db.scalar(select(func.count(TransactionFact.id))) == before_facts + 20
+                        assert db.scalar(select(func.count(LedgerEntry.id))) == before_cash + 20
+                        evidence = db.execute(select(TransactionImportRow.row_status,
+                            TransactionImportRow.transaction_fact_id, TransactionImportRow.raw_payload,
+                            TransactionImportRow.issue_code).where(
+                                TransactionImportRow.transaction_import_file_id == file_id)).all()
+                        assert len(evidence) == 23 and all(item.raw_payload for item in evidence)
+                        abnormal = [item for item in evidence if item.row_status == 3]
+                        assert len(abnormal) == 2
+                        assert all(item.transaction_fact_id == 0 and item.issue_code == 'ROW_INVALID' for item in abnormal)
+                        assert sum(item.row_status == 2 and item.transaction_fact_id == 0 for item in evidence) == 1
                     page.set_viewport_size({"width": 390, "height": 844})
                     page.goto(base + "/#workbench/import")
                     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")

@@ -3,6 +3,7 @@ import { esc, money, date, resourceId } from "../util/core.js";
 import { mountPicker, workbenchDialog, metadataLabel } from "../component/workbench.js";
 import { mountImportPlan, validateImportPlan } from '../component/import-plan.js';
 import { completeImportScope } from '../util/import-scope.js';
+import { importRowChoice } from '../util/import-decision.js';
 import { openImportChoice, importIntentNames } from '../component/import-choice.js';
 import { openImportBulk, importRangeFilter, mountImportDraftRows } from '../component/import-bulk.js';
 import { openImportBinding, readImportBinding } from '../component/import-binding.js';
@@ -55,7 +56,7 @@ export async function mountImportBatch(host, initial, changed) {
   }
   let page, scopeController;
   host.innerHTML = `<div class="preview-section"><h2 id="preview-title">显式分批导入</h2>
-    <p>1000行限制单次入账事务，不限制整次选择；列表可选20／50／100行，不代表整份账单。补证据不改变原审查。</p>
+    <p>1000行限制单次入账事务，不限制整次选择；列表可选20／50／100行，不代表整份账单。补证据不改变原审查。未手工决定的正常行默认接受，异常行默认跳过；异常证据保留，仍需保存核验和确认入账。</p>
     <div data-batch-files></div><p data-batch-summary></p>
     <div class="import-batch-toolbar" data-batch-toolbar><p data-batch-selection></p><small data-batch-selected-scope></small>
       <div class="actions"><button type="button" data-batch-select-page>选择本页未接受行</button><button type="button" data-batch-bulk>批量修改意图／决定</button><button type="button" data-batch-bind>批量绑定来源</button><button type="button" data-batch-pair>具名批配对</button>
@@ -111,7 +112,7 @@ export async function mountImportBatch(host, initial, changed) {
     find("[data-batch-selection]").textContent = `本次明确选择 ${context.selected.size} 行 · ${context.dirty ? '待保存核验' : '使用服务器最新摘要'}${context.selected.size > 1000 ? ' · 先核对拆批计划' : ''}${context.restoreRequired ? ' · 保留范围须重读' : ''}`;
     const selectedRows = [...context.selected.values()], fileIds = new Set(selectedRows.map(item => item.row.file_id));
     const files=plan.files.filter(file=>fileIds.has(file.file_id)).map(file=>file.filename);
-    find('[data-batch-selected-scope]').textContent = `文件范围：${files.length === 1 ? files[0] : `${fileIds.size}份（完整范围见文件摘要／计划）`}；待处理 ${selectedRows.filter(item => item.row.classification !== 'PROCESSED').length}，行问题 ${selectedRows.filter(item => item.row.issue_codes?.length).length}。`;
+    find('[data-batch-selected-scope]').textContent = `文件范围：${files.length === 1 ? files[0] : `${fileIds.size}份（完整范围见文件摘要／计划）`}；待处理 ${selectedRows.filter(item => item.row.classification !== 'PROCESSED').length}，行问题 ${selectedRows.filter(item => item.row.issue_codes?.length).length}；接受 ${selectedRows.filter(item => item.choice.decision === 'ACCEPT').length}，跳过 ${selectedRows.filter(item => item.choice.decision === 'SKIP').length}。`;
     find('[data-batch-selected-scope]').title=files.join('、');
     host.querySelectorAll("button,input,select").forEach(node => {
       if (!node.closest?.('[data-batch-operation]') && !node.closest?.('[data-batch-verification]')) node.disabled = context.busy || context.unknown;
@@ -159,7 +160,7 @@ export async function mountImportBatch(host, initial, changed) {
       find("[data-batch-page]").textContent = `第 ${requestedPage} 页 · 每页 ${next.page_size} 行 · 当前筛选共 ${next.total} 行`;
       find("[data-batch-rows]").innerHTML = next.items.map(row => {
         const selected = context.selected.get(identity(row));
-        const choice = selected?.choice || row.choice || { decision: "ACCEPT", recheck: false, account_ref_id: null };
+        const choice = importRowChoice(row, selected?.choice);
         const refText = choice.account_ref_id == null ? "可靠来源自动匹配／否则待绑定"
           : choice.account_ref_id === 0 ? "明确待绑定" : selected?.refLabel || `#${choice.account_ref_id}`;
         const processed = row.classification === "PROCESSED";
@@ -194,7 +195,7 @@ export async function mountImportBatch(host, initial, changed) {
         if (intent) intent.onclick = () => {
           if (!live() || context.busy || context.unknown) return;
           const frozen = context.plan.preview_digest, previous = context.selected.get(identity(row));
-          openImportChoice({row, choice:previous?.choice || row.choice || {decision:'ACCEPT',recheck:false,account_ref_id:null},
+          openImportChoice({row, choice:importRowChoice(row, previous?.choice),
             targetLabel:previous?.targetLabel, token:context.plan.token, digest:frozen, files:context.plan.files,
             selected:() => context.selected, signal,
             valid:() => live() && !context.busy && !context.unknown && context.plan.preview_digest === frozen && context.plan.status !== 'CONFIRMING',
@@ -379,7 +380,7 @@ export async function mountImportBatch(host, initial, changed) {
       const selected = new Map(context.selected);
       for (const row of rows) {
         if (row.classification !== 'PROCESSED' && !selected.has(identity(row))) selected.set(identity(row),
-          {row, choice:{...(row.choice || {decision:'ACCEPT',recheck:false,account_ref_id:null}),file_id:row.file_id,source_row_number:row.source_row_number}});
+          {row, choice:{...importRowChoice(row),file_id:row.file_id,source_row_number:row.source_row_number}});
       }
       if (selected.size > 20000) throw new Error('合并选择超过20000行；未部分加入，请缩小范围。');
       if (!live() || issued !== context.generation || context.plan.preview_digest !== digest) return;
