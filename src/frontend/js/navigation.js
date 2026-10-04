@@ -126,9 +126,17 @@ export function parseHash(hash, validPages) {
   return { page, params };
 }
 
+function domainNoteMarkup(active) {
+  if (active === "settings") return "<strong>自动化设置</strong>";
+  return `<span>账目形成</span><strong>事实流水 → 审查 → 经济流水</strong>
+    <details class="domain-help"><summary aria-label="账目关系说明">说明</summary>
+      <p>事实保留来源，审查负责解释，经济流水是最终阅读和统计结果。</p>
+    </details>`;
+}
+
 export function shellMarkup() {
   const nav = Object.entries(moduleMeta).map(([id, item], index) => `
-    <button type="button" data-module="${id}" data-page="${item.page}" aria-pressed="false">
+    <button type="button" data-module="${id}" data-page="${item.page}" aria-pressed="false" aria-label="${esc(item.label)}：${esc(item.caption)}">
       <span>0${index + 1}</span><strong>${esc(item.label)}</strong><small>${esc(item.caption)}</small>
     </button>`).join("");
   return `<div class="module-shell target-shell">
@@ -139,14 +147,14 @@ export function shellMarkup() {
       </a>
       <nav class="module-nav" aria-label="主要模块">${nav}</nav>
       <div class="topbar-actions">
-        <label class="timezone-control">显示时区<select data-timezone aria-label="页面显示时区"><option value="Asia/Hong_Kong">香港</option><option value="Asia/Shanghai">上海</option><option value="Asia/Tokyo">东京</option><option value="Europe/London">伦敦</option><option value="America/New_York">纽约</option><option value="UTC">UTC</option></select></label>
+        <label class="timezone-control"><span>显示时区</span><select data-timezone aria-label="页面显示时区"><option value="Asia/Hong_Kong">香港</option><option value="Asia/Shanghai">上海</option><option value="Asia/Tokyo">东京</option><option value="Europe/London">伦敦</option><option value="America/New_York">纽约</option><option value="UTC">UTC</option></select></label>
         <a class="connection" data-connection-status data-state="checking" href="/api/health" target="_blank" rel="noopener" title="点击打开本地服务健康检查"><i></i><span data-live-label aria-live="polite">正在检查本地账本</span></a>
         <button type="button" class="primary compact" data-page="import">导入账单</button>
       </div>
     </header>
     <div class="module-subbar">
       <nav class="secondary-nav" id="secondary-nav" aria-label="当前模块功能"></nav>
-      <div class="domain-note"><span>账目形成</span><strong>事实流水 → 审查 → 经济流水</strong><p>事实保留来源，审查负责解释，经济流水是最终阅读和统计结果。</p></div>
+      <div class="domain-note">${domainNoteMarkup("details")}</div>
     </div>
     <main class="module-content" id="content" tabindex="-1">
       <header class="module-heading page-header">
@@ -192,9 +200,7 @@ export function syncNavigation(page) {
     revealSelectedNavigation(secondaryNavigation);
   }
   const domainNote = $(".domain-note");
-  if (domainNote) domainNote.innerHTML = active === "settings"
-    ? "<strong>自动化设置</strong>"
-    : "<span>账目形成</span><strong>事实流水 → 审查 → 经济流水</strong><p>事实保留来源，审查负责解释，经济流水是最终阅读和统计结果。</p>";
+  if (domainNote) domainNote.innerHTML = domainNoteMarkup(active);
   const kicker = { details: "DETAILS", overview: "LEDGER OVERVIEW", workbench: "WORKBENCH", settings: "SETTINGS" };
   $("#section-kicker").textContent = kicker[active];
 }
