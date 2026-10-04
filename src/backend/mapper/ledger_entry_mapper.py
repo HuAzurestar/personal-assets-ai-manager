@@ -178,7 +178,10 @@ class LedgerEntryMapper:
         return result
 
     def summary(self, query: LedgerEntrySummaryQuery):
-        return self.db.execute(self.summary_statement(query)).mappings().all()
+        # These explicit scalar columns need no ORM result assembly. Keep the
+        # Session's same connection/snapshot and column type processors; the
+        # surrounding read deadline and complete contribution limit still apply.
+        return self.db.connection().execute(self.summary_statement(query)).mappings().all()
 
     def summary_statement(self, query: LedgerEntrySummaryQuery):
         clauses = self._active_clauses()

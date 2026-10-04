@@ -1,4 +1,5 @@
 """Complete exact aggregation, using actual isolated fictional SQLite rows."""
+from datetime import datetime, timezone
 from time import monotonic
 
 import pytest
@@ -46,6 +47,21 @@ def test_fifty_thousand_actual_contributors_are_complete_and_bounded():
     assert result.totals[0].income_and_expense_in_amount == 50000
     assert result.trend[0].income_amount == 50000
     assert duration < 2
+
+
+def test_summary_scalar_fetch_keeps_integer_and_utc_microsecond_types():
+    from backend.mapper.ledger_entry_mapper import LedgerEntryMapper
+    seed_contributions(1, amount=12345)
+    occurred = "2024-01-01T00:00:00.000007Z"
+    with target_database.SessionLocal() as db:
+        db.execute(text("UPDATE ledger_entry SET occurred_time=:occurred"), dict(occurred=occurred))
+        db.execute(text("UPDATE transaction_fact SET occurred_time=:occurred"), dict(occurred=occurred))
+        db.commit()
+        rows = LedgerEntryMapper(db).summary(LedgerEntrySummaryQuery())
+        assert len(rows) == 1 and type(rows[0]["amount"]) is int
+        assert rows[0]["amount"] == 12345 and rows[0]["currency_code"] == "CNY"
+        assert rows[0]["occurred_time"] == datetime(2024, 1, 1, microsecond=7, tzinfo=timezone.utc)
+        assert rows[0]["occurred_time"].tzinfo == timezone.utc
 
 
 def test_fifty_thousand_and_one_actual_contributors_return_no_partial_sum():
