@@ -13,6 +13,7 @@ import httpx
 from playwright.sync_api import expect, sync_playwright
 
 from browser_artifact import viewport_evidence
+from import_browser_action import open_import_advanced
 
 
 FINANCIAL_TABLES = ("transaction_fact", "review_case", "ledger_entry",
@@ -123,6 +124,7 @@ def run_import_restart():
                     expect(page.locator('[data-batch-select-scope]')).to_be_enabled(timeout=35000)
                     page.locator('[data-batch-save]').click()
                     expect(page.locator('[data-batch-plan]')).to_be_enabled(timeout=35000)
+                    open_import_advanced(page)
                     page.locator('[data-batch-plan]').click()
                     expect(page.locator('[data-plan-batches] [data-plan-batch]')).to_have_count(2, timeout=35000)
                     page.locator('[data-batch-consent]').check()
@@ -187,6 +189,7 @@ def run_import_restart():
                     viewport_evidence(page, "fix-import-real-restart-reconciled-remaining-one")
                     page.locator('[data-batch-save]').click()
                     expect(page.locator('[data-batch-plan]')).to_be_enabled(timeout=35000)
+                    open_import_advanced(page)
                     page.locator('[data-batch-plan]').click()
                     expect(page.locator('[data-plan-batches] [data-plan-batch]')).to_have_count(1, timeout=35000)
                     expect(page.locator('[data-batch-execute]')).to_be_disabled()
