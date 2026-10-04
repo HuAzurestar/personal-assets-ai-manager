@@ -81,6 +81,18 @@ def test_weak_source_is_exception_not_silently_skipped_in_projection(service):
     assert all(item["state"] == "EXCEPTION" and item["reason_codes"] == ["SOURCE_IDENTITY_REQUIRED"] for item in result["items"])
 
 
+@pytest.mark.parametrize("changes,code", [(dict(amount_minor=0),"ROW_INVALID"),
+    (dict(disposition="non_posted"),"NON_POSTED_EVIDENCE"),
+    (dict(disposition="neutral_evidence"),"NEUTRAL_EVIDENCE")])
+def test_invalid_core_retains_original_issue_not_a_fabricated_source_failure(service,changes,code):
+    current,rows = exports(service,changes=changes)
+    before,retained = manifest(service),deepcopy(service.store.get(current["token"]))
+    result = read(service,current,rows)
+    assert result["groups"] == []
+    assert all(item["state"] == "EXCEPTION" and item["reason_codes"] == [code] for item in result["items"])
+    assert manifest(service) == before and service.store.get(current["token"]) == retained
+
+
 def test_saved_explicit_new_intent_is_retained_and_group_not_partially_applied(service):
     current,rows = exports(service)
     choices = {key:choice(decision="SKIP") for key in rows}

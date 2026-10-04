@@ -5,6 +5,7 @@ import {importRowIdentity,importIntentChoice} from './import-choice.js';
 import {mountImportDraftRows} from './import-bulk.js';
 import {readImportBinding} from './import-binding.js';
 import {sameImportPairingScope} from './import-pairing.js';
+import {importIssueMessage} from '../util/import-decision.js';
 
 const locator = row => {
   if (typeof row?.file_id !== 'number' || typeof row?.source_row_number !== 'number') throw new Error('来源行定位不精确');
@@ -87,6 +88,8 @@ const reasons={ROWS_ALREADY_PROCESSED:'已接受行只读',ROW_RECHECK_REQUIRED:
   GROUP_REQUIRES_REVIEW:'组内有例外，整组保留原决定',NO_REPEAT_IN_SCOPE:'没有符合条件的重复导出组',
   CANONICAL_IDENTITY_RETAINED:'已有可靠交易号，沿用默认接受／补证据策略'};
 
+export const repeatIssueLabel = code => reasons[code] || `${importIssueMessage(code)}（${code}）`;
+
 export function openImportRepeat({selected,current=()=>selected,files,token,digest,time,signal,valid,apply}) {
   const frozen=new Map([...selected].map(([key,item])=>[key,structuredClone(item)])), confirmed=new Set();
   const label=row=>`${files.find(file=>file.file_id===row.file_id)?.filename || `文件 #${row.file_id}`} · 第 ${row.source_row_number} 行`;
@@ -152,7 +155,7 @@ export function openImportRepeat({selected,current=()=>selected,files,token,dige
       if(!currentScope() || issued!==generation) return;
       result=validateImportRepeat(next,frozen,digest,time);paint();
       const other=result.items.filter(item=>item.state!=='GROUPED');
-      mountImportDraftRows(find('[data-repeat-exceptions]'),other,item=>`${label(item.row)}：${item.reason_codes.map(code=>reasons[code] || code).join('；')}`,local.signal);
+      mountImportDraftRows(find('[data-repeat-exceptions]'),other,item=>`${label(item.row)}：${item.reason_codes.map(repeatIssueLabel).join('；')}`,local.signal);
       find('[data-repeat-status]').textContent=`完整核对 ${result.selected_count} 行；${other.length} 行未纳入建议组，保留原决定。请选择已核实的组并明确确认。`;
     } catch(error) {
       if(alive() && issued===generation) {result=null;find('[data-repeat-status]').textContent=`${error.code || '整组核对未完成'}：${error.message}；原决定不变，未保存或入账。`;}

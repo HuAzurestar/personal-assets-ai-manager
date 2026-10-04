@@ -53,8 +53,8 @@ class ImportRepeatService:
                 reason = ("ROWS_ALREADY_PROCESSED" if stored and stored["row_status"] == 1 else
                     "ROW_RECHECK_REQUIRED" if stored and stored["row_status"] in {2,3} and not choice["recheck"] else
                     "USER_INTENT_RETAINED" if choice["resolution"] != "AUTO" else
-                    candidate["issue"] or
-                    "EXTERNAL_CANDIDATE_REQUIRES_REVIEW" if candidate["fact_id"] else None)
+                    (candidate["issue"] or
+                    ("EXTERNAL_CANDIDATE_REQUIRES_REVIEW" if candidate["fact_id"] else None)))
                 if not reason and not rows[key].get("reference") and repeat_scope_key(rows[key],candidate) is None:
                     reason = "SOURCE_IDENTITY_REQUIRED"
                 items[key] = dict(row=row_locator(key), state="EXCEPTION" if reason else "UNCHANGED",

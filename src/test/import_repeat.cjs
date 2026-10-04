@@ -6,7 +6,7 @@ const fs=require('node:fs');
 const vm=require('node:vm');
 
 (async()=>{
-  const {validateImportRepeat,projectImportRepeat}=await import(pathToFileURL(
+  const {validateImportRepeat,projectImportRepeat,repeatIssueLabel}=await import(pathToFileURL(
     path.join(__dirname,'../frontend/js/component/import-repeat.js')).href);
   const time='2026-10-05T00:00:00.123456Z',digest='a'.repeat(64);
   const core={amount:100,currency_code:'CNY',cash_direction:'OUT',occurred_time:'2024-03-14T16:00:00.000001Z',summary:'Mock'};
@@ -19,6 +19,10 @@ const vm=require('node:vm');
     items:[1,2,3].map(file=>({row:locator(file),state:'GROUPED',reason_codes:[],keeper_row:locator(1)})).concat([
       {row:locator(4),state:'EXCEPTION',reason_codes:['SOURCE_IDENTITY_REQUIRED'],keeper_row:null}])};
   const before=JSON.stringify([...selected]);
+  for(const code of ['ROW_INVALID','NON_POSTED_EVIDENCE','NEUTRAL_EVIDENCE']) {
+    assert.match(repeatIssueLabel(code),/不能/);assert.ok(repeatIssueLabel(code).includes(code));
+    assert.doesNotMatch(repeatIssueLabel(code),/来源身份不足/);
+  }
   assert.equal(validateImportRepeat(result,selected,digest,time),result);
   const noConsent=projectImportRepeat(selected,result,new Set(),false,digest,time);
   assert.equal(noConsent.modified,0);assert.deepEqual([...noConsent.selected],[...selected]);

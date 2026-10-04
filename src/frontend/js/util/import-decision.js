@@ -36,6 +36,8 @@ export function importRiskLabel(row) {
 export function importIssueMessage(code) {
   return ({IMPORT_REVIEW_REQUIRED:'新增现金风险尚未明确：核对候选后选择跳过、具名配对，或明确确认另一笔真实交易',
     ROW_INVALID:'来源行会计字段无效，不能接受；可跳过并保留原证据',
+    NON_POSTED_EVIDENCE:'交易尚未入账，不能作为真实现金接受；跳过保留原证据',
+    NEUTRAL_EVIDENCE:'这是非现金变动的来源证据，不能作为真实现金接受；跳过保留原证据',
     ROW_RECHECK_REQUIRED:'旧跳过／问题行需明确重新检查',
     FACT_CONFLICT:'来源身份与已有事实冲突，不能覆盖旧事实',
     IDENTITY_AMBIGUOUS:'来源身份不唯一，须核对而不能自动选择',
