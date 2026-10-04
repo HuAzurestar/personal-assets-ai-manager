@@ -274,6 +274,9 @@ def run():
                             expect(page.locator('[data-batch-execution]')).to_contain_text('1000 行')
                             expect(page.locator('[data-batch-execution]')).not_to_contain_text('本批结果未知')
                             expect(page.locator('[data-batch-selection]')).to_contain_text('1 行',timeout=35000)
+                            expect(page.locator('[data-batch-selection]')).to_contain_text('已保存')
+                            expect(page.locator('[data-batch-selection]')).not_to_contain_text('未保存更改')
+                            expect(page.locator('[data-batch-status]')).to_contain_text('核验导入')
                             expect(page.locator('[data-batch-save]')).to_be_enabled(timeout=35000)
                         finally:
                             for lock in locks:

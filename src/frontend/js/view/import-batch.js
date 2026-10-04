@@ -110,15 +110,16 @@ export async function mountImportBatch(host, initial, changed) {
       + ((plan.issues || []).some(issue => issue.source_row_number > 0) ? `<details data-batch-issues><summary>查看本次行问题提示</summary>${plan.issues.filter(issue => issue.source_row_number > 0).map(issue => `<p>文件 #${issue.file_id} · 第 ${issue.source_row_number} 行：${esc(issue.code)}</p>`).join("")}${plan.has_more_issues ? "<p>此处仅为有界提示；其余问题请按文件及分类分页核对，不能把本提示当作完整行列表。</p>" : ""}</details>` : "");
     find("[data-batch-summary]").textContent = `拟新增 ${plan.counts.new} · 仅补证据 ${plan.counts.existing} · 已接受 ${plan.counts.processed} · 文件解析失败 ${failedFiles} · 行问题 ${Math.max(0, plan.issue_count - failedFiles)} · 总问题 ${plan.issue_count}（此处是解析／身份问题，不含新增现金风险；风险见所选范围核验）${plan.has_more_issues ? "（行问题请按分类分页核对；文件失败已全部显示）" : ""}${plan.timed_out ? "；预览超时提示，确认仍会重新核验" : ""}`;
     const readiness = context.unknown ? '提交结果未知，先核对持久状态' : context.dirty ? '选择有未保存更改，须核验导入'
+      : context.revalidationRequired ? '上次选择已保存 · 当前前提须重新核验'
       : context.disclosure ? context.disclosure.can_confirm ? '选择已保存 · 完整计划可提交' : '选择已保存 · 完整计划有阻断，须处理'
-      : context.preflightFailure ? '选择已保存 · 须重新核验' : '尚未取得可提交的完整计划';
+      : context.preflightFailure ? '选择已保存 · 须重新核验' : context.selected.size ? '选择已保存 · 尚未取得可提交的完整计划' : '尚未取得可提交的完整计划';
     find("[data-batch-selection]").textContent = `本次明确选择 ${context.selected.size} 行 · ${readiness}${context.selected.size > 1000 ? ' · 先核对拆批计划' : ''}${context.restoreRequired ? ' · 保留范围须重读' : ''}`;
     const selectedRows = [...context.selected.values()], fileIds = new Set(selectedRows.map(item => item.row.file_id));
     const files=plan.files.filter(file=>fileIds.has(file.file_id)).map(file=>file.filename);
     find('[data-batch-selected-scope]').textContent = `文件范围：${files.length === 1 ? files[0] : `${fileIds.size}份（完整范围见文件摘要／计划）`}；待处理 ${selectedRows.filter(item => item.row.classification !== 'PROCESSED').length}，行问题 ${selectedRows.filter(item => item.row.issue_codes?.length).length}；接受 ${selectedRows.filter(item => item.choice.decision === 'ACCEPT').length}，跳过 ${selectedRows.filter(item => item.choice.decision === 'SKIP').length}。`;
     find('[data-batch-selected-scope]').title=files.join('、');
     const risks = riskRows(), unresolved = risks.filter(item => importRiskUnresolved(item.row,item.choice));
-    find('[data-batch-risk-summary]').textContent = `所选完整范围：拟新增风险 ${risks.length} 行（疑似重复 ${risks.filter(item => importRiskState(item.row) === 'SUSPECTED').length}，未核验 ${risks.filter(item => importRiskState(item.row) === 'UNCHECKED').length}）；已跳过 ${risks.filter(item => item.choice.decision === 'SKIP').length}，接受但未解决 ${unresolved.length}。${context.disclosure ? `后端计划未解决 ${context.disclosure.batches.reduce((sum,batch) => sum + (batch.preview.issues?.length || 0),0)} 行；${context.disclosure.blocked.length} 个预算阻断组。` : '仅为已读取选择的风险提示；最终可提交性须完整计划核验。'}`;
+    find('[data-batch-risk-summary]').textContent = `所选完整范围：拟新增风险 ${risks.length} 行（疑似重复 ${risks.filter(item => importRiskState(item.row) === 'SUSPECTED').length}，未核验 ${risks.filter(item => importRiskState(item.row) === 'UNCHECKED').length}）；已跳过 ${risks.filter(item => item.choice.decision === 'SKIP').length}，接受但未解决 ${unresolved.length}，已明确意图 ${risks.filter(item => item.choice.decision === 'ACCEPT' && !importRiskUnresolved(item.row,item.choice)).length}（仍须计划核验）。${context.disclosure ? `后端计划未解决 ${context.disclosure.batches.reduce((sum,batch) => sum + (batch.preview.issues?.length || 0),0)} 行；${context.disclosure.blocked.length} 个预算阻断组。` : '仅为已读取选择的风险提示；最终可提交性须完整计划核验。'}`;
     host.querySelectorAll("button,input,select").forEach(node => {
       if (!node.closest?.('[data-batch-operation]') && !node.closest?.('[data-batch-verification]')) node.disabled = context.busy || context.unknown;
     });
@@ -127,10 +128,10 @@ export async function mountImportBatch(host, initial, changed) {
     find("[data-batch-verify]").disabled = context.busy;
     find("[data-batch-refresh]").disabled = context.busy;
     if (find("[data-batch-observed]")) find("[data-batch-observed]").disabled = context.busy || !context.verificationReady || plan.status === "CONFIRMING";
-    find("[data-batch-confirm]").disabled = context.busy || context.unknown || context.dirty || !context.selected.size || context.selected.size > 1000 || plan.status === "CONFIRMING" || !singleBatch();
+    find("[data-batch-confirm]").disabled = context.busy || context.unknown || context.dirty || context.revalidationRequired || !context.selected.size || context.selected.size > 1000 || plan.status === "CONFIRMING" || !singleBatch();
     find('[data-batch-risk-list]').disabled = context.busy || context.unknown || !risks.length;
     find('[data-batch-risk-skip]').disabled = context.busy || context.unknown || !unresolved.length || plan.status === 'CONFIRMING';
-    find('[data-batch-execute]').disabled=context.busy || context.unknown || context.dirty || context.restoreRequired || plan.status === 'CONFIRMING'
+    find('[data-batch-execute]').disabled=context.busy || context.unknown || context.dirty || context.revalidationRequired || context.restoreRequired || plan.status === 'CONFIRMING'
       || !context.selected.size || !context.disclosure?.can_confirm || !find('[data-batch-consent]').checked;
     find('[data-batch-execute]').hidden=!context.disclosure || !!context.executor;
     find('[data-batch-consent-panel]').hidden=!context.disclosure || !!context.executor;
@@ -140,7 +141,7 @@ export async function mountImportBatch(host, initial, changed) {
     find('[data-batch-stop-execution]').hidden=!context.executor;
     find('[data-batch-restore]').disabled=context.busy || context.unknown || !context.restoreRequired;
     find('[data-batch-restore]').hidden=!context.restoreRequired;
-    if (find('[data-batch-plan]')) find('[data-batch-plan]').disabled = context.busy || context.unknown || context.dirty || !context.selected.size || plan.status === 'CONFIRMING';
+    if (find('[data-batch-plan]')) find('[data-batch-plan]').disabled = context.busy || context.unknown || context.dirty || context.revalidationRequired || !context.selected.size || plan.status === 'CONFIRMING';
     if (find('[data-batch-stop-scope]')) find('[data-batch-stop-scope]').disabled = !context.scopeReading;
     find('[data-batch-bulk]').disabled ||= !context.selected.size || plan.status === 'CONFIRMING';
     find('[data-batch-bind]').disabled ||= !context.selected.size || plan.status === 'CONFIRMING';
@@ -253,7 +254,8 @@ export async function mountImportBatch(host, initial, changed) {
   const finishObserved = async retained => {
     if (retained?.serial) {
       retained.rows.forEach(row=>context.selected.delete(identity(row)));
-      context.dirty=!!context.selected.size;
+      context.dirty=!!context.restoreRequired && !!context.selected.size;
+      context.revalidationRequired=!!context.selected.size;
       const saved=JSON.parse(localStorage.getItem(remainingKey) || 'null'), handled=new Set(retained.rows.map(identity));
       if (saved?.choices) {
         saved.choices=saved.choices.filter(choice=>!handled.has(identity(choice)));
@@ -270,7 +272,7 @@ export async function mountImportBatch(host, initial, changed) {
     try {
       const plan = await request(`/paam/import/v1/preview/${context.plan.token}`, { signal });
       if (!live()) return;
-      if (plan.preview_digest !== context.plan.preview_digest) { context.dirty = !!context.selected.size; invalidatePlan(); }
+      if (plan.preview_digest !== context.plan.preview_digest) { context.revalidationRequired = !!context.selected.size; invalidatePlan(); }
       context.plan = plan;
       changed(plan);
       await readPage(1);
@@ -507,7 +509,7 @@ export async function mountImportBatch(host, initial, changed) {
   };
   const planButton = find('[data-batch-plan]');
   if (planButton) planButton.onclick = async () => {
-    if (context.busy || context.unknown || context.dirty || !context.selected.size || context.plan.status === 'CONFIRMING') return;
+    if (context.busy || context.unknown || context.dirty || context.revalidationRequired || !context.selected.size || context.plan.status === 'CONFIRMING') return;
     context.busy = true; update();
     try {await readPlan();}
     finally { context.busy = false; update(); }
@@ -531,12 +533,13 @@ export async function mountImportBatch(host, initial, changed) {
         changed(plan);
       }
       context.dirty = false;
+      context.revalidationRequired = false;
       await readPlan();
     } catch (error) { context.dirty = true; status(`${error.code || "保存失败"}：${error.message}。读取最新预览后重新选择。`); }
     finally { context.busy = false; update(); }
   };
   find("[data-batch-confirm]").onclick = async () => {
-    if (!live() || context.busy || context.unknown || context.dirty || context.restoreRequired || context.plan.status === 'CONFIRMING' || !context.selected.size || context.selected.size > 1000 || !singleBatch()) return;
+    if (!live() || context.busy || context.unknown || context.dirty || context.revalidationRequired || context.restoreRequired || context.plan.status === 'CONFIRMING' || !context.selected.size || context.selected.size > 1000 || !singleBatch()) return;
     context.verificationReady = false;
     const selected = [...context.selected.values()].map(item => ({ file_id: item.row.file_id, source_row_number: item.row.source_row_number }));
     context.busy = true;
@@ -593,7 +596,7 @@ export async function mountImportBatch(host, initial, changed) {
     if (live()) await readPage(1);
   };
   find('[data-batch-execute]').onclick=async()=>{
-    if (!live() || context.busy || context.unknown || context.dirty || context.restoreRequired || !context.selected.size
+    if (!live() || context.busy || context.unknown || context.dirty || context.revalidationRequired || context.restoreRequired || !context.selected.size
         || !context.disclosure?.can_confirm || !find('[data-batch-consent]').checked || context.plan.status === 'CONFIRMING') return;
     const token=context.plan.token;
     try {
@@ -617,7 +620,7 @@ export async function mountImportBatch(host, initial, changed) {
           retainRemaining();localStorage.removeItem(pendingKey);
         },
         failed:(error,state)=>{
-          context.unknown=state.unknown || (state.stage === 'LOCAL_RESULT' && !!pending());context.dirty=!!context.selected.size;
+          context.unknown=state.unknown || (state.stage === 'LOCAL_RESULT' && !!pending());context.revalidationRequired=!!context.selected.size;
           if (!context.unknown) localStorage.removeItem(pendingKey);
           context.verificationMessage=context.unknown ? '本批提交结果尚待核对；后续已停止，保留本批定位与未提交范围，不自动重发。' : null;
           status(context.unknown ? context.verificationMessage : importKnownFailureMessage(error));
@@ -629,17 +632,17 @@ export async function mountImportBatch(host, initial, changed) {
         }});
       context.executor=executor;activeExecution=executor;context.busy=true;update();
       const result=await executor.run();
-      if (!context.unknown) {localStorage.removeItem(pendingKey);context.dirty=!!context.selected.size;}
+      if (!context.unknown) {localStorage.removeItem(pendingKey);context.revalidationRequired=!!context.selected.size;}
       invalidatePlan();
       if (result.phase === 'COMPLETE') status('完整计划全部完成；各批已独立提交，没有后台继续任务。');
-    } catch (error) {context.dirty=!!context.selected.size;status(`未继续执行：${error.message}；保留范围，须重新核验。`);}
+    } catch (error) {context.revalidationRequired=!!context.selected.size;status(`未继续执行：${error.message}；保留范围，须重新核验。`);}
     finally {
       if (activeExecution === context.executor) activeExecution=null;
       context.executor=null;context.busy=false;update();
     }
     if (live() && !context.unknown) await refresh();
   };
-  find("[data-batch-clear]").onclick = () => { if (context.busy || context.unknown) return;context.selected.clear(); context.dirty = false; context.restoreRequired=false;localStorage.removeItem(remainingKey);invalidatePlan(); readPage(context.page); };
+  find("[data-batch-clear]").onclick = () => { if (context.busy || context.unknown) return;context.selected.clear(); context.dirty = false; context.revalidationRequired=false;context.restoreRequired=false;localStorage.removeItem(remainingKey);invalidatePlan(); readPage(context.page); };
   find("[data-batch-select-page]").onclick = () => { host.querySelectorAll("[data-row-select]:not([data-batch-processed])").forEach(input => { if (!input.checked) { input.checked = true; input.dispatchEvent(new Event("change")); } }); };
   find("[data-batch-cancel]").onclick = async () => {
     if (context.busy || context.unknown) return;

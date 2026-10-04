@@ -13,6 +13,7 @@ const {pathToFileURL} = require('node:url');
   const {validateImportPlan,mountImportPlan} = await import(module('component/import-plan.js'));
   const {mountImportDraftRows} = await import(module('component/import-bulk.js'));
   const {isUnknownWrite} = await import(module('api/client.js'));
+  const {importKnownFailureMessage} = await import(module('component/import-execution.js'));
   class Node {
     constructor() {this.isConnected=true;this.open=true;this.nodes=new Map();this.innerHTML='';this.textContent='';this.value='';this.checked=false;}
     querySelector(key) {if (!this.nodes.has(key)) this.nodes.set(key,new Node());return this.nodes.get(key);}
@@ -42,7 +43,8 @@ const {pathToFileURL} = require('node:url');
         batch_preview_digest:'b'.repeat(64),selected_rows:selected,budget,can_confirm:!issues.length,issues,
         pairs:selected.map(row=>({...row,row,duplicate_hint:context.selected.get(`${row.file_id}:${row.source_row_number}`).row.duplicate_hint}))}}]};
   };
-  const sandbox=vm.createContext({AbortController,URLSearchParams,...decisions,validateImportPlan,mountImportPlan,
+  const sandbox=vm.createContext({AbortController,URLSearchParams,TextEncoder,...decisions,validateImportPlan,mountImportPlan,
+    importKnownFailureMessage,
     mountImportDraftRows,isUnknownWrite,esc:String,
     workbenchDialog:()=>{dialog=new Node();return dialog;},
     localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)},
@@ -119,5 +121,24 @@ const {pathToFileURL} = require('node:url');
   assert.equal(context.unknown,true);assert.equal(find('[data-batch-confirm]').disabled,true);
   assert.ok(storage.has('paam.import.pending.v1'));
   const before=financial;await find('[data-batch-save]').onclick();await find('[data-batch-confirm]').onclick();assert.equal(financial,before);
+  // Serial failure and changed server premises also do not mean local choices
+  // became unsaved. Revalidation is separately required before another plan.
+  context.unknown=false;storage.clear();await find('[data-batch-save]').onclick();
+  find('[data-batch-consent]').checked=true;
+  sandbox.createImportExecution=options=>({state:{stop_requested:false},stop:async()=>{},run:async()=>{
+    options.failed(Object.assign(Error('fictional busy'),{status:503,code:'WRITE_BUSY'}),{unknown:false,stage:'CONFIRM'});
+    return {phase:'FAILED'};
+  }});
+  await find('[data-batch-execute]').onclick();
+  assert.equal(context.dirty,false);assert.equal(context.revalidationRequired,true);
+  assert.equal(financial,before);assert.equal(JSON.stringify([...context.selected.values()].map(item=>item.choice)),saved);
+  assert.match(find('[data-batch-status]').textContent,/核验导入/);
+  assert.match(find('[data-batch-selection]').textContent,/已保存.*重新核验/);
+  await find('[data-batch-plan]').onclick();assert.equal(context.disclosure,null);
+  await find('[data-batch-save]').onclick();assert.equal(context.revalidationRequired,false);
+  current={...current,preview_digest:'d'.repeat(64)};
+  await find('[data-batch-refresh]').onclick();
+  assert.equal(context.dirty,false);assert.equal(context.revalidationRequired,true);
+  assert.equal(context.disclosure,null);assert.equal(financial,before);
   console.log('PASS 811/9/24 complete-risk defaults, mandatory preflight, full risk paging, acknowledged skip, saved/blocked/stale/unknown separation, no replay');
 })().catch(error=>{console.error(error);process.exitCode=1;});

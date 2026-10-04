@@ -10,7 +10,7 @@ export function importKnownFailureMessage(error) {
     : error.code === 'WRITE_BUSY'
       ? '数据库正忙，或本批处理超过写入预算；本批未提交，请稍后再核验'
       : error.message || '操作已停止';
-  return `${reason}（${error.code || '操作已停止'}）；已完成批保留。请点击“保存选择并重新核验”，重新查看完整处理计划并再次明确批准；不会自动重发。`;
+  return `${reason}（${error.code || '操作已停止'}）；已完成批保留，未提交范围的选择不因失败变成未保存。请点击“核验导入”（保存选择并重新核验），核对完整处理计划并再次明确批准；不会自动重发。`;
 }
 
 const key = row => `${id(row?.file_id)}:${id(row?.source_row_number)}`;
