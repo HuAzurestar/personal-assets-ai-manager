@@ -1,0 +1,8 @@
+{
+  "id": "monthly-summary",
+  "name": "虚构月度摘要",
+  "messages": [
+    {"role": "system", "content": "Summarize only the disclosed fictional monthly counts. Return one JSON object with summary (up to 2000 characters) and highlights (at most five short strings), without other fields or markdown."},
+    {"role": "user", "content": "{{summary_input}}"}
+  ]
+}
