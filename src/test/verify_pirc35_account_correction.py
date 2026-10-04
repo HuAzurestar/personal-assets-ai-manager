@@ -169,7 +169,7 @@ def run():
                     # Real second publication succeeds, then its response is lost.
                     # Querying the current state never permits another old command.
                     fee=new['ledger_entries'][1]['id']
-                    page.goto(base+f'/#workbench/reviews?correct_ledger={fee}')
+                    page.goto(base+f'/#workbench/review?correct_ledger={fee}')
                     expect(form).to_be_visible();choose(2)
                     form.locator('[data-review-preview]').click();expect(form.locator('[data-review-command]')).to_be_enabled()
                     def lose_response(route):
