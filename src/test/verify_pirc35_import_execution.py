@@ -98,7 +98,17 @@ def run():
                     page.locator('[data-batch-consent]').check()
                     expect(page.locator('[data-batch-execute]')).to_be_enabled()
                     page.locator('[data-batch-execute]').click()
-                    expect(page.locator('[data-batch-execution]')).to_contain_text("全部完成", timeout=90000)
+                    try:
+                        expect(page.locator('[data-batch-execution]')).to_contain_text("全部完成", timeout=90000)
+                    except Exception:
+                        # Bounded diagnostics from this fictional database;
+                        # retain the original completion/deadline assertion.
+                        print('serial status:', page.locator('[data-batch-status]').inner_text(), flush=True)
+                        print('serial page errors:', errors, flush=True)
+                        print('serial sent children:', [body['batch_index'] for _, body in writes], flush=True)
+                        print('serial replies:', [dict(code=reply.get('body', {}).get('code'),
+                            next=reply.get('body', {}).get('next_batch_index')) for reply in replies], flush=True)
+                        raise
                     expect(page.locator('[data-batch-selection]')).to_contain_text("0 行", timeout=15000)
                     assert len(approvals) == 1 and approvals[0]['selected_rows'] and len(approvals[0]['selected_rows']) == 2500
                     assert [len(body['selected_rows']) for _, body in writes] == [1000, 1000, 500], page.locator('[data-batch-status]').inner_text()

@@ -14,6 +14,7 @@ const {pathToFileURL} = require('node:url');
   const {mountImportDraftRows} = await import(module('component/import-bulk.js'));
   const {isUnknownWrite} = await import(module('api/client.js'));
   const {importKnownFailureMessage} = await import(module('component/import-execution.js'));
+  const {completeImportScope} = await import(module('util/import-scope.js'));
   class Node {
     constructor() {this.isConnected=true;this.open=true;this.nodes=new Map();this.innerHTML='';this.textContent='';this.value='';this.checked=false;}
     querySelector(key) {if (!this.nodes.has(key)) this.nodes.set(key,new Node());return this.nodes.get(key);}
@@ -28,6 +29,7 @@ const {pathToFileURL} = require('node:url');
   let current={token:'workflow-fiction',status:'READY',updated_time:'2026-10-04T00:00:00.000001Z',
     preview_digest:'a'.repeat(64),files:[],counts:{new:802,invalid:9,existing:0,processed:0},issue_count:9};
   let context,financial=0,puts=0,reads=0,errorCode='IMPORT_REVIEW_REQUIRED',planFailure=false,dialog;
+  let scopeFailure=false, scopeWait=null, scopeReads=0;
   const storage=new Map(),host=new Node();
   const makePlan = selected => {
     const issues=selected.filter(row=>{
@@ -44,12 +46,22 @@ const {pathToFileURL} = require('node:url');
         pairs:selected.map(row=>({...row,row,duplicate_hint:context.selected.get(`${row.file_id}:${row.source_row_number}`).row.duplicate_hint}))}}]};
   };
   const sandbox=vm.createContext({AbortController,URLSearchParams,TextEncoder,...decisions,validateImportPlan,mountImportPlan,
-    importKnownFailureMessage,
+    importKnownFailureMessage,completeImportScope,
     mountImportDraftRows,isUnknownWrite,esc:String,
     workbenchDialog:()=>{dialog=new Node();return dialog;},
     localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)},
     request:async(url,options)=>{
-      if (url.includes('/row/list')) return {items:[],total:0,page_size:20};
+      if (url.includes('/row/list')) {
+        const query=new URL(url,'http://fiction.invalid').searchParams;
+        if (query.get('page_size') === '100') {
+          scopeReads++;
+          if (scopeWait) await scopeWait;
+          const index=Number(query.get('page_index'));
+          if (scopeFailure && index === 2) throw Error('fictional second scope page failed');
+          return {items:rows.slice((index-1)*100,index*100),total:811,page_size:100,page_index:index};
+        }
+        return {items:[],total:0,page_size:20};
+      }
       if (url.endsWith('/operation-preview')) {
         reads++;if (planFailure) throw Object.assign(Error('fictional deadline'),{status:413,code:'READ_BUDGET_EXCEEDED'});
         return makePlan(JSON.parse(options.body).selected_rows);
@@ -67,17 +79,31 @@ const {pathToFileURL} = require('node:url');
   vm.runInContext(source+'\nglobalThis.mount=mountImportBatch;globalThis.testContexts=contexts;',sandbox);
   await sandbox.mount(host,current,()=>{});
   context=sandbox.testContexts.get(current.token);
-  context.selected=new Map(rows.map(row=>[`${row.file_id}:${row.source_row_number}`,{row,
-    choice:{...decisions.importRowChoice(row),file_id:row.file_id,source_row_number:row.source_row_number}}]));
-  context.dirty=true;
   const find=selector=>host.querySelector(selector);
   await find('[data-batch-confirm]').onclick();assert.equal(financial,0);
-  await find('[data-batch-save]').onclick();
+  await find('[data-batch-guide]').onclick();
   assert.equal(puts,1);assert.equal(reads,1);assert.equal(financial,0);
   assert.equal(find('[data-batch-confirm]').disabled,false);
   assert.equal([...context.selected.values()].filter(item=>item.choice.decision==='ACCEPT').length,778);
   assert.match(find('[data-batch-risk-summary]').textContent,/疑似重复 24/);
   assert.match(find('[data-batch-risk-summary]').textContent,/已跳过 24，接受但未解决 0/);
+  // A failed second page never saves a prefix or silently reuses old selection.
+  const selectedBefore=context.selected, choicesBefore=JSON.stringify([...context.selected.values()].map(item=>item.choice));
+  scopeFailure=true;await find('[data-batch-guide]').onclick();scopeFailure=false;
+  assert.equal(puts,1);assert.equal(reads,1);assert.equal(context.selected,selectedBefore);
+  assert.equal(JSON.stringify([...context.selected.values()].map(item=>item.choice)),choicesBefore);
+  // Only one guided chain may run. Preserve prior manual choices on recheck.
+  const ordinary=[...context.selected.values()].find(item=>item.choice.decision==='ACCEPT');
+  ordinary.choice.decision='SKIP';
+  let release;scopeWait=new Promise(resolve=>release=resolve);
+  const beforeScopeReads=scopeReads, guided=find('[data-batch-guide]').onclick();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(find('[data-batch-guide]').disabled,true);
+  await find('[data-batch-guide]').onclick();assert.equal(scopeReads,beforeScopeReads+1);
+  scopeWait=null;release();await guided;
+  assert.equal(ordinary.choice.decision,'SKIP');assert.equal(financial,0);
+  assert.equal(puts,2);assert.equal(reads,2);assert.equal(context.guiding,false);
+  ordinary.choice.decision='ACCEPT';
   // A user's explicit ordinary ACCEPT remains authoritative, but does not
   // grant hidden NEW risk consent. All 24 blockers appear before any write.
   for (const item of context.selected.values()) if (decisions.importRiskState(item.row)==='SUSPECTED') item.choice.decision='ACCEPT';

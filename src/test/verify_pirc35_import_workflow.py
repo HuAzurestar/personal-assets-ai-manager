@@ -95,13 +95,12 @@ def run():
                     with target_database.SessionLocal() as db:
                         before_facts = db.scalar(select(func.count(TransactionFact.id)))
                         before_cash = db.scalar(select(func.count(LedgerEntry.id)))
-                    page.locator('[data-batch-select-scope]').click()
+                    page.locator('[data-batch-guide]').click()
                     expect(page.locator('[data-batch-selection]')).to_contain_text('811 行', timeout=30000)
                     expect(page.locator('[data-batch-selected-scope]')).to_contain_text('接受 778，跳过 33')
                     expect(page.locator('[data-batch-risk-summary]')).to_contain_text('疑似重复 24')
-                    expect(page.locator('[data-batch-confirm]')).to_be_disabled()
-                    page.locator('[data-batch-save]').click()
                     expect(page.locator('[data-batch-confirm]')).to_be_enabled(timeout=30000)
+                    expect(page.locator('[data-batch-guide-hint]')).to_contain_text('完整计划已核验')
                     assert writes == [] and snapshot() == original
                     # Reproduce 802 ACCEPT / 9 SKIP with deliberate UI edits;
                     # defaults never silently grant cash consent to those risks.
