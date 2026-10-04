@@ -218,11 +218,14 @@ def run():
                 assert business.locator('[data-review-technical]').get_attribute('open') is None
                 viewport_evidence(page, 'fix-r07-normal-mobile-preview')
                 preview_top = form.locator('[data-review-step="preview"]').bounding_box()['y']
-                # scrollIntoView rounds scrollY to whole pixels, while CSS
-                # geometry retains fractions (observed -0.46875px). Require
-                # actual top alignment within one pixel, not a loose visibility
-                # bound or exact-zero integer assumption.
-                assert abs(preview_top) <= 1, {'preview_top': preview_top, 'scroll': page.evaluate('window.scrollY')}
+                # Align within one pixel of the top or the physical page-bottom
+                # limit. A folded preview may be shorter than the viewport;
+                # do not require artificial blank space just to reach y=0.
+                geometry = page.evaluate('({scroll:window.scrollY,maxScroll:Math.max(0,document.documentElement.scrollHeight-window.innerHeight),height:window.innerHeight})')
+                expected_top = max(0, preview_top + geometry['scroll'] - geometry['maxScroll'])
+                assert abs(preview_top - expected_top) <= 1, dict(preview_top=preview_top,expected_top=expected_top,**geometry)
+                cash_box = business.locator('[data-review-cash-result]').bounding_box()
+                assert cash_box['y'] >= -1 and cash_box['y'] + cash_box['height'] < geometry['height']
                 assert len(commands) == 1
                 before = len(candidate_reads)
                 page.goto(base + '/#workbench/review?case_code=POS_OPENING')

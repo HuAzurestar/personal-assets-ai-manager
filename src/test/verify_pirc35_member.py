@@ -166,7 +166,9 @@ def run():
                     page.route(failed_url,lambda route:route.fulfill(status=503,json={'status':503,'message':'Mock member page read failed','body':{'code':'QUERY_BUSY'}}))
                     open_current()
                     dialog.locator('[data-select-review-group]').click()
-                    expect(dialog.locator('[data-member-status]')).to_contain_text('Mock member page read failed')
+                    expect(dialog.locator('[data-member-status]')).to_contain_text('QUERY_BUSY')
+                    expect(dialog.locator('[data-member-status]')).to_contain_text('读取暂时繁忙')
+                    expect(dialog.locator('[data-member-status]')).not_to_contain_text('Mock member page read failed')
                     expect(form.locator('[data-cash-row]')).to_have_count(1)
                     page.unroute(failed_url)
                     # Cancel while the second page is pending. A late response
