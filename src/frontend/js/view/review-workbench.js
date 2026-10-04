@@ -20,26 +20,57 @@ export function stopReviewRead() { controller?.abort(); }
 const ids = values => values.length ? values.map(id => `#${id}`).join("、") : "无";
 
 function previewMarkup(plan, facts = new Map(), positions = new Map(), labels = new Map()) {
-  return `<h3>服务端预览（尚未发布）</h3><p data-financial-scope-note>${esc(financialScopeNote)}</p><p>整体停用冲突 Review：${ids(plan.impact.conflicting_review_ids)}；恢复原始系统默认：${ids(plan.impact.restored_default_review_ids)}</p>
-    <p>账户来源：${ids(plan.impact.affected_account_ref_ids)}；对象：${ids(plan.impact.affected_position_ids)}；可能失效的后续腿：${ids(plan.impact.dependent_position_leg_ids)}</p>
-    <p>标签影响 Ledger：${ids(plan.impact.tag_ledger_ids)}；涉及 ${(plan.tag_effect.affected_views || []).length} 个视图、${(plan.tag_effect.affected_rule_ids || []).length} 条规则。旧标签保留，异步请求随账务状态失效。</p>
-    <p>将失效的建议：${plan.tag_effect.invalidated_request_count ?? 0}；扫描状态：${esc(plan.tag_effect.scan_state || "NOT_NEEDED")}。只有完整含义相同且新旧各唯一的输出延续标签。</p>
-    ${(plan.tag_effect.mappings || []).length ? `<section class="panel" data-tag-mappings><h4>新旧标签对照</h4>
-      <div data-tag-impact></div></section>` : ""}
-    ${plan.blocking_issues.map(issue => `<p class="error">${esc(financialIssueMessage(issue))}</p>`).join("")}
-    ${plan.new_reviews.map(row => `<section class="panel"><h4>${esc(row.case_code)} → ${esc(reviewTypeNames[row.type] || row.type)} · ${esc(row.title)}</h4>
-      ${row.allocations.map(allocation => {
-        const fact = facts.get(allocation.transaction_id);
-        return `<p>${fact ? `${esc(fact.summary)} · ` : ''}Fact #${allocation.transaction_id} → ${esc(typeNames[allocation.economic_type])} · ${fact ? esc(money({ cash_amount: allocation.cash_amount, cash_currency_code: fact.cash_currency_code })) : `${allocation.cash_amount} 最小单位`} · ${esc(labels.get(`account_ref_id:${allocation.account_ref_id}`) || `来源卡 #${allocation.account_ref_id}`)}${fact ? ` · ${esc(fact.cash_direction)} · ${esc(date(fact.occurred_time))}` : ""}</p>`;
-      }).join("")}
-      ${row.new_positions.map((position, index) => `<p>新对象 ${index + 1}：${esc(position.title)} · ${esc(position.type)} · ${esc(position.usage_scenario)} · ${esc(labels.get(`party_id:${position.party_id}`) || `个人 #${position.party_id}`)} · ${esc(position.counterparty)} · ${esc(position.unit_code)}</p>`).join("")}
-      ${row.legs.map((leg, index) => {
+  // Format only the complete server plan; never sum across units or derive
+  // financial outputs, coverage, approval or quantity state in the browser.
+  const cash = (amount, fact) => fact ? `${money({cash_amount:amount,cash_currency_code:fact.cash_currency_code})} ${fact.cash_currency_code}`
+    : `${amount} 最小单位（单位信息未读取）`;
+  const quantity = (amount, position) => position ? `${quantityDecimal(amount,position.unit_code)} ${position.unit_code}`
+    : `${amount} 最小单位（单位信息未读取）`;
+  const quantityState = (state, position) => state.quantity_state === 'KNOWN' && state.quantity != null
+    ? quantity(state.quantity,position) : financialStateLabel('quantity',state.quantity_state);
+  const source = id => labels.get(`account_ref_id:${id}`) || (id ? `来源卡 #${id}` : '来源未识别');
+  const direction = code => code === 'IN' ? '收入' : code === 'OUT' ? '支出' : '方向信息未读取';
+  const mappings = plan.tag_effect.mappings || [];
+  const reviewRequired = mappings.filter(row=>row.disposition === 'REVIEW_REQUIRED').length;
+  return `<section data-review-business><h3>业务结果预览（尚未发布）</h3>
+    ${plan.blocking_issues.map(issue=>`<p class="error">${esc(financialIssueMessage(issue))}</p>`).join('')}
+    <p data-financial-scope-note>${esc(financialScopeNote)}</p>
+    ${plan.new_reviews.map(row=>`<section class="panel"><h4>${esc(row.title || cases.find(([code])=>code === row.case_code)?.[1] || reviewTypeNames[row.type] || row.type)}</h4>
+      ${row.allocations.length ? `<ul class="account-correction-list">${row.allocations.map(allocation=>{
+        const fact = facts.get(allocation.transaction_id), duplicate = allocation.economic_type === 'DUPLICATE';
+        return `<li data-review-cash-result><strong>${duplicate ? '重复证据金额（不增加现金）' : direction(fact?.cash_direction)} · ${esc(cash(allocation.cash_amount,fact))} · ${esc(typeNames[allocation.economic_type] || allocation.economic_type)}</strong>
+          <span>${esc(fact?.summary || `交易 #${allocation.transaction_id}`)} · ${esc(source(allocation.account_ref_id))}${fact ? ` · ${esc(date(fact.occurred_time))}` : ''}</span></li>`;
+      }).join('')}</ul>` : '<p>本事项不新建现金输出。</p>'}
+      ${row.new_positions.map(position=>`<p>新数量对象：${esc(position.title)} · ${esc(financialStateLabel('positionType',position.type,false))} · ${esc(financialStateLabel('positionUsage',position.usage_scenario,false))} · ${esc(labels.get(`party_id:${position.party_id}`) || `个人 #${position.party_id}`)} · ${esc(position.counterparty)} · ${esc(position.unit_code)}</p>`).join('')}
+      ${row.legs.length ? `<ul class="account-correction-list">${row.legs.map(leg=>{
         const position = leg.existing_position_id ? positions.get(leg.existing_position_id) : row.new_positions[leg.new_position_index];
-        return `<p>数量腿 ${index + 1} → ${position ? esc(position.title) : leg.existing_position_id ? `对象 #${leg.existing_position_id}` : `新对象 ${leg.new_position_index + 1}`}：${esc(leg.type)} · ${esc(leg.leg_direction)} ${position ? `${quantityDecimal(leg.leg_amount, position.unit_code)} ${esc(position.unit_code)}` : `${leg.leg_amount} 最小量`} · ${esc(labels.get(`source:${leg.source}`) || `来源腿 #${leg.source}`)} · ${esc(date(leg.occurred_time))} · ${esc(leg.basis)}</p>`;
-      }).join("")}
-      ${row.position_allocations.map(link => `<p>现金行 ${link.allocation_index + 1} → 数量腿 ${link.leg_index + 1}：${esc(money(link))}（款项归因，不是额外现金）</p>`).join("")}</section>`).join("")}
-    ${plan.position_changes.map(change => `<p>对象 ${change.position_id ? `#${change.position_id}` : `新对象 ${change.new_position_index + 1}`}：${esc(financialStateLabel('quantity',change.before.quantity_state))} ${change.before.quantity ?? "—"} → ${esc(financialStateLabel('quantity',change.after.quantity_state))} ${change.after.quantity ?? "—"}（单位最小量；来源失效不能当作有据数量）</p>`).join("")}
-    ${plan.coverage.map(row => `<p>Fact #${row.transaction_id}：事实 ${row.cash_amount}／生效覆盖 ${row.effective_cash_amount}（同币种最小单位）</p>`).join("")}`;
+        return `<li><strong>${esc(position?.title || (leg.existing_position_id ? `对象 #${leg.existing_position_id}` : `新对象 ${leg.new_position_index+1}`))} · ${leg.leg_direction === 'IN' ? '增加' : leg.leg_direction === 'OUT' ? '减少' : '方向未知'} ${esc(quantity(leg.leg_amount,position))}</strong><span>${esc(date(leg.occurred_time))} · ${esc(leg.basis)}（数量证据，不是另一笔现金）</span></li>`;
+      }).join('')}</ul>` : ''}</section>`).join('')}
+    ${!plan.new_reviews.length ? '<p>不新建现金输出；仅调整所选原解释状态，原内容和证据保留。</p>' : ''}
+    ${plan.position_changes.length ? `<section><h4>有据数量变化（不是余额或估值）</h4>${plan.position_changes.map(change=>{
+      const position = change.position_id ? positions.get(change.position_id) : plan.new_reviews[change.new_review_index]?.new_positions[change.new_position_index];
+      return `<p data-review-quantity-change>${esc(position?.title || (change.position_id ? `对象 #${change.position_id}` : `新对象 ${change.new_position_index+1}`))}：${esc(quantityState(change.before,position))} → ${esc(quantityState(change.after,position))}</p>`;
+    }).join('')}</section>` : ''}
+    <p>将整体停用 ${plan.impact.conflicting_review_ids.length} 个冲突事项，恢复 ${plan.impact.restored_default_review_ids.length} 个原始系统默认；旧内容保留。</p>
+    ${plan.impact.dependent_position_leg_ids.length ? `<p class="error">${plan.impact.dependent_position_leg_ids.length} 条后续数量证据可能因来源失效而需要核对，不能当作有据数量或零。</p>` : ''}
+    <p>标签按完整等义规则处理，旧标签保留；${reviewRequired} 项需人工核对，${plan.tag_effect.invalidated_request_count ?? 0} 项旧建议将失效。</p>
+    ${plan.coverage.length ? `<details data-review-coverage><summary>金额覆盖核对（${plan.coverage.length} 个事实，不代表业务已核对正确）</summary>${plan.coverage.map(row=>{
+      const fact = facts.get(row.transaction_id);
+      return `<p>${esc(fact?.summary || `交易 #${row.transaction_id}`)}：事实 ${esc(cash(row.cash_amount,fact))}／生效覆盖 ${esc(cash(row.effective_cash_amount,fact))}</p>`;
+    }).join('')}</details>` : ''}
+    <details data-review-technical><summary>完整技术关系与标签影响（只读）</summary>
+      <p>整体停用冲突 Review：${ids(plan.impact.conflicting_review_ids)}；恢复原始系统默认：${ids(plan.impact.restored_default_review_ids)}</p>
+      <p>账户来源：${ids(plan.impact.affected_account_ref_ids)}；对象：${ids(plan.impact.affected_position_ids)}；可能失效的后续腿：${ids(plan.impact.dependent_position_leg_ids)}</p>
+      <p>标签影响 Ledger：${ids(plan.impact.tag_ledger_ids)}；涉及 ${(plan.tag_effect.affected_views || []).length} 个视图、${(plan.tag_effect.affected_rule_ids || []).length} 条规则。旧标签保留，异步请求随账务状态失效。</p>
+      <p>将失效的建议：${plan.tag_effect.invalidated_request_count ?? 0}；扫描状态：${esc(plan.tag_effect.scan_state || 'NOT_NEEDED')}。只有完整含义相同且新旧各唯一的输出延续标签。</p>
+      ${plan.new_reviews.map(row=>`<section><h4>${esc(row.case_code)} → ${esc(reviewTypeNames[row.type] || row.type)} · ${esc(row.title)}</h4>
+        ${row.allocations.map(allocation=>`<p>Fact #${allocation.transaction_id} → ${esc(typeNames[allocation.economic_type] || allocation.economic_type)} · ${esc(cash(allocation.cash_amount,facts.get(allocation.transaction_id)))} · ${esc(source(allocation.account_ref_id))}</p>`).join('')}
+        ${row.new_positions.map((position,index)=>`<p>新对象 ${index+1}：${esc(position.title)} · ${esc(financialStateLabel('positionType',position.type))} · ${esc(financialStateLabel('positionUsage',position.usage_scenario))} · ${esc(labels.get(`party_id:${position.party_id}`) || `个人 #${position.party_id}`)} · ${esc(position.counterparty)} · ${esc(position.unit_code)}</p>`).join('')}
+        ${row.legs.map((leg,index)=>`<p>数量腿 ${index+1} → ${leg.existing_position_id ? `对象 #${leg.existing_position_id}` : `新对象 ${leg.new_position_index+1}`}：${esc(leg.type)} · ${esc(leg.leg_direction)} ${esc(quantity(leg.leg_amount,leg.existing_position_id ? positions.get(leg.existing_position_id) : row.new_positions[leg.new_position_index]))} · ${esc(labels.get(`source:${leg.source}`) || `来源腿 #${leg.source}`)} · ${esc(date(leg.occurred_time))} · ${esc(leg.basis)}</p>`).join('')}
+        ${row.position_allocations.map(link=>`<p>现金行 ${link.allocation_index+1} → 数量腿 ${link.leg_index+1}：${esc(money(link))} ${esc(link.cash_currency_code)}（款项归因，不是额外现金）</p>`).join('')}</section>`).join('')}
+      ${plan.coverage.map(row=>`<p>Fact #${row.transaction_id}：事实 ${row.cash_amount}／生效覆盖 ${row.effective_cash_amount}（同币种最小单位）</p>`).join('')}
+      ${mappings.length ? '<section class="panel" data-tag-mappings><h4>新旧标签对照</h4><div data-tag-impact></div></section>' : ''}
+    </details></section>`;
 }
 
 // Preview and command share exactly the same frozen intent. Editing cancels

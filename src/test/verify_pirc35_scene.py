@@ -80,6 +80,19 @@ def run():
                 form.locator('[data-review-preview]').click()
                 expect(form.locator('[data-review-command]')).to_be_enabled()
                 expect(form.locator('[data-financial-scope-note]')).to_contain_text('不代表业务已核对正确')
+                business = form.locator('[data-review-business]')
+                expect(business.locator('[data-review-cash-result]')).to_have_count(1)
+                expect(business.locator('[data-review-cash-result]')).to_contain_text('支出')
+                expect(business.locator('[data-review-cash-result]')).to_contain_text('400.00 CNY')
+                assert business.locator('[data-review-technical]').get_attribute('open') is None
+                for width in (1280, 820, 390):
+                    page.set_viewport_size({'width':width,'height':844})
+                    assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+                    cash_box = business.locator('[data-review-cash-result]').bounding_box()
+                    assert cash_box['height'] <= (160 if width == 390 else 90), cash_box
+                    assert cash_box['y'] < business.locator('[data-review-technical]').bounding_box()['y']
+                    viewport_evidence(page,f'dev17-review-business-normal-{width}')
+                page.set_viewport_size({'width':1440,'height':900})
                 first = previews[-1]['new_reviews'][0]
                 assert first['case_code'] == 'NORMAL'
                 assert first['parameters']['legs'] == first['parameters']['new_positions'] == first['parameters']['position_allocations'] == []
@@ -124,6 +137,16 @@ def run():
                 link.locator('[name="cash_amount"]').fill('400')
                 form.locator('[data-review-preview]').click()
                 expect(form.locator('[data-review-command]')).to_be_enabled()
+                expect(business.locator('[data-review-quantity-change]')).to_contain_text('Mock scene principal')
+                expect(business.locator('[data-review-quantity-change]')).to_contain_text('数量未知')
+                expect(business.locator('[data-review-quantity-change]')).to_contain_text('400.00 CNY')
+                for width in (1280, 820, 390):
+                    page.set_viewport_size({'width':width,'height':844})
+                    assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+                    expect(business.locator('[data-review-quantity-change]')).to_contain_text('UNKNOWN')
+                    assert business.locator('[data-review-technical]').get_attribute('open') is None
+                    viewport_evidence(page,f'dev17-review-business-principal-{width}')
+                page.set_viewport_size({'width':1440,'height':900})
                 viewport_evidence(page, 'fix-r07-principal-scene')
                 form.locator('[name="case_code"]').select_option('NORMAL')
                 switch = page.locator('dialog[open] [data-scene-switch]')
@@ -191,6 +214,8 @@ def run():
                 assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
                 form.locator('[data-review-preview]').click()
                 expect(form.locator('[data-review-command]')).to_be_enabled()
+                expect(business.locator('[data-review-cash-result]')).to_be_visible()
+                assert business.locator('[data-review-technical]').get_attribute('open') is None
                 viewport_evidence(page, 'fix-r07-normal-mobile-preview')
                 preview_top = form.locator('[data-review-step="preview"]').bounding_box()['y']
                 # scrollIntoView rounds scrollY to whole pixels, while CSS

@@ -121,6 +121,17 @@ def run():
                     assert plan["blocking_issues"] == []
                     total = len(plan["tag_effect"]["mappings"])
                     assert total > 100, total
+                    business = review.locator('[data-review-business]')
+                    expect(business.locator('[data-review-cash-result]')).to_have_count(60)
+                    expect(business.locator('[data-review-cash-result]').first).to_contain_text('100.00 CNY')
+                    expect(business.locator('[data-review-cash-result]').first).to_contain_text('支出')
+                    technical = review.locator('[data-review-technical]')
+                    assert technical.get_attribute('open') is None
+                    assert business.locator('[data-review-cash-result]').first.bounding_box()['y'] < technical.bounding_box()['y']
+                    # Complete mapping browsing remains available under a
+                    # readonly disclosure; opening it is not a financial edit.
+                    technical.locator('summary').click()
+                    expect(review.locator('[data-review-command]')).to_be_enabled()
                     impact = review.locator("[data-tag-impact]")
                     expect(impact.locator("[data-impact-count]")).to_contain_text(f"完整影响共 {total} 项")
                     expect(impact).to_contain_text("虚构")
