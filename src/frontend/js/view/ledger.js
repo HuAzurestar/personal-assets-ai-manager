@@ -646,10 +646,9 @@ async function editTags(ledgerId) {
 }
 
 async function editLedgerAccount(ledgerId) {
-  const detail = await request(`/paam/ledger/v1/flow/${ledgerId}`);
-  const ids = [...new Set(detail.allocations.map(row => row.transaction_id ?? row.transaction_fact_id))];
+  ledgerId = resourceId(ledgerId);
   closeDialogs();
-  route("reviews", new URLSearchParams({ facts: ids.join(",") }));
+  route("reviews", new URLSearchParams({ correct_ledger: String(ledgerId) }));
 }
 
 function importPage() {

@@ -2037,6 +2037,12 @@
   .account-scope-fields > small { grid-column:1/-1; }
 }
 
+.account-correction-shell { overflow-wrap:anywhere; min-width:0; }
+.account-correction-list { list-style:none; margin:8px 0; padding:0; }
+.account-correction-list li { display:grid; gap:3px; padding:8px 0; border-bottom:1px solid var(--line); }
+.account-correction-list li span { color:var(--muted); font-size:12px; }
+.account-correction-shell details { margin:8px 0; }
+
 /* Position summaries are evidence quantities, not valuation or account cash. */
 .position-list-surface [data-position-list] table { min-width:0; table-layout:fixed; }
 .position-list-surface [data-position-list] td { padding:8px 10px; font-size:12px; white-space:normal; overflow-wrap:anywhere; }

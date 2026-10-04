@@ -86,7 +86,7 @@ class ReviewCommandService:
             # Invalid business decisions are preview issues, not partial writes.
             return dict(reviews=[], coverage=[], impact=dict(conflicting_review_ids=[], restored_default_review_ids=[],
                 affected_account_ref_ids=[], affected_position_ids=[], dependent_position_leg_ids=[], tag_ledger_ids=[]),
-                blocking_issues=[dict(code=error.code, message=str(error))], expected_reviews=[], tag_effect={},
+                blocking_issues=[dict(code=error.code, message=str(error), **({'details':error.details} if error.details else {}))], expected_reviews=[], tag_effect={},
                 preview_digest=hashlib.sha256(canonical(intent.model_dump()).encode()).hexdigest())
 
     def _plan(self, intent):

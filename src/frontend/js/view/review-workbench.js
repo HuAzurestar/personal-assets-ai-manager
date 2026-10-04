@@ -9,6 +9,7 @@ import { localChoiceMap } from '../component/local-choice.js';
 import { reviewScene, incompatibleSceneInputs } from '../util/review-scene.js';
 import { currentReviewLabel } from '../util/review-member.js';
 import { openCurrentReviews, openReviewMembers } from '../component/review-member.js';
+import { mountAccountCorrection } from './account-correction.js';
 
 const base = "/paam/ledger/v1/review";
 const cases = [["NORMAL", "普通收支"], ["REFUND", "退款"], ["SHARED_PAYMENT", "共同费用 / AA"], ["INTERNAL_TRANSFER", "真实内部转账"], ["BORROW_REPAY", "借出、借入、收回、偿还"], ["DUPLICATE", "同一交易的重复证据"], ["POS_OPENING", "对象期初数量"], ["POS_POSITION_OPEN", "对象增加（可无现金）"], ["POS_POSITION_SETTLE", "对象减少（显式来源）"], ["POS_CREDIT_PURCHASE", "信用消费"], ["POS_CREDIT_REPAY", "信用还本"]];
@@ -41,7 +42,7 @@ function previewMarkup(plan, facts = new Map(), positions = new Map(), labels = 
 
 // Preview and command share exactly the same frozen intent. Editing cancels
 // the approval; command retries are never automatic, even after a lost reply.
-function bindPublication(form, build, facts, completed, positions = new Map(), labels = () => new Map()) {
+function bindPublication(form, build, facts, completed, positions = new Map(), labels = () => new Map(), options = {}) {
   let generation = 0, plan, frozen, writing = false, uncertain = false, previewing = false;
   const previewButton = form.querySelector("[data-review-preview]");
   const submit = form.querySelector("[data-review-command]");
@@ -68,10 +69,12 @@ function bindPublication(form, build, facts, completed, positions = new Map(), l
       const intent = build();
       const next = await jsonRequest(`${base}/preview`, "POST", intent);
       if (!form.isConnected || issued !== generation) return;
+      const markup = await (options.render ? options.render(next) : previewMarkup(next, facts, positions, labels()));
+      if (!form.isConnected || issued !== generation) return;
       plan = next; frozen = intent;
-      form.querySelector("[data-review-impact]").innerHTML = previewMarkup(next, facts, positions, labels());
+      form.querySelector("[data-review-impact]").innerHTML = markup;
       if (next.tag_effect.mappings?.length) mountTagImpact(form.querySelector("[data-tag-impact]"), next.tag_effect);
-      status.textContent = next.blocking_issues.length ? "有阻塞问题，不能提交。" : "请核对现金、数量、整体冲突和默认恢复后确认。";
+      status.textContent = next.blocking_issues.length ? "有阻塞问题，不能提交。" : (options.confirmation || "请核对现金、数量、整体冲突和默认恢复后确认。");
       submit.disabled = !!next.blocking_issues.length;
       // Scene pages keep narrow-screen actions within reach; bring the actual
       // complete server impact into view before the user can confirm it.
@@ -94,6 +97,7 @@ function bindPublication(form, build, facts, completed, positions = new Map(), l
       if (!uncertain) { setEditing(false); submit.disabled = true; }
     } finally { writing = false; }
   };
+  invalidate.state = () => ({writing, uncertain, previewing});
   return invalidate;
 }
 
@@ -139,6 +143,7 @@ export async function mountReviewWorkbench(root, params, completed) {
   const signal = controller.signal, route = location.hash;
   const host = root.querySelector("[data-review-workflow]");
   if (!host) return;
+  if (params.has('correct_ledger')) return mountAccountCorrection(host, params, {signal, publication:bindPublication});
   let sceneCode = params.get('case_code') || 'NORMAL';
   reviewScene(sceneCode);
   const preselected = new Set((params.get("facts") || "").split(",").filter(Boolean).map(id => resourceId(id)));

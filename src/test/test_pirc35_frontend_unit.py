@@ -34,6 +34,7 @@ import pytest
     "position_summary.cjs",
     "review_scene.cjs",
     "review_member.cjs",
+    "account_correction.cjs",
 ])
 def test_standalone_frontend_contract(script):
     """Keep the standalone CI contracts in the local full-test matrix too."""

@@ -7,6 +7,7 @@ than silently becoming NEEDS_REVIEW. Old groups and source IDs remain readable.
 from collections import defaultdict
 
 from backend.service.review_intent_service import reject
+from backend.error import TargetEconomicError
 
 
 ECONOMIC_NAMES = {0:'TRANSACTION',1:'ACCOUNT_TRANSFER',2:'ASSET_LIABILITY',3:'DUPLICATE'}
@@ -55,7 +56,8 @@ def account_correction_drafts(mapper, corrections, duplicate_decisions):
     duplicate_ids={row['transaction_id'] for row in bundle['allocations'] if flows[row['ledger_id']]['entry_type']==3}
     decisions={row.transaction_id:row.model_dump() for row in duplicate_decisions}
     if set(decisions)!=duplicate_ids:
-        reject('ACCOUNT_CORRECTION_KEEPER_REQUIRED','整组含重复证据；须逐份明确仍计现金的保留交易，不能推断旧目标')
+        raise TargetEconomicError(422,'整组含重复证据；须逐份明确仍计现金的保留交易，不能推断旧目标',
+            code='ACCOUNT_CORRECTION_KEEPER_REQUIRED',details={'duplicate_transaction_ids':sorted(duplicate_ids)})
     copied_sources={row['id'] for row in bundle['position_legs'] if row['leg_direction']=='IN'}
     drafts=[]
     for rid in sorted(review_ids):

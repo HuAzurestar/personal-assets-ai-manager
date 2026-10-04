@@ -176,7 +176,9 @@ def test_correction_requires_exact_fresh_duplicate_keeper_and_revalidates_source
     service=ReviewCommandService(db);rid=execute(db,new_reviews=[duplicate])['created_reviews'][0]['id']
     old=service.detail(rid);lid=old['ledger_entries'][0]['id'];before=counts(db)
     change=correction(lid,1)
-    assert service.preview(ReviewChangeInput(**change))['blocking_issues'][0]['code']=='ACCOUNT_CORRECTION_KEEPER_REQUIRED'
+    required=service.preview(ReviewChangeInput(**change))['blocking_issues'][0]
+    assert required['code']=='ACCOUNT_CORRECTION_KEEPER_REQUIRED'
+    assert required['details']=={'duplicate_transaction_ids':[5]}
     change['correction_duplicates']=[dict(transaction_id=5,kept_transaction_id=1)]
     assert service.preview(ReviewChangeInput(**change))['blocking_issues'][0]['code']=='INVALID_DUPLICATE'
     assert counts(db)==before and db.get(ReviewCase,rid).status==db.get(ReviewCase,kept).status==0
