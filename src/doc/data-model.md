@@ -208,7 +208,8 @@ Fact 只放跨来源稳定、计算必须的核心字段。客户详情、完整
 | `name` | TEXT | 无伪造默认 | 展示名；身份只使用 `id` |
 | `view_id` | INTEGER | 无伪造默认 | 正整数逻辑 Tag View ID；普通索引 |
 | `method` | INTEGER | `1` | 1=LLM_DIRECT |
-| `method_config_json` | TEXT | 无伪造默认 | `schema_version=1`、`model_id` 与 Prompt |
+| `method_config_json` | TEXT | 无伪造默认 | `schema_version=1`、`model_id`、`prompt_id` 与独立规则指引；旧配置缺省为 `tag-suggestion` |
+| `last_analysis_json` | TEXT | `{}` | 有界的最近业务校验/提交状态，通过 `call_id` 关联；不保存 Prompt 或响应正文，不改变规则语义修订 |
 | `enabled` / `cron` | INTEGER / TEXT | `0` / `''` | 是否注册调度及 Cron 表达式 |
 | `amount_mode` | INTEGER | `1` | 1=BAND，2=EXACT，3=NONE |
 | `rule_revision` | INTEGER | `1` | 正整数规则内容版本 |
@@ -223,12 +224,22 @@ Fact 只放跨来源稳定、计算必须的核心字段。客户详情、完整
 | 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
 | `rule_id` / `rule_revision` | INTEGER | 无伪造默认 | 正整数规则 ID 及生成时版本 |
+| `call_id` | INTEGER | `0` | 已提交建议关联的调用 ID；历史/无模型来源用 0，不复制模型正文 |
 | `ledger_id` / `view_id` | INTEGER | 无伪造默认 | 正整数目标 Ledger 与 Tag View ID |
 | `proposed_tag_id` | INTEGER | 无伪造默认 | 正整数候选 Tag ID |
 | `status` | INTEGER | `1` | 1=PENDING，2=ENABLED，3=REJECTED，4=CANCELLED，5=REPLACED |
 | `reason_summary` | TEXT | `''` | 已清洗理由，最多 200 字 |
 
 请求没有 UUID、来源哈希、独立 decision 或归档字段。一次分析可生成多条请求；最终状态转换、标签互斥和规则计数在后续 Service 事务中实现。
+
+### 14. `llm_prompt_audit`：唯一外部调用审计
+
+保留原有 ID、关联、attempt、request_json、response_text、截断标记、状态及时间列。
+PIRC-40 原位迁移使标签关联可空，新增 source、operation_id、prompt_id、prompt_fingerprint、metadata_json，
+以及可空的 input_tokens/output_tokens/total_tokens/estimated_cost（成本为十进制文本而非浮点财务事实）。
+旧行原样复制；没有供应商用量不补零。metadata 只保留 dispatch_state、有效连接依据和受限供应商元数据。
+新成功状态 SUCCEEDED 只表示供应商调用成功，业务 PASSED/REJECTED 与 COMMITTED/STALE/CANCELLED/FAILED 留在规则/建议记录。
+正文列表与统计禁止加载；敏感详情默认关闭，须部署独立授权令牌。启动原子重建此表，失败回滚，不创建第二套调用日志。
 
 ## 热、冷与读取规则
 
@@ -246,7 +257,7 @@ Fact 只放跨来源稳定、计算必须的核心字段。客户详情、完整
 
 ## 迁移结论
 
-旧业务表和过渡表已经从模型和运行时删除。新数据库直接创建 13 张目标表；已有 10 表目标数据库通过三个幂等 `CREATE TABLE IF NOT EXISTS` 资产增量接入，既有行不改写。仍不提供更早旧业务表的原位迁移。必要语义分别进入：
+旧业务表和过渡表已经从模型和运行时删除。新数据库直接创建 14 张目标表；已有 10 表目标数据库通过幂等 SQL 资产增量接入，既有行不改写。PIRC-40 对已存在的调用审计进行保留历史的原子迁移，并幂等增加业务 call_id / last_analysis_json 列。仍不提供更早旧业务表的原位迁移。必要语义分别进入：
 
 - 文件/批次/来源/异常：`transaction_import_file + transaction_import_row`。
 - 规范流水：`transaction_fact`。
@@ -254,4 +265,4 @@ Fact 只放跨来源稳定、计算必须的核心字段。客户详情、完整
 - 正式经济结果：`ledger_entry`、三元 `review_allocation` 与标签表。
 - 自动标签配置与审查：`setting + auto_tag_rule + tag_assignment_request`。
 
-应用只创建当前结构；除从既有 10 表目标库幂等补建上述三表外，不在启动时升级或回填旧业务表。导入事务为新 Fact 同步创建 CONFIRMED Review、等额 INCOME_AND_EXPENSE 与 `review_allocation`。
+应用只创建当前结构及上述明确限定的 PIRC-40 迁移，不升级或回填更早旧业务表。导入事务为新 Fact 同步创建 CONFIRMED Review、等额 INCOME_AND_EXPENSE 与 `review_allocation`。

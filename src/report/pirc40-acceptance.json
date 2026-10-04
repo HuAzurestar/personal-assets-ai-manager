@@ -1,0 +1,56 @@
+{
+  "issue": "PIRC-40",
+  "recorded_at": "2026-10-04T15:27:08Z",
+  "status": "implemented_locally",
+  "baseline": "38474fc55bdf247e868694b9a44dd2736350a7da",
+  "branch": "feature-pirc-40",
+  "implementation_commits": ["b0ca569", "0aff0aa", "1edcf3a"],
+  "checkout": "MPA/tmp/pirc40-work",
+  "sdk_versions": {
+    "litellm": "1.102.0", "openai": "2.54.0", "httpx": "0.28.1",
+    "httpcore": "1.0.9", "tiktoken": "0.14.0", "pydantic_tested": "2.13.5"
+  },
+  "complete_transitive_lock": false,
+  "verification": {
+    "command": "python -m pytest src/test -q",
+    "passed": 700, "failed": 0, "skipped": 4, "elapsed_seconds": 250.90,
+    "warning": "Starlette BlockingPortal deprecation",
+    "compileall": "passed: src/backend src/middleware src/script src/test",
+    "node_syntax": "passed: automation.js and automation_feedback.js",
+    "git_diff_check": "passed",
+    "browser_command": "python -m pytest src/test/test_browser.py --run-browser -q",
+    "browser_result": "environment_blocked",
+    "browser_scenarios": 4,
+    "browser_reason": "PermissionError WinError 5 in asyncio Windows pipe creation before Playwright/browser startup"
+  },
+  "acceptance_evidence": {
+    "single_attempt_real_sdk_http_counts": "test_middleware_llm.py: local countable HTTP stub; 429, 503 and timeout each exactly one POST",
+    "before_audit_no_http": "test_middleware_llm.py: audit failure prevents actual SDK HTTP output",
+    "redirect_proxy_boundary": "test_middleware_llm.py: 307 is not followed; implicit environment proxy ignored",
+    "worker_ownership": "test_middleware_llm.py and test_middleware_schedule.py: cancellation drains real worker and retains lock/key",
+    "persistent_unknown_block": "test_middleware_llm.py: failed finish leaves original STARTED/MAY_HAVE_EXECUTED and blocks another operation",
+    "monotonic_finish": "test_middleware_llm.py: repeated finish is idempotent; late error cannot downgrade success",
+    "credential_rotation_and_http_opt_in": "test_middleware_integration.py: resolved credential change sends zero requests; HTTP requires explicit connection/catalog authorization",
+    "known_success_recovery": "test_middleware_integration.py: fresh client recovers saved result after failed business commit with no second provider call",
+    "business_cancellation_and_stale": "test_middleware_integration.py: pause allows admitted item commit; cancellation blocks recovery in fresh lifespan; changed revision rejects submission",
+    "template_and_sensitive_reads": "test_middleware_prompt.py: one-pass rendering, schema/type/length checks, shared prefix, read-only management, synthetic preview, body-free SQL list/statistics and authorized detail",
+    "migration": "test_llm_audit_migration.py: all legacy columns preserved, idempotent migration, rollback and unknown-schema refusal",
+    "generic_scheduler": "test_middleware_schedule.py: independent housekeeping job, declared parameters/phases/metrics/codes, frozen registration snapshot and control latches",
+    "generic_configuration": "test_middleware_config.py: typed sources, immutable value copies, deployment override, stale prepare discard, two-section reread, scope serialization, retain/disable recovery and startup NEEDS_RESTART",
+    "non_tag_use_case": "test_middleware_integration.py: independent fictional monthly-summary DTO/service with nullable tag associations"
+  },
+  "scope": {
+    "prompt_storage": "file-only read-only deployed resources; online SQL template CRUD/CAS is intentionally not built",
+    "physical_tables": 14,
+    "scheduler_engines": 1,
+    "deployment_profile": "one application process",
+    "business_record": "bounded latest analysis status on rule; committed suggestion rows retain call_id, no duplicated model body",
+    "legacy_adapter": "retained for compatibility/fixture callers; production composition uses public LlmClient",
+    "monthly_summary": "fictional-only extension proof, no unrestricted execution endpoint"
+  },
+  "delivery_limits": [
+    "Browser scenarios were attempted but could not start under the managed Windows sandbox; not claimed passed.",
+    "The original PAAM workspace entry is an outside-root junction. After permissions changed, implementation continued in an independent writable checkout; original path was not overwritten with the completed tree.",
+    "No GitHub branch push, pull request creation, merge, production deployment or paid model call was performed."
+  ]
+}
