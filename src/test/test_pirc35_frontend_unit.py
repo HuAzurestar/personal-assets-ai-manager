@@ -14,6 +14,7 @@ import pytest
     "import_decision.cjs",
     "import_workflow.cjs",
     "import_history.cjs",
+    "navigation_context.cjs",
     "import_plan.cjs",
     "import_choice.cjs",
     "import_bulk.cjs",

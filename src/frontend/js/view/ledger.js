@@ -10,6 +10,7 @@ import { flowVisibility } from '../util/flow-visibility.js';
 import { transactionFilter, bindTransactionFilter, stopTransactionFilterRead,
   transactionScopeFilters, transactionFilterDirty, transactionFilterReadBusy } from '../component/transaction-filter.js';
 import { preserveView } from "../util/view_state.js?v=20260928.6";
+import { navigationContext } from '../util/navigation-context.js';
 import { toast } from "../component/toast.js";
 import { table } from "../component/table.js";
 import { openInspection } from "../component/inspection.js?v=20260928.6";
@@ -139,14 +140,17 @@ const pageInfo = {
   settings: ["设置", ""],
 };
 const validPages = new Set(Object.keys(pageInfo));
+const navigationView = navigationContext($('#page-content'));
 
 function route(page, params = new URLSearchParams()) {
+  navigationView.remember();
   location.hash = canonicalHash(page, params);
 }
 function readRoute({ restoreValues = true } = {}) {
   const { page: nextPage, params } = parseHash(location.hash, validPages);
   const canonical = canonicalHash(nextPage, params);
-  if (location.hash.slice(1) !== canonical) history.replaceState(null, "", `#${canonical}`);
+  if (location.hash.slice(1) !== canonical) history.replaceState(history.state, "", `#${canonical}`);
+  navigationView.begin(location.hash);
   if (nextPage !== "import-history") {
     clearTimeout(state.historyFilterTimer);
     state.historyRequestController?.abort();
@@ -256,6 +260,7 @@ async function render({ background = false, restoreValues = true } = {}) {
     renderedRoute = routeKey;
     if (page === "import") renderImportPlan();
     if (page === "reviews") await mountEconomicReviewEditor(root);
+    navigationView.mounted(routeKey, {restore:!samePage});
   } catch (error) {
     if (renderVersion !== state.renderVersion || page !== state.page || routeKey !== location.hash) return;
     if (samePage) {
