@@ -3,7 +3,7 @@ import { esc, date, resourceId } from "../util/core.js";
 import { table } from "../component/table.js";
 import { namedChoice, bindNamedChoice, metadataLabel, mountPicker } from '../component/workbench.js';
 import { candidateScan, scanControls } from '../util/candidate-scan.js';
-import { financialIssueMessage } from '../util/financial-copy.js';
+import { financialIssueMessage, financialStateLabel } from '../util/financial-copy.js';
 
 const base = "/paam/ledger/v1";
 const endpoint = { party: "account-party", account: "account", ref: "account-ref" };
@@ -80,7 +80,7 @@ function cardList(result, searching) {
   const rows = result.items.map(row => `<tr data-ref-id="${row.id}">
     <td data-label="来源卡"><strong>${esc(row.institution || row.display_label?.split(' · ')[0] || row.source_namespace || '来源机构未登记')} · ${esc(row.name || '未命名来源')}</strong><small>${esc(row.source_identity || row.reference || '账号未知')} · #${row.id}</small></td>
     <td data-label="归属">${esc(row.party_name || '未分组')}<small>${esc(row.account_name || '无管理集合')}</small></td>
-    <td data-label="状态">${esc(row.status)}</td>
+    <td data-label="状态">${esc(financialStateLabel('account',row.status))}</td>
     <td data-label="资料"><span>${esc({RELIABLE:'可靠来源', WEAK:'弱来源', UNKNOWN:'身份未知'}[row.identity_strength])}</span><small>历史来源入库：${row.latest_source_time ? esc(date(row.latest_source_time)) : '未知'}</small></td>
     <td data-label="操作"><div class="actions"><button type="button" data-account-edit="ref" data-id="${row.id}">维护</button><button type="button" data-account-move="${row.id}">变更归属</button></div></td></tr>`);
   const empty = searching && result.has_more ? '尚无命中；本次查找仍未结束。' : '当前范围没有来源卡。';
@@ -124,7 +124,7 @@ export async function accountManagementPage(params) {
       </div></details></aside>
       <section class="panel account-card-surface"><div class="account-card-head"><div><h1>具体来源卡</h1><p>${scope.unassigned ? '未分组：不归属任何个人或集合。' : `${esc(party?.name || '全部个人')} / ${esc(account?.name || '全部集合')}`}</p></div><div class="actions"><a href="#workbench/review?complete_source=1" data-account-complete-source>补齐历史流水来源</a><button type="button" data-account-create="ref">新建来源卡</button></div></div>
         <form data-account-filter class="account-filter"><label class="account-word">字面搜索<input name="word" value="${esc(scope.word)}" maxlength="128" placeholder="机构、名称、遮罩号或归属"></label>
-          <label>状态<select name="status">${[['','全部状态'],['ACTIVE','ACTIVE'],['CLOSED','CLOSED']].map(([value,text])=>`<option value="${value}" ${scope.status === value ? 'selected' : ''}>${text}</option>`).join('')}</select></label>
+          <label>状态<select name="status">${[['','全部状态'],...['ACTIVE','CLOSED'].map(code=>[code,financialStateLabel('account',code)])].map(([value,text])=>`<option value="${value}" ${scope.status === value ? 'selected' : ''}>${esc(text)}</option>`).join('')}</select></label>
           <label>每页<select name="page_size">${[20,50,100].map(value=>`<option value="${value}" ${scope.pageSize === value ? 'selected' : ''}>${value}项</option>`).join('')}</select></label>
           <button type="submit">查找</button><button type="button" data-account-clear-search>清空搜索</button></form>
         <div class="account-ref-table" data-account-list>${cardList(result, !!scope.word)}</div>
@@ -194,7 +194,7 @@ async function openAccountCommand(host, reload, kind, rawId, moving = false) {
           } catch (error) {
             // A preview POST is read-only: a lost preview can be requested
             // again; it must not be mistaken for an unknown move command.
-            if (node.isConnected && issued === generation) node.querySelector('[role=status]').textContent = `${error.code || '预览失败'}：${error.message}；未执行归属变更。`;
+            if (node.isConnected && issued === generation) node.querySelector('[role=status]').textContent = `${financialIssueMessage(error,'归属变更预览未取得可靠结果，请重新读取当前归属核对')}；未执行归属变更。`;
           }
           finally { submit.disabled = node.dataset.writeOutcome === 'UNKNOWN'; }
         };
@@ -220,7 +220,7 @@ async function openAccountCommand(host, reload, kind, rawId, moving = false) {
         + (kind === "ref" ? input("institution", "机构", row.institution || "", 'maxlength="120"') + input("reference", "用户登记本方账号（与来源身份不同）", row.reference || "", 'maxlength="200" autocomplete="off"') : "")
         + (kind === "account" ? input("statement_interval_months", "账单提醒月数（0 为手动）", row.statement_interval_months || 0, 'type="number" min="0" max="120" required')
           + input("snapshot_interval_months", "余额快照提醒月数（0 为手动）", row.snapshot_interval_months || 0, 'type="number" min="0" max="120" required') : "")
-        + (id ? `<label>状态<select name="status"><option value="ACTIVE" ${row.status === "ACTIVE" ? "selected" : ""}>ACTIVE</option><option value="CLOSED" ${row.status === "CLOSED" ? "selected" : ""}>CLOSED（历史现金仍计）</option></select></label>` : "");
+        + (id ? `<label>状态<select name="status">${['ACTIVE','CLOSED'].map(code=>`<option value="${code}" ${row.status === code ? 'selected' : ''}>${esc(financialStateLabel('account',code))}</option>`).join('')}</select></label>` : "");
       const node = dialog(`${id ? "维护" : "新建"}${labels[kind]}`, `<form class="stack">${fields}<p role="status"></p><button type="submit">保存</button></form>`);
       const controller = new AbortController();
       node.addEventListener('close', () => controller.abort(), {once:true});

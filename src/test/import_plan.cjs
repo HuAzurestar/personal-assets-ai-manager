@@ -7,6 +7,8 @@ async function run() {
   const module = name => pathToFileURL(path.join(__dirname,'../frontend/js',name)).href;
   const {completeImportScope} = await import(module('util/import-scope.js'));
   const {validateImportPlan, mountImportPlan} = await import(module('component/import-plan.js'));
+  const {installUnitDictionary} = await import(module('util/unit-dictionary.js'));
+  installUnitDictionary(require('./unit_fixture.cjs').unitFixture());
   const rows = Array.from({length:2500},(_,i) => ({file_id:1,source_row_number:i + 1}));
   const policy = {max_batch_rows:1000,serial:true,retain_committed:true,automatic_post_replay:false,
     stop_on:['CANCEL','FAILURE','STALE_PREVIEW','RESULT_UNKNOWN']};
@@ -87,7 +89,7 @@ async function run() {
   class Node {
     constructor() {this.isConnected = true; this.innerHTML = ''; this.nodes = new Map();}
     querySelector(key) {if (!this.nodes.has(key)) this.nodes.set(key,new Node()); return this.nodes.get(key);}
-    querySelectorAll() {return [];}
+    querySelectorAll(key) {return key === '[data-plan-batch]' && this.batchButton ? [this.batchButton] : [];}
   }
   const host = new Node();
   mountImportPlan(host,blocked);
@@ -106,6 +108,36 @@ async function run() {
   list.querySelector('[data-plan-next]').onclick(); assert.match(list.innerHTML,/41–50 \/ 50/);
   host.querySelector('[data-plan-batches]').isConnected = false;
   list.querySelector('[data-plan-prev]').onclick(); assert.match(list.innerHTML,/41–50 \/ 50/);
+  // Execute the actual detail handler, retaining codes and escaping labels.
+  const display = clone();
+  display.selected_count = 1000; display.selected_rows = rows.slice(0,1000); display.batches = [display.batches[0]];
+  const preview = display.batches[0].preview;
+  preview.counts = {new_real_fact:1000,new_duplicate_fact:0,evidence_only:0,skipped:0,invalid:0,unresolved:0};
+  preview.pairs = ['NONE_IN_SCOPE','SUSPECTED','UNCHECKED'].map((state,index)=>({row:rows[index],target:null,resolution:'AUTO',
+    comparison:{amount:100,currency_code:'CNY',cash_direction:'OUT',occurred_time:null,exact_match:false},
+    source_labels_masked:['Mock <source>'],duplicate_hint:{state,candidate_count:index === 2 ? null : index},reason_codes:[]}));
+  preview.effects = {by_currency:[],tag_effect:{new_output_count:1000,projected_assignment_count:0,affected_view_ids:[],affected_rule_ids:[],default_assignments:[]},
+    new_original_defaults:[{row:rows[0],output_index:0,amount:100,currency_code:'CNY',cash_direction:'OUT',occurred_time:'2024-01-01T00:00:00',account_ref_id:null,source_label_masked:'Mock',after_status:'CONFIRMED'}],
+    new_duplicate_reviews:[],before_after_review_states:[{before:{id:7,title:'Mock review',status:'CONFIRMED',type:'OTHER_MANUAL',updated_time:'2024-01-01'},after_status:'REVOKED'}]};
+  preview.issues = [];
+  const detailHost = new Node(), button = new Node(); button.dataset = {planBatch:'0'};
+  detailHost.querySelector('[data-plan-batches]').querySelector('[data-plan-list-items]').batchButton = button;
+  mountImportPlan(detailHost,validateImportPlan(display,rows.slice(0,1000)));
+  assert.match(detailHost.innerHTML,/规则校验通过；不代表业务已核对正确/);
+  button.onclick();
+  const detail = detailHost.querySelector('[data-plan-selected-detail]');
+  assert.match(detail.innerHTML,/事务内重验.*明确确认/);
+  const pairsHtml = detail.querySelector('[data-plan-pairs]').innerHTML;
+  assert.match(pairsHtml,/本次核验范围内未发现候选（不代表全库无重复）/);
+  assert.match(pairsHtml,/疑似重复（未认定重复）（SUSPECTED）/);
+  assert.match(pairsHtml,/风险未核验（不能按零候选处理）（UNCHECKED）.*候选数未知/s);
+  assert.match(pairsHtml,/Mock &lt;source&gt;/); assert.doesNotMatch(pairsHtml,/<source>/);
+  assert.match(detail.querySelector('[data-plan-defaults]').innerHTML,/拟生效（尚未写入）（CONFIRMED）/);
+  assert.match(detail.querySelector('[data-plan-reviews]').innerHTML,/解释已生效（CONFIRMED） → 拟停用（尚未写入）（REVOKED）/);
+  display.can_confirm = false; preview.can_confirm = false;
+  mountImportPlan(detailHost,validateImportPlan(display,rows.slice(0,1000))); button.onclick();
+  assert.doesNotMatch(detailHost.innerHTML,/规则校验通过/);
+  assert.match(detail.innerHTML,/本批被阻断，不能提交/);
   console.log('PASS COMPLETE_SCOPE=1 NO_PARTIAL=1 CONTEXT_GUARDS=1 FROZEN_COVERAGE=1 ALL_BATCH_PAGES=1 NO_FINANCIAL_WRITES=1');
 }
 run().catch(error => {console.error(error); process.exitCode = 1;});

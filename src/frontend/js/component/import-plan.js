@@ -1,5 +1,6 @@
 import { esc, money, date, quantityDecimal, resourceId } from '../util/core.js';
 import { importIssueMessage } from '../util/import-decision.js';
+import { financialStateLabel, importPlanScopeNote } from '../util/financial-copy.js';
 
 // This is disclosure of the server's frozen projection, never a client-side
 // financial planner. Local paging retains every record in the supplied plan.
@@ -68,7 +69,7 @@ function pairMarkup(pair) {
   return `<article class="picker-list-row import-plan-record"><div><strong>${esc(rowName(pair.row))} → ${esc(targetName(pair.target))}</strong>
     <p>${esc(modes[pair.resolution])} · ${amount(value.amount, value.currency_code)} · ${esc(value.cash_direction || '方向未知')} · ${esc(value.occurred_time ? date(value.occurred_time) : '时间未知')}</p>
     <p>${pair.source_labels_masked.map(esc).join(' → ')} · ${value.exact_match ? '核心精确一致' : '不代表已经配对'}</p>
-    <small>风险范围：${esc(hint.state)} · ${hint.candidate_count == null ? '候选数未知，不能当作零' : `${hint.candidate_count} 个候选（只限已核对范围）`}
+    <small>风险范围：${esc(financialStateLabel('importRisk',hint.state))} · ${hint.candidate_count == null ? '候选数未知，不能当作零' : `${hint.candidate_count} 个候选（只限已核验范围）`}
     ${pair.reason_codes.length ? ` · ${esc(pair.reason_codes.join('、'))}` : ''}</small></div></article>`;
 }
 
@@ -77,7 +78,7 @@ function showBatch(host, item, signal) {
   host.innerHTML = `<section class="panel" data-plan-batch-detail><h3>第 ${item.batch_index + 1} 批：完整核对</h3>
     <p>${esc(ranges(item.row_ranges))}</p><p>${esc(budget(value.budget))}</p>
     <p>真实新增 ${counts.new_real_fact} · 新重复 Fact ${counts.new_duplicate_fact} · 仅补证据 ${counts.evidence_only} · 跳过 ${counts.skipped} · 无效 ${counts.invalid} · 未解决 ${counts.unresolved}</p>
-    <p>${value.can_confirm ? '本批前提已核对；执行仍须锁内重验。' : '本批被阻断，不能提交。'}</p>
+    <p>${value.can_confirm ? esc(importPlanScopeNote) : '本批被阻断，不能提交。'}</p>
     ${effect.by_currency.map(row => `<p>单位 ${esc(row.currency_code)}：新增真实流入 ${amount(row.cash_in_amount,row.currency_code)}／流出 ${amount(row.cash_out_amount,row.currency_code)}；重复排除流入 ${amount(row.excluded_in_amount,row.currency_code)}／流出 ${amount(row.excluded_out_amount,row.currency_code)}。不跨币加总。</p>`).join('')}
     <p>新输出 ${tag.new_output_count} · 默认标签赋值 ${tag.projected_assignment_count} · 影响视图 ${tag.affected_view_ids.map(id => `#${id}`).join('、') || '无'} · 规则 ${tag.affected_rule_ids.map(id => `#${id}`).join('、') || '无'}（包括停用规则的扫描前提）。</p>
     ${tag.default_assignments.map(row => `<p>默认标签：${esc(row.view_name_masked)} #${row.view_id} → ${esc(row.tag_name_masked)} #${row.tag_id}</p>`).join('')}
@@ -87,14 +88,14 @@ function showBatch(host, item, signal) {
     ${section('既有解释完整内容与状态', 'reviews')}</section>`;
   pageList(host.querySelector('[data-plan-pairs]'), value.pairs, pairMarkup, '来源配对', signal);
   pageList(host.querySelector('[data-plan-defaults]'), effect.new_original_defaults, row =>
-    `<p>${esc(rowName(row.row))} → 原默认拟建输出 ${row.output_index + 1} · ${amount(row.amount,row.currency_code)} · ${esc(row.cash_direction)} · ${esc(date(row.occurred_time))} · ${esc(source(row.account_ref_id))} · ${esc(row.source_label_masked)} · ${esc(row.after_status)}</p>`, '拟建默认', signal);
+    `<p>${esc(rowName(row.row))} → 原默认拟建输出 ${row.output_index + 1} · ${amount(row.amount,row.currency_code)} · ${esc(row.cash_direction)} · ${esc(date(row.occurred_time))} · ${esc(source(row.account_ref_id))} · ${esc(row.source_label_masked)} · ${esc(financialStateLabel('plannedReview',row.after_status))}</p>`, '拟建默认', signal);
   const duplicate = effect.new_duplicate_reviews.flatMap(review => review.allocations.map(row => ({...row, review_index:review.review_index})));
   pageList(host.querySelector('[data-plan-duplicates]'), duplicate, row =>
     `<p>拟建重复解释 ${row.review_index + 1} · ${esc(rowName(row.row))} → 保留 ${esc(targetName(row.kept_target))} · DUPLICATE ${amount(row.amount,row.currency_code)} ${esc(row.cash_direction)} · ${esc(source(row.account_ref_id))}</p>`, '拟建重复', signal);
   pageList(host.querySelector('[data-plan-revoke]'), item.duplicate_revoke_scope, row => `<p>${esc(rowName(row))}：原默认停用；撤销本批 DUP 解释会整组恢复这些原默认，不支持只撤销其中一行。</p>`, '整组撤销范围', signal);
   pageList(host.querySelector('[data-plan-issues]'), value.issues, row => `<p class="error">${esc(rowName(row))}：${esc(row.code)} · ${esc(importIssueMessage(row.code))}</p>`, '未解决问题', signal);
   pageList(host.querySelector('[data-plan-reviews]'), effect.before_after_review_states, (row,index) =>
-    `<article class="panel"><h4>${esc(row.before.title)} · Review #${row.before.id} · ${esc(row.before.status)} → ${esc(row.after_status)}</h4>
+    `<article class="panel"><h4>${esc(row.before.title)} · Review #${row.before.id} · ${esc(financialStateLabel('review',row.before.status))} → ${esc(financialStateLabel('plannedReview',row.after_status))}</h4>
       <p>${esc(row.before.type)} · 更新 ${esc(row.before.updated_time)}</p>
       <button type="button" data-plan-review="${index}">查看完整原现金、关系与数量</button></article>`, '既有解释', signal,
     (list, items) => list.querySelectorAll('[data-plan-review]').forEach(button => {
@@ -113,7 +114,7 @@ function showReview(host, review, signal) {
   pageList(panel.querySelector('[data-plan-allocation]'), review.allocations, row => `<p>关系 #${row.id}：Fact #${row.transaction_id} → Ledger #${row.ledger_id} · ${amount(row.cash_amount,row.cash_currency_code)}</p>`, '第一段关系', signal);
   pageList(panel.querySelector('[data-plan-legs]'), review.position_legs, row => `<p>数量腿 #${row.id} → 对象 #${row.position_id} · ${esc(row.type)} ${esc(row.leg_direction)} ${esc(quantityDecimal(row.leg_amount,row.unit_code))} ${esc(row.unit_code)} · 来源腿 #${row.source_position_leg_id} · ${esc(date(row.occurred_time))} · ${esc(row.basis)}</p>`, '原数量腿', signal);
   pageList(panel.querySelector('[data-plan-links]'), review.position_allocations, row => `<p>关系 #${row.id}：Ledger #${row.ledger_id} → 数量腿 #${row.position_leg_id} · ${amount(row.cash_amount,row.cash_currency_code)}</p>`, '第二段关系', signal);
-  pageList(panel.querySelector('[data-plan-positions]'), review.positions, row => `<p>对象 #${row.id} · ${esc(row.title)} · ${esc(row.description)} · ${esc(row.type)} · ${esc(row.status)} · ${esc(row.usage_scenario)} · 个人 #${row.party_id} · ${esc(row.counterparty)} · ${esc(row.unit_code)}</p>`, '原数量对象', signal);
+  pageList(panel.querySelector('[data-plan-positions]'), review.positions, row => `<p>对象 #${row.id} · ${esc(row.title)} · ${esc(row.description)} · ${esc(row.type)} · ${esc(financialStateLabel('position',row.status))} · ${esc(row.usage_scenario)} · 个人 #${row.party_id} · ${esc(row.counterparty)} · ${esc(row.unit_code)}</p>`, '原数量对象', signal);
 }
 
 export function mountImportPlan(host, plan, {signal} = {}) {
@@ -122,7 +123,7 @@ export function mountImportPlan(host, plan, {signal} = {}) {
     <p>本次明确选择 ${plan.selected_count} 行 · 可规划 ${plan.batches.length} 批 · 阻断关联组 ${plan.blocked.length} 个。</p>
     <p>每批最多1000来源行，另受完整解释／关系／标签预算约束；关联组不拆散。各批不是一个大事务。</p>
     <p>取消、失败、前提变化或结果未知时停止后续；此前成功批保留，不回滚整次操作。结果未知先查持久状态，不自动重发 POST；继续须你的明确动作并重新核对剩余计划。</p>
-    <p>${plan.can_confirm ? '计划无阻断；本预览本身不会提交账务。' : '存在阻断或未解决事项；不能自动跳过后执行其余记录。'}</p>
+    <p>${plan.can_confirm ? `计划无阻断；${esc(importPlanScopeNote)}本预览本身不会提交账务。` : '存在阻断或未解决事项；不能自动跳过后执行其余记录。'}</p>
     <p data-plan-issue-summary>所选完整范围未解决 ${issues.length} 行，其中新增现金风险待处理 ${issues.filter(row=>row.code === 'IMPORT_REVIEW_REQUIRED').length} 行；预算阻断组与行问题分别计算，不以零阻断组冒称可入账。</p>
     <div data-plan-all-issues></div><div data-plan-batches></div><div data-plan-blocked></div><div data-plan-selected-detail></div></section>`;
   pageList(host.querySelector('[data-plan-all-issues]'),issues,row=>`<p class="error">${esc(rowName(row))}：${esc(row.code)} · ${esc(importIssueMessage(row.code))}</p>`,'全部未解决来源行',signal);

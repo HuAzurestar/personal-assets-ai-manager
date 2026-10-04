@@ -4,6 +4,10 @@ const financialStates = {
   coverage: {FULL:'金额已完整分配',PARTIAL:'金额部分分配',UNRESOLVED:'金额覆盖待处理'},
   default: {KNOWN:'原系统默认唯一',MISSING:'原系统默认缺失',AMBIGUOUS:'原系统默认不唯一'},
   review: {CONFIRMED:'解释已生效',REVOKED:'解释已停用',PENDING:'解释待确认'},
+  plannedReview: {CONFIRMED:'拟生效（尚未写入）',REVOKED:'拟停用（尚未写入）'},
+  account: {ACTIVE:'使用中',CLOSED:'已关闭（历史现金保留）'},
+  metadata: {ACTIVE:'使用中',CLOSED:'已关闭（历史内容保留）',ARCHIVED:'已归档（证据保留）',SETTLED:'已标记结清（仍需核对当前数量）'},
+  importRisk: {NONE_IN_SCOPE:'本次核验范围内未发现候选（不代表全库无重复）',SUSPECTED:'疑似重复（未认定重复）',UNCHECKED:'风险未核验（不能按零候选处理）'},
   quantity: {KNOWN:'有据数量',UNKNOWN:'数量未知（没有数量证据，不是零）',NEEDS_REVIEW:'数量待核对（来源失效，需核对；不是零）'},
   identity: {KNOWN:'已关联数量对象',NEEDS_IDENTITY:'尚需关联数量对象',NOT_APPLICABLE:'不涉及数量对象'},
   cost: {UNKNOWN:'成本未知',NEEDS_REVIEW:'成本待核对'},
@@ -11,6 +15,7 @@ const financialStates = {
 };
 
 export const financialScopeNote = '金额分配完整只表示解释覆盖，包含不计现金的重复证据；解释生效只表示当前采用，不代表业务已核对正确。';
+export const importPlanScopeNote = '规则校验通过；不代表业务已核对正确。执行仍须事务内重验，并由你明确确认。';
 
 export function financialStateLabel(group, code, technical = true) {
   const states = Object.hasOwn(financialStates,group) ? financialStates[group] : null;

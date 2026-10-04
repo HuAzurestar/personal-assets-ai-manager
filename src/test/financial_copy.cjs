@@ -15,7 +15,16 @@ const {pathToFileURL} = require('node:url');
   assert.match(copy.financialStateLabel('quantity','UNKNOWN'), /没有数量证据，不是零/);
   assert.match(copy.financialStateLabel('quantity','NEEDS_REVIEW'), /来源失效.*不是零/);
   assert.match(copy.financialStateLabel('position','SETTLED'), /标记结清.*核对当前数量/);
-  for (const group of ['coverage','default','review','quantity','position','identity','cost','__proto__']) {
+  assert.equal(copy.financialStateLabel('account','ACTIVE',false),'使用中');
+  assert.match(copy.financialStateLabel('account','CLOSED'), /已关闭.*历史现金保留.*CLOSED/);
+  assert.match(copy.financialStateLabel('importRisk','NONE_IN_SCOPE'), /本次核验范围.*不代表全库无重复/);
+  assert.match(copy.financialStateLabel('importRisk','SUSPECTED'), /疑似重复.*未认定重复/);
+  assert.match(copy.financialStateLabel('importRisk','UNCHECKED'), /风险未核验.*不能按零候选处理/);
+  assert.match(copy.financialStateLabel('plannedReview','CONFIRMED'), /拟生效.*尚未写入.*CONFIRMED/);
+  assert.match(copy.financialStateLabel('plannedReview','REVOKED'), /拟停用.*尚未写入.*REVOKED/);
+  assert.doesNotMatch(copy.financialStateLabel('plannedReview','CONFIRMED'), /已生效|已核对/);
+  assert.match(copy.importPlanScopeNote, /规则校验通过.*不代表业务已核对正确.*事务内重验.*明确确认/);
+  for (const group of ['coverage','default','review','quantity','position','identity','cost','account','metadata','plannedReview','importRisk','__proto__']) {
     for (const code of [null,undefined,'BAD','__proto__','<img>']) {
       assert.match(copy.financialStateLabel(group,code), /状态未知/);
       assert.doesNotMatch(copy.financialStateLabel(group,code), /已分配|已生效|已结清/);
@@ -37,7 +46,10 @@ const {pathToFileURL} = require('node:url');
   assert.equal(statusNames.CONFIRMED,copy.financialStateLabel('review','CONFIRMED',false));
   // Existing uncertainty classification remains authoritative, even for a
   // recognizable validation code delivered with an unexplained server failure.
-  const {writeFailure} = await load('component/workbench.js');
+  const {writeFailure,metadataLabel} = await load('component/workbench.js');
+  assert.equal(metadataLabel({name:'Mock source',status:'ACTIVE',id:7}), 'Mock source · 使用中（ACTIVE） · #7');
+  assert.match(metadataLabel({name:'Mock source',status:'CLOSED',id:7}), /已关闭.*历史内容保留.*CLOSED.*#7/);
+  assert.match(metadataLabel({name:'Mock source',status:'FUTURE',id:7}), /状态未知.*FUTURE.*#7/);
   const status = {textContent:''}, host={querySelector:()=>status};
   assert.equal(writeFailure(host,{status:422,code:'INVALID_PRINCIPAL',message:'PRIVATE'}),false);
   assert.match(status.textContent,/本金/); assert.doesNotMatch(status.textContent,/PRIVATE/);

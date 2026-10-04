@@ -1,12 +1,12 @@
 import { request, isUnknownWrite } from "../api/client.js";
 import { esc } from "../util/core.js";
-import { financialIssueMessage } from '../util/financial-copy.js';
+import { financialIssueMessage, financialStateLabel } from '../util/financial-copy.js';
 import { candidateScan, scanControls } from "../util/candidate-scan.js";
 import { mountLocalPicker } from './local-choice.js';
 
 // The API label is derived from masked public identity and current ownership.
 // Keep stable IDs and status as secondary disambiguators, never infer a merge.
-export const metadataLabel = row => `${row.display_label || [row.institution || row.source_namespace, row.name, row.source_identity || row.reference].filter(Boolean).join(" · ") || "未命名对象"} · ${row.status} · #${row.id}`;
+export const metadataLabel = row => `${row.display_label || [row.institution || row.source_namespace, row.name, row.source_identity || row.reference].filter(Boolean).join(" · ") || "未命名对象"} · ${financialStateLabel('metadata',row.status)} · #${row.id}`;
 
 export const input = (name, label, value = "", extra = "") => `<label>${esc(label)}<input name="${name}" value="${esc(value)}" ${extra}></label>`;
 export const select = (name, label, choices, value = "") => `<label>${esc(label)}<select name="${name}">${choices.map(choice => {
