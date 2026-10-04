@@ -1,4 +1,4 @@
-.target-shell { --list-body-font:14px; --list-meta-font:12px; --list-line-height:1.4; }
+:root { --list-body-font:14px; --list-meta-font:12px; --list-line-height:1.4; }
 .target-shell .brand-text strong { display:block; }
 .target-shell .brand-text small { line-height:1.35; }
 .target-shell .metric { cursor:default; }

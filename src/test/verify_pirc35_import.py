@@ -106,7 +106,7 @@ def run():
                     assert candidate.locator("span").bounding_box()["width"] > candidate.bounding_box()["width"] * .65
                     assert candidate.locator("button").bounding_box()["width"] < 140
                     assert candidate.bounding_box()["height"] <= 70
-                    assert candidate.locator('span').evaluate('node => parseFloat(getComputedStyle(node).fontSize)') >= 14
+                    assert candidate.locator('span').evaluate('node => parseFloat(getComputedStyle(node).fontSize)') == 14
                     viewport_evidence(page, "fix-batch2-source-picker")
                     candidate.locator("button").click()
                     expect(rows.first.locator("[data-row-ref]")).to_contain_text("建设银行")
