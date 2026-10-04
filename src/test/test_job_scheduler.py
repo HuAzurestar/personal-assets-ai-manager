@@ -143,7 +143,7 @@ def test_pause_during_call_prevents_duplicate_and_does_not_auto_resume():
     _run(scenario())
 
 
-def test_replacing_a_running_registration_stops_its_next_item():
+def test_replacing_a_running_registration_keeps_its_current_snapshot():
     async def scenario():
         scheduler = JobScheduler()
         started = asyncio.Event()
@@ -165,7 +165,7 @@ def test_replacing_a_running_registration_stops_its_next_item():
             await asyncio.wait_for(started.wait(), timeout=1)
             assert contexts[0].may_start_work() is True
             scheduler.register_interval("tag-scan:7", seconds=3600, callback=new_callback)
-            assert contexts[0].may_start_work() is False
+            assert contexts[0].may_start_work() is True
             release.set()
         finally:
             await scheduler.shutdown()
@@ -322,12 +322,12 @@ def test_cron_preview_uses_hong_kong_timezone_and_rejects_invalid_input():
 def test_target_lifespan_registers_import_sweep_in_shared_scheduler(monkeypatch):
     class FakeScheduler:
         def __init__(self):
-            self.registration = None
+            self.registrations = {}
             self.started = False
             self.stopped = False
 
         def register_interval(self, task_key, *, seconds, callback, paused=False):
-            self.registration = (task_key, seconds, callback, paused)
+            self.registrations[task_key] = (task_key, seconds, callback, paused)
 
         async def start(self):
             self.started = True
@@ -353,7 +353,8 @@ def test_target_lifespan_registers_import_sweep_in_shared_scheduler(monkeypatch)
     async def scenario():
         async with target_main.lifespan(target_main.app):
             assert fake.started is True
-            task_key, seconds, callback, paused = fake.registration
+            assert set(fake.registrations) == {"system:import-preview-timeout", "system:config-reconcile"}
+            task_key, seconds, callback, paused = fake.registrations["system:import-preview-timeout"]
             assert task_key == "system:import-preview-timeout"
             assert seconds > 0
             assert paused is False

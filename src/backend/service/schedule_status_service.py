@@ -65,6 +65,10 @@ class ScheduleStatusService:
         return page
 
     def _with_names(self, values):
+        for item in values:
+            progress = self._scheduler.progress_snapshot(item["task_key"])
+            if progress is not None:
+                item["generic_progress"] = progress
         ids = {int(item["task_key"].split(":")[1]) for item in values if (
             item["task_key"].startswith("tag-scan:") and item["task_key"].split(":")[1].isdigit()
             and len(item["task_key"].split(":")[1]) <= 19
