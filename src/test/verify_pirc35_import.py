@@ -211,7 +211,16 @@ def run():
                     expect(rows).to_have_count(3)
                     expect(rows.last.locator('[data-row-decision]')).to_have_value('SKIP')
                     page.locator('[data-batch-save]').click()
-                    expect(page.locator('[data-batch-confirm]')).to_be_enabled()
+                    try:
+                        expect(page.locator('[data-batch-confirm]')).to_be_enabled()
+                    except AssertionError:
+                        print("Mixed import confirmation diagnostic", {
+                            "selection": page.locator('[data-batch-selection]').inner_text(),
+                            "status": page.locator('[data-batch-status]').inner_text(),
+                            "risk": page.locator('[data-batch-risk-summary]').inner_text(),
+                            "plan": page.locator('[data-batch-operation]').inner_text(),
+                        })
+                        raise
                     from backend.core import target_database
                     from backend.entity import TransactionFact, LedgerEntry, TransactionImportRow
                     from sqlalchemy import select, func

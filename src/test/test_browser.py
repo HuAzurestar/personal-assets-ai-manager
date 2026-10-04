@@ -17,6 +17,7 @@ import pytest
     "verify_m2_ui.py",
     "verify_pirc35_account.py",
     "verify_pirc35_account_scope.py",
+    "verify_pirc35_history.py",
     "verify_pirc35_position.py",
     "verify_pirc35_import.py",
     "verify_pirc35_import_workflow.py",

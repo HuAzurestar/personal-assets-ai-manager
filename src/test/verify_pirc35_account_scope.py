@@ -193,7 +193,17 @@ def run():
                     expect(rows).to_have_count(1)
                     expect(rows).to_contain_text("Mock B closed card")
                     root.locator('[data-account-filter] [name="status"]').select_option("")
-                    expect(rows).to_have_count(24)
+                    try:
+                        expect(rows).to_have_count(24)
+                    except AssertionError:
+                        print("Account clear-filter diagnostic", {
+                            "url": page.url,
+                            "status": root.locator('[data-account-filter] [name="status"]').input_value(),
+                            "page_size": root.locator('[data-account-filter] [name="page_size"]').input_value(),
+                            "params": root.get_attribute('data-account-params'),
+                            "reads": [url for url in reads if '/account-ref/list?' in url][-6:],
+                        })
+                        raise
                     # Directories are low-frequency dialogs, not extra page tables.
                     root.locator('[data-account-manage="party"]').click()
                     directory = page.locator('dialog[open] [data-account-directory]')
