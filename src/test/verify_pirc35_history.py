@@ -12,6 +12,7 @@ import uvicorn
 from playwright.sync_api import expect, sync_playwright
 from serve_m2_ui import prepare_app
 from browser_artifact import viewport_evidence
+from browser_list import assert_full_list_text, assert_list_readability
 
 
 def run():
@@ -22,7 +23,8 @@ def run():
         with target_database.SessionLocal() as db:
             samples = [(101, 1), (101, 3), (102, 1), (201, 1), (201, 1), (201, 1)] + [(203, 1)] * 30
             for index, (source, status) in enumerate(samples, 1):
-                db.add(TransactionImportFile(filename=f"Mock history {index}.csv", source_type=source,
+                db.add(TransactionImportFile(filename=f"Mock history {index}" + (
+                    ' 完全虚构的长中文账单文件名用于检查导入历史内容可以完整阅读而不被隐藏' if index == 35 else '') + '.csv', source_type=source,
                     status=status, file_format=1, sha256=f"{index:064x}"))
             db.commit()
         with socket.socket() as sock:
@@ -57,6 +59,14 @@ def run():
                     metric = page.locator('[data-history-summary] .history-metric').first.locator('strong')
                     expect(files).to_have_count(10)
                     expect(metric).to_have_text('36')
+                    for width in (1440, 1280, 1100, 820, 390, 320):
+                        page.set_viewport_size({'width': width, 'height': 900})
+                        assert_list_readability(page, files.first, files.first.locator('.batch-file strong'),
+                            files.first.locator('.batch-file small'))
+                        long_title = files.locator('.batch-file strong').filter(has_text='Mock history 35')
+                        assert_full_list_text(long_title, '完全虚构的长中文账单文件名用于检查导入历史内容可以完整阅读而不被隐藏')
+                        viewport_evidence(page, f'dev17-list-history-{width}')
+                    page.set_viewport_size({'width': 1280, 'height': 800})
                     form.locator('[name="source_type"]').select_option('102')
                     expect(files).to_have_count(1)
                     expect(metric).to_have_text('1')

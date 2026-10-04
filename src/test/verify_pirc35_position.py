@@ -11,6 +11,7 @@ import uvicorn
 from playwright.sync_api import expect, sync_playwright
 from serve_m2_ui import prepare_app
 from browser_artifact import viewport_evidence
+from browser_list import assert_list_readability
 from browser_choice import choose_local
 
 
@@ -218,6 +219,13 @@ def run():
                     expect(page.locator("[data-position-quantity]")).to_contain_text("100.00 CNY")
                     expect(main_row.locator('[data-position-row-quantity]')).to_contain_text('100.00 CNY')
                     expect(page.locator('.toast')).to_have_count(0, timeout=6000)
+                    for width in (1440, 1280, 1100, 820, 390, 320):
+                        page.set_viewport_size({'width': width, 'height': 900})
+                        assert_list_readability(page, main_row, main_row.locator('td').first.locator('a'),
+                            main_row.locator('td').nth(1).locator('small'),
+                            amount=main_row.locator('[data-position-row-quantity]'))
+                        viewport_evidence(page, f'dev17-list-position-{width}')
+                    page.set_viewport_size({'width': 1280, 'height': 800})
                     viewport_evidence(page, 'fix-r14-known-list')
                     # Review inspection is the canonical immutable content, not history/revisions.
                     page.goto(base + "/#details/review")

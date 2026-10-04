@@ -1,3 +1,4 @@
+.target-shell { --list-body-font:14px; --list-meta-font:12px; --list-line-height:1.4; }
 .target-shell .brand-text strong { display:block; }
 .target-shell .brand-text small { line-height:1.35; }
 .target-shell .metric { cursor:default; }
@@ -304,13 +305,14 @@
 .target-shell .history-updating { min-width:72px; padding-bottom:11px; color:var(--muted); font-size:11px; }
 .target-shell [data-history-results] { transition:opacity .12s ease; }
 .target-shell [data-history-results][aria-busy="true"] { opacity:.68; }
-.target-shell .batch-card-list { display:grid; gap:10px; }
+.target-shell .batch-card-list { display:grid; gap:6px; }
 .target-shell .batch-card {
-  width:100%; min-height:86px;
+  width:100%; min-height:68px;
   display:grid;
   grid-template-columns:42px minmax(220px,1.6fr) minmax(170px,1fr) 100px 88px 140px 18px;
   gap:14px; align-items:center;
-  padding:14px 16px;
+  padding:10px 14px;
+  line-height:var(--list-line-height); overflow-wrap:anywhere;
   color:var(--text); background:var(--surface);
   border:1px solid var(--line); border-radius:12px;
   text-align:left;
@@ -324,13 +326,13 @@
 .target-shell .batch-file strong,
 .target-shell .batch-file small,
 .target-shell .batch-file .history-id { display:block; }
-.target-shell .batch-file strong { margin:5px 0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; }
-.target-shell .batch-file small { font-size:11px; }
+.target-shell .batch-file strong { margin:3px 0; white-space:normal; font-size:var(--list-body-font); }
+.target-shell .batch-file small { font-size:var(--list-meta-font); }
 .target-shell .batch-field { min-width:0; }
-.target-shell .batch-field > small { display:block; margin-bottom:7px; font-size:10px; }
-.target-shell .batch-field > span { display:block; font-size:12px; }
+.target-shell .batch-field > small { display:block; margin-bottom:4px; font-size:var(--list-meta-font); }
+.target-shell .batch-field > span { display:block; font-size:var(--list-body-font); }
 .target-shell .batch-chevron { color:var(--muted); font-size:25px; line-height:1; text-align:right; }
-.target-shell .history-id { color:var(--muted); font-variant-numeric:tabular-nums; }
+.target-shell .history-id { color:var(--muted); font-size:var(--list-meta-font); font-variant-numeric:tabular-nums; }
 .target-shell .progress-count { white-space:nowrap; font-variant-numeric:tabular-nums; }
 .target-shell .account-chip {
   display:inline-flex; margin:2px 5px 2px 0; padding:4px 7px;
@@ -343,6 +345,13 @@
   display:grid; place-items:center; width:50px; height:50px; margin:0 auto 12px;
   border-radius:15px; background:var(--soft); color:var(--accent); font-size:25px;
 }
+@media (max-width:1000px) {
+  .target-shell .batch-card { grid-template-columns:42px minmax(0,1fr) 18px; align-items:start; }
+  .target-shell .batch-file { grid-column:2; }
+  .target-shell .batch-field { grid-column:2; display:grid; grid-template-columns:90px minmax(0,1fr); gap:10px; align-items:start; }
+  .target-shell .batch-field > small { margin:0; }
+  .target-shell .batch-chevron { grid-column:3; grid-row:1; }
+}
 @media (max-width:760px) {
   .target-shell .cards { grid-template-columns:1fr 1fr; }
   .target-shell .page-header { align-items:flex-start; }
@@ -352,17 +361,6 @@
   .target-shell .import-step small { display:none; }
   .target-shell .preview-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .target-shell .history-summary { grid-template-columns:repeat(3,minmax(0,1fr)); }
-  .target-shell .batch-card {
-    grid-template-columns:42px minmax(0,1fr) 18px;
-    align-items:start;
-  }
-  .target-shell .batch-file { grid-column:2; }
-  .target-shell .batch-field {
-    grid-column:2;
-    display:grid; grid-template-columns:90px minmax(0,1fr); gap:10px; align-items:start;
-  }
-  .target-shell .batch-field > small { margin:0; }
-  .target-shell .batch-chevron { grid-column:3; grid-row:1; }
 }
 @media (max-width:480px) {
   .target-shell .cards { grid-template-columns:1fr; }
@@ -1716,26 +1714,28 @@
 .date-time-range-popover > footer [data-range-clear] { margin-right:auto; }
 .detail-filter-actions { display:flex; align-items:center; gap:8px; margin-left:auto; }
 .detail-data-table { width:100%; min-width:880px; border-collapse:collapse; }
-.detail-data-table th { height:42px; padding:8px 16px; color:var(--muted); background:var(--subtle); text-align:left; font-size:11px; white-space:nowrap; }
-.detail-data-table td { height:62px; padding:10px 16px; border-top:1px solid var(--row-line); font-size:12px; vertical-align:middle; }
+.detail-data-table th { height:40px; padding:7px 14px; color:var(--muted); background:var(--subtle); text-align:left; font-size:var(--list-meta-font); white-space:nowrap; }
+.detail-data-table td { height:56px; padding:8px 14px; border-top:1px solid var(--row-line); font-size:var(--list-body-font); line-height:var(--list-line-height); vertical-align:middle; }
 .detail-click-row { cursor:pointer; transition:background .12s ease; }
 .detail-click-row:hover,.detail-click-row:focus-within { background:color-mix(in srgb,var(--accent) 5%,var(--surface)); }
 .detail-primary { width:100%; min-height:0; padding:0; border:0; background:transparent; text-align:left; }
 .detail-primary:hover { color:var(--accent); background:transparent; }
-.detail-primary strong,.detail-primary small { display:block; max-width:360px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.detail-primary small { margin-top:4px; color:var(--muted); font-size:10px; }
+.detail-primary strong,.detail-primary small { display:block; max-width:360px; white-space:normal; overflow-wrap:anywhere; }
+.detail-primary strong { font-size:var(--list-body-font); line-height:var(--list-line-height); }
+.detail-primary small { margin-top:3px; color:var(--muted); font-size:var(--list-meta-font); line-height:var(--list-line-height); }
 .detail-primary .ledger-row-tags { display:flex; gap:5px; max-width:360px; margin-top:6px; }
-.ledger-row-tags span { padding:2px 6px; border-radius:999px; color:var(--accent); background:var(--soft); font-size:9px; }
-.detail-data-table .fact-summary { max-width:360px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ledger-row-tags span { padding:2px 6px; border-radius:999px; color:var(--accent); background:var(--soft); font-size:var(--list-meta-font); }
+.detail-data-table .fact-summary { max-width:360px; white-space:normal; overflow-wrap:anywhere; }
 .detail-data-table .fact-account { max-width:210px; color:var(--muted); white-space:nowrap; }
-.detail-data-table .fact-amount { width:190px; font:750 12px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace; text-align:right; white-space:nowrap; }
+.detail-data-table .fact-amount { width:190px; font:750 var(--list-body-font)/1.3 ui-monospace,SFMono-Regular,Consolas,monospace; text-align:right; white-space:nowrap; }
 .detail-data-table .fact-amount.inflow { color:var(--danger); }
 .detail-data-table .fact-amount.outflow { color:var(--accent); }
 .detail-data-table .detail-arrow { width:38px; color:var(--accent); text-align:right; }
-.flow-source-label { display:-webkit-box; max-width:260px; overflow:hidden; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow-wrap:anywhere; }
+.flow-source-label { display:block; max-width:260px; white-space:normal; overflow-wrap:anywhere; }
 .flow-review-link { min-height:44px; max-width:190px; padding:4px 8px; text-align:left; }
-.flow-review-link > span,.flow-review-link > small { display:block; max-width:170px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.flow-review-link > small { margin-top:3px; color:var(--muted); font-size:10px; font-weight:500; }
+.flow-review-link > span,.flow-review-link > small { display:block; max-width:170px; white-space:normal; overflow-wrap:anywhere; line-height:var(--list-line-height); }
+.flow-review-link > span { font-size:var(--list-body-font); }
+.flow-review-link > small { margin-top:3px; color:var(--muted); font-size:var(--list-meta-font); font-weight:500; }
 [data-flow-status="historical"] { color:var(--muted); text-decoration:underline dotted; }
 @media (max-width:767px) {
   [data-flow-read] .detail-data-table { min-width:0; table-layout:fixed; }
@@ -1745,7 +1745,7 @@
   [data-flow-read] .flow-list-row td:nth-child(-n+3) { grid-column:1/-1; }
   [data-flow-read] .flow-list-row td:nth-child(-n+3)::before { display:none; }
   [data-flow-read] .flow-list-row .detail-primary { min-height:44px; }
-  [data-flow-read] .flow-list-row .detail-primary strong,[data-flow-read] .flow-list-row .detail-primary small { max-width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  [data-flow-read] .flow-list-row .detail-primary strong,[data-flow-read] .flow-list-row .detail-primary small { max-width:100%; white-space:normal; }
   [data-flow-read] .flow-source-label { max-width:100%; }
   [data-flow-read] .flow-review-link { display:flex; gap:10px; align-items:center; max-width:100%; width:100%; }
   [data-flow-read] .flow-review-link > small { flex:1; min-width:0; max-width:none; margin:0; }
@@ -2035,9 +2035,9 @@
 .account-ref-table th:nth-child(3) { width:9%; }
 .account-ref-table th:nth-child(4) { width:22%; }
 .account-ref-table th:nth-child(5) { width:22%; }
-.account-ref-table td { padding:8px 10px; font-size:12px; white-space:normal; overflow-wrap:anywhere; vertical-align:middle; }
+.account-ref-table td { padding:8px 10px; font-size:var(--list-body-font); line-height:var(--list-line-height); white-space:normal; overflow-wrap:anywhere; vertical-align:middle; }
 .account-ref-table td strong,.account-ref-table td small { display:block; }
-.account-ref-table td small { margin-top:3px; font-size:11px; color:var(--muted); line-height:1.45; }
+.account-ref-table td small { margin-top:3px; font-size:var(--list-meta-font); color:var(--muted); line-height:var(--list-line-height); }
 .account-ref-table td .actions { gap:5px; flex-wrap:wrap; }
 .account-list-pager { justify-content:flex-end; padding:10px 16px; font-size:12px; }
 .account-ref-table > .actions { padding:10px 16px; font-size:12px; }
@@ -2069,8 +2069,8 @@
 
 /* Position summaries are evidence quantities, not valuation or account cash. */
 .position-list-surface [data-position-list] table { min-width:0; table-layout:fixed; }
-.position-list-surface [data-position-list] td { padding:8px 10px; font-size:12px; white-space:normal; overflow-wrap:anywhere; }
-.position-list-surface [data-position-list] td small { display:block; margin-top:4px; font-size:11px; color:var(--muted); }
+.position-list-surface [data-position-list] td { padding:8px 10px; font-size:var(--list-body-font); line-height:var(--list-line-height); white-space:normal; overflow-wrap:anywhere; }
+.position-list-surface [data-position-list] td small { display:block; margin-top:3px; font-size:var(--list-meta-font); color:var(--muted); }
 .position-list-surface [data-position-list] button { min-height:32px; padding:5px 8px; font-size:12px; }
 @media(max-width:600px) {
   .position-list-surface [data-position-list] .table-wrap { overflow:visible; }
@@ -2079,7 +2079,7 @@
   .position-list-surface [data-position-list] tr[data-position-row] { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); padding:8px; border-bottom:1px solid var(--line); }
   .position-list-surface [data-position-list] td { display:block; padding:5px; border:0; }
   .position-list-surface [data-position-list] td:first-child { grid-column:1/-1; }
-  .position-list-surface [data-position-list] td::before { content:attr(data-label); display:block; margin-bottom:3px; color:var(--muted); font-size:10px; }
+  .position-list-surface [data-position-list] td::before { content:attr(data-label); display:block; margin-bottom:3px; color:var(--muted); font-size:var(--list-meta-font); }
 }
 @media(max-width:600px) {
   .account-metadata-scope { padding:12px; }
@@ -2093,6 +2093,6 @@
   .account-ref-table tr { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); border-bottom:1px solid var(--line); padding:8px; }
   .account-ref-table td { display:block; border:0; padding:5px; }
   .account-ref-table td:first-child,.account-ref-table td:last-child { grid-column:1/-1; }
-  .account-ref-table td::before { content:attr(data-label); display:block; color:var(--muted); font-size:10px; margin-bottom:3px; }
+  .account-ref-table td::before { content:attr(data-label); display:block; color:var(--muted); font-size:var(--list-meta-font); margin-bottom:3px; }
   .account-list-pager { justify-content:center; flex-wrap:wrap; }
 }

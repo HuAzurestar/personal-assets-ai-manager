@@ -10,6 +10,7 @@ import httpx
 import uvicorn
 from playwright.sync_api import expect, sync_playwright
 from browser_artifact import viewport_evidence
+from browser_list import assert_full_list_text, assert_list_readability
 from serve_m2_ui import prepare_app
 
 
@@ -53,7 +54,8 @@ def run():
                 assert closed.status_code == 200, closed.text
                 card("Mock independent unassigned", 0)
                 for number in range(1, 21):
-                    card(f"Mock A card {number:02d}", groups[0]["id"])
+                    card(f"Mock A card {number:02d}" + (
+                        ' 完全虚构的长中文来源卡名称用于检查来源机构与账户身份完整可读而不是省略号' if number == 1 else ''), groups[0]["id"])
                 card("Mock A reserve card", groups[1]["id"])
                 before = {name: client.get(api + path).json()["body"]["total"] for name, path in (
                     ("facts", "/transaction_fact/list"), ("flows", "/flow/list"), ("refs", "/account-ref/list"))}
@@ -75,6 +77,15 @@ def run():
                     expect(root.locator("[data-account-count]")).to_contain_text("共 22 项")
                     assert root.locator("table").count() == 1
                     assert rows.first.bounding_box()["height"] <= 100
+                    for width in (1440, 1280, 1100, 820, 390, 320):
+                        page.set_viewport_size({'width': width, 'height': 900})
+                        assert_list_readability(page, rows.first,
+                            rows.first.locator('td').first.locator('strong'),
+                            rows.first.locator('td').first.locator('small'))
+                        long_title = rows.filter(has_text='Mock A card 01').locator('td').first.locator('strong')
+                        assert_full_list_text(long_title, '完全虚构的长中文来源卡名称用于检查来源机构与账户身份完整可读而不是省略号')
+                        viewport_evidence(page, f'dev17-list-account-{width}')
+                    page.set_viewport_size({'width': 1440, 'height': 900})
                     sidebar = root.locator('.account-metadata-scope').bounding_box()
                     cards = root.locator('.account-card-surface').bounding_box()
                     assert sidebar['y'] == cards['y'] and sidebar['x'] + sidebar['width'] < cards['x']

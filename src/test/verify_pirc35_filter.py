@@ -14,7 +14,7 @@ import uvicorn
 from playwright.sync_api import expect, sync_playwright
 
 from browser_artifact import viewport_evidence
-from browser_list import assert_list_readability
+from browser_list import assert_full_list_text, assert_list_readability
 from serve_m2_ui import prepare_app
 
 
@@ -26,6 +26,8 @@ def assert_common_row(page, form, currency_name, evidence):
         row = page.locator('#page-content .detail-data-table tbody tr').first
         assert_list_readability(page, row, row.locator('.detail-primary strong'),
             row.locator('.detail-primary small'), amount=row.locator('.fact-amount'), max_height=90)
+        long_title = page.locator('#page-content .detail-primary strong').filter(has_text='Mock filter Reserve')
+        assert_full_list_text(long_title, '这是一条完全虚构的长中文账单摘要用于验证来源与业务内容不会被省略号隐藏')
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), width
         if width > 1100:
             common = [form.locator(selector).bounding_box() for selector in
@@ -64,7 +66,8 @@ def run():
             db.flush()
             rows = [TransactionFact(fact_key=f'mock-filter-{name}',
                 occurred_time=datetime(2026, 9, day, tzinfo=timezone.utc), cash_direction=direction,
-                amount=1000, currency_code='CNY', account_code='', summary=f'Mock filter {name}')
+                amount=1000, currency_code='CNY', account_code='', summary=f'Mock filter {name}' + (
+                    ' 这是一条完全虚构的长中文账单摘要用于验证来源与业务内容不会被省略号隐藏' if name == 'Reserve' else ''))
                 for name, day, direction in [('Alpha', 1, 1), ('Reserve', 2, 2), ('Unknown', 3, 1)]]
             db.add_all(rows)
             db.flush()
