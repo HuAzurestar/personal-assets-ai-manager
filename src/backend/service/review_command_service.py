@@ -19,6 +19,7 @@ from backend.mapper.trusted_relation_mapper import TrustedRelationMapper
 from backend.schema.review_command import ReviewChangeInput, ReviewCommandInput
 from backend.service.review_intent_service import expand, raw_draft, reject, validate_duplicate_keepers
 from backend.service.target_tag_projection_service import TargetTagProjectionService
+from backend.service.account_correction_service import account_correction_drafts
 
 
 REVIEW_NAMES = {0: "NORMAL_TRANSACTION", 1: "BORROW_AND_REPAY", 2: "CREDIT_CARD",
@@ -90,7 +91,9 @@ class ReviewCommandService:
 
     def _plan(self, intent):
         raw = [raw_draft(row) for row in intent.new_reviews]
-        selected = set(intent.activate_review_ids) | set(intent.deactivate_review_ids)
+        corrections, correction_ids = account_correction_drafts(self.mapper,intent.account_corrections,intent.correction_duplicates)
+        raw.extend(corrections)
+        selected = set(intent.activate_review_ids) | set(intent.deactivate_review_ids) | correction_ids
         selected_bundle = self.mapper.bundle(selected)
         selected_reviews = {row["id"]: row for row in selected_bundle["reviews"]}
         if set(selected_reviews) != selected:
@@ -111,7 +114,7 @@ class ReviewCommandService:
             incoming.update(row["transaction_id"] for row in draft["duplicate_transactions"])
             raw_ids.update(row["kept_transaction_id"] for row in draft["duplicate_transactions"])
         current_incoming = self.mapper.allocations_for_facts(incoming, active=True)
-        conflicts = {row["review_id"] for row in current_incoming} - set(intent.activate_review_ids)
+        conflicts = ({row["review_id"] for row in current_incoming} - set(intent.activate_review_ids)) | correction_ids
         closing = conflicts | set(intent.deactivate_review_ids)
         affected_bundle = self.mapper.bundle(selected | closing)
         affected = incoming | {row["transaction_id"] for row in affected_bundle["allocations"]}
@@ -163,7 +166,8 @@ class ReviewCommandService:
         parties = {row["id"]: row for row in self.mapper.named_rows("parties", party_ids)}
         sources = {row["id"]: row for row in self.mapper.named_rows("legs", source_ids)}
         source_reviews = {row["id"]: row for row in self.mapper.named_rows("reviews", [row["review_id"] for row in sources.values()])}
-        if any(row["review_id"] in closing for row in sources.values()):
+        copied_sources = {leg['copied_leg_id'] for draft in corrections for leg in draft['legs'] if leg['leg_direction']=='IN'}
+        if any(row["review_id"] in closing and row['id'] not in copied_sources for row in sources.values()):
             reject("POSITION_SOURCE_INVALID", "this command would deactivate a new leg's source", status=409)
         drafts = [expand(draft, facts, positions, refs, parties, sources, source_reviews, default_refs,
                          defer_duplicate_source=True) for draft in raw]
@@ -286,7 +290,9 @@ class ReviewCommandService:
         preview_drafts = [dict(case_code=draft["case_code"], type=REVIEW_NAMES[draft["type"]], title=draft["title"],
             allocations=[{key: row[key] for key in ("transaction_id", "economic_type", "cash_amount", "account_ref_id")}
                          for row in draft["allocations"]], new_positions=draft["new_positions"], legs=draft["legs"],
-            position_allocations=draft["position_allocations"]) for draft in drafts]
+            position_allocations=draft["position_allocations"],
+            **({key:draft[key] for key in ('source_review_id','copied_ledger_ids','account_changes')}
+                if draft['case_code']=='ACCOUNT_CORRECTION' else {})) for draft in drafts]
         preview = dict(reviews=[review_po(review_rows[rid]) for rid in sorted(states)],
             new_reviews=preview_drafts, position_changes=changes, coverage=[dict(transaction_id=fid, cash_amount=facts[fid]["amount"],
                                              effective_cash_amount=final_coverage[fid]) for fid in sorted(affected)],

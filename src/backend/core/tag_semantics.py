@@ -3,9 +3,10 @@ from collections import defaultdict
 
 
 def position_description(identity, position, leg, link):
+    source = ('REPLACEMENT',leg['replacement_source_leg_id']) if leg.get('replacement_source_leg_id') else leg.get('source_position_leg_id',leg.get('source',0))
     return (identity, position["type"], position["usage_scenario"], position["unit_code"],
             leg["type"], leg["leg_direction"], leg["leg_amount"], leg["occurred_time"],
-            leg["basis"], leg.get("source_position_leg_id", leg.get("source", 0)),
+            leg["basis"], source,
             link["cash_amount"], link["cash_currency_code"])
 
 

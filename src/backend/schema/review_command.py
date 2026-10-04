@@ -122,6 +122,12 @@ class ExpectedReview(Intent):
         return self
 
 
+class AccountCorrection(Intent):
+    """Only a selected immutable Ledger's account may change."""
+    ledger_id: PositiveId
+    account_ref_id: NonnegativeId
+
+
 class ReviewChangeInput(Intent):
     deactivate_review_ids: list[PositiveId] = Field(default_factory=list, max_length=100)
     activate_review_ids: list[PositiveId] = Field(default_factory=list, max_length=100)
@@ -130,6 +136,9 @@ class ReviewChangeInput(Intent):
     # Historical immutable cash rows do not store a guessed duplicate anchor.
     # Reactivation therefore needs a fresh explicit decision, never inference.
     activation_duplicates: list[DuplicateTransaction] = Field(default_factory=list, max_length=2000)
+    account_corrections: list[AccountCorrection] = Field(default_factory=list, max_length=100)
+    # Published DUP outputs do not persist an inferred keeper. Recheck explicitly.
+    correction_duplicates: list[DuplicateTransaction] = Field(default_factory=list, max_length=2000)
 
     @model_validator(mode="after")
     def unambiguous(self):
@@ -142,7 +151,17 @@ class ReviewChangeInput(Intent):
         ids = [row.transaction_id for row in self.activation_duplicates]
         if len(ids) != len(set(ids)):
             raise ValueError("duplicate activation evidence selection")
-        if not (self.deactivate_review_ids or self.activate_review_ids or self.new_reviews):
+        corrections = [row.ledger_id for row in self.account_corrections]
+        if len(corrections) != len(set(corrections)):
+            raise ValueError("duplicate Ledger correction")
+        if self.account_corrections and (self.deactivate_review_ids or self.activate_review_ids or self.new_reviews or self.activation_duplicates):
+            raise ValueError("account correction cannot include other business decisions")
+        if self.correction_duplicates and not self.account_corrections:
+            raise ValueError("duplicate keeper is unrelated to account correction")
+        keepers = [row.transaction_id for row in self.correction_duplicates]
+        if len(keepers) != len(set(keepers)):
+            raise ValueError("duplicate correction keeper")
+        if not (self.deactivate_review_ids or self.activate_review_ids or self.new_reviews or self.account_corrections):
             raise ValueError("empty Review change")
         return self
 

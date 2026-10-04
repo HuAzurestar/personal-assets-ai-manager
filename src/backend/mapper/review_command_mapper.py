@@ -40,6 +40,7 @@ class ReviewCommandMapper:
 
     def named_rows(self, name, ids, key="id"):
         entities = {"facts": TransactionFact, "reviews": ReviewCase, "positions": Position,
+                    "ledgers": LedgerEntry,
                     "legs": PositionLeg, "refs": LedgerAccountRef, "accounts": LedgerAccount,
                     "parties": LedgerAccountParty, "tags": LedgerEntryTag, "requests": TagAssignmentRequest,
                     "rules": AutoTagRule}
@@ -86,6 +87,9 @@ class ReviewCommandMapper:
         ledgers = self.rows(LedgerEntry, LedgerEntry.id, [row["ledger_id"] for row in allocations])
         return dict(reviews=reviews, allocations=allocations, ledger_entries=ledgers,
                     position_legs=legs, position_allocations=links)
+
+    def allocations_for_ledgers(self, ids):
+        return self.rows(ReviewAllocation, ReviewAllocation.ledger_id, ids, limit=4000)
 
     def dependents(self, ids):
         return self.rows(PositionLeg, PositionLeg.source_position_leg_id, ids, limit=4000)
@@ -179,8 +183,8 @@ class ReviewCommandMapper:
                 fact = facts[split["transaction_id"]]
                 ledgers.append(LedgerEntry(entry_type=split["entry_type"], entry_direction=fact["cash_direction"],
                     amount=split["cash_amount"], currency_code=fact["currency_code"],
-                    account_ref_id=split["account_ref_id"], account_code=fact["account_code"],
-                    counterparty_account_ref=fact["counterparty_account_ref"], occurred_time=fact["occurred_time"],
+                    account_ref_id=split["account_ref_id"], account_code=split.get('original_account_code',fact["account_code"]),
+                    counterparty_account_ref=split.get('original_counterparty_account_ref',fact["counterparty_account_ref"]), occurred_time=fact["occurred_time"],
                     created_time=now, updated_time=now))
             legs = [PositionLeg(position_id=(leg["existing_position_id"] if leg["existing_position_id"] is not None
                      else position_group[leg["new_position_index"]].id), review_id=review.id,
@@ -190,6 +194,16 @@ class ReviewCommandMapper:
             ledger_groups.append(ledgers)
             leg_groups.append(legs)
         self.db.add_all([row for group in ledger_groups + leg_groups for row in group])
+        self.db.flush()
+        # Resolve only server-derived correction copies inside this unpublished
+        # transaction. No old leg/output is updated and no ID is guessed.
+        copied_sources={leg['copied_leg_id']:row.id for draft,group in zip(drafts,leg_groups)
+            for leg,row in zip(draft['legs'],group) if 'copied_leg_id' in leg}
+        for draft,group in zip(drafts,leg_groups):
+            for leg,row in zip(draft['legs'],group):
+                source=leg.get('replacement_source_leg_id')
+                if source:
+                    row.source_position_leg_id=copied_sources[source]
         self.db.flush()
         if fault:
             fault("outputs")
