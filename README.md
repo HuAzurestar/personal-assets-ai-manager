@@ -106,8 +106,13 @@ PIRC-40 将公共能力集中到 `src/middleware/{llm,schedule,config}`，由 ba
 - 模型目标默认 HTTPS；本地/内网明文 HTTP 必须在该保存连接上明确选择
   `allow_insecure_http=true`。生成、目录及连接检查均拒绝 URL 内嵌凭据和自动重定向。
   `PAAM_LLM_PROXY` 是显式部署代理，普通 HTTP_PROXY/HTTPS_PROXY 不被使用。
+- 保存与调用共用生成参数校验：支持 `temperature`、`top_p`、`max_tokens`、
+  `max_completion_tokens`、`seed`、`presence_penalty`、`frequency_penalty`、
+  `reasoning_effort` 及 `extra_body.enable_thinking`。未知参数或越界值在保存前拒绝；
+  任意供应商扩展需先加入公共调用合同，不能仅保存后等到执行时报错。
 - `PAAM_SCAN_ENABLED=true/false`（严格 JSON 布尔值）可覆盖保存开关；
   设置页及 `/paam/system/v1/config` 区分保存、有效来源与安装状态。
+  `/paam/system/v1/schedule/status` 使用已安装配置及可用状态；应用失败时显示关闭。
   共享引擎的 `system:config-reconcile` 有界检查负责收敛，无第二条定时循环。
 - pause 不取消已准入当前项；cancel/remove 撤销未提交结果。取消等待后仍排空真实
   SDK worker，不能立即复用同 key/全局 SDK 锁。默认部署仍限定单进程。

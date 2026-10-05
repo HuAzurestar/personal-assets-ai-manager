@@ -14,6 +14,18 @@ from backend.core.job_scheduler import JobScheduler
 from middleware.config import ConfigApplier, ConfigDefinition, ConfigResolver
 
 
+def scan_control_definition():
+    return ConfigDefinition("scan-control", bool, "true", "tag-scheduler",
+                            sources=("deployment", "persisted", "default"),
+                            env_key="PAAM_SCAN_ENABLED", failure_policy="disable")
+
+
+def resolve_scan_enabled(saved):
+    resolver = ConfigResolver()
+    resolver.register(scan_control_definition())
+    return resolver.resolve("scan-control", {"scan-control": saved}, None, dict(os.environ)).value
+
+
 class _ScheduleValue(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: int
@@ -87,10 +99,9 @@ class _ScheduleInstaller:
 
 class RuntimeConfigService:
     def __init__(self, sessions, schedule):
+        self.schedule = schedule
         self.resolver = ConfigResolver()
-        self.resolver.register(ConfigDefinition("scan-control", bool, "true", "tag-scheduler",
-                                               sources=("deployment", "persisted", "default"),
-                                               env_key="PAAM_SCAN_ENABLED", failure_policy="disable"))
+        self.resolver.register(scan_control_definition())
         self.resolver.register(ConfigDefinition("tag-schedule", list[_ScheduleValue], "[]", "tag-scheduler",
                                                failure_policy="disable"))
         self.applier = ConfigApplier(self.resolver, _Storage(sessions), lambda: dict(os.environ))
@@ -101,6 +112,11 @@ class RuntimeConfigService:
 
     def sync_rule(self, rule_id):
         return self.reconcile()
+
+    def scan_enabled(self):
+        with self.schedule._scheduler.configuration_guard():
+            return (self.applier.state("tag-scheduler").available
+                    and self.schedule.effective_enabled is True)
 
     def describe(self):
         state = asdict(self.applier.state("tag-scheduler"))

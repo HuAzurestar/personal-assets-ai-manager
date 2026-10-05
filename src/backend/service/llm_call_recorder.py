@@ -55,6 +55,7 @@ class SqlCallRecorder:
         if response:
             # SDK headers and exception bodies never cross this allowlist.
             metadata.update(model=response.model[:512], finish_reason=response.finish_reason[:32])
+            metadata["envelope_validated"] = True
             if response.provider_request_id:
                 metadata["provider_request_id"] = response.provider_request_id[:160]
         with self.sessions() as db:

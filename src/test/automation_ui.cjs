@@ -147,7 +147,7 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
   const scan = fs.readFileSync(path.resolve(__dirname, "../backend/service/auto_tag_scan_service.py"), "utf8");
   backendCodes.push(...[...scan.matchAll(/, "((?:RULE_|VIEW_|MODEL_)[A-Z_]+|NO_ACTIVE_TARGETS)"\)/g)].map(match => match[1]));
   backendCodes.push(...[...scan.matchAll(/return report\("([A-Z_]+)"\)/g)].map(match => match[1]).filter(code => !["NO_DATA", "PAGE_COMPLETE", "RETRY_DEFERRED", "RULE_TOKEN_CHANGED"].includes(code)));
-  for (const errorCode of new Set([...backendCodes, "RULE_NOT_FOUND", "RULE_DISABLED", "VIEW_INACTIVE", "SOFT_BUDGET_EXHAUSTED", "COUNTER_EXHAUSTED", "COMMIT_FAILED"])) {
+  for (const errorCode of new Set([...backendCodes, "RULE_NOT_FOUND", "RULE_DISABLED", "VIEW_INACTIVE", "SOFT_BUDGET_EXHAUSTED", "COUNTER_EXHAUSTED", "COMMIT_FAILED", "RULE_TOKEN_CHANGED", "CANCELLED", "AUDIT_STORAGE_ERROR", "AUDIT_FINISH_FAILED", "OPERATION_BLOCKED"])) {
     assert.doesNotMatch(context.testScheduleExplanation(errorCode), /执行失败，请查看服务端日志/, errorCode);
   }
   assert.doesNotMatch(code, /RATE_LIMITED:|REGISTRATION_FAILED:/);
@@ -229,7 +229,9 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
   assert.doesNotMatch(settings, /<details/);
   assert.match(settings, /测试真实连接/);
   assert.match(settings, /可能计费/);
-  assert.equal((settings.match(/class="automation-section"/g) || []).length, 4);
+  assert.equal((settings.match(/class="automation-section"/g) || []).length, 5);
+  assert.match(settings, /公共 Prompt/);
+  assert.match(settings, /data-action="prompt-library"/);
   assert.equal((settings.match(/data-auto-notice/g) || []).length, 1);
   assert.doesNotMatch(settings, /interaction-demo|M2 交互演示|automation-hero/);
 
@@ -244,6 +246,20 @@ vm.runInContext(`${code}\nglobalThis.testPanel = autoRulesPanel; globalThis.test
   assert.equal(context.ruleExecution(rule, null, model, views[0]).label, "状态未知");
   assert.equal(context.ruleExecution({ ...rule, enabled: false }, null, model, views[0]).label, "已停用");
   assert.equal(context.ruleExecution(rule, schedule, { ...model, enabled: false }, views[0]).label, "模型不可用");
+
+  for (const enabled of [true, false]) {
+    context.overrideSetting = { ...setting, scan_enabled: !enabled, config_state: {
+      sections: [{ section: "scan-control", effective_value: enabled, overridden: true }],
+      apply: { status: "APPLIED", available: true },
+    } };
+    vm.runInContext('setting = overrideSetting', context);
+    const control = vm.runInContext('scanControlMarkup()', context);
+    assert.match(control, new RegExp(`自动分析：${enabled ? "已开启" : "已关闭"}`));
+    assert.match(control, /有效值由部署覆盖/);
+    assert.match(control, /data-action="scan-toggle" disabled/);
+  }
+  context.overrideSetting = setting;
+  vm.runInContext('setting = overrideSetting', context);
 
   const draft = { prompt: rule.method_config.prompt, model_id: "2", amount_mode: "1", name: "仅改名", cron: "* * * * *", enabled: false };
   assert.equal(context.semanticRuleChange(rule, draft), false);

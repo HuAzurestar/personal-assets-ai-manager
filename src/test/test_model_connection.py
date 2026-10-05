@@ -45,7 +45,8 @@ def test_probe_is_one_bounded_audited_call_without_bill_reads(probe, monkeypatch
 
     def complete(**request):
         calls.append(request)
-        return {'choices': [{'message': {'content': 'raw-private-provider-result'}}]}
+        return {'choices': [{'index': 0, 'finish_reason': 'stop',
+                             'message': {'role': 'assistant', 'content': 'raw-private-provider-result'}}]}
 
     monkeypatch.setattr(connection, '_direct_litellm_completion', complete)
     event.listen(engine, 'before_cursor_execute', lambda c, cur, statement, p, ctx, many: sql.append(statement))
@@ -61,7 +62,7 @@ def test_probe_is_one_bounded_audited_call_without_bill_reads(probe, monkeypatch
     assert request['proxy_url'] is None
     assert request['num_retries'] == request['max_retries'] == 0
     assert request['caching'] is False and request['stream'] is False
-    assert 'provider_zero' not in request
+    assert 'presence_penalty' not in request
     assert all('FROM ledger' not in statement and 'transaction_fact' not in statement.lower() for statement in sql)
     assert any('INSERT INTO llm_prompt_audit' in statement for statement in sql)
     assert any('UPDATE llm_prompt_audit' in statement for statement in sql)
@@ -106,7 +107,8 @@ def test_duplicate_probe_is_rejected_until_first_finishes(probe, monkeypatch):
     def slow(**kw):
         entered.set()
         assert release.wait(5)
-        return {'choices': [{'message': {'content': 'OK'}}]}
+        return {'choices': [{'index': 0, 'finish_reason': 'stop',
+                             'message': {'role': 'assistant', 'content': 'OK'}}]}
 
     monkeypatch.setattr(connection, '_direct_litellm_completion', slow)
     with ThreadPoolExecutor(max_workers=1) as pool:

@@ -54,7 +54,16 @@ blocks automatic tag re-dispatch for that item, even after a new process or rule
 revision. A post-audit failure must repair the original row, not generate again.
 `ERROR` stores only a safe code; no SDK exception body is retained. `SUCCEEDED`
 describes provider success, not a valid or committed suggestion. Legacy REJECTED,
-SUGGESTED and INSUFFICIENT rows are preserved. Responses over 256 KiB are
+SUGGESTED and INSUFFICIENT rows are preserved as RESPONSE_RECEIVED, including
+repair of databases upgraded by the initial PIRC-40 migration. Legacy STARTED
+and ERROR rows remain uncertain. Completed legacy rows do not block analysis
+after a semantic rule change. Recoverable SUCCEEDED rows must carry the
+`envelope_validated=true` marker: choice, role, refusal, tool calls and finish
+reason are checked before projecting and persisting the response. Older
+SUCCEEDED rows without this marker cannot be safely restored or resent.
+Cancellation before outbound admission prevents sending and finishes the audit
+as ERROR/CANCELLED with NOT_SENT; an admitted worker is drained to completion.
+Responses over 256 KiB are
 truncated and marked with `response_truncated=1`.
 
 `request_json` contains the exact system/user messages and response format sent

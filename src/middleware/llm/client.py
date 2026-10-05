@@ -5,10 +5,11 @@ import asyncio
 import math
 import hmac
 from collections.abc import Mapping
+from threading import Event, Lock
 from .contract import LlmError, LlmResponse
 
 
-async def drain_on_cancel(task):
+async def drain_on_cancel(task, *, on_cancel=None):
     """Keep ownership until real execution ends, even after repeated cancellation."""
     cancelled = False
     while True:
@@ -19,6 +20,8 @@ async def drain_on_cancel(task):
             if task.cancelled():
                 raise
             cancelled = True
+            if on_cancel is not None:
+                on_cancel()
         except Exception:
             if cancelled:
                 raise asyncio.CancelledError() from None
@@ -67,12 +70,19 @@ class LlmClient:
         if not self._accepting:
             raise LlmError("CANCELLED")
         # Tasks and any async provider resources belong to this lifespan/loop.
-        task = asyncio.create_task(self._generate(request, connection, context, admission))
+        cancelled = Event()
+        dispatch_lock = Lock()
+
+        def cancel():
+            with dispatch_lock:
+                cancelled.set()
+
+        task = asyncio.create_task(self._generate(request, connection, context, admission, cancelled, dispatch_lock))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
-        return await drain_on_cancel(task)
+        return await drain_on_cancel(task, on_cancel=cancel)
 
-    async def _generate(self, request, connection, context, admission):
+    async def _generate(self, request, connection, context, admission, cancelled, dispatch_lock):
         provider = self.providers.get(connection.provider_driver)
         if provider is None:
             raise LlmError("CONFIG_INVALID")
@@ -92,6 +102,8 @@ class LlmClient:
 
         def before_dispatch():
             nonlocal state
+            if cancelled.is_set() or not self._accepting:
+                raise LlmError("CANCELLED")
             if state != "NOT_SENT":
                 raise LlmError("CONFIG_INVALID")
             # Persist before checking dynamic authorization. Admission rejection
@@ -110,7 +122,12 @@ class LlmClient:
                 raise LlmError("AUTH_FAILED") from None
             if admission.admit(connection, context) is not True:
                 raise LlmError("CANCELLED")
-            state = "MAY_HAVE_EXECUTED"
+            # Cancellation and outbound admission have one ordering boundary.
+            # Once admitted, retain worker ownership and finish its audit.
+            with dispatch_lock:
+                if cancelled.is_set() or not self._accepting:
+                    raise LlmError("CANCELLED")
+                state = "MAY_HAVE_EXECUTED"
 
         response = None
         error = None
@@ -119,7 +136,20 @@ class LlmClient:
             state = "RESPONSE_RECEIVED"
             choices = field(raw, "choices")
             choice = choices[0] if isinstance(choices, (list, tuple)) and len(choices) == 1 else None
-            content = field(field(choice, "message"), "content")
+            message = field(choice, "message")
+            status = field(raw, "status_code")
+            if (choice is None or field(choice, "index") not in (None, 0)
+                    or message is None or field(message, "role") not in (None, "assistant")
+                    or field(message, "tool_calls")
+                    or (isinstance(status, int) and status != 200)):
+                raise LlmError("RESPONSE_INVALID")
+            if field(message, "refusal"):
+                raise LlmError("MODEL_REFUSED")
+            if field(choice, "finish_reason") == "length":
+                raise LlmError("RESPONSE_TRUNCATED")
+            if field(choice, "finish_reason") != "stop":
+                raise LlmError("RESPONSE_INVALID")
+            content = field(message, "content")
             if not isinstance(content, str) or not content.strip():
                 raise LlmError("RESPONSE_INVALID")
             usage = field(raw, "usage")

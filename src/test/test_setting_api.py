@@ -83,8 +83,7 @@ def _model_payload(*, temperature: float = 0.0, name: str = "Free model"):
             "temperature": temperature,
             "max_tokens": 512,
             "timeout": 60,
-            "provider_zero": 0,
-            "provider_flag": False,
+            "presence_penalty": 0,
             "extra_body": {"enable_thinking": False},
         },
     }
@@ -117,8 +116,7 @@ def test_model_configuration_secret_lifecycle_and_restart(setting_runtime, monke
         token = created_body["updated_time"]
         params = created_body["models"][0]["litellm_params"]
         assert params["temperature"] == 0
-        assert params["provider_zero"] == 0
-        assert params["provider_flag"] is False
+        assert params["presence_penalty"] == 0
         assert params["extra_body"]["enable_thinking"] is False
         assert created_body["models"][0]["key_configured"] is False
 
@@ -180,8 +178,8 @@ def test_model_configuration_secret_lifecycle_and_restart(setting_runtime, monke
     persisted_params = json.loads(persisted)["automation"]["models"][0][
         "litellm_params"
     ]
-    assert persisted_params["provider_zero"] == 0
-    assert persisted_params["provider_flag"] is False
+    assert persisted_params["presence_penalty"] == 0
+    assert persisted_params["extra_body"]["enable_thinking"] is False
 
     # A new app/client and fresh SQLAlchemy sessions recover the same profile.
     with _client(sessions, store) as restarted_client:
@@ -355,7 +353,7 @@ def test_parameter_change_invalidates_rules_and_uses_exact_lock_token(
             assert db.scalar(select(AutoTagRule)).rule_revision == 2
 
         typed_change_model = _model_payload(temperature=0.25, name="Renamed")
-        typed_change_model["litellm_params"]["provider_zero"] = False
+        typed_change_model["litellm_params"]["extra_body"]["enable_thinking"] = True
         typed_change_model["litellm_params"]["proxy_url"] = "http://proxy.test:7890"
         typed_change = client.put(
             "/paam/system/v1/setting/automation",

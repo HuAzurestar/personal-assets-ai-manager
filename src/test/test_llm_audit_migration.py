@@ -1,4 +1,5 @@
 import sqlite3
+import json
 from pathlib import Path
 import pytest
 from backend.core.llm_audit_migration import LEGACY_COLUMNS, migrate_llm_audit
@@ -47,4 +48,37 @@ def test_unknown_schema_is_refused_without_modification():
     with pytest.raises(RuntimeError):
         migrate_llm_audit(db, ASSET)
     assert [r[1] for r in db.execute("PRAGMA table_info(llm_prompt_audit)")] == ["id"]
+    db.close()
+
+
+@pytest.mark.parametrize("status,state", [
+    ("INSUFFICIENT", "RESPONSE_RECEIVED"), ("SUGGESTED", "RESPONSE_RECEIVED"),
+    ("REJECTED", "RESPONSE_RECEIVED"), ("STARTED", "MAY_HAVE_EXECUTED"),
+    ("ERROR", "MAY_HAVE_EXECUTED"),
+])
+def test_migration_distinguishes_completed_and_uncertain_calls(status, state):
+    db, _ = legacy()
+    db.execute("UPDATE llm_prompt_audit SET status = ?", (status,))
+    db.commit()
+    migrate_llm_audit(db, ASSET)
+    metadata = json.loads(db.execute("SELECT metadata_json FROM llm_prompt_audit").fetchone()[0])
+    assert metadata == {"legacy": True, "dispatch_state": state}
+    db.close()
+
+
+def test_migration_repairs_original_upgrade_without_touching_new_calls():
+    db, expected = legacy()
+    migrate_llm_audit(db, ASSET)
+    db.execute("UPDATE llm_prompt_audit SET metadata_json = ?", (
+        '{"legacy":true,"dispatch_state":"MAY_HAVE_EXECUTED","retained":"fixture"}',))
+    db.commit()
+    migrate_llm_audit(db, ASSET)
+    assert db.execute("SELECT " + ",".join(LEGACY_COLUMNS) + " FROM llm_prompt_audit").fetchone() == expected
+    assert json.loads(db.execute("SELECT metadata_json FROM llm_prompt_audit").fetchone()[0]) == {
+        "legacy": True, "dispatch_state": "RESPONSE_RECEIVED", "retained": "fixture"}
+    db.execute("UPDATE llm_prompt_audit SET metadata_json = ?", ('{"dispatch_state":"MAY_HAVE_EXECUTED"}',))
+    db.commit()
+    migrate_llm_audit(db, ASSET)
+    assert json.loads(db.execute("SELECT metadata_json FROM llm_prompt_audit").fetchone()[0]) == {
+        "dispatch_state": "MAY_HAVE_EXECUTED"}
     db.close()

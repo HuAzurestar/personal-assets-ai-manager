@@ -17,6 +17,7 @@ from pydantic import (
 from backend.core.money import MAX_ABS_AMOUNT, normalize_currency_code
 from backend.schema.response import SuccessResponse
 from backend.schema.runtime_config import RuntimeConfigRead
+from middleware.llm.contract import LlmError, LlmRequest, REASONING_EFFORTS
 
 
 _FORBIDDEN_PARAMETER_KEYS = {
@@ -41,7 +42,7 @@ _FORBIDDEN_PARAMETER_KEYS = {
     "set_verbose", "suppress_debug_info", "log_raw_request_response", "drop_params",
 }
 
-_TEXT_PARAMETER_ENUMS = {"reasoning_effort": {"none", "minimal", "low", "medium", "high", "xhigh"}}
+_TEXT_PARAMETER_ENUMS = {"reasoning_effort": REASONING_EFFORTS}
 
 
 def _validate_provider_value(value: Any, *, path: tuple[str, ...] = ()) -> None:
@@ -79,7 +80,7 @@ def _validate_provider_value(value: Any, *, path: tuple[str, ...] = ()) -> None:
 
 
 class LiteLLMParams(BaseModel):
-    """Validated LiteLLM configuration while retaining provider extensions."""
+    """Saved connection and generation options share the invocation contract."""
 
     model_config = ConfigDict(extra="allow")
 
@@ -125,6 +126,13 @@ class LiteLLMParams(BaseModel):
     def require_http_authorization(self):
         if urlsplit(self.api_base).scheme == "http" and not self.allow_insecure_http:
             raise ValueError("HTTP requires explicit authorization for this connection")
+        options = self.model_dump(exclude_none=True)
+        for name in ("model", "api_base", "proxy_url", "timeout", "allow_insecure_http"):
+            options.pop(name, None)
+        try:
+            LlmRequest.build([{"role": "user", "content": ""}], generation_options=options)
+        except LlmError:
+            raise ValueError("unsupported generation option or value; check model parameters") from None
         return self
 
     @field_validator("proxy_url")

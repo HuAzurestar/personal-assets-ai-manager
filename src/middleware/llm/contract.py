@@ -13,11 +13,14 @@ def canonical(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
-OPTIONS = frozenset({"temperature", "top_p", "max_tokens", "max_completion_tokens", "seed", "extra_body"})
+OPTIONS = frozenset({"temperature", "top_p", "max_tokens", "max_completion_tokens", "seed", "extra_body",
+                     "presence_penalty", "frequency_penalty", "reasoning_effort"})
 EXTENSIONS = frozenset({"enable_thinking"})
+REASONING_EFFORTS = frozenset({"none", "minimal", "low", "medium", "high", "xhigh"})
 ERROR_CODES = frozenset({"CONFIG_INVALID", "AUTH_FAILED", "MODEL_DISABLED", "CANCELLED",
                          "TIMEOUT", "RATE_LIMITED", "PROVIDER_FAILED", "RESPONSE_INVALID",
-                         "AUDIT_BEGIN_FAILED", "AUDIT_FINISH_FAILED", "OPERATION_BLOCKED", "UNKNOWN_ERROR"})
+                         "AUDIT_BEGIN_FAILED", "AUDIT_FINISH_FAILED", "OPERATION_BLOCKED", "UNKNOWN_ERROR",
+                         "MODEL_REFUSED", "RESPONSE_TRUNCATED"})
 
 
 @dataclass(frozen=True)
@@ -49,6 +52,9 @@ class LlmRequest:
                 if name == "extra_body":
                     if not isinstance(item, dict) or set(item) - EXTENSIONS or any(type(v) is not bool for v in item.values()):
                         raise ValueError()
+                elif name == "reasoning_effort":
+                    if not isinstance(item, str) or item not in REASONING_EFFORTS:
+                        raise ValueError()
                 elif type(item) not in (int, float) or not math.isfinite(item):
                     raise ValueError()
                 elif name in {"max_tokens", "max_completion_tokens"} and (type(item) is not int or not 1 <= item <= 65536):
@@ -56,6 +62,8 @@ class LlmRequest:
                 elif name == "temperature" and not 0 <= item <= 2:
                     raise ValueError()
                 elif name == "top_p" and not 0 < item <= 1:
+                    raise ValueError()
+                elif name in {"presence_penalty", "frequency_penalty"} and not -2 <= item <= 2:
                     raise ValueError()
                 elif name == "seed" and (type(item) is not int or not -2**31 <= item < 2**31):
                     raise ValueError()

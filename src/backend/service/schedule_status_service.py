@@ -12,6 +12,7 @@ from backend.mapper.setting_mapper import SettingMapper
 from backend.schema.schedule import ScheduleStatusRead, ScheduleTaskRead
 from backend.schema.list_query import iter_filter_fields
 from backend.schema.response import ListBody
+from backend.service.runtime_config_service import resolve_scan_enabled
 
 
 class ScheduleStatusService:
@@ -22,16 +23,26 @@ class ScheduleStatusService:
         *,
         synthetic_acceptance_enabled: bool,
         real_analysis_enabled: bool = False,
+        runtime_config=None,
     ):
         self._scheduler = scheduler
         self._sessions = sessions
         self._synthetic_acceptance_enabled = synthetic_acceptance_enabled
         self._real_analysis_enabled = real_analysis_enabled
+        self._runtime_config = runtime_config
 
     def get(self) -> ScheduleStatusRead:
         snapshot = self._scheduler.snapshot()
-        with self._sessions() as db:
-            scan_enabled = SettingMapper(db).scan_enabled()
+        if self._runtime_config is not None:
+            scan_enabled = self._runtime_config.scan_enabled()
+        else:
+            # Services used without an application lifespan still resolve the
+            # same typed deployment/persisted/default precedence.
+            try:
+                with self._sessions() as db:
+                    scan_enabled = resolve_scan_enabled(SettingMapper(db).scan_enabled())
+            except (ValueError, TypeError):
+                scan_enabled = False
         if not scan_enabled:
             guard = "DISABLED"
         elif self._real_analysis_enabled:

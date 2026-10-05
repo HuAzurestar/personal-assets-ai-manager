@@ -162,7 +162,7 @@ def run() -> None:
                 model_form.locator('[name="temperature"]').fill("0")
                 model_form.locator('[name="max_tokens"]').fill("512")
                 model_form.locator('[name="extras"]').fill(
-                    '{"provider_zero":0,"provider_flag":false}'
+                    '{"presence_penalty":0,"extra_body":{"enable_thinking":false}}'
                 )
                 model_form.locator('[name="secret"]').fill("browser-test-secret")
                 model_form.locator('[name="enabled"]').check()
@@ -182,8 +182,8 @@ def run() -> None:
                     f"{base_url}/paam/system/v1/setting/automation"
                 ).json()["body"]
                 assert persisted_setting["models"][0]["litellm_params"]["temperature"] == 0
-                assert persisted_setting["models"][0]["litellm_params"]["provider_zero"] == 0
-                assert persisted_setting["models"][0]["litellm_params"]["provider_flag"] is False
+                assert persisted_setting["models"][0]["litellm_params"]["presence_penalty"] == 0
+                assert persisted_setting["models"][0]["litellm_params"]["extra_body"]["enable_thinking"] is False
                 assert "browser-test-secret" not in str(persisted_setting)
                 page.reload()
                 expect(page.locator('[data-model-card="1"]')).to_contain_text(

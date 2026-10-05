@@ -98,7 +98,8 @@ def test_boolean_admission_denial_is_not_ignored(audit_database):
     assert not calls
 
 
-def test_saved_success_recovery_after_business_crash_uses_no_second_provider_call(scan_runtime):
+@pytest.mark.parametrize("validated", [True, False])
+def test_saved_success_recovery_after_business_crash_uses_no_second_provider_call(scan_runtime, validated):
     sessions, _, view_id, tags = scan_runtime
     ledger_id = source_ledger(sessions, tags["unclassified"])
     rule_id = _seed_rule(sessions, view_id)
@@ -115,15 +116,32 @@ def test_saved_success_recovery_after_business_crash_uses_no_second_provider_cal
         report = await CrashCommit(sessions, first).run_protected(rule_id, _context(), LlmPrivacyService())
         assert report.stopped_reason == "COMMIT_FAILED"
         await first.close()
+        if not validated:
+            # The original middleware discarded envelope facts. Such old
+            # successes must neither produce suggestions nor be sent again.
+            with sessions() as db:
+                audit = db.scalars(select(LlmPromptAudit)).one()
+                metadata = json.loads(audit.metadata_json)
+                metadata.pop("envelope_validated")
+                audit.metadata_json = json.dumps(metadata)
+                db.commit()
         # Independent lifespan, same durable DB; must consume the original response.
         second = ConfiguredLlmAnalyzer(sessions, Secret(), LiteLlmAdapter(complete))
         try:
             report = await AutoTagScanService(sessions, second).run_protected(rule_id, _context(), LlmPrivacyService())
-            assert report.insufficient_count == 1
+            if validated:
+                assert report.insufficient_count == 1
+            else:
+                assert report.stopped_reason == "OPERATION_BLOCKED"
+                assert report.insufficient_count == report.request_count == 0
         finally:
             await second.close()
     asyncio.run(run())
     assert calls == [1]
+    if not validated:
+        with sessions() as db:
+            assert db.get(AutoTagRule, rule_id).scan_after_ledger_id == 0
+        return
     with sessions() as db:
         rule = db.get(AutoTagRule, rule_id)
         state = json.loads(rule.last_analysis_json)

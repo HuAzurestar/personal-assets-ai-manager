@@ -136,6 +136,8 @@ class ConfiguredLlmAnalyzer:
             if row["response_truncated"]:
                 raise LlmError("OPERATION_BLOCKED", call_id=row["id"], dispatch_state=state)
             metadata = json.loads(row["metadata_json"])
+            if metadata.get("envelope_validated") is not True:
+                raise LlmError("OPERATION_BLOCKED", call_id=row["id"], dispatch_state=state)
             old_item = json.loads(json.loads(row["request_json"])["messages"][-1]["content"])["item"]
             return LlmResponse(row["id"], row["response_text"], metadata.get("finish_reason", ""),
                                metadata.get("model", "")), old_item
