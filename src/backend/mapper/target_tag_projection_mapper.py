@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import and_, delete, insert, select
+from sqlalchemy import Text, and_, bindparam, delete, insert, select
 from sqlalchemy.orm import Session
 
 from backend.entity import (
@@ -154,12 +154,25 @@ class TargetTagProjectionMapper:
             ) if previous_updated_times[ledger_id] is not None else current_time
             for ledger_id in changed
         }
-        records = [dict(ledger_id=ledger_id, tag_id=tag_id,
-                        created_time=updated_times[ledger_id], updated_time=updated_times[ledger_id])
+        table = LedgerEntryTag.__table__
+        dialect = self.db.get_bind().dialect
+        # All Tags of one Ledger share its exact replacement timestamp. Run
+        # the existing column codecs once per Ledger rather than twice per Tag.
+        # Explicit text binds retain that validated six-microsecond UTC text;
+        # no clock truncation, alternate codec or persistent cache is involved.
+        stored_times = {ledger_id: dict(
+            tag_created_time=table.c.created_time.type.process_bind_param(value, dialect),
+            tag_updated_time=table.c.updated_time.type.process_bind_param(value, dialect),
+        ) for ledger_id, value in updated_times.items()}
+        records = [dict(ledger_id=ledger_id, tag_id=tag_id, **stored_times[ledger_id])
             for ledger_id, tag_ids in ledger_tags.items()
             if ledger_id in changed_ids
             for tag_id in tag_ids
         ]
+        statement = insert(table).values(
+            created_time=bindparam("tag_created_time", type_=Text()),
+            updated_time=bindparam("tag_updated_time", type_=Text()),
+        )
         for offset in range(0, len(records), 400):
-            self.db.execute(insert(LedgerEntryTag.__table__), records[offset:offset + 400])
+            self.db.execute(statement, records[offset:offset + 400])
         self.db.flush()

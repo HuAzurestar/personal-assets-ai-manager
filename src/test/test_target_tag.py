@@ -459,3 +459,64 @@ def test_archived_tag_invalidates_assignment_and_advances_projection(target_tag_
         f"/paam/ledger/v1/flow/{ledger_id}"
     ).json()["body"]
     assert after_restore["tags"][0]["tag_system_name"] == "unclassified"
+
+
+def test_tag_batch_encodes_each_ledger_timestamp_once_without_losing_precision(monkeypatch):
+    from sqlalchemy import update
+    from backend.core import target_database
+    from backend.entity.base import UTCISO8601DateTime
+    from backend.mapper.target_tag_mapper import TargetTagMapper
+    from backend.mapper import target_tag_projection_mapper as projection
+
+    bindings = []
+    original = UTCISO8601DateTime.process_bind_param
+
+    def observed(self, value, dialect):
+        bindings.append(value)
+        return original(self, value, dialect)
+
+    # Install before this isolated engine first binds timestamps, not after its
+    # dialect has cached a processor for fixture setup.
+    monkeypatch.setattr(UTCISO8601DateTime, "process_bind_param", observed)
+    target_database.ensure_target_schema()
+    sessions = target_database.SessionLocal
+    now = datetime(2030, 1, 1, microsecond=7, tzinfo=timezone.utc)
+    future = now + timedelta(days=1, microseconds=10)
+    with sessions() as db:
+        mapper = TargetTagMapper(db)
+        mapper.begin_write()
+        for index in range(4):
+            view_id = mapper.create_view(f"Mock clock {index}", f"mock_clock_{index}", now)
+            mapper.create_tag(view_id, "Mock choice", "choice", now)
+        mapper.commit()
+    ledger_ids = [_ledger_for_fact(sessions, fact_id) for fact_id in _add_facts(sessions, 2)]
+    with sessions() as db:
+        db.execute(update(LedgerEntryTag).where(LedgerEntryTag.ledger_id == ledger_ids[1])
+            .values(updated_time=future))
+        db.commit()
+    monkeypatch.setattr(projection, "utc_now", lambda: now)
+    with sessions() as db:
+        tag_ids = tuple(db.scalars(select(TargetTag.id).where(TargetTag.system_name == "choice")
+            .order_by(TargetTag.id)))
+        assert len(tag_ids) == 4
+        entities = (TransactionFact, ReviewCase, LedgerEntry, ReviewAllocation)
+        def financial():
+            return [tuple(tuple(row) for row in db.execute(select(entity.__table__).order_by(entity.id)))
+                for entity in entities]
+        before = financial()
+        bindings.clear()
+        mapper = projection.TargetTagProjectionMapper(db)
+        mapper.replace({ledger_id: tag_ids for ledger_id in ledger_ids})
+        assert bindings == [now, now, future + timedelta(microseconds=1), future + timedelta(microseconds=1)]
+        rows = db.connection().exec_driver_sql(
+            "SELECT ledger_id, tag_id, created_time, updated_time FROM ledger_entry_tag ORDER BY ledger_id, tag_id"
+        ).all()
+        assert len(rows) == 8
+        for ledger_id, tag_id, created, updated in rows:
+            expected = now if ledger_id == ledger_ids[0] else future + timedelta(microseconds=1)
+            assert tag_id in tag_ids
+            assert created == updated == expected.isoformat(timespec="microseconds").replace("+00:00", "Z")
+        mapper.replace({ledger_id: tag_ids for ledger_id in ledger_ids})
+        assert len(bindings) == 4, "an unchanged complete tag state binds no replacement timestamps"
+        assert financial() == before
+        db.commit()
