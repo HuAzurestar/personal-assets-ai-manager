@@ -11,6 +11,10 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from threading import RLock
 from typing import Literal
+from contextlib import nullcontext
+from middleware.schedule import JobDefinition, TriggerSpec, JobRun, RunContext, RunControl, validate_task_key
+from middleware.llm.contract import canonical
+from middleware.llm.client import drain_on_cancel
 
 from apscheduler.jobstores.base import JobLookupError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -30,7 +34,7 @@ DEFAULT_PAGE_LIMIT = 100
 DEFAULT_SOFT_BUDGET_SECONDS = 30.0
 
 QueueState = Literal["IDLE", "QUEUED", "RUNNING", "PAUSED", "BLOCKED"]
-LastResult = Literal["COMPLETED", "PARTIAL_FAILURE", "FAILED", "CANCELLED"]
+LastResult = Literal["COMPLETED", "PARTIAL_FAILURE", "SUCCEEDED", "YIELDED", "FAILED", "CANCELLED"]
 BLOCKING_CODES = frozenset({
     "CONFIG_ERROR", "AUTH_ERROR", "MODEL_DISABLED", "NO_ACTIVE_TARGETS",
     "VIEW_INACTIVE", "REGISTER_FAILED", "COUNTER_EXHAUSTED",
@@ -72,17 +76,39 @@ class JobRunContext:
     run_id: str = ""
     _progress: Callable[[dict], None] = field(default=lambda _: None, repr=False, compare=False)
     _event: Callable[[dict], None] = field(default=lambda _: None, repr=False, compare=False)
+    control: RunControl | None = field(default=None, repr=False, compare=False)
+    _report: Callable[[dict], None] = field(default=lambda _: None, repr=False, compare=False)
 
     def may_start_work(self) -> bool:
         """Return false once this run's soft start budget is exhausted."""
 
-        return self._monotonic() < self.deadline_monotonic and self._active()
+        return self._monotonic() < self.deadline_monotonic and self.is_active()
 
     def remaining_seconds(self) -> float:
         return max(0.0, self.deadline_monotonic - self._monotonic()) if self._active() else 0.0
 
     def is_active(self) -> bool:
-        return self._active()
+        return self.control.may_start_work() if self.control else self._active()
+
+    def may_commit(self) -> bool:
+        return self.control.may_commit() if self.control else self._active()
+
+    def admit_request(self):
+        if self.control:
+            return self.control.admit_request()
+        if not self._active():
+            from middleware.llm import LlmError
+            raise LlmError("CANCELLED")
+        return True
+
+    def commit_guard(self):
+        return self.control.commit_guard() if self.control else nullcontext(self._active())
+
+    async def run_sync(self, callback, *args):
+        return await drain_on_cancel(asyncio.create_task(asyncio.to_thread(callback, *args)))
+
+    def report(self, *, phase, completed, total=None, metrics=None):
+        self._report(dict(phase=phase, completed=completed, total=total, metrics=metrics or {}))
 
     def progress(self, **values) -> None:
         self._progress(values)
@@ -133,6 +159,8 @@ class _Registration:
     trigger: BaseTrigger
     callback: JobCallback
     paused: bool = False
+    definition: JobDefinition | None = None
+    parameters_json: str = "{}"
 
 
 @dataclass(slots=True)
@@ -184,9 +212,31 @@ class JobScheduler:
         self._worker_task: asyncio.Task[None] | None = None
         self._accepting = False
         self.diagnostics = diagnostics or ScheduleDiagnostics()
+        self.diagnostics.register_identity("system:worker")
         self._worker_failed = False
         self._heartbeat_at: datetime | None = None
         self._registration_failures: set[str] = set()
+        self._controls: dict[str, RunControl] = {}
+        self._definitions: dict[str, JobDefinition] = {}
+        self._generic_progress: dict[str, dict] = {}
+        self._run_definitions = {}
+
+    def register(self, definition: JobDefinition, trigger: TriggerSpec, *, parameters=None, paused=False):
+        from pydantic import TypeAdapter
+        parameters_json = canonical(parameters or {})
+        if definition.parameter_schema is not None:
+            adapter = TypeAdapter(definition.parameter_schema)
+            value = adapter.validate_python(parameters or {}, strict=True)
+            parameters_json = canonical(adapter.dump_python(value, mode="json"))
+        with self._state_lock:
+            self._definitions[definition.key] = definition
+            self.diagnostics.register_definition(definition)
+            if trigger.kind == "interval":
+                self.register_interval(definition.key, seconds=trigger.value, callback=definition.handler, paused=paused)
+            else:
+                self.register_cron(definition.key, expression=trigger.value, callback=definition.handler, paused=paused)
+            self._registrations[definition.key].definition = definition
+            self._registrations[definition.key].parameters_json = parameters_json
 
     @staticmethod
     def _new_scheduler() -> AsyncIOScheduler:
@@ -202,6 +252,9 @@ class JobScheduler:
     @property
     def running(self) -> bool:
         return self._accepting
+
+    def configuration_guard(self):
+        return self._state_lock
 
     def register_interval(
         self,
@@ -249,6 +302,7 @@ class JobScheduler:
         self._validate_task_key(task_key)
         if not callable(callback):
             raise TypeError("callback must be callable")
+        self.diagnostics.register_identity(task_key)
         with self._state_lock:
             registration = _Registration(
                 task_key=task_key,
@@ -271,6 +325,7 @@ class JobScheduler:
                 self._states[task_key].blocked_code = None
 
     def registration_failed(self, task_key: str) -> None:
+        self.diagnostics.register_identity(task_key)
         """Retain a visible failed registration, without a runnable stale job."""
         self._validate_task_key(task_key)
         with self._state_lock:
@@ -330,6 +385,8 @@ class JobScheduler:
     async def shutdown(self) -> None:
         with self._state_lock:
             self._accepting = False
+            for control in self._controls.values():
+                control.cancel()
         if self._scheduler.running:
             self._scheduler.remove_all_jobs()
             self._scheduler.shutdown(wait=False)
@@ -353,6 +410,10 @@ class JobScheduler:
             self._registrations.clear()
             self._states.clear()
             self._registration_failures.clear()
+            self._controls.clear()
+            self._run_definitions.clear()
+            self._definitions.clear()
+            self._generic_progress.clear()
             self._worker_failed = False
             self._heartbeat_at = None
         self._scheduler = self._new_scheduler()
@@ -392,6 +453,7 @@ class JobScheduler:
                 state.enqueued_at = self._now()
                 state.enqueued_monotonic = self._monotonic()
                 state.started_at = None
+                state.run_id = new_run_id()
             self._condition.notify()
             return True
 
@@ -399,6 +461,9 @@ class JobScheduler:
         with self._state_lock:
             registration = self._required(task_key)
             registration.paused = True
+            state = self._states.get(task_key)
+            if state and state.run_id in self._controls:
+                self._controls[state.run_id].pause()
             self._discard_queued(task_key)
         if self._scheduler.running:
             self._scheduler.pause_job(task_key)
@@ -415,6 +480,9 @@ class JobScheduler:
             if task_key not in self._registration_failures:
                 self._required(task_key)
             self._registrations.pop(task_key, None)
+            state = self._states.get(task_key)
+            if state and state.run_id in self._controls:
+                self._controls[state.run_id].cancel()
             self._registration_failures.discard(task_key)
             self._discard_queued(task_key)
             if self._running_key != task_key:
@@ -424,6 +492,20 @@ class JobScheduler:
                 self._scheduler.remove_job(task_key)
             except JobLookupError:
                 pass
+
+    def request_cancel(self, run_id: str) -> None:
+        with self._state_lock:
+            control = self._controls.get(run_id)
+            if control is not None:
+                control.cancel()
+                return
+            for key, state in self._states.items():
+                if state.run_id == run_id and key in self._queue:
+                    self._discard_queued(key)
+                    state.last_result = "CANCELLED"
+                    state.last_run_id, state.run_id = run_id, None
+                    return
+        raise KeyError(run_id)
 
     def snapshot(self) -> SchedulerSnapshot:
         with self._state_lock:
@@ -530,7 +612,10 @@ class JobScheduler:
                             state.enqueued_monotonic = None
                             state.started_at = self._now()
                             state.started_monotonic = self._monotonic()
-                            state.run_id = new_run_id()
+                            state.run_id = state.run_id or new_run_id()
+                            control = RunControl()
+                            self._controls[state.run_id] = control
+                            self._run_definitions[state.run_id] = registration.definition
                             state.progress = JobProgress()
                             self._heartbeat_at = state.started_at
                             self.diagnostics.record(
@@ -556,12 +641,18 @@ class JobScheduler:
                 run_id=state.run_id,
                 _progress=lambda values, key=task_key, run=state.run_id: self._progress(key, run, values),
                 _event=lambda values, key=task_key, run=state.run_id: self._event(key, run, values),
+                control=control,
+                _report=lambda values, key=task_key, run=state.run_id: self._report_progress(key, run, values),
             )
             try:
+                if registration.definition is not None:
+                    context = RunContext(JobRun(state.run_id, task_key, state.started_at, registration.parameters_json),
+                                         context.deadline_monotonic, control, self._monotonic,
+                                         context._report, context._event)
                 outcome = await registration.callback(context)
                 if outcome is not None and (
                     not isinstance(outcome, JobOutcome)
-                    or outcome.result not in {"COMPLETED", "PARTIAL_FAILURE", "FAILED", "CANCELLED"}
+                    or outcome.result not in {"COMPLETED", "PARTIAL_FAILURE", "SUCCEEDED", "YIELDED", "FAILED", "CANCELLED"}
                 ):
                     raise ValueError("Scheduled callback returned an invalid outcome")
             except asyncio.CancelledError:
@@ -579,17 +670,19 @@ class JobScheduler:
                 with self._state_lock:
                     state.last_result = (
                         (outcome.result if outcome is not None else "COMPLETED")
-                        if self._accepting else "CANCELLED"
+                        if self._accepting and control.may_commit() else "CANCELLED"
                     )
                     state.last_error_code = (
-                        safe_code(outcome.error_code) if self._accepting and outcome is not None
+                        self._outcome_code(outcome.error_code, registration.definition) if self._accepting and outcome is not None
                         and outcome.error_code is not None
                         else None
                     )
-                    state.last_outcome_code = safe_code(outcome.outcome_code) if outcome else "RUN_COMPLETED"
+                    state.last_outcome_code = self._outcome_code(outcome.outcome_code, registration.definition) if outcome else "RUN_COMPLETED"
             finally:
                 with self._state_lock:
                     self._finish_run(task_key, state)
+                    self._controls.pop(state.run_id, None)
+                    self._run_definitions.pop(state.run_id, None)
                     state.started_at = None
                     state.started_monotonic = None
                     state.run_id = None
@@ -649,6 +742,42 @@ class JobScheduler:
                     allowed[key] = value
             state.progress = replace(state.progress, **allowed)
             self._heartbeat_at = self._now()
+
+    def _report_progress(self, task_key, run_id, values):
+        import math
+        with self._state_lock:
+            state = self._states.get(task_key)
+            definition = self._run_definitions.get(run_id)
+            if state is None or state.run_id != run_id or definition is None:
+                raise ValueError("Unknown registered run")
+            if values["phase"] not in definition.phases:
+                raise ValueError("Undeclared phase")
+            for key in ("completed", "total"):
+                value = values[key]
+                if value is not None and (type(value) is not int or not 0 <= value < 2**63):
+                    raise ValueError("Invalid progress count")
+            if values["completed"] is None or (values["total"] is not None and values["completed"] > values["total"]):
+                raise ValueError("Invalid progress total")
+            metrics = values["metrics"]
+            if not isinstance(metrics, dict) or set(metrics) - definition.metrics:
+                raise ValueError("Undeclared metric")
+            if any(type(v) not in {int, float} or not math.isfinite(v) or abs(v) >= 2**63 for v in metrics.values()):
+                raise ValueError("Invalid metric value")
+            self._generic_progress[task_key] = {**values, "metrics": dict(metrics)}
+            self._heartbeat_at = self._now()
+
+    def progress_snapshot(self, task_key):
+        from copy import deepcopy
+        with self._state_lock:
+            if task_key not in self._states:
+                raise KeyError(task_key)
+            return deepcopy(self._generic_progress.get(task_key))
+
+    @staticmethod
+    def _outcome_code(code, definition):
+        if definition is not None and code in definition.error_codes:
+            return code
+        return safe_code(code)
 
     def _event(self, task_key: str, run_id: str, values: dict) -> None:
         with self._state_lock:
@@ -722,8 +851,7 @@ class JobScheduler:
 
     @staticmethod
     def _validate_task_key(task_key: str) -> None:
-        if len(task_key) > 96 or TASK_KEY_PATTERN.fullmatch(task_key) is None:
-            raise ValueError("task_key must be a stable namespaced identifier")
+        validate_task_key(task_key)
 
 
 job_scheduler = JobScheduler(diagnostics=ScheduleDiagnostics(DATA_DIR / "schedule-logs"))

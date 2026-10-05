@@ -93,6 +93,36 @@ Import File 标记为 `FAILED`，仍在当前进程中的预览仍可继续修�
 
 ## 验证
 
+PIRC-40 将公共能力集中到 `src/middleware/{llm,schedule,config}`，由 backend bootstrap
+注入凭据与 SQLite 审计端口；仍只有现有 APScheduler/FIFO 引擎和 14 张表。
+标签任务固定同次短读的规则/模型/披露/模板依据，再执行一次生成请求。
+调用成功与业务校验/提交分开记录；未确定调用保守阻断，提交失败优先恢复已保存响应。
+
+- Prompt 首期是随部署加载的只读文件资产；`/paam/system/v1/llm/prompt/*`
+  提供列表、详情、引用和服务端虚构预览，不调用模型。规则指引仍独立编辑。
+- `/paam/system/v1/llm/call/list` 与 `/call/statistics` 不查询正文。
+  敏感 `/call/{id}` 默认禁止；仅在部署 `PAAM_LLM_AUDIT_DETAIL_TOKEN`
+  （至少 32 字符）且请求提供匹配 `X-PAAM-Audit-Token` 时允许，不能通过 URL 传令牌。
+- 模型目标默认 HTTPS；本地/内网明文 HTTP 必须在该保存连接上明确选择
+  `allow_insecure_http=true`。生成、目录及连接检查均拒绝 URL 内嵌凭据和自动重定向。
+  `PAAM_LLM_PROXY` 是显式部署代理，普通 HTTP_PROXY/HTTPS_PROXY 不被使用。
+- 保存与调用共用生成参数校验：支持 `temperature`、`top_p`、`max_tokens`、
+  `max_completion_tokens`、`seed`、`presence_penalty`、`frequency_penalty`、
+  `reasoning_effort` 及 `extra_body.enable_thinking`。未知参数或越界值在保存前拒绝；
+  任意供应商扩展需先加入公共调用合同，不能仅保存后等到执行时报错。
+- `PAAM_SCAN_ENABLED=true/false`（严格 JSON 布尔值）可覆盖保存开关；
+  设置页及 `/paam/system/v1/config` 区分保存、有效来源与安装状态。
+  `/paam/system/v1/schedule/status` 使用已安装配置及可用状态；应用失败时显示关闭。
+  共享引擎的 `system:config-reconcile` 有界检查负责收敛，无第二条定时循环。
+- pause 不取消已准入当前项；cancel/remove 撤销未提交结果。取消等待后仍排空真实
+  SDK worker，不能立即复用同 key/全局 SDK 锁。默认部署仍限定单进程。
+
+SDK 验收链固定为 LiteLLM 1.102.0 / OpenAI 2.54.0 / httpx 0.28.1 /
+httpcore 1.0.9 / tiktoken 0.14.0；这不是完整传递依赖锁文件。
+新增 `test_middleware_*.py` 和 `test_llm_audit_migration.py` 使用本地可计数 HTTP stub
+及虚构数据，不访问真实模型。非标签月度摘要与非 LLM housekeeping 仅作独立扩展证明，
+没有开放任意执行/重扫 API。
+
 ```powershell
 node --check src/frontend/target-ledger.js
 .\.venv\Scripts\python.exe -m compileall -q src/backend src/script src/test

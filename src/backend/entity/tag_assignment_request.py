@@ -16,6 +16,7 @@ TAG_REQUEST_STATUS_REPLACED = 5
 
 class TagAssignmentRequest(TargetTable, TargetBase):
     __tablename__ = "tag_assignment_request"
+    call_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     __table_args__ = (
         CheckConstraint("rule_id > 0", name="ck_tag_assignment_request_rule_id"),
         CheckConstraint(

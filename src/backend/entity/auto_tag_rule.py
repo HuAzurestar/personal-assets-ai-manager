@@ -16,6 +16,7 @@ MAX_COUNTER_VALUE = 9_223_372_036_854_775_807
 
 class AutoTagRule(TargetTable, TargetBase):
     __tablename__ = "auto_tag_rule"
+    last_analysis_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}", server_default="{}")
     __table_args__ = (
         CheckConstraint("view_id > 0", name="ck_auto_tag_rule_view_id"),
         CheckConstraint("method = 1", name="ck_auto_tag_rule_method"),

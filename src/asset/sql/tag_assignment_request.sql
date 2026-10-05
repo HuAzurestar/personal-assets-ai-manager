@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS tag_assignment_request /* 自动规则发起、由人
     id INTEGER PRIMARY KEY /* 隐式主键，由 SQLite rowid 自动生成 */,
     rule_id INTEGER NOT NULL CHECK (rule_id > 0) /* auto_tag_rule.id，逻辑外键 */,
     rule_revision INTEGER NOT NULL CHECK (rule_revision > 0) /* 生成请求时的规则版本 */,
+    call_id INTEGER NOT NULL DEFAULT 0 CHECK (call_id >= 0),
     ledger_id INTEGER NOT NULL CHECK (ledger_id > 0) /* ledger_entry.id，逻辑外键 */,
     view_id INTEGER NOT NULL CHECK (view_id > 0) /* tag_view.id，逻辑外键 */,
     proposed_tag_id INTEGER NOT NULL CHECK (proposed_tag_id > 0) /* tag.id，逻辑外键 */,

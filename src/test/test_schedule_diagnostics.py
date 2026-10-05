@@ -10,9 +10,17 @@ from fastapi.testclient import TestClient
 
 from backend.core.job_scheduler import JobOutcome, JobScheduler
 from backend.core.schedule_diagnostics import MAX_ENTRY_BYTES, MAX_LOG_BYTES, ScheduleDiagnostics, new_run_id
+from backend.core.schedule_diagnostics import ScheduleDiagnostics as _ScheduleDiagnostics
 from backend.core.target_database import init_target_db
 from backend.router import system
 from backend.router.error import register_error_handlers
+
+
+def ScheduleDiagnostics(*args, **kwargs):
+    store = _ScheduleDiagnostics(*args, **kwargs)
+    store.register_identity("tag-scan:3")
+    store.register_identity("system:worker")
+    return store
 
 
 def emit(store, code="OUTPUT_SEMANTIC_INVALID", **kwargs):
@@ -67,12 +75,14 @@ def test_write_failure_retains_only_last_100_safe_events(tmp_path, monkeypatch, 
 
 def test_codebook_rejects_untrusted_fields_and_revalidates_disk(tmp_path):
     store = ScheduleDiagnostics(tmp_path)
-    event = store.record(
-        task_key="account:123456789012345", run_id="private_nonce", phase="private prompt",
-        code="RAW_PROVIDER_TEXT", detail_code="raw amount 2900", ledger_id=True,
-    )
+    with pytest.raises(ValueError, match="Unknown task key"):
+        store.record(task_key="account:123456789012345", run_id="private_nonce", phase="SCAN", code="RUN_STARTED")
+    with pytest.raises(ValueError):
+        store.record(task_key="system:worker", run_id="private_nonce", phase="private prompt", code="RAW_PROVIDER_TEXT")
+    event = store.record(task_key="system:worker", run_id="private_nonce", phase="FINISH",
+                         code="UNKNOWN_ERROR", detail_code="raw amount 2900", ledger_id=True)
     assert event["code"] == "UNKNOWN_ERROR"
-    assert event["task_key"] == "system:unknown"
+    assert event["task_key"] == "system:worker"
     assert "ledger_id" not in event
     raw = json.dumps(event, ensure_ascii=False)
     assert all(word not in raw for word in ("private", "RAW_PROVIDER", "123456789", "2900"))

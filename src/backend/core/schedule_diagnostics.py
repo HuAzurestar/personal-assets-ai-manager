@@ -9,6 +9,7 @@ from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
+from middleware.schedule import validate_task_key
 
 MAX_LOG_BYTES = 5 * 1024 * 1024
 MAX_ENTRY_BYTES = 2048
@@ -17,6 +18,9 @@ PHASES = frozenset({
     "FINISH", "SHUTDOWN", "WORKER",
 })
 MESSAGES = {
+    "AUDIT_FINISH_FAILED": "模型调用已发生，但审计收尾失败；需修复原记录，禁止重发。",
+    "OPERATION_BLOCKED": "该业务项有未确定或待恢复调用，已阻止自动重发。",
+    "CANCELLED": "当前请求准入已撤销，未发送或提交新结果。",
     "RUN_STARTED": "本轮开始执行。",
     "RUN_COMPLETED": "本轮正常完成。",
     "RUN_CANCELLED": "本轮已取消；未提交结果不视为成功。",
@@ -82,7 +86,6 @@ WARNING_CODES = frozenset({
     "RUN_CANCELLED", "RETRY_SCHEDULED", "RETRY_DEFERRED", "RULE_DISABLED",
     "RULE_TOKEN_CHANGED", "CURSOR_ALREADY_ADVANCED", "AMOUNT_BAND_UNCONFIGURED",
 })
-_TASK = re.compile(r"^(?:tag-scan:[1-9][0-9]{0,18}|system:[a-z][a-z0-9-]{0,63})$")
 _RUN = re.compile(r"^[0-9a-f]{32}$")
 
 
@@ -110,6 +113,21 @@ class ScheduleDiagnostics:
         self._lock = RLock()
         self._io_failed = False
         self._invalid_history = False
+        self._definitions = {}
+
+    def register_definition(self, definition):
+        with self._lock:
+            previous = self._definitions.get(definition.key)
+            if previous is not None:
+                from dataclasses import replace
+                definition = replace(definition, phases=definition.phases | previous.phases,
+                                     error_codes=definition.error_codes | previous.error_codes,
+                                     metrics=definition.metrics | previous.metrics)
+            self._definitions[definition.key] = definition
+
+    def register_identity(self, key):
+        from middleware.schedule import JobDefinition
+        self.register_definition(JobDefinition(key, lambda _: None, PHASES))
 
     @property
     def health(self) -> str:
@@ -126,15 +144,24 @@ class ScheduleDiagnostics:
         attempt: int | None = None, detail_code: str | None = None,
         now: datetime | None = None,
     ) -> dict:
-        code = safe_code(code)
+        validate_task_key(task_key)
+        definition = self._definitions.get(task_key)
+        if definition is None:
+            raise ValueError("Unknown task key")
+        custom = definition is not None and code in definition.error_codes
+        if definition is not None and code not in MESSAGES and not custom:
+            raise ValueError("Undeclared diagnostic code")
+        if definition is not None and phase not in PHASES and phase not in definition.phases:
+            raise ValueError("Undeclared diagnostic phase")
+        code = code if custom else safe_code(code)
         event = {
             "time": (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat(),
             "run_id": run_id if _RUN.fullmatch(run_id) else new_run_id(),
-            "task_key": task_key if _TASK.fullmatch(task_key) else "system:unknown",
-            "phase": phase if phase in PHASES else "FINISH",
+            "task_key": task_key,
+            "phase": phase if phase in PHASES or (definition and phase in definition.phases) else "FINISH",
             "code": code,
             "severity": "INFO" if code in INFO_CODES else "WARNING" if code in WARNING_CODES else "ERROR",
-            "safe_message": MESSAGES[code],
+            "safe_message": MESSAGES.get(code, "任务报告了已声明的诊断码。"),
         }
         for key, value, maximum in (
             ("rule_revision", rule_revision, 2**63 - 1),
@@ -229,8 +256,7 @@ class ScheduleDiagnostics:
             self._io_failed = True
         return events
 
-    @staticmethod
-    def _decode(line: bytes) -> dict | None:
+    def _decode(self, line: bytes) -> dict | None:
         """Revalidate disk input; edited log text is not a trusted UI message."""
         if not line or len(line) > MAX_ENTRY_BYTES:
             return None
@@ -238,8 +264,7 @@ class ScheduleDiagnostics:
             item = json.loads(line)
             if not isinstance(item, dict) or not (
                 isinstance(item.get("run_id"), str) and _RUN.fullmatch(item["run_id"])
-                and isinstance(item.get("task_key"), str) and _TASK.fullmatch(item["task_key"])
-                and item.get("phase") in PHASES and item.get("code") in MESSAGES
+                and isinstance(item.get("task_key"), str)
             ):
                 return None
             timestamp = datetime.fromisoformat(item["time"])
@@ -247,6 +272,7 @@ class ScheduleDiagnostics:
                 return None
             # Rebuild every display field from the fixed codebook, not disk text.
             local = ScheduleDiagnostics()
+            local._definitions = self._definitions.copy()
             return local.record(
                 run_id=item["run_id"], task_key=item["task_key"], phase=item["phase"],
                 code=item["code"], rule_revision=item.get("rule_revision"),

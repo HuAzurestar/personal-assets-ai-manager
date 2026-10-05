@@ -16,8 +16,11 @@ from test_llm_client_lifecycle import offline_client  # noqa: F401
 def probe(setting_runtime):  # noqa: F811 - explicitly reused pytest fixture
     sessions, engine, store = setting_runtime
     client = _client(sessions, store)
+    store.set(1, 'fictional-probe-secret')
+    model = _model_payload()
+    model['enabled'] = True
     setting = client.put('/paam/system/v1/setting/automation', json={
-        'models': [_model_payload()], 'expected_updated_time': None,
+        'models': [model], 'expected_updated_time': None,
     }).json()['body']
     store.set(1, 'fictional-probe-secret')
 
@@ -36,13 +39,14 @@ def check(client, setting, **changes):
     })
 
 
-def test_probe_is_one_bounded_call_without_writes_or_bill_reads(probe, monkeypatch, caplog):
+def test_probe_is_one_bounded_audited_call_without_bill_reads(probe, monkeypatch, caplog):
     client, setting, engine, _ = probe
     calls, sql = [], []
 
     def complete(**request):
         calls.append(request)
-        return {'choices': [{'message': {'content': 'raw-private-provider-result'}}]}
+        return {'choices': [{'index': 0, 'finish_reason': 'stop',
+                             'message': {'role': 'assistant', 'content': 'raw-private-provider-result'}}]}
 
     monkeypatch.setattr(connection, '_direct_litellm_completion', complete)
     event.listen(engine, 'before_cursor_execute', lambda c, cur, statement, p, ctx, many: sql.append(statement))
@@ -58,9 +62,10 @@ def test_probe_is_one_bounded_call_without_writes_or_bill_reads(probe, monkeypat
     assert request['proxy_url'] is None
     assert request['num_retries'] == request['max_retries'] == 0
     assert request['caching'] is False and request['stream'] is False
-    assert 'provider_zero' not in request
-    assert all('ledger' not in statement.lower() and 'transaction_fact' not in statement.lower() for statement in sql)
-    assert all(not statement.lstrip().upper().startswith(('INSERT', 'UPDATE', 'DELETE')) for statement in sql)
+    assert 'presence_penalty' not in request
+    assert all('FROM ledger' not in statement and 'transaction_fact' not in statement.lower() for statement in sql)
+    assert any('INSERT INTO llm_prompt_audit' in statement for statement in sql)
+    assert any('UPDATE llm_prompt_audit' in statement for statement in sql)
     assert client.get('/paam/system/v1/setting/automation').json()['body']['updated_time'] == setting['updated_time']
     assert 'fictional-probe-secret' not in response.text + caplog.text
     assert 'raw-private-provider-result' not in response.text + caplog.text
@@ -102,7 +107,8 @@ def test_duplicate_probe_is_rejected_until_first_finishes(probe, monkeypatch):
     def slow(**kw):
         entered.set()
         assert release.wait(5)
-        return {'choices': [{'message': {'content': 'OK'}}]}
+        return {'choices': [{'index': 0, 'finish_reason': 'stop',
+                             'message': {'role': 'assistant', 'content': 'OK'}}]}
 
     monkeypatch.setattr(connection, '_direct_litellm_completion', slow)
     with ThreadPoolExecutor(max_workers=1) as pool:
@@ -119,6 +125,7 @@ def test_duplicate_probe_is_rejected_until_first_finishes(probe, monkeypatch):
 def test_actual_sdk_401_sends_one_http_request(probe, offline_client):  # noqa: F811
     client, setting, _, _ = probe
     payload = _model_payload()
+    payload['enabled'] = True
     payload['litellm_params']['api_base'] = 'https://provider.invalid/v1'
     payload['litellm_params']['model'] = 'openai/pirc24-probe'
     setting = client.put('/paam/system/v1/setting/automation', json={

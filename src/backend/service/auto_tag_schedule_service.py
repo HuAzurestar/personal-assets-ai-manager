@@ -39,8 +39,13 @@ class AutoTagScheduleService:
         self._scheduler = scheduler
         self._synthetic_acceptance_enabled = synthetic_acceptance_enabled
         self._real_analysis_enabled = real_analysis_enabled
+        self.effective_enabled = None
         analyzer = ConfiguredLlmAnalyzer(sessions, secret_store)
+        self._analyzer = analyzer
         self._scan = AutoTagScanService(sessions, analyzer)
+
+    async def close(self):
+        await self._analyzer.close()
 
     def register_persisted(self) -> bool:
         if not (self._synthetic_acceptance_enabled or self._real_analysis_enabled):
@@ -111,7 +116,7 @@ class AutoTagScheduleService:
     def _callback(self, rule_id: int):
         async def run(context: JobRunContext) -> JobOutcome:
             with self._sessions() as db:
-                if not SettingMapper(db).scan_enabled():
+                if not (self.effective_enabled if self.effective_enabled is not None else SettingMapper(db).scan_enabled()):
                     return JobOutcome("CANCELLED")
                 if not self._real_analysis_enabled and not (
                     AutoTagScanMapper(db).is_synthetic_acceptance_database()
@@ -135,7 +140,7 @@ class AutoTagScheduleService:
                 synthetic_only=not self._real_analysis_enabled,
             )
             if report.stopped_reason == "SOFT_BUDGET_EXHAUSTED":
-                return JobOutcome("PARTIAL_FAILURE", report.stopped_reason)
+                return JobOutcome("YIELDED", outcome_code=report.stopped_reason)
             if report.failed_count:
                 return JobOutcome(
                     result=(
@@ -155,12 +160,14 @@ class AutoTagScheduleService:
             if report.stopped_reason in {
                 "RULE_NOT_FOUND", "RULE_DISABLED", "MODEL_DISABLED", "NO_ACTIVE_TARGETS",
                 "CONFIG_ERROR", "AUTH_ERROR", "AUDIT_STORAGE_ERROR",
+                "AUDIT_FINISH_FAILED", "OPERATION_BLOCKED",
                 "VIEW_INACTIVE", "COMMIT_FAILED", "COUNTER_EXHAUSTED",
                 "SYNTHETIC_FIXTURE_MISSING", "SYNTHETIC_FIXTURE_INVALID",
             }:
                 return JobOutcome("FAILED", report.stopped_reason)
             if report.stopped_reason in {
                 "RULE_TOKEN_CHANGED", "CURSOR_ALREADY_ADVANCED",
+                "CANCELLED",
             }:
                 return JobOutcome("CANCELLED")
             outcome = report.stopped_reason

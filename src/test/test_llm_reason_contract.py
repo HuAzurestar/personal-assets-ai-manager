@@ -18,11 +18,12 @@ def output(payload, reason):
 
 @pytest.mark.parametrize("mode", [1, 2, 3])
 @pytest.mark.parametrize("direction", ["IN", "OUT"])
-def test_program_example_is_valid_for_its_protected_payload(mode, direction):
+def test_disclosed_reason_example_passes_without_personalizing_system_prefix(mode, direction):
     payload = _payload(_input(direction=direction), mode=mode)
     request = build_litellm_request(payload, _profile())
-    example = next(line.removeprefix("有建议：") for line in request["messages"][0]["content"].splitlines()
-                   if line.startswith("有建议："))
+    disclosed = json.loads(request["messages"][1]["content"])
+    example = output(payload, disclosed["reason_options"][-1])
+    assert payload.item not in request["messages"][0]["content"]
     assert parse_business_output(example, payload).kind == "SUGGESTED"
 
 

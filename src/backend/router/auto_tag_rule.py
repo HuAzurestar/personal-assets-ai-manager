@@ -118,5 +118,6 @@ def preview_candidates(rule_id: int, db: Session = Depends(get_db)):
 
 def _write_service(db: Session, request: Request) -> AutoTagRuleService:
     schedule = getattr(request.app.state, "auto_tag_schedule", None)
-    callback = schedule.sync_rule if schedule is not None else None
+    runtime_config = getattr(request.app.state, "runtime_config", None)
+    callback = runtime_config.sync_rule if runtime_config is not None else schedule.sync_rule if schedule is not None else None
     return AutoTagRuleService(db, on_saved=callback)

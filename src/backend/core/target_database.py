@@ -77,9 +77,22 @@ def ensure_target_schema(bind=None) -> None:
     try:
         driver = getattr(connection, "driver_connection", connection)
         driver.execute("PRAGMA encoding = 'UTF-8'")
+        from backend.core.llm_audit_migration import migrate_llm_audit
+        migrate_llm_audit(driver, SQL_ASSET_DIR / "llm_prompt_audit.sql")
         for table_name in TARGET_TABLE_NAMES:
             path = SQL_ASSET_DIR / f"{table_name}.sql"
             driver.executescript(path.read_text(encoding="utf-8"))
+        # Add business linkage in place; no second LLM log or task table.
+        driver.execute("BEGIN IMMEDIATE")
+        try:
+            if "last_analysis_json" not in {r[1] for r in driver.execute("PRAGMA table_info(auto_tag_rule)")}:
+                driver.execute("ALTER TABLE auto_tag_rule ADD COLUMN last_analysis_json TEXT NOT NULL DEFAULT '{}'")
+            if "call_id" not in {r[1] for r in driver.execute("PRAGMA table_info(tag_assignment_request)")}:
+                driver.execute("ALTER TABLE tag_assignment_request ADD COLUMN call_id INTEGER NOT NULL DEFAULT 0 CHECK(call_id >= 0)")
+            driver.commit()
+        except Exception:
+            driver.rollback()
+            raise
         _normalize_legacy_millisecond_timestamps(driver)
         encoding = driver.execute("PRAGMA encoding").fetchone()[0]
         if encoding.upper().replace("-", "") != "UTF8":

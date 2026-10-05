@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS auto_tag_rule /* 一个 View 下独立扫描并产生
     view_id INTEGER NOT NULL CHECK (view_id > 0) /* tag_view.id，逻辑外键；由 Service 批量校验 */,
     method INTEGER NOT NULL DEFAULT 1 CHECK (method = 1) /* 方法：1=LLM_DIRECT */,
     method_config_json TEXT NOT NULL /* schema_version=1 的方法配置 JSON */,
+    last_analysis_json TEXT NOT NULL DEFAULT '{}',
     enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)) /* 是否进入调度：0=否，1=是 */,
     cron TEXT NOT NULL DEFAULT '' /* Cron 表达式；未配置时为空串 */,
     amount_mode INTEGER NOT NULL DEFAULT 1 CHECK (amount_mode IN (1, 2, 3)) /* 金额披露：1=BAND，2=EXACT，3=NONE */,

@@ -18,6 +18,7 @@ command = [
     "--onedir", "--paths", str(ROOT / "src"),
     "--add-data", f"{ROOT / 'src' / 'frontend'}{SEP}frontend",
     "--add-data", f"{ROOT / 'src' / 'asset'}{SEP}asset",
+    "--add-data", f"{ROOT / 'src' / 'middleware' / 'llm' / 'prompt' / 'resource'}{SEP}middleware/llm/prompt/resource",
     "--hidden-import", "backend.target_main", "--collect-all", "uvicorn",
     str(ROOT / "run.py"),
 ]

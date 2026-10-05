@@ -7,6 +7,7 @@ import hmac
 import re
 import secrets
 import unicodedata
+from copy import copy
 from collections.abc import Mapping
 
 from backend.core.money import decimal_from_amount
@@ -71,6 +72,14 @@ class LlmPrivacyService:
         # is not silently sorted, coerced, or substituted with a currency default.
         self._policy = AutomationDisclosure.model_validate(dict(disclosure or {}))
         self._bands = self._policy.amount_bands
+
+    def with_disclosure(self, disclosure):
+        # Preserve caller-specific sanitizers and their state without invoking
+        # an arbitrary subclass constructor for every item in the same page.
+        policy = LlmPrivacyService(disclosure)
+        result = copy(self)
+        result._policy, result._bands = policy._policy, policy._bands
+        return result
 
     def build_payload(
         self,

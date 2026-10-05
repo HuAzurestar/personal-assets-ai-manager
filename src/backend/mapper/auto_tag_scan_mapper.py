@@ -5,6 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Literal
+import json
+from backend.schema.execution_snapshot import ExecutionSnapshot
+from middleware.llm.prompt import prompt_store
 
 from sqlalchemy import distinct, select, text, update
 from sqlalchemy.orm import Session
@@ -60,6 +63,7 @@ class ScanPage:
     active_tag_states: dict[int, tuple[str, ...]]
     existing_request_ids: frozenset[int]
     targets: tuple[ScanTarget, ...]
+    execution_snapshot: ExecutionSnapshot | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +89,10 @@ class AutoTagScanMapper:
 
     def __init__(self, db: Session):
         self.db = db
+
+    def record_business(self, rule_id, value):
+        self.db.execute(update(AutoTagRule).where(AutoTagRule.id == rule_id)
+                        .values(last_analysis_json=json.dumps(value, separators=(",", ":"))))
 
     def is_synthetic_acceptance_database(self) -> bool:
         """Reject any database containing a non-fixture fact before scanning."""
@@ -119,6 +127,11 @@ class AutoTagScanMapper:
             else {}
         )
         models = automation.get("models", []) if isinstance(automation, dict) else []
+        profile = next((m for m in models if isinstance(m, dict) and m.get("id") == model_id), None)
+        template = prompt_store.get(config["prompt_id"])
+        execution = ExecutionSnapshot(rule["rule_revision"], template.id, template.fingerprint,
+                                      json.dumps(profile, ensure_ascii=False),
+                                      json.dumps(automation.get("disclosure", {}), ensure_ascii=False))
         model_enabled = any(
             isinstance(model, dict)
             and model.get("id") == model_id
@@ -151,6 +164,7 @@ class AutoTagScanMapper:
                 active_tag_states={},
                 existing_request_ids=frozenset(),
                 targets=self._targets(rule["view_id"]),
+                execution_snapshot=execution,
             )
 
         active_ledger_ids = frozenset(self.db.scalars(select(
@@ -203,6 +217,7 @@ class AutoTagScanMapper:
             },
             existing_request_ids=existing_request_ids,
             targets=self._targets(rule["view_id"]),
+            execution_snapshot=execution,
         )
 
     def read_protected_source(
@@ -250,6 +265,8 @@ class AutoTagScanMapper:
         ledger_id: int,
         kind: ScanCommitKind,
         suggestions: tuple[LlmResolvedSuggestion, ...] = (),
+        allow_paused: bool = False,
+        business: dict | None = None,
     ) -> ScanCommitResult:
         """Commit request rows, counters, and cursor in one write transaction."""
 
@@ -267,7 +284,7 @@ class AutoTagScanMapper:
                 AutoTagRule.suggested_count,
                 AutoTagRule.updated_time,
             ).where(AutoTagRule.id == token.rule_id)).mappings().one_or_none()
-            if not self._matches(rule, token):
+            if not self._matches(rule, token, allow_paused=allow_paused):
                 self.db.rollback()
                 return ScanCommitResult("STALE", "RULE_TOKEN_CHANGED")
             if ledger_id <= token.scan_after_ledger_id:
@@ -328,6 +345,7 @@ class AutoTagScanMapper:
                     {
                         "rule_id": token.rule_id,
                         "rule_revision": token.rule_revision,
+                        "call_id": business["call_id"] if business else 0,
                         "ledger_id": ledger_id,
                         "view_id": rule["view_id"],
                         "proposed_tag_id": suggestion.tag_id,
@@ -341,12 +359,13 @@ class AutoTagScanMapper:
                 update(AutoTagRule)
                 .where(
                     AutoTagRule.id == token.rule_id,
-                    AutoTagRule.enabled == 1,
+                    True if allow_paused else AutoTagRule.enabled == 1,
                     AutoTagRule.rule_revision == token.rule_revision,
                     AutoTagRule.scan_epoch == token.scan_epoch,
                     AutoTagRule.scan_after_ledger_id == token.scan_after_ledger_id,
                 )
                 .values(
+                    **({"last_analysis_json": json.dumps({**business, "commit": "COMMITTED"}, separators=(",", ":"))} if business else {}),
                     scan_after_ledger_id=ledger_id,
                     analyzed_count=next_analyzed,
                     failed_count=next_failed,
@@ -429,10 +448,10 @@ class AutoTagScanMapper:
         return "ELIGIBLE"
 
     @staticmethod
-    def _matches(rule, token: ScanToken) -> bool:
+    def _matches(rule, token: ScanToken, *, allow_paused=False) -> bool:
         return bool(
             rule is not None
-            and rule["enabled"] == 1
+            and (allow_paused or rule["enabled"] == 1)
             and rule["rule_revision"] == token.rule_revision
             and rule["scan_epoch"] == token.scan_epoch
             and rule["scan_after_ledger_id"] == token.scan_after_ledger_id

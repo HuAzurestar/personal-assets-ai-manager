@@ -1,11 +1,20 @@
 """Explicit one-request probe: no ledger reads, writes, retries or raw output."""
 from datetime import datetime, timezone
 from threading import Lock
+import asyncio
+from sqlalchemy.orm import sessionmaker
 
 from backend.error import LlmAdapterError, SettingError
 from backend.schema.setting import ModelConnectionCheckRead
-from backend.service.llm_adapter import _direct_litellm_completion, _field, _provider_exception
+from backend.service.llm_adapter import _field, _provider_exception
 from backend.service.setting_service import SettingService
+from backend.bootstrap import create_llm_client
+from backend.service.model_call_service import connection_for, SavedModelAdmission, LEGACY_CODES
+from middleware.llm import CallContext, LlmRequest, LlmError
+
+# Optional callable adapter for embeddings/test hosts. Production uses the
+# registered provider; no Router builds SDK options or holds DB transactions.
+_direct_litellm_completion = None
 
 
 _PROBE_LOCK = Lock()
@@ -56,11 +65,27 @@ class ModelConnectionService:
                 request["extra_body"] = {"enable_thinking": params.extra_body["enable_thinking"]}
             connected, code, message = False, "INVALID_RESPONSE", "供应商未返回有效文本，请检查模型兼容性。"
             try:
-                response = self.completion(**request)
-                choices = _field(response, "choices")
-                content = _field(_field(choices[0], "message"), "content") if choices else None
-                if isinstance(content, str) and content.strip():
+                sessions = sessionmaker(bind=self.db.get_bind(), autoflush=False)
+                connection = connection_for(model, timeout=request["timeout"])
+                options = {"max_tokens": 32}
+                if "extra_body" in request:
+                    options["extra_body"] = request["extra_body"]
+                llm_request = LlmRequest.build(MESSAGES, generation_options=options)
+                admission = SavedModelAdmission(sessions, self.secret_reader, connection)
+
+                async def generate():
+                    client = create_llm_client(sessions, self.secret_reader, completion=self.completion)
+                    try:
+                        return await client.generate(llm_request, connection, CallContext("connection-check"), admission=admission)
+                    finally:
+                        await client.close()
+
+                response = asyncio.run(generate())
+                if response.content.strip():
                     connected, code, message = True, "CONNECTED", "已收到真实模型响应。此检查不代表分类准确率。"
+            except LlmError as error:
+                code = LEGACY_CODES.get(error.code, "PROVIDER_UNAVAILABLE")
+                message = ERROR_MESSAGES.get(code, ERROR_MESSAGES["PROVIDER_UNAVAILABLE"])
             except LlmAdapterError as error:
                 code = error.code
                 message = ERROR_MESSAGES.get(code, ERROR_MESSAGES["PROVIDER_UNAVAILABLE"])

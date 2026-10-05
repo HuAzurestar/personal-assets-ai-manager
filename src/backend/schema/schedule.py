@@ -52,7 +52,7 @@ class ScheduleTaskRead(BaseModel):
     enqueued_at: datetime | None
     started_at: datetime | None
     next_run_at: datetime | None
-    last_result: Literal["COMPLETED", "PARTIAL_FAILURE", "FAILED", "CANCELLED"] | None
+    last_result: Literal["COMPLETED", "PARTIAL_FAILURE", "SUCCEEDED", "YIELDED", "FAILED", "CANCELLED"] | None
     last_error_code: str | None
     run_id: str | None = None
     last_run_id: str | None = None
@@ -63,6 +63,7 @@ class ScheduleTaskRead(BaseModel):
     last_outcome_code: str | None = None
     last_failure: ScheduleEventRead | None = None
     blocked_attempts: int = 0
+    generic_progress: dict | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class ScheduleStatusRead(BaseModel):

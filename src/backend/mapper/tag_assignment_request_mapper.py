@@ -387,6 +387,7 @@ class TagAssignmentRequestMapper:
     ) -> list[int]:
         entities = [
             TagAssignmentRequest(
+                call_id=int(item.get("call_id", 0)),
                 rule_id=int(item["rule_id"]),
                 rule_revision=int(item["rule_revision"]),
                 ledger_id=int(item["ledger_id"]),

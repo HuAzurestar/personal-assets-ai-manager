@@ -157,4 +157,4 @@ def test_real_scan_passes_ledger_revision_run_and_attempt_to_audit(scan_runtime)
         row = db.scalars(select(LlmPromptAudit)).one()
         assert (row.run_id, row.rule_id, row.rule_revision) == ("b" * 32, rule_id, 1)
         assert (row.ledger_id, row.model_id, row.attempt) == (ledger_id, 9, 1)
-        assert row.status == "INSUFFICIENT"
+        assert row.status == "SUCCEEDED"

@@ -46,11 +46,11 @@ def health():
     "/paam/system/v1/schedule/status",
     response_model=ScheduleStatusResponse,
 )
-def schedule_status():
+def schedule_status(request: Request):
     return ScheduleStatusResponse(
         status=200,
         message="ok",
-        body=_schedule_service().get(),
+        body=_schedule_service(request).get(),
     )
 
 
@@ -82,9 +82,10 @@ def schedule_events(
     return ScheduleEventListResponse(status=200, message="ok", body=_schedule_service().events(request))
 
 
-def _schedule_service():
+def _schedule_service(request: Request | None = None):
     return ScheduleStatusService(
         job_scheduler, target_database.SessionLocal,
         synthetic_acceptance_enabled=AUTOTAG_SYNTHETIC_ACCEPTANCE,
         real_analysis_enabled=AUTOTAG_REAL_ANALYSIS,
+        runtime_config=getattr(request.app.state, "runtime_config", None) if request is not None else None,
     )

@@ -1,0 +1,55 @@
+{
+  "issue": "PIRC-40",
+  "date": "2026-10-05",
+  "pull_request": "https://github.com/HuAzurestar/personal-assets-ai-manager/pull/12",
+  "reviewed_head": "9378d8e480f022a0b61afc28d44e5824d6d98fb0",
+  "findings": [
+    {
+      "id": "R1",
+      "priority": "P1",
+      "resolution": "Completed legacy INSUFFICIENT, SUGGESTED and REJECTED audits receive RESPONSE_RECEIVED; original-upgrade metadata is repaired idempotently without rewriting legacy columns. STARTED and ERROR remain uncertain."
+    },
+    {
+      "id": "R2",
+      "priority": "P1",
+      "resolution": "Latch caller cancellation and serialize it with final outbound admission. Calls cancelled while waiting for SDK_LOCK send zero requests and finish as ERROR/CANCELLED with NOT_SENT; admitted workers retain their lock and finish their original audit."
+    },
+    {
+      "id": "R3",
+      "priority": "P2",
+      "resolution": "Validate choice count/index, role, refusal, tool calls, status, finish reason and text before projecting a provider success. Persist envelope_validated and require it for recovery; missing validation facts never authorize restoration or re-dispatch."
+    },
+    {
+      "id": "R4",
+      "priority": "P2",
+      "resolution": "Share generation validation between saved profiles and requests. Support presence_penalty, frequency_penalty and reasoning_effort alongside retained safe options; reject unknown parameters and invalid values before persistence. Replace fictional unsupported extension fixtures with supported options."
+    },
+    {
+      "id": "R5",
+      "priority": "P2",
+      "resolution": "Explain RULE_TOKEN_CHANGED, CANCELLED, AUDIT_STORAGE_ERROR, AUDIT_FINISH_FAILED and OPERATION_BLOCKED; extend frontend assertions and account for the added read-only Prompt section."
+    },
+    {
+      "id": "R6",
+      "priority": "P2",
+      "resolution": "Inject the applied runtime configuration into schedule/status. Report installed scan availability, including deployment overrides and apply failure; standalone projections share the same typed precedence. Verify both override directions, API apply failures and UI override display."
+    }
+  ],
+  "verification": {
+    "original_review_counterexamples": {"passed": 9, "failed": 0},
+    "review_and_migration_regression": {"passed": 36, "failed": 0},
+    "connection_and_recovery_regression": {"passed": 20, "failed": 0},
+    "full_regression": {"status": "passed", "passed": 734, "skipped": 4, "failed": 0},
+    "windows_browser": {"passed": 4, "failed": 0, "playwright": "1.45.0"},
+    "frontend_contracts": {"passed": 4, "failed": 0},
+    "python_compile": "passed",
+    "frontend_syntax": "passed",
+    "git_diff_check": "passed"
+  },
+  "limits": [
+    "No paid provider requests or production deployment were performed; the PR remains unmerged.",
+    "Tests reused the review virtual environment and did not change global or user-site dependencies. This environment inherits application dependencies; complete transitive dependency locking remains outside these six repairs.",
+    "Old middleware SUCCEEDED rows without envelope_validated remain blocked because discarded provider envelope facts cannot be reconstructed safely.",
+    "Browser verification covers the existing four fictional-data scenarios; deployment override UI behavior is additionally covered by frontend contracts."
+  ]
+}

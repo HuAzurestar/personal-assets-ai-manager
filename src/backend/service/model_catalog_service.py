@@ -131,7 +131,8 @@ class ModelCatalogService:
                       and item.get("id") == request.model_id), None)
         params = saved.get("litellm_params", {}) if saved else {}
         if not isinstance(params, dict) or params.get("api_base", "").rstrip("/") != base \
-                or (params.get("proxy_url") or None) != (request.proxy_url or None):
+                or (params.get("proxy_url") or None) != (request.proxy_url or None) \
+                or bool(params.get("allow_insecure_http", False)) != request.allow_insecure_http:
             raise SettingError(
                 422, "地址或代理已修改；请填写 API Key 或先保存配置后再获取列表",
                 code="MODEL_CATALOG_UNSAVED_CONNECTION",

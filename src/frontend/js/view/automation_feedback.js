@@ -1,6 +1,6 @@
 import { esc, date } from "../util/core.js";
 
-export const executionResultNames = { COMPLETED: "完成", PARTIAL_FAILURE: "部分失败", FAILED: "失败", CANCELLED: "已取消", UNKNOWN: "结果未知" };
+export const executionResultNames = { COMPLETED: "完成", SUCCEEDED: "成功", YIELDED: "留待后续执行", PARTIAL_FAILURE: "部分失败", FAILED: "失败", CANCELLED: "已取消", UNKNOWN: "结果未知" };
 
 export function helpTip(label, copy) {
   return `<span class="automation-tip"><button type="button" class="automation-tip-trigger" aria-label="${esc(label)}" aria-description="${esc(copy)}">?</button><span class="automation-tip-content" role="tooltip">${esc(copy)}</span></span>`;
@@ -84,6 +84,7 @@ const localTime = (value) => value ? date(value) : "—";
 
 export function scheduleProgressMarkup(progress) {
   if (!progress) return "";
+  if (Object.hasOwn(progress, "completed")) return `<small>${esc(progress.phase)} · ${esc(progress.completed)} / ${esc(progress.total ?? "—")} · ${Object.entries(progress.metrics || {}).map(([key, value]) => `${esc(key)}: ${esc(value)}`).join(" · ")}</small>`;
   return `<small>${esc(phaseCopy[progress.phase] || progress.phase)} · 已检查 ${esc(progress.inspected_count || 0)} / ${esc(progress.page_total || 0)} · 调用模型项 ${esc(progress.submitted_count || 0)} · 尝试 ${esc(progress.attempt || 0)} / 3</small>
     <small>未调用 ${esc(progress.no_call_count || 0)} · 依据不足 ${esc(progress.insufficient_count || 0)} · 待审申请 ${esc(progress.request_count || 0)} · 失败 ${esc(progress.failed_count || 0)} · 跳过 ${esc(progress.skipped_count || 0)}</small>`;
 }
@@ -95,7 +96,7 @@ export function runtimeMarkup(schedule) {
   const running = tasks.filter((task) => task.queue_state === "RUNNING");
   const rows = tasks.map((task) => `<tr><td><strong>${task.task_key === "system:import-preview-timeout" ? "导入预览超时清理（系统维护）" : esc(task.display_name || task.task_key)}</strong><small>${esc(task.task_key)}</small></td>
     <td>${esc(task.queue_state)}${task.queue_position == null ? "" : ` · 排队第 ${esc(task.queue_position)} 位 · 已等待 ${Math.floor((task.wait_ms || 0) / 1000)} 秒<small>入队 ${esc(localTime(task.enqueued_at))}</small>`}
-    ${task.queue_state === "RUNNING" ? `<small>开始 ${esc(localTime(task.started_at))} · 已耗时 ${Math.floor((task.elapsed_ms || 0) / 1000)} 秒</small>${scheduleProgressMarkup(task.progress)}` : ""}
+    ${task.queue_state === "RUNNING" ? `<small>开始 ${esc(localTime(task.started_at))} · 已耗时 ${Math.floor((task.elapsed_ms || 0) / 1000)} 秒</small>${scheduleProgressMarkup(task.generic_progress || task.progress)}` : ""}
     ${task.queue_state === "BLOCKED" ? `<small>已阻塞，连续 ${esc(task.blocked_attempts || 1)} 轮；${task.last_error_code === "REGISTER_FAILED" ? "请重新保存规则" : "后续 CRON 只尝试恢复，不推进未处理项"}</small>` : ""}</td>
     <td>${esc(task.last_result ? executionResultNames[task.last_result] || "结果未知" : "尚未运行")}${task.last_error_code ? ` · ${esc(task.last_error_code)}` : ` · ${esc(outcomeCopy[task.last_outcome_code] || "")}`}
     ${scheduleProgressMarkup(task.last_progress)}${task.last_run_id ? `<small>诊断编号 <code>${esc(task.last_run_id)}</code></small>` : ""}</td><td>${esc(localTime(task.next_run_at))}</td></tr>`).join("");
