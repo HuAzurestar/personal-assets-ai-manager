@@ -274,17 +274,17 @@ def test_synthetic_request_requires_approval_and_reads_back_source(request_api):
 
     before = client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]
     before_tags = {
-        item["view_system_name"]: item for item in before["ledger_entry"]["tags"]
+        item["view_system_name"]: item for item in before["tags"]
     }
     assert before_tags["category"]["tag_system_name"] == "unclassified"
-    assert before_tags["category"]["source_type"] == "MANUAL"
+    assert before_tags["category"]["source_type"] == "UNKNOWN"
 
     approved = client.post(
         "/paam/tag/v1/assignment_request/batch_approve",
         json={"request_ids": [items[0]["id"]]},
     )
     assert approved.status_code == 200, approved.text
-    assert approved.json()["body"]["items"][0]["status"] == 2
+    assert approved.json()["body"]["results"][0]["status"] == 2
     competing = client.get(
         f"/paam/tag/v1/assignment_request/{items[1]['id']}"
     ).json()["body"]
@@ -292,13 +292,24 @@ def test_synthetic_request_requires_approval_and_reads_back_source(request_api):
 
     after = client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]
     after_tags = {
-        item["view_system_name"]: item for item in after["ledger_entry"]["tags"]
+        item["view_system_name"]: item for item in after["tags"]
     }
+    with sessions() as db:
+        accepted_tag_row_id = db.scalar(select(LedgerEntryTag.id).where(
+            LedgerEntryTag.ledger_id == ledger_id,
+            LedgerEntryTag.tag_id == tag_ids["category"]["food"],
+        ))
+    assert accepted_tag_row_id is not None
     assert after_tags["category"] == {
+        "id": accepted_tag_row_id,
+        "view_id": category_id,
+        "tag_id": tag_ids["category"]["food"],
         "view_name": "Category",
         "view_system_name": "category",
         "tag_name": "Food",
         "tag_system_name": "food",
+        "view_status": "ACTIVE",
+        "tag_status": "ACTIVE",
         "source_type": "AUTO_RULE",
         "request_id": items[0]["id"],
         "rule_id": food_rule,
@@ -328,7 +339,7 @@ def test_reject_keeps_tag_and_increments_rule_counter(request_api):
     )
 
     assert rejected.status_code == 200, rejected.text
-    assert rejected.json()["body"]["items"][0]["status"] == 3
+    assert rejected.json()["body"]["results"][0]["status"] == 3
     all_requests = client.get("/paam/tag/v1/assignment_request/list")
     pending_requests = client.get(
         "/paam/tag/v1/assignment_request/list",
@@ -371,7 +382,7 @@ def test_approval_conflicts_have_item_results_and_never_override_manual_tag(requ
         json={"request_ids": request_ids},
     )
     assert scope_conflict.status_code == 200
-    assert [item["result"] for item in scope_conflict.json()["body"]["items"]] == ["SCOPE_CONFLICT", "SCOPE_CONFLICT"]
+    assert [item["code"] for item in scope_conflict.json()["body"]["results"]] == ["SCOPE_CONFLICT", "SCOPE_CONFLICT"]
     with sessions() as db:
         assert set(db.scalars(select(TagAssignmentRequest.status)).all()) == {1}
 
@@ -394,7 +405,7 @@ def test_approval_conflicts_have_item_results_and_never_override_manual_tag(requ
         json={"request_ids": [request_ids[0]]},
     )
     assert manual_conflict.status_code == 200
-    assert manual_conflict.json()["body"]["items"][0]["result"] == (
+    assert manual_conflict.json()["body"]["results"][0]["code"] == (
         "MANUAL_TAG_CONFLICT"
     )
     with sessions() as db:
@@ -425,7 +436,7 @@ def test_stale_rule_and_inactive_ledger_are_rejected(request_api):
         json={"request_ids": [request_id]},
     )
     assert stale.status_code == 200
-    assert stale.json()["body"]["items"][0]["result"] == "RULE_STALE"
+    assert stale.json()["body"]["results"][0]["code"] == "RULE_STALE"
 
     with sessions() as db:
         db.execute(update(AutoTagRule).where(
@@ -442,8 +453,8 @@ def test_stale_rule_and_inactive_ledger_are_rejected(request_api):
         "/paam/tag/v1/assignment_request/batch_approve",
         json={"request_ids": [request_id]},
     )
-    assert inactive.status_code == 200
-    assert inactive.json()["body"]["items"][0]["result"] == "LEDGER_INACTIVE"
+    assert inactive.status_code == 409
+    assert inactive.json()["body"]["code"] == "SUGGESTION_STALE"
 
 
 def _request_id(sessions, rule_id, ledger_id):
@@ -541,9 +552,10 @@ def test_same_value_manual_save_takes_ownership_and_is_then_idempotent(request_a
     assert replay.status_code == 200
     assert replay.json()["body"] == current
     assert _manual(client, ledger_id, opened["tag_state"], opened["updated_time"]).status_code == 409
-    tags = client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]["ledger_entry"]["tags"]
+    tags = client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]["tags"]
     category = next(item for item in tags if item["view_system_name"] == "category")
-    assert category["source_type"] == "MANUAL"
+    # The retained tag value proves no origin once the AUTO request is replaced.
+    assert category["source_type"] == "UNKNOWN"
     assert category["request_id"] is None
     with sessions() as db:
         assert db.get(TagAssignmentRequest, request_id).status == 5
@@ -574,7 +586,7 @@ def test_manual_assignment_cancels_pending_only_for_target_ledger(request_api, c
     assert client.post(
         "/paam/tag/v1/assignment_request/batch_approve",
         json={"request_ids": [request_id]},
-    ).json()["body"]["items"][0]["result"] == "REQUEST_STATE_CONFLICT"
+    ).json()["body"]["code"] == "SUGGESTION_STALE"
     with sessions() as db:
         assert db.get(TagAssignmentRequest, request_id).status == 4
         assert db.get(TagAssignmentRequest, other_request).status == 1

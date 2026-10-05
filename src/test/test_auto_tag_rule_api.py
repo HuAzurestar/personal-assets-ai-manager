@@ -523,6 +523,12 @@ def test_candidate_preview_is_read_only_and_explicitly_simulated(
             ]
             db.add_all(reviews)
             db.flush()
+            db.add_all([TransactionFact(
+                id=1000 + index, fact_key=f"fictional-preview-state-{index}", occurred_time=now,
+                cash_direction=1, amount=ledger.amount, currency_code="CNY", account_code="wallet",
+                counterparty_name="", counterparty_account_ref="", summary="",
+                created_time=now, updated_time=now,
+            ) for index, ledger in enumerate(ledgers)])
             db.add_all([
                 ReviewAllocation(
                     review_case_id=review.id,
@@ -599,7 +605,7 @@ def test_candidate_preview_is_read_only_and_explicitly_simulated(
             "ledger_id": eligible_id, "reason": "ELIGIBLE",
             "amount": 104, "currency_code": "CNY",
             "occurred_time": sample["occurred_time"],
-            "counterparty_name": None, "summary": None,
+            "counterparty_name": "", "summary": "",
         }
         assert datetime.fromisoformat(sample["occurred_time"].replace("Z", "+00:00")).replace(tzinfo=timezone.utc) == now
 

@@ -25,6 +25,8 @@ from backend.entity import (
 )
 from backend.parser.statement_parser import digest
 from backend.smart_import import build_plan
+from backend.mapper.account_management_mapper import AccountManagementMapper
+from backend.core.source_account_identity import reliable_source, binding_digest
 
 
 _IMPORT_SOURCE_BY_NAME = {
@@ -82,6 +84,13 @@ class TargetImportMatchMapper:
             plan["counts"].get("errors", 0)
             or plan["counts"].get("ambiguous", 0)
         )
+        identities = {identity for doc in plan["documents"] for row in doc.get("rows", [])
+                      if row.get("action") == "new" and (identity := reliable_source(row)) is not None}
+        account_mapper = AccountManagementMapper(self.db)
+        refs = list(account_mapper.reliable_refs(identities).values())
+        account_rows = account_mapper.named_rows("accounts", [row["account_id"] for row in refs if row["account_id"]])
+        party_rows = account_mapper.named_rows("parties", [row["party_id"] for row in account_rows])
+        plan["source_binding_digest"] = binding_digest(dict(refs=refs, accounts=account_rows, parties=party_rows))
         plan["version"] = digest({
             key: value for key, value in plan.items() if key != "version"
         })

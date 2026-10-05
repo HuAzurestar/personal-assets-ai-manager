@@ -22,14 +22,6 @@ CASH_DIRECTION_OUT = 2
 
 class TransactionFact(TargetTable, TargetBase):
     __tablename__ = "transaction_fact"
-    __table_args__ = (
-        UniqueConstraint("fact_key", name="uq_transaction_fact_key"),
-        Index(
-            "ix_transaction_fact_occurred_time_id",
-            "occurred_time",
-            "id",
-        ),
-    )
 
     fact_key: Mapped[str] = mapped_column(String(160), nullable=False)
     occurred_time: Mapped[datetime] = mapped_column(
@@ -46,3 +38,17 @@ class TransactionFact(TargetTable, TargetBase):
         String(200), nullable=False, default=""
     )
     summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+    __table_args__ = (
+        UniqueConstraint("fact_key", name="uq_transaction_fact_key"),
+        Index(
+            "ix_transaction_fact_occurred_time_id",
+            "occurred_time",
+            "id",
+        ),
+        Index(
+            "ix_transaction_fact_time_desc_id_asc",
+            occurred_time.desc(),
+            "id",
+        ),
+    )

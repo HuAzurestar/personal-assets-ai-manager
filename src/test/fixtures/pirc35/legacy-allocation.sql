@@ -1,3 +1,4 @@
+-- Historical pre-PIRC-35 structure, used only for isolated migration tests.
 PRAGMA encoding = 'UTF-8';
 
 CREATE TABLE IF NOT EXISTS review_allocation /* Review、Transaction Fact 与 Ledger Entry 的已发布三元金额关系 */ (

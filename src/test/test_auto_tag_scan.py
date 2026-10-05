@@ -40,6 +40,8 @@ from backend.service.auto_tag_scan_service import AutoTagScanService
 from backend.service.llm_privacy_service import LlmPrivacyService
 from backend.service.tag_assignment_request_service import TagAssignmentRequestService
 from backend.service.target_economic_service import TargetEconomicService
+from backend.schema.review_command import ReviewChangeInput, ReviewCommandInput
+from backend.service.review_command_service import ReviewCommandService
 
 NOW = datetime(2026, 9, 22, 8, tzinfo=timezone.utc)
 
@@ -154,6 +156,11 @@ def _seed_ledger(
         )
         db.add(ledger)
         db.flush()
+        db.add(TransactionFact(id=ledger.id, fact_key=f"pirc24-gate-fictional-{ledger.id}",
+            occurred_time=NOW, cash_direction=1, amount=12300, currency_code="CNY", account_code="fixture",
+            counterparty_name="Fictional merchant", counterparty_account_ref="", summary="Fictional purchase",
+            created_time=NOW, updated_time=NOW))
+        db.flush()
         review = ReviewCase(
             behavior_type=1,
             status=0 if active else 1,
@@ -203,20 +210,10 @@ def test_acceptance_source_rejects_unmarked_fact(scan_runtime):
     sessions, _, _, tag_ids = scan_runtime
     ledger_id = _seed_ledger(sessions, tag_ids["unclassified"])
     with sessions() as db:
-        db.add(TransactionFact(
-            id=ledger_id,
-            fact_key="ordinary-bill",
-            occurred_time=NOW,
-            cash_direction=2,
-            amount=12_300,
-            currency_code="CNY",
-            account_code="fixture",
-            counterparty_name="Not for model",
-            counterparty_account_ref="",
-            summary="Private summary",
-            created_time=NOW,
-            updated_time=NOW,
-        ))
+        fact = db.get(TransactionFact, ledger_id)
+        fact.fact_key = "ordinary-bill"
+        fact.counterparty_name = "Not for model"
+        fact.summary = "Private summary"
         db.commit()
         mapper = AutoTagScanMapper(db)
         assert mapper.is_synthetic_acceptance_database() is False
@@ -279,15 +276,18 @@ def test_protected_split_uses_ledger_amount_not_original_fact(
         fact_id = fact.id
         economics = TargetEconomicService(db)
         economics.ensure_defaults([fact_id], commit=True)
-        review = economics.create(TargetEconomicReviewCreateRequest(
-            behavior_type=1, title="Synthetic split",
-            economics=[{"client_key": "claim", "economic_type": "CLAIM"}],
-            allocations=[{
-                "fact_id": fact_id, "economic_key": "claim", "amount": 1000,
-            }],
-            idempotency_key="synthetic-split",
-        ))
-        split_id = review.allocations[0].ledger_entry_id
+        from backend.entity import LedgerAccountParty
+        db.add(LedgerAccountParty(id=1, name="Mock person", status="ACTIVE"))
+        db.commit()
+        result = _scan_review_command(db, new_reviews=[dict(case_code="POS_POSITION_OPEN", title="Synthetic split",
+            new_positions=[dict(title="Mock note", description="", type="ASSET", usage_scenario="GENERAL",
+                party_id=1, counterparty="", unit_code=currency_code)],
+            allocations=[dict(transaction_id=fact_id, economic_type=kind, cash_amount=amount, account_ref_id=0)
+                         for kind, amount in [("ASSET_LIABILITY",1000),("TRANSACTION",4000)]],
+            legs=[dict(new_position_index=0, type="MOVEMENT", leg_amount=1000, leg_direction="IN", occurred_time=NOW)],
+            position_allocations=[dict(allocation_index=0, leg_index=0, cash_amount=1000, cash_currency_code=currency_code)])])
+        split_id = ReviewCommandService(db).detail(result["created_reviews"][0]["id"])["allocations"][0]["ledger_id"]
+
     rule_id = _seed_rule(sessions, view_id, amount_mode=amount_mode)
     with sessions() as db:
         mapper = AutoTagScanMapper(db)
@@ -316,17 +316,10 @@ def test_protected_split_uses_ledger_amount_not_original_fact(
 def _protected_ledgers(sessions, tag_id):
     ids = [_seed_ledger(sessions, tag_id) for _ in range(2)]
     with sessions() as db:
-        db.add_all([
-            TransactionFact(
-                id=ledger_id, fact_key=f"pirc24-gate-fictional-{ledger_id}",
-                occurred_time=NOW, cash_direction=1, amount=12300,
-                currency_code="CNY", account_code="fixture",
-                counterparty_name="咖啡馆" * 67, counterparty_account_ref="",
-                summary="茶" * 501 if index == 0 else "文具购买",
-                created_time=NOW, updated_time=NOW,
-            )
-            for index, ledger_id in enumerate(ids)
-        ])
+        for index, ledger_id in enumerate(ids):
+            fact = db.get(TransactionFact, ledger_id)
+            fact.counterparty_name = "咖啡馆" * 67
+            fact.summary = "茶" * 501 if index == 0 else "文具购买"
         db.commit()
     return ids
 
@@ -818,21 +811,13 @@ def test_review_revoke_and_restore_invalidate_scan_and_pending_request(
         db.flush()
         economics = TargetEconomicService(db)
         economics.ensure_defaults([fact.id], commit=True)
-        review = economics.create(TargetEconomicReviewCreateRequest(
-            behavior_type=1,
-            title="Synthetic review",
-            economics=[{
-                "client_key": "purchase",
-                "economic_type": "TRANSACTION",
-            }],
-            allocations=[{
-                "fact_id": fact.id,
-                "economic_key": "purchase",
-                "amount": 5_000,
-            }],
-            idempotency_key="synthetic-create",
-        ))
-        ledger_id = review.allocations[0].ledger_entry_id
+        result = _scan_review_command(db, new_reviews=[dict(case_code="NORMAL", title="Synthetic review",
+            parameters=dict(transaction_ids=[fact.id]))])
+        review_id = result["created_reviews"][0]["id"]
+        ledger_id = ReviewCommandService(db).detail(review_id)["allocations"][0]["ledger_id"]
+        default_ledger_id = db.scalar(select(ReviewAllocation.ledger_entry_id).join(
+            ReviewCase, ReviewCase.id == ReviewAllocation.review_case_id).where(
+            ReviewAllocation.transaction_fact_id == fact.id, ReviewCase.behavior_type == 0))
         assert db.scalar(select(LedgerEntryTag.tag_id).where(
             LedgerEntryTag.ledger_id == ledger_id,
         )) == tag_ids["unclassified"]
@@ -859,30 +844,24 @@ def test_review_revoke_and_restore_invalidate_scan_and_pending_request(
         with sessions() as db:
             request_id = db.scalar(select(TagAssignmentRequest.id).where(TagAssignmentRequest.rule_id == rule_id))
         with sessions() as db:
-            assert TagAssignmentRequestService(db).approve([request_id]).items[0].result == "APPROVED"
+            assert TagAssignmentRequestService(db).approve([request_id]).results[0].code == "APPROVED"
 
     with sessions() as db:
-        revoked = TargetEconomicService(db).revoke(
-            review.id,
-            TargetReviewTransitionRequest(idempotency_key="synthetic-revoke"),
-        )
-        assert revoked.status == 1
+        _scan_review_command(db, deactivate_review_ids=[review_id])
+        assert ReviewCommandService(db).detail(review_id)["status"] == "REVOKED"
     with sessions() as db:
         rule = db.get(AutoTagRule, rule_id)
         request = db.scalar(select(TagAssignmentRequest).where(
             TagAssignmentRequest.rule_id == rule_id,
         ))
         assert rule.scan_epoch == 2
-        assert rule.scan_after_ledger_id == ledger_id - 1
+        assert rule.scan_after_ledger_id == min(default_ledger_id, ledger_id) - 1
         assert request.status == (5 if approved else TAG_REQUEST_STATUS_CANCELLED)
         assert (rule.accepted_count, rule.rejected_count) == (int(approved), 0)
 
     with sessions() as db:
-        restored = TargetEconomicService(db).restore(
-            review.id,
-            TargetReviewTransitionRequest(idempotency_key="synthetic-restore"),
-        )
-        assert restored.status == 0
+        _scan_review_command(db, activate_review_ids=[review_id])
+        assert ReviewCommandService(db).detail(review_id)["status"] == "CONFIRMED"
     with sessions() as db:
         rule = db.get(AutoTagRule, rule_id)
         assert rule.scan_epoch == 3
@@ -890,3 +869,9 @@ def test_review_revoke_and_restore_invalidate_scan_and_pending_request(
         request = db.scalar(select(TagAssignmentRequest).where(TagAssignmentRequest.rule_id == rule_id))
         assert request.status == (5 if approved else TAG_REQUEST_STATUS_CANCELLED)
         assert (rule.accepted_count, rule.rejected_count) == (int(approved), 0)
+
+def _scan_review_command(db, **intent):
+    service = ReviewCommandService(db)
+    preview = service.preview(ReviewChangeInput(**intent))
+    assert not preview["blocking_issues"], preview
+    return service.command(ReviewCommandInput(**intent, expected_reviews=preview["expected_reviews"], preview_digest=preview["preview_digest"]))

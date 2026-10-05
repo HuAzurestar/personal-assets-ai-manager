@@ -18,3 +18,7 @@ CREATE TABLE IF NOT EXISTS transaction_fact /* 接受后的不可变规范交易
 
 CREATE INDEX IF NOT EXISTS ix_transaction_fact_occurred_time_id
     ON transaction_fact (occurred_time, id);
+
+/* 默认候选按时间降序、同时间 ID 升序；反扫旧索引不能提供这个混合顺序。 */
+CREATE INDEX IF NOT EXISTS ix_transaction_fact_time_desc_id_asc
+    ON transaction_fact (occurred_time DESC, id ASC);

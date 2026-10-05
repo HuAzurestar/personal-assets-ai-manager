@@ -19,6 +19,7 @@ from backend.mapper.auto_tag_scan_mapper import (
     ScanTarget,
     ScanToken,
 )
+from backend.mapper.auto_tag_scan_batch_mapper import ScanBatchResult
 from backend.schema.llm_analysis import (
     LlmAmountDisclosure,
     LlmCandidate,
@@ -360,11 +361,12 @@ def test_protected_scan_stops_after_first_provider_wide_failure():
     service._read_page = lambda rule_id, limit: page
     committed = []
 
-    def commit(token, ledger_id, kind, suggestions):
-        committed.append((ledger_id, kind, suggestions))
-        return ScanCommitResult("COMMITTED", "ANALYSIS_COMMITTED")
+    def commit(original_page, outcomes):
+        committed.extend((item["ledger_id"], item["kind"], item.get("suggestions", ())) for item in outcomes)
+        return ScanBatchResult("COMMITTED", "PREFIX_COMMITTED",
+            tuple(ScanCommitResult("COMMITTED", "ANALYSIS_COMMITTED") for _ in outcomes))
 
-    service._commit = commit
+    service._commit_prefix = commit
     payload = ProtectedLlmAnalysisInput(
         source="PROTECTED_LEDGER",
         item="item_1",

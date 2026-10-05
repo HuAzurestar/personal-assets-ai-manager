@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy import and_, exists, func, select
 from sqlalchemy.orm import Session
+from backend.mapper.account_management_mapper import AccountManagementMapper
 
 from backend.entity import (
     TAG_REQUEST_STATUS_ENABLED,
@@ -177,7 +178,21 @@ class LedgerEntryMapper:
         return result
 
     def summary(self, query: LedgerEntrySummaryQuery):
+        # These explicit scalar columns need no ORM result assembly. Keep the
+        # Session's same connection/snapshot and column type processors; the
+        # surrounding read deadline and complete contribution limit still apply.
+        return self.db.connection().execute(self.summary_statement(query)).mappings().all()
+
+    def summary_statement(self, query: LedgerEntrySummaryQuery):
         clauses = self._active_clauses()
+        scopes = AccountManagementMapper(self.db)
+        for dimension in ("account_ref_id", "account_id", "party_id"):
+            value = getattr(query, dimension)
+            if value is not None:
+                clauses.append(LedgerEntry.account_ref_id == 0 if dimension == "account_ref_id" and value == 0
+                    else LedgerEntry.account_ref_id.in_(scopes.ref_scope(dimension, value)))
+        if query.cash_currency_code is not None:
+            clauses.append(LedgerEntry.currency_code == query.cash_currency_code)
         if query.occurred_time_start:
             clauses.append(
                 LedgerEntry.occurred_time >= query.occurred_time_start
@@ -186,14 +201,14 @@ class LedgerEntryMapper:
             clauses.append(
                 LedgerEntry.occurred_time < query.occurred_time_end
             )
-        return self.db.execute(select(
+        return select(
             LedgerEntry.id,
             LedgerEntry.entry_type,
             LedgerEntry.entry_direction,
-            LedgerEntry.amount,
-            LedgerEntry.currency_code,
+            LedgerEntry.amount.label("amount"),
+            LedgerEntry.currency_code.label("currency_code"),
             LedgerEntry.occurred_time,
-        ).where(*clauses)).mappings().all()
+        ).where(*clauses).limit(50001)
 
     @staticmethod
     def _clauses(filter_value: LedgerEntryFilter) -> list:

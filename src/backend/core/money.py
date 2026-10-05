@@ -12,6 +12,7 @@ DEFAULT_CURRENCY_PRECISION = {
     "GBP": 2,
     "HKD": 2,
     "JPY": 0,
+    "KRW": 0,
     "USD": 2,
 }
 MAX_CURRENCY_PRECISION = 8

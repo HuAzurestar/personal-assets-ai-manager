@@ -1,6 +1,7 @@
 """Domain error translation shared by PAAM HTTP routers."""
 
 import logging
+from time import monotonic
 from collections.abc import Callable, Coroutine
 from typing import Any
 
@@ -13,6 +14,7 @@ from starlette.responses import JSONResponse
 
 from backend.error import DomainError
 from backend.schema.response import ErrorBody, ErrorResponse
+from backend.core.feature_observability import observability, trace_id, trace_scope
 
 
 logger = logging.getLogger(__name__)
@@ -71,6 +73,16 @@ def _error_response(
     details: Any = None,
     headers: dict[str, str] | None = None,
 ) -> JSONResponse:
+    safe_trace = trace_id()
+    if safe_trace is None:
+        with trace_scope() as safe_trace:
+            observability.emit("HTTP", code=code)
+    else:
+        observability.emit("HTTP", code=code)
+    if details is not None and not isinstance(details, dict):
+        details = {"field": details}
+    details = dict(details or {}, trace_id=safe_trace)
+    headers = dict(headers or {}, **{"X-PAAM-Trace-ID": safe_trace})
     response = ErrorResponse(
         status=status_code,
         message=message,
@@ -95,11 +107,24 @@ def _domain_error_response(error: DomainError) -> JSONResponse:
     )
 
 
-def _validation_error_response(error: RequestValidationError) -> JSONResponse:
+def _validation_error_response(error: RequestValidationError, request: Request | None = None) -> JSONResponse:
+    code = "VALIDATION_ERROR"
+    path = request.url.path if request is not None else ""
+    review_intent = path in {"/paam/ledger/v1/review/preview", "/paam/ledger/v1/review/command"}
+    position_input = path.startswith("/paam/financial/v1/position")
+    if review_intent or position_input:
+        errors = error.errors()
+        if review_intent and any("behavior_type" in row.get("loc", ()) for row in errors):
+            code = "INVALID_REVIEW_TYPE"
+        elif review_intent and any(row["type"] in {"union_tag_invalid", "union_tag_not_found"}
+                                  or "case_code" in row.get("loc", ()) for row in errors):
+            code = "INVALID_CASE_CODE"
+        elif any("usage_scenario" in row.get("loc", ()) for row in errors):
+            code = "INVALID_USAGE_SCENARIO"
     return _error_response(
         422,
         "Request validation failed",
-        "VALIDATION_ERROR",
+        code,
         details=_redact_validation_errors(error.errors()),
     )
 
@@ -117,11 +142,9 @@ def _http_error_response(error: HTTPException) -> JSONResponse:
 
 
 def _internal_error_response(request: Request, error: Exception) -> JSONResponse:
-    logger.error(
-        "Unhandled error while processing %s",
-        request.url.path,
-        exc_info=error,
-    )
+    # SQL/driver exceptions can embed complete source payloads and parameters.
+    # Neither exception text/traceback nor client-controlled paths are logs.
+    logger.error("Unhandled application error code=INTERNAL_SERVER_ERROR")
     return _error_response(
         500,
         "Internal server error",
@@ -134,10 +157,10 @@ async def _domain_error_handler(_: Request, error: DomainError) -> JSONResponse:
 
 
 async def _validation_error_handler(
-    _: Request,
+    request: Request,
     error: RequestValidationError,
 ) -> JSONResponse:
-    return _validation_error_response(error)
+    return _validation_error_response(error, request)
 
 
 async def _http_error_handler(_: Request, error: HTTPException) -> JSONResponse:
@@ -166,12 +189,21 @@ class DomainErrorRoute(APIRoute):
         original = super().get_route_handler()
 
         async def translated(request: Request) -> Response:
+            with trace_scope() as safe_trace:
+                started = monotonic()
+                response = await handle(request)
+                response.headers["X-PAAM-Trace-ID"] = safe_trace
+                if response.status_code < 400:
+                    observability.emit("HTTP", duration_ms=(monotonic() - started) * 1000)
+                return response
+
+        async def handle(request: Request) -> Response:
             try:
                 return await original(request)
             except DomainError as error:
                 return _domain_error_response(error)
             except RequestValidationError as error:
-                return _validation_error_response(error)
+                return _validation_error_response(error, request)
             except HTTPException as error:
                 return _http_error_response(error)
             except Exception as error:

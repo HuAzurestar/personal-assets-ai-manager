@@ -13,15 +13,19 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event, inspect, select
 from sqlalchemy.orm import sessionmaker
 
-import backend.service.target_intake_service as target_intake_service_module
+import backend.service.import_batch_service as target_intake_service_module
 from backend.core import target_database
 from backend import target_main
-from backend.core.intake_preview_store import (
-    IMPORT_PREVIEW_TIMEOUT,
-    IntakePreviewState,
-    IntakePreviewStore,
-    target_intake_preview_store,
+from backend.core.import_preview_store import (
+    ImportPreviewState as IntakePreviewState,
+    ImportPreviewStore as IntakePreviewStore,
+    import_preview_store as target_intake_preview_store,
 )
+from import_batch_helpers import confirm_api_batch, prepare_api_batch
+from backend.error import TargetIntakeError
+from backend.mapper.import_source_mapper import ImportSourceMapper
+from backend.mapper.import_batch_mapper import ImportBatchMapper
+IMPORT_PREVIEW_TIMEOUT = timedelta(minutes=30)
 from backend.entity.base import utc_now
 from backend.entity import (
     CASH_DIRECTION_IN,
@@ -110,31 +114,26 @@ def test_intake_preview_store_rejects_stale_replacement():
     store = IntakePreviewStore()
     store.put(IntakePreviewState(
         token="preview-token",
-        documents=[],
-        plan={"version": "initial"},
+        files=[], rows={},
     ))
     stale = store.get("preview-token")
     assert stale is not None
 
-    with store.locked("preview-token") as current:
-        assert current is not None
-        current.result = {"status": "confirmed"}
-        store.touch(current)
-
-    stale.plan = {"version": "stale"}
-    assert not store.replace(
-        stale,
-        expected_updated_time=stale.updated_time,
-    )
+    current = store.get("preview-token")
+    current.files = [{"file_id": 1}]
+    store.replace(current, current.updated_time)
+    with pytest.raises(TargetIntakeError) as caught:
+        store.replace(stale, stale.updated_time)
+    assert caught.value.code == "PREVIEW_CHANGED"
     retained = store.get("preview-token")
     assert retained is not None
     assert retained.updated_time > stale.updated_time
-    assert retained.result == {"status": "confirmed"}
-    assert retained.plan == {"version": "initial"}
+    assert not hasattr(retained, "result")
+    assert retained.files == [{"file_id": 1}]
 
 
 def test_intake_preview_timeout_defaults_to_thirty_minutes():
-    state = IntakePreviewState(token="preview-token", documents=[], plan={})
+    state = IntakePreviewState(token="preview-token", files=[], rows={})
     assert state.timeout == timedelta(minutes=30)
     assert state.timeout == IMPORT_PREVIEW_TIMEOUT
 
@@ -142,9 +141,10 @@ def test_intake_preview_timeout_defaults_to_thirty_minutes():
 def test_timed_out_preview_can_still_be_confirmed(target_import_api):
     client, sessions, _engine = target_import_api
     preview = _preview(client, "expired.csv", _csv())
-    with target_intake_preview_store.locked(preview["token"]) as state:
-        assert state is not None
-        state.updated_time = utc_now() - IMPORT_PREVIEW_TIMEOUT - timedelta(seconds=1)
+    state = target_intake_preview_store.get(preview["token"])
+    state.timeout = timedelta(seconds=-1)
+    target_intake_preview_store.replace(state, state.updated_time)
+    assert target_intake_preview_store.get(preview["token"]).timed_out
     with sessions() as db:
         import_file = db.scalar(select(TransactionImportFile))
         import_file.updated_time = (
@@ -211,23 +211,21 @@ def _preview(client, filename: str, content: bytes, password: str | None = None)
     return response.json()["body"]
 
 
-def _confirm(client, preview):
-    return client.post(
-        f"/paam/import/v1/preview/{preview['token']}/confirm",
-        json={"version": preview["version"]},
-    )
+def _confirm(client, preview, *, skip_invalid=False):
+    # Author-controlled fictional WeChat bills omit a reliable profile. NEW is
+    # explicit for new rows only; repeats stay AUTO and invalid rows stay SKIP.
+    return confirm_api_batch(client, preview, skip_invalid=skip_invalid, explicit_new=True)
 
 
 def test_import_read_mapper_owns_public_import_queries():
-    for method_name in ("history", "rows", "accounts"):
-        assert hasattr(TargetImportReadMapper, method_name)
-        assert not hasattr(TargetImportWriteMapper, method_name)
+    assert hasattr(ImportSourceMapper, "query")
+    assert hasattr(ImportSourceMapper, "relation_rows")
+    assert not hasattr(ImportSourceMapper, "write_batch")
 
 
 def test_import_match_mapper_owns_preview_planning():
-    assert hasattr(TargetImportMatchMapper, "plan")
-    assert hasattr(TargetImportMatchMapper, "load_history")
-    assert not hasattr(TargetImportWriteMapper, "plan")
+    assert hasattr(ImportBatchMapper, "match")
+    assert not hasattr(ImportBatchMapper, "load_history")
 
 
 def test_import_file_is_pending_before_parser_runs(target_import_api, monkeypatch):
@@ -248,14 +246,14 @@ def test_import_file_is_pending_before_parser_runs(target_import_api, monkeypatc
         parse_after_pending,
     )
     preview = _preview(client, "pending-before-parse.csv", _csv())
-    assert preview["can_confirm"]
+    assert preview["issue_count"] == 0
     assert observed_statuses == [IMPORT_FILE_STATUS_PENDING]
 
 
 def test_target_import_writes_fact_evidence_and_hot_projection(target_import_api):
     client, sessions, engine = target_import_api
     preview = _preview(client, "wechat.csv", _csv())
-    assert preview["can_confirm"]
+    assert preview["issue_count"] == 0
     with sessions() as db:
         pending_file = db.scalar(select(TransactionImportFile))
         pending_file_id = pending_file.id
@@ -306,15 +304,15 @@ def test_target_import_writes_fact_evidence_and_hot_projection(target_import_api
     assert set(inspect(engine).get_table_names()) == set(
         target_database.TARGET_TABLE_NAMES
     )
-    ledger_v2 = client.get("/paam/ledger/v1/flow/list")
-    assert ledger_v2.status_code == 200, ledger_v2.text
-    assert ledger_v2.json()["body"]["total"] == 1
-    assert ledger_v2.json()["body"]["items"][0]["entry_type"] == 0
-    assert ledger_v2.json()["body"]["items"][0]["amount"] == 1000
+    flows = client.get("/paam/ledger/v1/flow/list")
+    assert flows.status_code == 200, flows.text
+    assert flows.json()["body"]["total"] == 1
+    assert flows.json()["body"]["items"][0]["economic_type"] == "TRANSACTION"
+    assert flows.json()["body"]["items"][0]["cash_amount"] == 1000
 
     repeated = _preview(client, "renamed.csv", _csv())
-    assert repeated["counts"]["duplicate_file"] == 1
-    assert _confirm(client, repeated).status_code == 200
+    assert repeated["counts"]["processed"] == 1
+    assert _confirm(client, repeated).status_code == 409
     with sessions() as db:
         assert db.query(TransactionFact).count() == 1
         assert db.query(TransactionImportFile).count() == 1
@@ -340,7 +338,7 @@ def test_overlapping_import_order_preserves_facts_and_projection(target_import_a
         response = client.post("/paam/import/v1/preview", json={"files": group})
         assert response.status_code == 200, response.text
         plan = response.json()["body"]
-        assert plan["can_confirm"]
+        assert plan["issue_count"] == 0
         confirmed = _confirm(client, plan)
         assert confirmed.status_code == 200, confirmed.text
     with sessions() as db:
@@ -372,17 +370,16 @@ def test_zero_amount_rows_are_preserved_without_creating_facts(target_import_api
     )
     preview = _preview(client, "zero-balance-opening.csv", _csv(rows))
 
-    assert preview["can_confirm"]
-    assert preview["counts"]["record"] == 1
+    assert preview["counts"]["invalid"] == 1
     assert preview["counts"]["new"] == 1
 
-    response = _confirm(client, preview)
+    response = _confirm(client, preview, skip_invalid=True)
     assert response.status_code == 200, response.text
     with sessions() as db:
         assert db.query(TransactionFact).count() == 1
         assert db.query(TransactionImportRow).count() == 2
         skipped = db.scalar(select(TransactionImportRow).where(
-            TransactionImportRow.row_status == IMPORT_ROW_STATUS_SKIPPED
+            TransactionImportRow.row_status == IMPORT_ROW_STATUS_INVALID
         ))
         assert skipped is not None
         assert skipped.transaction_fact_id == 0
@@ -396,15 +393,15 @@ def test_target_import_rolls_back_when_default_review_write_fails(
     client, sessions, _ = target_import_api
     preview = _preview(client, "rollback.csv", _csv())
 
-    original_ensure_defaults = TargetEconomicService.ensure_defaults
+    original_ensure_defaults = ImportBatchMapper.create_initial_defaults
 
-    def fail_after_default_review(service, fact_ids):
-        original_ensure_defaults(service, fact_ids)
+    def fail_after_default_review(mapper, facts, **kwargs):
+        original_ensure_defaults(mapper, facts, **kwargs)
         raise RuntimeError("simulated default review failure")
 
     monkeypatch.setattr(
-        TargetEconomicService,
-        "ensure_defaults",
+        ImportBatchMapper,
+        "create_initial_defaults",
         fail_after_default_review,
     )
     response = _confirm(client, preview)
@@ -414,21 +411,19 @@ def test_target_import_rolls_back_when_default_review_write_fails(
         assert db.query(TransactionFact).count() == 0
         import_file = db.scalar(select(TransactionImportFile))
         failed_file_id = import_file.id
-        assert import_file.status == IMPORT_FILE_STATUS_FAILED
+        assert import_file.status == IMPORT_FILE_STATUS_PENDING
         assert db.query(TransactionImportRow).count() == 0
         assert db.query(ReviewCase).count() == 0
         assert db.query(LedgerEntry).count() == 0
 
     monkeypatch.setattr(
-        TargetEconomicService,
-        "ensure_defaults",
+        ImportBatchMapper,
+        "create_initial_defaults",
         original_ensure_defaults,
     )
     retried = _confirm(client, preview)
     assert retried.status_code == 200, retried.text
-    assert retried.json()["body"]["transaction_import_file_ids"] == [
-        failed_file_id
-    ]
+    assert [item["file_id"] for item in retried.json()["body"]["files"]] == [failed_file_id]
 
 
 def test_import_history_supports_canonical_pagination_and_source_filter(
@@ -519,17 +514,14 @@ def test_import_history_child_returns_all_related_rows(target_import_api):
     )
     confirmed = _confirm(client, preview)
     assert confirmed.status_code == 200, confirmed.text
-    batch_id = confirmed.json()["body"]["transaction_import_file_ids"][0]
+    batch_id = confirmed.json()["body"]["files"][0]["file_id"]
 
     first = client.get(
         f"/paam/import/v1/import_file/{batch_id}/transaction_fact/list"
     ).json()["body"]
     assert (first["total"], len(first["items"])) == (26, 26)
     assert first["items"][0]["id"] > 0
-    assert first["items"][0]["cash_direction"] in {
-        CASH_DIRECTION_IN,
-        CASH_DIRECTION_OUT,
-    }
+    assert first["items"][0]["cash_direction"] in {"IN", "OUT"}
 
     unsupported_page = client.get(
         f"/paam/import/v1/import_file/{batch_id}/transaction_fact/list",
@@ -543,6 +535,9 @@ def test_target_confirm_select_count_is_independent_of_row_count(target_import_a
 
     def count_for(row_count: int, prefix: str) -> int:
         preview = _preview(client, f"{prefix}.csv", _csv(_rows(row_count, prefix=prefix)))
+        # Complete risk disclosure is outside this financial SQL-count probe.
+        error, payload = prepare_api_batch(client, preview, explicit_new=True)
+        assert error is None
         statements = []
 
         def listener(_connection, _cursor, statement, _parameters, _context, _many):
@@ -551,7 +546,7 @@ def test_target_confirm_select_count_is_independent_of_row_count(target_import_a
 
         event.listen(engine, "before_cursor_execute", listener)
         try:
-            response = _confirm(client, preview)
+            response = client.post(f"/paam/import/v1/preview/{preview['token']}/confirm", json=payload)
         finally:
             event.remove(engine, "before_cursor_execute", listener)
         assert response.status_code == 200, response.text
@@ -567,7 +562,7 @@ def test_target_confirm_select_count_is_independent_of_row_count(target_import_a
 def test_target_import_accepts_supported_workbooks(target_import_api, extension):
     client, sessions, _ = target_import_api
     preview = _preview(client, f"statement.{extension}", _workbook(extension))
-    assert preview["can_confirm"]
+    assert preview["issue_count"] == 0
     assert _confirm(client, preview).status_code == 200
     with sessions() as db:
         assert db.query(TransactionFact).count() == 1
@@ -587,14 +582,14 @@ def test_encrypted_zip_password_is_ephemeral(target_import_api):
         archive.writestr("wechat.csv", _csv())
 
     wrong = _preview(client, "statement.zip", output.getvalue(), "wrong")
-    assert not wrong["can_confirm"]
+    assert wrong["issue_count"] > 0
     assert password not in json.dumps(wrong, ensure_ascii=False)
     with sessions() as db:
         failed_file = db.scalar(select(TransactionImportFile))
         failed_file_id = failed_file.id
         assert failed_file.status == IMPORT_FILE_STATUS_FAILED
     preview = _preview(client, "statement.zip", output.getvalue(), password)
-    assert preview["can_confirm"]
+    assert preview["issue_count"] == 0
     with sessions() as db:
         pending_file = db.scalar(select(TransactionImportFile))
         assert (pending_file.id, pending_file.status) == (
@@ -615,8 +610,12 @@ def test_encrypted_zip_password_is_ephemeral(target_import_api):
 def test_corrupt_workbook_is_a_preview_error(target_import_api, extension):
     client, sessions, _ = target_import_api
     preview = _preview(client, f"bad.{extension}", b"not a workbook")
-    assert not preview["can_confirm"]
-    assert preview["documents"][0]["error"]
+    assert preview["issue_count"] > 0
+    assert preview["issues"][0]["code"] == "WORKBOOK_INVALID"
+    file = preview["files"][0]
+    assert file["parse_status"] == "FAILED" and file["parse_issue_code"] == "WORKBOOK_INVALID"
+    assert file["parsed_row_count"] == 0 and file["parse_recovery"]
+    assert "not a workbook" not in file["parse_issue_message"]
     with sessions() as db:
         assert db.query(TransactionFact).count() == 0
         import_file = db.scalar(select(TransactionImportFile))
@@ -629,8 +628,8 @@ def test_target_fact_conflict_stays_on_import_row(target_import_api):
     assert _confirm(client, first).status_code == 200
     conflict_rows = _rows(amount="20.00")
     conflict = _preview(client, "conflict.csv", _csv(conflict_rows))
-    assert conflict["counts"]["error"] == 1
-    assert _confirm(client, conflict).status_code == 200
+    assert conflict["counts"]["invalid"] == 1
+    assert _confirm(client, conflict, skip_invalid=True).status_code == 200
 
     with sessions() as db:
         raw = db.scalar(select(TransactionImportRow).where(
@@ -638,7 +637,8 @@ def test_target_fact_conflict_stays_on_import_row(target_import_api):
         ))
         conflict_id = raw.id
         conflict_file_id = raw.transaction_import_file_id
-        existing_fact_id = db.scalar(select(TransactionFact.id))
+        original_payload, original_hash = raw.raw_payload, raw.raw_hash
+        assert db.scalar(select(TransactionFact.amount)) == 1000
         assert (raw.row_status, raw.transaction_fact_id) == (
             IMPORT_ROW_STATUS_INVALID,
             0,
@@ -652,76 +652,17 @@ def test_target_fact_conflict_stays_on_import_row(target_import_api):
             import_file.status,
         ) == (0, 0, 1, IMPORT_FILE_STATUS_FAILED)
 
-    listed = client.get(
-        "/paam/import/v1/fact_conflict/list",
-        params={
-            "page_size": 1,
-            "filter": '{"key":"status","op":"=","val":"PENDING"}',
-        },
-    )
-    assert listed.status_code == 200, listed.text
-    assert listed.json()["body"]["total"] == 1
-    assert listed.json()["body"]["items"][0]["id"] == conflict_id
-    detail = client.get(f"/paam/import/v1/fact_conflict/{conflict_id}").json()["body"]
-
-    dismissed = client.post(
-        f"/paam/import/v1/fact_conflict/{conflict_id}/dismiss",
-        json={"expected_version": detail["version"], "reason": "not the same fact"},
-    )
-    assert dismissed.status_code == 200, dismissed.text
-    assert dismissed.json()["body"]["status"] == "REJECTED"
+    # Retired pseudo-Review commands cannot relink conflicting source evidence.
+    for method, path in [("get", "list"), ("get", str(conflict_id)),
+                         *(('post', f'{conflict_id}/{action}') for action in ('resolve', 'dismiss', 'reopen'))]:
+        response = getattr(client, method)(f"/paam/import/v1/fact_conflict/{path}")
+        assert response.status_code == 410, response.text
+        assert response.json()["body"]["code"] == "IMPORT_WRITE_RETIRED"
     with sessions() as db:
-        import_file = db.get(TransactionImportFile, conflict_file_id)
-        assert (
-            import_file.success_count,
-            import_file.skip_count,
-            import_file.issue_count,
-            import_file.status,
-        ) == (0, 1, 0, IMPORT_FILE_STATUS_IMPORTED)
-    stale = client.post(
-        f"/paam/import/v1/fact_conflict/{conflict_id}/reopen",
-        json={"expected_version": detail["version"]},
-    )
-    assert stale.status_code == 409
-
-    rejected = dismissed.json()["body"]
-    reopened = client.post(
-        f"/paam/import/v1/fact_conflict/{conflict_id}/reopen",
-        json={"expected_version": rejected["version"]},
-    )
-    assert reopened.status_code == 200, reopened.text
-    with sessions() as db:
-        import_file = db.get(TransactionImportFile, conflict_file_id)
-        assert (
-            import_file.success_count,
-            import_file.skip_count,
-            import_file.issue_count,
-            import_file.status,
-        ) == (0, 0, 1, IMPORT_FILE_STATUS_FAILED)
-    resolved = client.post(
-        f"/paam/import/v1/fact_conflict/{conflict_id}/resolve",
-        json={
-            "resolution_type": "LINK_EXISTING",
-            "existing_bill_id": existing_fact_id,
-            "expected_version": reopened.json()["body"]["version"],
-        },
-    )
-    assert resolved.status_code == 200, resolved.text
-    assert resolved.json()["body"]["status"] == "CONFIRMED"
-    with sessions() as db:
-        import_file = db.get(TransactionImportFile, conflict_file_id)
-        assert (
-            import_file.success_count,
-            import_file.skip_count,
-            import_file.issue_count,
-            import_file.status,
-        ) == (1, 0, 0, IMPORT_FILE_STATUS_IMPORTED)
-
-    unsupported = client.get(
-        "/paam/import/v1/fact_conflict/list",
-        params={"sorter": '[{"key":"updated_time","direction":"desc"}]'},
-    )
-    assert unsupported.status_code == 422
+        raw = db.get(TransactionImportRow, conflict_id)
+        assert (raw.raw_payload, raw.raw_hash, raw.transaction_fact_id) == (original_payload, original_hash, 0)
+        assert db.scalar(select(TransactionFact.amount)) == 1000
+        assert db.query(ReviewCase).count() == 1
 
 
 def test_source_override_cannot_contradict_statement_content():

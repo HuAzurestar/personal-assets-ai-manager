@@ -1,3 +1,7 @@
+import { currencyPrecision, unitPrecision } from './unit-dictionary.js';
+import { financialStateLabel } from './financial-copy.js';
+export { currencyPrecision, unitPrecision };
+
 export const $ = (selector, root = document) => root.querySelector(selector);
 export const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
@@ -6,6 +10,34 @@ export const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => 
 })[char]);
 
 export const key = () => crypto.randomUUID();
+
+// JSON numeric IDs must be exact before they can identify a financial object.
+// Never send a rounded SQLite ID, scientific notation, boolean or empty input.
+export function resourceId(value, { allowZero = false } = {}) {
+  const text = typeof value === "string" ? value.trim() : value;
+  const valid = typeof text === "number" || (typeof text === "string" && /^\d+$/.test(text));
+  const id = valid ? Number(text) : NaN;
+  if (!Number.isSafeInteger(id) || id < (allowZero ? 0 : 1)) {
+    throw Object.assign(new Error(`对象 ID 必须为可精确表示的${allowZero ? "非负" : "正"}整数；本次未发送请求。`),
+      { code: "INVALID_ID", status: 422 });
+  }
+  return id;
+}
+
+// A final guard for server-selected IDs, expected-state IDs and nested intents.
+// Zero is validated by the owning DTO; this guard only prevents precision loss.
+export function assertExactResourceIds(value) {
+  if (!value || typeof value !== "object") return;
+  if (Array.isArray(value)) { value.forEach(assertExactResourceIds); return; }
+  for (const [name, item] of Object.entries(value)) {
+    if (name === "id" || name.endsWith("_id") || name === "source" || name === "source_row_number") {
+      if (name === "account_ref_id" && item == null) continue; // Explicit automatic source choice.
+      resourceId(item, { allowZero: true });
+    } else if (name.endsWith("_ids") && Array.isArray(item)) {
+      item.forEach(id => resourceId(id, { allowZero: true }));
+    } else assertExactResourceIds(item);
+  }
+}
 
 const DEFAULT_TIME_ZONE = "Asia/Hong_Kong";
 const TIME_ZONE_STORAGE_KEY = "paam.timezone";
@@ -62,7 +94,12 @@ export function selectedCalendarDate(value = new Date()) {
   return { year, month, day, iso };
 }
 
-export function zonedISOString(value, exclusiveEnd = false) {
+export function localDateTime(value = new Date(), timeZone = selectedTimeZone()) {
+  const parts = wallClockParts(value, timeZone);
+  return `${String(parts[0]).padStart(4, '0')}-${String(parts[1]).padStart(2, '0')}-${String(parts[2]).padStart(2, '0')}T${parts.slice(3).map(part => String(part).padStart(2, '0')).join(':')}`;
+}
+
+export function zonedISOString(value, exclusiveEnd = false, timeZone = selectedTimeZone()) {
   const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2}))?)?$/);
   if (!match) throw new Error(`无效的本地日期时间：${value}`);
   const dateOnly = match[4] === undefined;
@@ -70,13 +107,17 @@ export function zonedISOString(value, exclusiveEnd = false) {
     Number(match[1]), Number(match[2]) - 1, Number(match[3]),
     Number(match[4] || 0), Number(match[5] || 0), Number(match[6] || 0),
   );
+  const calendar = new Date(wallTimestamp);
+  if (calendar.getUTCFullYear() !== Number(match[1]) || calendar.getUTCMonth() + 1 !== Number(match[2])
+    || calendar.getUTCDate() !== Number(match[3]) || calendar.getUTCHours() !== Number(match[4] || 0)
+    || calendar.getUTCMinutes() !== Number(match[5] || 0) || calendar.getUTCSeconds() !== Number(match[6] || 0))
+    throw new Error(`无效的本地日期时间：${value}`);
   if (exclusiveEnd) wallTimestamp += dateOnly ? 86_400_000 : 60_000;
   const target = new Date(wallTimestamp);
   const desired = Date.UTC(
     target.getUTCFullYear(), target.getUTCMonth(), target.getUTCDate(),
     target.getUTCHours(), target.getUTCMinutes(), target.getUTCSeconds(),
   );
-  const timeZone = selectedTimeZone();
   const wallClockValue = (instant) => {
     const parts = wallClockParts(instant, timeZone);
     return Date.UTC(parts[0], parts[1] - 1, parts[2], parts[3], parts[4], parts[5]);
@@ -107,14 +148,15 @@ export function date(value) {
 }
 
 export const typeNames = {
-  0: "收入与支出", 1: "内部转账", 2: "资产与负债",
-  TRANSACTION: "收入与支出", ACCOUNT_TRANSFER: "内部转账", CLAIM: "资产与负债",
+  0: "收入与支出", 1: "内部转账", 2: "资产与负债", 3: "重复证据，不计金额",
+  TRANSACTION: "收入与支出", ACCOUNT_TRANSFER: "内部转账", ASSET_LIABILITY: "资产与负债", DUPLICATE: "重复证据，不计金额",
   INCOME_AND_EXPENSE: "收入与支出", INTERNAL_TRANSFER: "内部转账", ASSET_AND_LIABILITY: "资产与负债",
 };
 
 export const reviewTypeNames = {
   TRANSACTION: "事实交易",
   BORROW_AND_REPAY: "借款与还款",
+  NORMAL_TRANSACTION: "系统原始交易", CREDIT_CARD: "信用卡", SHARED_SETTLEMENT: "共同费用", OTHER_MANUAL: "人工解释",
   ACCOUNT: "账户修正",
   FACT_CONFLICT: "事实冲突",
 };
@@ -123,21 +165,10 @@ export const roleNames = {};
 
 export const statusNames = {
   0: "已确认", 1: "已撤销",
-  PENDING: "待确认", CONFIRMED: "已确认", REVOKED: "已撤销",
+  PENDING: "待确认", CONFIRMED: financialStateLabel('review','CONFIRMED',false), REVOKED: financialStateLabel('review','REVOKED',false),
   REJECTED: "已忽略", DEFAULT: "默认", COMPLETE: "完整",
   PARTIAL: "部分", CONFLICT: "冲突", ACTIVE: "启用中", ARCHIVED: "已归档",
 };
-
-const currencyPrecisions = {
-  CNY: 2, EUR: 2, GBP: 2, HKD: 2, JPY: 0, USD: 2,
-};
-
-export function currencyPrecision(value) {
-  const code = String(value || "").trim().toUpperCase();
-  const match = code.match(/^([A-Z][A-Z0-9]{1,11}?)(?:_([0-8]))?$/);
-  if (!match || !(match[1] in currencyPrecisions)) throw new Error(`不支持的币种单位：${value}`);
-  return match[2] === undefined ? currencyPrecisions[match[1]] : Number(match[2]);
-}
 
 export function decimalAmount(value, currencyCode) {
   const text = String(value || "").trim();
@@ -147,15 +178,17 @@ export function decimalAmount(value, currencyCode) {
   const [whole, decimal = ""] = text.split(".");
   if (decimal.length > precision) throw new Error(`${currencyCode} 金额最多允许 ${precision} 位小数`);
   const result = Number(`${whole}${decimal.padEnd(precision, "0")}`);
-  if (!Number.isSafeInteger(result) || result <= 0) throw new Error("金额超出可处理范围");
+  if (!Number.isSafeInteger(result) || result <= 0 || result > 9_000_000_000_000) throw new Error("金额超出可处理范围");
   return result;
 }
 
 export function money(item) {
   if (!item) return "—";
-  const code = String(item.currency_code || "").toUpperCase();
+  const amount = item.cash_amount ?? item.amount;
+  if (amount == null) return "—";
+  const code = String(item.cash_currency_code || item.currency_code || "").toUpperCase();
   const precision = currencyPrecision(code);
-  const value = Number(item.amount) / (10 ** precision);
+  const value = Number(amount) / (10 ** precision);
   const baseCurrency = code.split("_", 1)[0];
   try {
     return new Intl.NumberFormat("zh-CN", {
@@ -167,4 +200,22 @@ export function money(item) {
   } catch {
     return `${value.toFixed(precision)} ${code}`;
   }
+}
+
+export function quantityDecimal(amount, code) {
+  if (!Number.isSafeInteger(amount) || Math.abs(amount) > 9_000_000_000_000) throw new Error("数量超出精确范围");
+  const precision = unitPrecision(code);
+  const digits = String(Math.abs(amount)).padStart(precision + 1, "0");
+  return `${amount < 0 ? "−" : ""}${precision ? `${digits.slice(0, -precision)}.${digits.slice(-precision)}` : digits}`;
+}
+
+export function quantityAmount(value, code) {
+  const text = String(value ?? "").trim();
+  const precision = unitPrecision(code);
+  if (!/^\d+(\.\d+)?$/.test(text)) throw new Error("请填写精确正数量，不接受科学计数或非有限数");
+  const [whole, decimal = ""] = text.split(".");
+  if (decimal.length > precision) throw new Error(`${code} 超出单位精度`);
+  const result = Number(`${whole}${decimal.padEnd(precision, "0")}`);
+  if (!Number.isSafeInteger(result) || result <= 0 || result > 9_000_000_000_000) throw new Error("数量超出精确正量范围");
+  return result;
 }

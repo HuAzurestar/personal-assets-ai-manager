@@ -11,6 +11,7 @@ from backend.core.target_database import init_target_db
 from backend.entity import (
     CASH_DIRECTION_IN,
     CASH_DIRECTION_OUT,
+    LedgerEntry,
     ReviewAllocation,
     ReviewCase,
     TransactionFact,
@@ -93,14 +94,18 @@ def test_ledger_account_is_independent_from_transaction_fact(target_account_api)
     updated = client.put(f"/paam/ledger/v1/flow/{ledger_id}/account", json={
         "account_code": "ledger-wallet",
     })
-    assert updated.status_code == 200, updated.text
-    assert updated.json()["body"]["account_code"] == "ledger-wallet"
+    assert updated.status_code == 410, updated.text
+    assert updated.json()["body"]["code"] == "REVIEW_WRITE_RETIRED"
 
     with sessions() as db:
         assert db.get(TransactionFact, fact_id).account_code == "fact-wallet"
+        assert db.get(LedgerEntry, ledger_id).account_code == "fact-wallet"
     detail = client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]
-    assert detail["ledger_entry"]["account_code"] == "ledger-wallet"
-    assert detail["facts"][0]["account_code"] == "fact-wallet"
+    assert detail["ledger_entry"]["account_ref_id"] == 0
+    assert detail["account"] == {
+        "state": "UNIDENTIFIED", "ref": None, "account": None, "party": None,
+    }
+    assert detail["facts"][0]["account_code"] == "****llet"
 
 
 def test_ledger_account_uses_serial_writes_and_rejects_projection_sentinel(
@@ -113,17 +118,17 @@ def test_ledger_account_uses_serial_writes_and_rejects_projection_sentinel(
     invalid = client.put(f"/paam/ledger/v1/flow/{ledger_id}/account", json={
         "account_code": "MULTIPLE",
     })
-    assert invalid.status_code == 422
+    assert invalid.status_code == 410
 
     first = client.put(f"/paam/ledger/v1/flow/{ledger_id}/account", json={
         "account_code": "checked-wallet",
     })
-    assert first.status_code == 200, first.text
+    assert first.status_code == 410, first.text
     second = client.put(f"/paam/ledger/v1/flow/{ledger_id}/account", json={
         "account_code": "latest-wallet",
     })
-    assert second.status_code == 200
-    assert second.json()["body"]["account_code"] == "latest-wallet"
+    assert second.status_code == 410
+    assert client.get(f"/paam/ledger/v1/flow/{ledger_id}/account").json()["body"]["account_code"] == "wallet"
 
 
 def test_ledger_account_returns_not_found_for_unknown_ledger(target_account_api):

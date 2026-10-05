@@ -1,5 +1,6 @@
 import { jsonRequest } from "../api/client.js";
 import { $, esc, money } from "../util/core.js";
+import { currencyPrecision, unitChoices, unitLabel } from "../util/unit-dictionary.js";
 import { helpTip } from "./automation_feedback.js?v=20260928.6";
 
 export function parseDisclosure(boundariesText, dateGranularity) {
@@ -9,7 +10,7 @@ export function parseDisclosure(boundariesText, dateGranularity) {
   const entries = Object.entries(bands);
   if (entries.length > 64) throw new Error("最多配置 64 个币种单位");
   for (const [currency, values] of entries) {
-    if (!/^(CNY|USD|HKD|JPY|EUR|GBP)(_[0-8])?$/.test(currency)) throw new Error(`${currency} 不是受支持的规范币种单位`);
+    currencyScale(currency);
     if (!Array.isArray(values) || !values.length || values.length > 64 || values[0] !== 0
       || values.some((value, index) => !Number.isSafeInteger(value) || value < 0 || value > 9000000000000 || (index > 0 && value <= values[index - 1]))) {
       throw new Error(`${currency}：必须从 0 开始，填写 1–64 个严格递增整数，最大 9000000000000`);
@@ -19,8 +20,8 @@ export function parseDisclosure(boundariesText, dateGranularity) {
 }
 
 export function currencyScale(code) {
-  if (!/^(CNY|USD|HKD|JPY|EUR|GBP)(_[0-8])?$/.test(code)) throw new Error("请选择有效币种");
-  return code.includes("_") ? Number(code.split("_")[1]) : code === "JPY" ? 0 : 2;
+  if (typeof code !== 'string' || code !== code.trim().toUpperCase()) throw new Error('请选择规范币种单位');
+  return currencyPrecision(code);
 }
 
 export function decimalBoundary(text, code) {
@@ -60,18 +61,17 @@ export function openDisclosureEditor(setting, openDialog, saved) {
   const advanced = $('[name="advanced"]', form);
   const json = $('[name="boundaries"]', form);
   const canonical = (bands) => JSON.stringify(Object.entries(bands).sort(([a],[b]) => a.localeCompare(b)));
-  const names = { CNY: "人民币（元）", USD: "美元", HKD: "港元", JPY: "日元", EUR: "欧元", GBP: "英镑" };
-  const codes = [...new Set([...Object.keys(names), ...Object.keys(boundaries)])];
+  const codes = unitChoices('CURRENCY').map(item => item.code);
   function render(bands) {
     const options = [...new Set([...codes, ...Object.keys(bands)])];
-    editor.innerHTML = Object.entries(bands).map(([code, values]) => `<fieldset data-currency-row><legend>${esc(code)} 区间 · ${esc(names[code] || names[code.split('_')[0]])}</legend><input type="hidden" data-band-currency value="${esc(code)}"><div data-boundary-list>${values.map(value => boundaryInput(boundaryDecimal(value,code))).join("")}</div><button type="button" data-add-boundary>增加起点</button><button type="button" data-remove-currency>移除币种</button></fieldset>`).join("");
+    editor.innerHTML = Object.entries(bands).map(([code, values]) => `<fieldset data-currency-row><legend>${esc(code)} 区间 · ${esc(unitLabel(code))}</legend><input type="hidden" data-band-currency value="${esc(code)}"><div data-boundary-list>${values.map(value => boundaryInput(boundaryDecimal(value,code))).join("")}</div><button type="button" data-add-boundary>增加起点</button><button type="button" data-remove-currency>移除币种</button></fieldset>`).join("");
     syncCurrencies(options);
   }
   function syncCurrencies(options = codes) {
     const used = [...editor.querySelectorAll('[data-band-currency]')].map(input => input.value);
     const select = $('[data-new-currency]', form);
     const selected = select.value;
-    select.innerHTML = options.filter(code => !used.includes(code)).map(code => `<option value="${esc(code)}">${esc(code)} · ${esc(names[code] || names[code.split('_')[0]])}</option>`).join('');
+    select.innerHTML = options.filter(code => !used.includes(code)).map(code => `<option value="${esc(code)}">${esc(code)} · ${esc(unitLabel(code))}</option>`).join('');
     if ([...select.options].some(option => option.value === selected)) select.value = selected;
     $('[data-add-currency]', form).disabled = !select.options.length;
   }
@@ -168,7 +168,7 @@ export function openDisclosurePreview(openDialog, amountMode = 1) {
   const dialog = openDialog("已保存配置 · 虚构披露预览", `<form class="form-grid three" data-preview-form>
     <label>样例<select name="sample"><option value="MEAL_SMALL">29 元虚构餐饮</option><option value="MEAL_LARGE">3500 元虚构聚餐</option><option value="NON_MEAL_SMALL">20 元虚构文具</option><option value="NO_CONTEXT">无业务语义</option></select></label>
     <label>金额模式<select name="amount_mode">${[[1, "BAND · 金额区间"], [2, "EXACT · 精确金额"], [3, "NONE · 不发送金额"]].map(([value, label]) => `<option value="${value}" ${value === amountMode ? "selected" : ""}>${label}</option>`).join("")}</select></label>
-    <label>币种单位<input name="currency_code" value="CNY" maxlength="16" required></label>
+    <label>币种单位<select name="currency_code">${unitChoices('CURRENCY').map(item => `<option value="${esc(item.code)}">${esc(item.code)} · ${esc(unitLabel(item.code))}</option>`).join('')}</select></label>
     <button type="submit">预览（不调用模型）</button>
   </form><div data-disclosure-preview aria-live="polite"><p>只使用已保存配置；编辑器里未保存的草稿不会生效。</p></div>`);
   const form = $("[data-preview-form]", dialog);

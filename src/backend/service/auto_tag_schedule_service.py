@@ -147,7 +147,7 @@ class AutoTagScheduleService:
                         report.stopped_reason
                         if report.stopped_reason in {
                             "CONFIG_ERROR", "AUTH_ERROR", "AUDIT_STORAGE_ERROR", "COMMIT_FAILED", "COUNTER_EXHAUSTED",
-                            "VIEW_INACTIVE", "NO_ACTIVE_TARGETS", "MODEL_DISABLED",
+                            "VIEW_INACTIVE", "NO_ACTIVE_TARGETS", "MODEL_DISABLED", "TAG_RELATION_BROKEN", "CONFIG_CHANGED", "RESULT_UNKNOWN",
                         }
                         else report.last_error_code or "ITEM_FAILURE"
                     ),
@@ -157,10 +157,11 @@ class AutoTagScheduleService:
                 "CONFIG_ERROR", "AUTH_ERROR", "AUDIT_STORAGE_ERROR",
                 "VIEW_INACTIVE", "COMMIT_FAILED", "COUNTER_EXHAUSTED",
                 "SYNTHETIC_FIXTURE_MISSING", "SYNTHETIC_FIXTURE_INVALID",
+                "TAG_RELATION_BROKEN", "CONFIG_CHANGED", "RESULT_UNKNOWN",
             }:
-                return JobOutcome("FAILED", report.stopped_reason)
+                return JobOutcome("PARTIAL_FAILURE" if report.successful_count else "FAILED", report.stopped_reason)
             if report.stopped_reason in {
-                "RULE_TOKEN_CHANGED", "CURSOR_ALREADY_ADVANCED",
+                "RULE_TOKEN_CHANGED", "CURSOR_ALREADY_ADVANCED", "SOURCE_CHANGED",
             }:
                 return JobOutcome("CANCELLED")
             outcome = report.stopped_reason

@@ -159,6 +159,12 @@ def _parse_component(raw: str, name: str, adapter: TypeAdapter, shape: type):
 
 def _decode_component(raw: str, name: str, shape: type):
     try:
+        if len(raw.encode("utf8")) > 16384:
+            raise ValueError("component too large")
+    except (UnicodeError, ValueError):
+        raise ListQueryError("Invalid or over-budget list JSON", code=f"LIST_{name.upper()}_INVALID",
+            details={"component": name, "max_bytes": 16384})
+    try:
         value = json.loads(raw)
     except json.JSONDecodeError as error:
         raise ListQueryError(
@@ -170,6 +176,8 @@ def _decode_component(raw: str, name: str, shape: type):
                 "position": error.pos,
             },
         ) from error
+    except RecursionError:
+        raise ListQueryError("List JSON is too deeply nested", code="LIST_EXPRESSION_LIMIT_EXCEEDED")
     if not isinstance(value, shape):
         raise ListQueryError(
             f"Invalid {name} expression",
@@ -210,7 +218,10 @@ def _validate_query_words(value: list[Any]) -> None:
             )
 
 
-def _validate_filter_operators(value: dict[str, Any], path: str = "$") -> None:
+def _validate_filter_operators(value: dict[str, Any], path: str = "$", depth: int = 1) -> None:
+    if depth > 3:
+        raise ListQueryError("List filter expression limit exceeded", code="LIST_EXPRESSION_LIMIT_EXCEEDED",
+            details={"component": "filter", "max_depth": 3})
     operator = value.get("op")
     if "key" in value:
         if operator not in COMPARISON_OPERATORS:
@@ -241,7 +252,7 @@ def _validate_filter_operators(value: dict[str, Any], path: str = "$") -> None:
         return
     for index, expression in enumerate(expressions):
         if isinstance(expression, dict):
-            _validate_filter_operators(expression, f"{path}.expression[{index}]")
+            _validate_filter_operators(expression, f"{path}.expression[{index}]", depth + 1)
 
 
 def _validate_sort_directions(value: list[Any]) -> None:

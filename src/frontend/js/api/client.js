@@ -1,8 +1,19 @@
+import { assertExactResourceIds } from "../util/core.js";
+import { financialIssueReason } from '../util/financial-copy.js';
+
 const connectionCopy = {
   checking: "正在检查本地账本",
   connected: "本地账本已连接",
   disconnected: "本地账本连接中断",
 };
+
+// WRITE_BUSY is emitted only after a known pre-commit failure/rollback. A
+// transport failure, explicit unknown outcome or unexplained 5xx stays unknown.
+export function isUnknownWrite(error) {
+  if (!error.status || error.code === "RESULT_UNKNOWN") return true;
+  if (error.code === "WRITE_BUSY" && [409, 503].includes(error.status)) return false;
+  return error.status >= 500;
+}
 
 function setConnectionState(state) {
   const indicator = document.querySelector("[data-connection-status]");
@@ -32,9 +43,9 @@ async function readResponse(url, options, includeEnvelope) {
   setConnectionState("connected");
   const payload = response.status === 204 ? null : await response.json().catch(() => null);
   if (!response.ok) {
-    const validationDetails = payload?.body?.code === "VALIDATION_ERROR"
-      && Array.isArray(payload?.body?.details)
-      ? payload.body.details.map((item) => item?.msg).filter(Boolean)
+    const validationDetails = ["VALIDATION_ERROR", "INVALID_REVIEW_TYPE", "INVALID_CASE_CODE", "INVALID_USAGE_SCENARIO"].includes(payload?.body?.code)
+      && Array.isArray(payload?.body?.details?.field)
+      ? payload.body.details.field.map((item) => item?.msg).filter(Boolean)
       : [];
     const detail = validationDetails.length
       ? validationDetails
@@ -42,9 +53,17 @@ async function readResponse(url, options, includeEnvelope) {
     const text = Array.isArray(detail)
       ? detail.map((item) => typeof item === "string" ? item : item?.msg).filter(Boolean).join("；")
       : detail || `请求失败（${response.status}）`;
-    const error = new Error(text);
+    const code = payload?.body?.code;
+    const financial = /^\/paam\/(?:ledger|financial|import)\/v1\//.test(url);
+    const reading = ['GET','HEAD'].includes((options.method || 'GET').toUpperCase());
+    const humanText = typeof text === 'string' && /[\u4e00-\u9fff]/.test(text) ? text
+      : reading ? '读取失败，当前结果未核实；请稍后重新读取'
+        : response.status >= 500 ? '请求未取得可靠结果；请读取当前状态核对，不自动重发'
+          : '操作未通过校验，请核对当前选择和完整计划';
+    const error = new Error(financial ? financialIssueReason(code,humanText) : text);
     error.code = payload?.body?.code;
     error.details = payload?.body?.details;
+    error.traceId = payload?.body?.details?.trace_id || response.headers.get("X-PAAM-Trace-ID");
     error.status = response.status;
     throw error;
   }
@@ -70,8 +89,11 @@ export async function checkConnection() {
   }
 }
 
-export const jsonRequest = (url, method, body, includeEnvelope = false) => request(url, {
-  method,
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify(body),
-}, includeEnvelope);
+export const jsonRequest = (url, method, body, includeEnvelope = false) => {
+  if (/^\/paam\/(?:ledger|financial|import)\/v1\//.test(url)) assertExactResourceIds(body);
+  return request(url, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }, includeEnvelope);
+};

@@ -268,6 +268,8 @@ def build_messages(
     }
     if payload.date is not None:
         user_value["date"] = payload.date
+    if payload.economic_type is not None:
+        user_value["economic_type"] = payload.economic_type
     if payload.payment_channel is not None:
         user_value["payment_channel"] = payload.payment_channel
     if payload.amount.mode == "BAND":

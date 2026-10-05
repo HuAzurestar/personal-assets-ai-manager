@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from backend.core import protected_secret_store
+from backend.core.feature_observability import observed
 from backend.error import LlmAdapterError, ProtectedSecretStoreError
 from backend.mapper.setting_mapper import SettingMapper
 from backend.schema.llm_analysis import (
@@ -41,6 +42,7 @@ class ConfiguredLlmAnalyzer:
         self._adapter = adapter or LiteLlmAdapter()
         self._audit = LlmPromptAuditService(sessions)
 
+    @observed("LLM_ADAPTER", "adapter_duration")
     async def analyze(
         self,
         payload: LlmAnalysisInput,

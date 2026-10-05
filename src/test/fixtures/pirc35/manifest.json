@@ -1,0 +1,41 @@
+{
+  "fixtures": [
+    {
+      "file": "abc-1.csv",
+      "provider": "abc",
+      "source_format": "pdf",
+      "mock_rows": 24
+    },
+    {
+      "file": "ccb-2.csv",
+      "provider": "ccb",
+      "source_format": "xls",
+      "mock_rows": 24
+    },
+    {
+      "file": "wechat-3.csv",
+      "provider": "wechat",
+      "source_format": "xlsx",
+      "mock_rows": 24
+    },
+    {
+      "file": "cmb-4.csv",
+      "provider": "cmb",
+      "source_format": "pdf",
+      "mock_rows": 24
+    },
+    {
+      "file": "cmb-5.csv",
+      "provider": "cmb",
+      "source_format": "pdf",
+      "mock_rows": 24
+    },
+    {
+      "file": "alipay-6.csv",
+      "provider": "alipay",
+      "source_format": "csv",
+      "mock_rows": 24
+    }
+  ],
+  "unreadable_sources": 1
+}

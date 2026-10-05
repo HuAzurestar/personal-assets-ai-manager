@@ -9,6 +9,7 @@ from backend.error import TargetTagError
 from backend.entity.base import utc_now
 from backend.mapper.target_tag_assignment_mapper import TargetTagAssignmentMapper
 from backend.mapper.tag_assignment_request_mapper import TagAssignmentRequestMapper
+from backend.mapper.trusted_relation_mapper import TrustedRelationMapper
 from backend.schema.target_tag import TargetTagAssignmentRead, TargetTagAssignmentRequest
 from backend.service.target_tag_projection_service import TargetTagProjectionService
 
@@ -22,6 +23,7 @@ class TargetTagAssignmentService:
         self.projection = TargetTagProjectionService(db)
 
     def get(self, ledger_id: int) -> TargetTagAssignmentRead:
+        TrustedRelationMapper(self.mapper.db).read_snapshot()
         if not self.mapper.ledger_exists(ledger_id):
             raise TargetTagError(404, "ledger entry not found")
         current = self.mapper.assignment(ledger_id)
@@ -38,11 +40,14 @@ class TargetTagAssignmentService:
     ) -> TargetTagAssignmentRead:
         try:
             self.mapper.begin_write()
-            if not self.mapper.ledger_exists(ledger_id):
+            status = self.mapper.ledger_status(ledger_id)
+            if status is None:
                 raise TargetTagError(404, "ledger entry not found")
+            if status != 0:
+                raise TargetTagError(409, "inactive Ledger is read-only", code="LEDGER_INACTIVE")
             current = self.mapper.assignment(ledger_id)
             if current["updated_time"] != payload.expected_updated_time:
-                raise TargetTagError(409, "tag assignment changed; reload before writing")
+                raise TargetTagError(409, "tag assignment changed; reload before writing", code="TAG_STATE_CHANGED")
             state, tag_ids = self.projection.assignment(payload.tag_state)
             tags_unchanged = current["tag_ids"] == tuple(sorted(tag_ids))
             changed_views = {
@@ -92,7 +97,7 @@ class TargetTagAssignmentService:
             raise
         except (KeyError, ValueError) as error:
             self.mapper.rollback()
-            raise TargetTagError(422, str(error)) from error
+            raise TargetTagError(422, str(error), code="TAG_STATE_INVALID") from error
         except (IntegrityError, OperationalError) as error:
             self.mapper.rollback()
             raise TargetTagError(409, "tag assignment write conflict; retry") from error

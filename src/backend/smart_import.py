@@ -101,17 +101,8 @@ def build_plan(
                 row["account"] = accounts[bindings[original]]
                 row["account_basis"] = "使用之前确认的账户匹配"
             elif row["account"]["number"].startswith("****"):
-                candidates = [
-                    a
-                    for a in bank_accounts
-                    if a["provider"] == row["account"]["provider"]
-                    and a["number"].endswith(row["account"]["number"][-4:])
-                ]
-                if len(candidates) == 1:
-                    row["account"] = candidates[0]
-                    row["account_basis"] = "银行与尾号匹配，请核对"
-                elif len(candidates) > 1:
-                    row["error"] = "同银行有多张卡尾号相同，请在预览中选择账户"
+                # A matching suffix is not a reliable own-account identity.
+                row["account_basis"] = "遮罩身份未自动绑定；可在Review明确选择具体卡"
             known.setdefault(row["account"]["identity"], row["account"])
 
     # Derive lookup bounds from this upload before touching the transaction tables.
@@ -271,18 +262,8 @@ def build_plan(
                         evidence[row["match"]].append(row)
             counts[row["action"]] += 1
 
-    # Match across separate uploads as well as within this batch. Resolve a masked
-    # card only when exactly one full account of that bank shares its suffix.
+    # Candidate evidence never upgrades a masked suffix to a full identity.
     def resolved_account(spec):
-        if spec["number"].startswith("****"):
-            options = [
-                a
-                for a in bank_accounts
-                if a["provider"] == spec["provider"]
-                and a["number"].endswith(spec["number"][-4:])
-            ]
-            if len(options) == 1:
-                return options[0]["identity"]
         return spec["identity"]
 
     new_rows = {

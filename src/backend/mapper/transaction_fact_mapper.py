@@ -95,7 +95,7 @@ class TransactionFactMapper:
         ).order_by(
             TransactionFact.occurred_time.desc(),
             TransactionFact.id.desc(),
-        )).mappings().all()
+        ).limit(4001)).mappings().all()
         return [dict(row) for row in rows]
 
     def detail(self, fact_id: int) -> dict | None:

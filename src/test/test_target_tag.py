@@ -336,7 +336,7 @@ def test_ledger_tag_assignment_is_direct_and_idempotent(target_tag_api):
     assert _assign(client, ledger_id, "food").status_code == 200
 
     detail = client.get(f"/paam/ledger/v1/flow/{ledger_id}").json()["body"]
-    assert detail["ledger_entry"]["tags"][0]["tag_system_name"] == "food"
+    assert detail["tags"][0]["tag_system_name"] == "food"
     assert all("review_type" not in item for item in detail["reviews"])
     with sessions() as db:
         assert db.get(LedgerEntry, ledger_id).updated_time == previous_updated_time
@@ -380,7 +380,7 @@ def test_archived_view_is_excluded_from_assignment_state(target_tag_api):
     assert _assignment(client, ledger_id)["tag_state"] == {}
 
 
-def test_inactive_ledger_tag_assignment_is_allowed(target_tag_api):
+def test_inactive_ledger_tag_assignment_is_read_only(target_tag_api):
     client, sessions, _engine = target_tag_api
     fact_id = _add_facts(sessions, 1)[0]
     _create_tag_dictionary(client)
@@ -389,20 +389,22 @@ def test_inactive_ledger_tag_assignment_is_allowed(target_tag_api):
         case_id = db.scalar(select(ReviewAllocation.review_case_id).where(
             ReviewAllocation.ledger_entry_id == ledger_id,
         ))
-        TargetEconomicService(db).revoke(
-            case_id,
-            TargetReviewTransitionRequest(
-                idempotency_key="revoke-before-tag-edit",
-            ),
-        )
+        from backend.schema.review_command import ReviewChangeInput, ReviewCommandInput
+        from backend.service.review_command_service import ReviewCommandService
+        service = ReviewCommandService(db)
+        intent = dict(new_reviews=[dict(case_code="NORMAL", parameters=dict(transaction_ids=[fact_id]))])
+        preview = service.preview(ReviewChangeInput(**intent))
+        service.command(ReviewCommandInput(**intent, expected_reviews=preview["expected_reviews"], preview_digest=preview["preview_digest"]))
 
     assigned = _assign(client, ledger_id, "food")
-    assert assigned.status_code == 200, assigned.text
+    assert assigned.status_code == 409, assigned.text
+    assert assigned.json()["body"]["code"] == "LEDGER_INACTIVE"
     with sessions() as db:
         assignment = db.scalar(select(LedgerEntryTag).where(
             LedgerEntryTag.ledger_id == ledger_id,
         ))
-        assert db.get(TargetTag, assignment.tag_id).system_name == "food"
+        assert db.get(TargetTag, assignment.tag_id).system_name == "unclassified"
+    assert _assignment(client, ledger_id)["tag_state"] == {"category": "unclassified"}
 
 
 def test_tag_assignment_has_bounded_reads(target_tag_api):
@@ -442,7 +444,7 @@ def test_archived_tag_invalidates_assignment_and_advances_projection(target_tag_
     assert archived.status_code == 200, archived.text
     invalidated = client.get(
         f"/paam/ledger/v1/flow/{ledger_id}"
-    ).json()["body"]["ledger_entry"]
+    ).json()["body"]
     assert invalidated["tags"][0]["tag_system_name"] == "unclassified"
     assert _assign(
         client, ledger_id, "food"
@@ -455,5 +457,66 @@ def test_archived_tag_invalidates_assignment_and_advances_projection(target_tag_
     assert restored.status_code == 200, restored.text
     after_restore = client.get(
         f"/paam/ledger/v1/flow/{ledger_id}"
-    ).json()["body"]["ledger_entry"]
+    ).json()["body"]
     assert after_restore["tags"][0]["tag_system_name"] == "unclassified"
+
+
+def test_tag_batch_encodes_each_ledger_timestamp_once_without_losing_precision(monkeypatch):
+    from sqlalchemy import update
+    from backend.core import target_database
+    from backend.entity.base import UTCISO8601DateTime
+    from backend.mapper.target_tag_mapper import TargetTagMapper
+    from backend.mapper import target_tag_projection_mapper as projection
+
+    bindings = []
+    original = UTCISO8601DateTime.process_bind_param
+
+    def observed(self, value, dialect):
+        bindings.append(value)
+        return original(self, value, dialect)
+
+    # Install before this isolated engine first binds timestamps, not after its
+    # dialect has cached a processor for fixture setup.
+    monkeypatch.setattr(UTCISO8601DateTime, "process_bind_param", observed)
+    target_database.ensure_target_schema()
+    sessions = target_database.SessionLocal
+    now = datetime(2030, 1, 1, microsecond=7, tzinfo=timezone.utc)
+    future = now + timedelta(days=1, microseconds=10)
+    with sessions() as db:
+        mapper = TargetTagMapper(db)
+        mapper.begin_write()
+        for index in range(4):
+            view_id = mapper.create_view(f"Mock clock {index}", f"mock_clock_{index}", now)
+            mapper.create_tag(view_id, "Mock choice", "choice", now)
+        mapper.commit()
+    ledger_ids = [_ledger_for_fact(sessions, fact_id) for fact_id in _add_facts(sessions, 2)]
+    with sessions() as db:
+        db.execute(update(LedgerEntryTag).where(LedgerEntryTag.ledger_id == ledger_ids[1])
+            .values(updated_time=future))
+        db.commit()
+    monkeypatch.setattr(projection, "utc_now", lambda: now)
+    with sessions() as db:
+        tag_ids = tuple(db.scalars(select(TargetTag.id).where(TargetTag.system_name == "choice")
+            .order_by(TargetTag.id)))
+        assert len(tag_ids) == 4
+        entities = (TransactionFact, ReviewCase, LedgerEntry, ReviewAllocation)
+        def financial():
+            return [tuple(tuple(row) for row in db.execute(select(entity.__table__).order_by(entity.id)))
+                for entity in entities]
+        before = financial()
+        bindings.clear()
+        mapper = projection.TargetTagProjectionMapper(db)
+        mapper.replace({ledger_id: tag_ids for ledger_id in ledger_ids})
+        assert bindings == [now, now, future + timedelta(microseconds=1), future + timedelta(microseconds=1)]
+        rows = db.connection().exec_driver_sql(
+            "SELECT ledger_id, tag_id, created_time, updated_time FROM ledger_entry_tag ORDER BY ledger_id, tag_id"
+        ).all()
+        assert len(rows) == 8
+        for ledger_id, tag_id, created, updated in rows:
+            expected = now if ledger_id == ledger_ids[0] else future + timedelta(microseconds=1)
+            assert tag_id in tag_ids
+            assert created == updated == expected.isoformat(timespec="microseconds").replace("+00:00", "Z")
+        mapper.replace({ledger_id: tag_ids for ledger_id in ledger_ids})
+        assert len(bindings) == 4, "an unchanged complete tag state binds no replacement timestamps"
+        assert financial() == before
+        db.commit()

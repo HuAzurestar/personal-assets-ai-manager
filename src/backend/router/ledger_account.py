@@ -27,7 +27,7 @@ def get_account(ledger_id: int, db: Session = Depends(get_db)):
     )
 
 
-@router.put("/flow/{ledger_id}/account", response_model=LedgerAccountResponse)
+@router.put("/flow/{ledger_id}/account", response_model=LedgerAccountResponse, deprecated=True)
 def update_account(
     ledger_id: int,
     payload: LedgerAccountUpdateRequest,

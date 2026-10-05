@@ -6,7 +6,7 @@ from script.reset_target_database import reset
 
 
 def test_target_metadata_contains_exactly_the_target_tables():
-    assert len(TARGET_TABLE_NAMES) == 14
+    assert len(TARGET_TABLE_NAMES) == 20
     assert set(TargetBase.metadata.tables) == set(TARGET_TABLE_NAMES)
 
 

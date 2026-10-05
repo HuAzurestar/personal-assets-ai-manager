@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import json
 
 import pytest
 from fastapi import FastAPI
@@ -161,7 +162,8 @@ def test_import_file_detail_has_an_unpaged_transaction_fact_subresource(
     facts = client.get(f"/paam/import/v1/import_file/{file_ids[0]}/transaction_fact/list")
 
     assert detail.status_code == 200
-    assert detail.json()["body"]["import_file"]["id"] == file_ids[0]
+    assert detail.json()["body"]["file"]["id"] == file_ids[0]
+    assert detail.json()["body"]["coverage"] == "ACTIVITY_RANGE_ONLY"
     assert facts.status_code == 200
     assert facts.json()["body"]["total"] == 1
     assert facts.json()["body"]["items"][0]["id"] == fact_id
@@ -203,39 +205,27 @@ def test_import_file_rows_show_fact_links_skips_and_raw_json(import_file_api):
     )
 
     assert all_rows.status_code == 200, all_rows.text
-    assert all_rows.json()["body"] == {
-        "items": [{
-            "id": 1,
-            "source_row_number": 1,
-            "row_status": IMPORT_ROW_STATUS_ACCEPTED,
-            "source_reference": f"ref-{file_ids[0]}",
-            "issue_code": "",
-            "issue_message": "",
-            "raw_payload": "{}",
-            "transaction_fact": {
-                "id": fact_id,
-                "occurred_time": "2026-09-16T08:00:00Z",
-                "cash_direction": CASH_DIRECTION_OUT,
-                "amount": 880,
-                "currency_code": "CNY",
-                "account_code": "wallet",
-                "counterparty_name": "Merchant",
-                "counterparty_account_ref": "",
-                "summary": "Lunch",
-                "created_time": "2026-09-16T08:00:00Z",
-                "updated_time": "2026-09-16T08:00:00Z",
-            },
-        }],
-        "total": 2,
-        "page_index": 1,
-        "page_size": 1,
-    }
+    body = all_rows.json()["body"]
+    assert set(body) == {"items", "total", "page_index", "page_size"}
+    assert (body["total"], body["page_index"], body["page_size"]) == (2, 1, 1)
+    row = body["items"][0]
+    assert (row["source_row_number"], row["transaction_id"], row["row_status"]) == (1, fact_id, IMPORT_ROW_STATUS_ACCEPTED)
+    assert "raw_payload" not in row and "transaction_fact" not in row
+    assert row["source_reference"] == "****ef-1"
+    detail = client.get(f"/paam/import/v1/import_file/{file_ids[0]}/row/{row['id']}")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["body"]["raw_payload"] == {}
+    assert detail.json()["body"]["fact"]["id"] == fact_id
     assert skipped.status_code == 200, skipped.text
     skipped_body = skipped.json()["body"]
     assert skipped_body["total"] == 1
     assert skipped_body["items"][0]["source_row_number"] == 2
     assert "transaction_fact" not in skipped_body["items"][0]
-    assert '"amount":"0.00"' in skipped_body["items"][0]["raw_payload"]
+    assert skipped_body["items"][0]["transaction_id"] == 0
+    assert "raw_payload" not in skipped_body["items"][0]
+    evidence = client.get(f"/paam/import/v1/import_file/{file_ids[0]}/row/{skipped_body['items'][0]['id']}").json()["body"]
+    assert evidence["raw_payload"]["raw"]["amount"] == "0.00"
+    assert evidence["fact"] is None
 
 
 def test_import_file_row_list_rejects_unknown_filters(import_file_api):
@@ -278,7 +268,7 @@ def test_import_file_row_list_query_count_is_fixed(import_file_api):
         event.remove(engine, "before_cursor_execute", count_selects)
 
     assert first.status_code == second.status_code == 200
-    assert first_count == second_count == 3
+    assert first_count == second_count == 5
     assert all("SELECT *" not in statement.upper() for statement in selects)
 
 
@@ -301,7 +291,7 @@ def test_import_file_detail_returns_not_found(import_file_api):
 
     assert response.status_code == 404
     assert response.json()["status"] == 404
-    assert response.json()["body"]["code"] == "INTAKE_ERROR"
+    assert response.json()["body"]["code"] == "REFERENCE_NOT_FOUND"
 
 
 def test_file_relation_summary_deduplicates_source_rows_and_excludes_revoked(import_file_api):
@@ -313,6 +303,8 @@ def test_file_relation_summary_deduplicates_source_rows_and_excludes_revoked(imp
     now = datetime(2026, 9, 17, 8, tzinfo=timezone.utc)
     with sessions() as db:
         # A repeated source row must not multiply the same fact's money.
+        file = db.get(TransactionImportFile, file_ids[0])
+        file.total_count = file.success_count = 3
         db.add(TransactionImportRow(
             transaction_fact_id=fact_id, transaction_import_file_id=file_ids[0],
             source_row_number=2, row_status=IMPORT_ROW_STATUS_ACCEPTED,
@@ -338,27 +330,45 @@ def test_file_relation_summary_deduplicates_source_rows_and_excludes_revoked(imp
         {"currency_code": "CNY", "entry_direction": 2, "amount": 880},
         {"currency_code": "CNY_4", "entry_direction": 1, "amount": 12345},
     ]
-    before = client.get(f"/paam/import/v1/import_file/{file_ids[0]}").json()["body"]["relation_summary"]
+    def relation_summary():
+        rows = client.get(f"/paam/import/v1/import_file/{file_ids[0]}/row/list").json()["body"]["items"]
+        response = client.get(f"/paam/import/v1/import_file/{file_ids[0]}/row/relations",
+                              params={"row_ids": json.dumps([row["id"] for row in rows])})
+        assert response.status_code == 200, response.text
+        active = {row["allocation_id"]: row for row in response.json()["body"]["items"]
+                  if row["review_status"] == "CONFIRMED"}
+        totals = {}
+        for row in active.values():
+            key = (row["cash_currency_code"], CASH_DIRECTION_OUT if row["transaction_id"] == fact_id else 1)
+            totals[key] = totals.get(key, 0) + row["cash_amount"]
+        return dict(totals=[dict(currency_code=currency, entry_direction=direction, amount=amount)
+                           for (currency, direction), amount in sorted(totals.items())],
+                    allocation_count=len(active), ledger_count=len({r["ledger_id"] for r in active.values()}),
+                    review_count=len({r["review_id"] for r in active.values()}))
+    before = relation_summary()
     assert before["totals"] == expected
     assert before["allocation_count"] == before["ledger_count"] == before["review_count"] == 2
     with sessions() as db:
-        review = TargetEconomicService(db).create(TargetEconomicReviewCreateRequest(
-            behavior_type=0, title="Split", idempotency_key="file-summary-split",
-            economics=[{"client_key": "part", "economic_type": "ACCOUNT_TRANSFER"}],
-            allocations=[{"fact_id": fact_id, "economic_key": "part", "amount": 400}],
-        ))
-        review_id = review.id
-    during = client.get(f"/paam/import/v1/import_file/{file_ids[0]}").json()["body"]["relation_summary"]
+        from backend.schema.review_command import ReviewChangeInput, ReviewCommandInput
+        from backend.service.review_command_service import ReviewCommandService
+        service = ReviewCommandService(db)
+        intent = dict(new_reviews=[dict(case_code="NORMAL", title="Mock split", parameters=dict(
+            allocations=[dict(transaction_id=fact_id, economic_type="TRANSACTION", cash_amount=amount, account_ref_id=0)
+                         for amount in (400, 480)]))])
+        preview = service.preview(ReviewChangeInput(**intent))
+        result = service.command(ReviewCommandInput(**intent, expected_reviews=preview["expected_reviews"], preview_digest=preview["preview_digest"]))
+        review_id = result["created_reviews"][0]["id"]
+    during = relation_summary()
     assert during["totals"] == expected
     assert during["allocation_count"] == 3
     with sessions() as db:
-        TargetEconomicService(db).revoke(review_id, TargetReviewTransitionRequest(
-            idempotency_key="file-summary-revoke", actor="test", reason="test",
-        ))
-    after = client.get(f"/paam/import/v1/import_file/{file_ids[0]}").json()["body"]["relation_summary"]
+        service = ReviewCommandService(db)
+        intent = dict(deactivate_review_ids=[review_id])
+        preview = service.preview(ReviewChangeInput(**intent))
+        service.command(ReviewCommandInput(**intent, expected_reviews=preview["expected_reviews"], preview_digest=preview["preview_digest"]))
+    after = relation_summary()
     assert after["totals"] == expected
-    # The untouched 480 residual and restored 400 default remain two entries;
-    # revocation does not merge them into a new fabricated aggregate.
-    assert after["allocation_count"] == 3
+    # Restore the original full default, without fabricating residual/default rows.
+    assert after["allocation_count"] == 2
     facts = client.get(f"/paam/import/v1/import_file/{file_ids[0]}/transaction_fact/list").json()["body"]
     assert facts["total"] == 2

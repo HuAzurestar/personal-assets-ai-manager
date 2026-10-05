@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
-
-from sqlalchemy import select, text, update
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from backend.entity import LedgerEntry
@@ -24,21 +22,6 @@ class LedgerAccountMapper:
             LedgerEntry.account_code,
         ).where(LedgerEntry.id == ledger_id)).mappings().one_or_none()
         return dict(row) if row is not None else None
-
-    def update(
-        self,
-        ledger_id: int,
-        account_code: str,
-        now: datetime,
-    ) -> None:
-        result = self.db.execute(update(LedgerEntry).where(
-            LedgerEntry.id == ledger_id,
-        ).values(
-            account_code=account_code,
-            updated_time=now,
-        ))
-        if result.rowcount != 1:
-            raise ValueError(f"ledger {ledger_id} not found")
 
     def commit(self) -> None:
         self.db.commit()

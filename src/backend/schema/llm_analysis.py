@@ -59,6 +59,7 @@ class _LlmAnalysisInput(BaseModel):
 
     item: str = Field(min_length=1, max_length=120)
     direction: Literal["IN", "OUT"]
+    economic_type: Literal["TRANSACTION", "ACCOUNT_TRANSFER", "ASSET_LIABILITY"] | None = None
     merchant: str = Field(default="", max_length=200)
     summary: str = Field(default="", max_length=500)
     rule_prompt: str = Field(min_length=1, max_length=4000)
@@ -121,4 +122,4 @@ class LlmAnalysisResult(BaseModel):
 
     kind: Literal["SUGGESTED", "NO_SUGGESTION"]
     item: str
-    suggestions: list[LlmResolvedSuggestion]
+    suggestions: list[LlmResolvedSuggestion] = Field(max_length=100)

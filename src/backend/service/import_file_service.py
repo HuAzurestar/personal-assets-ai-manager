@@ -21,6 +21,11 @@ from backend.schema.import_file import (
     parse_import_file_time,
 )
 from backend.schema.transaction_fact import TransactionFactListItem
+from backend.service.fact_read_service import fact_po
+from backend.service.flow_read_service import limited
+from backend.mapper.bounded_query_mapper import query_budget
+from backend.mapper.trusted_relation_mapper import TrustedRelationMapper
+from backend.error import TargetEconomicError
 
 
 class ImportFileService:
@@ -74,13 +79,19 @@ class ImportFileService:
         self,
         import_file_id: int,
     ) -> ImportFileTransactionFactListRead:
-        if self.mapper.detail(import_file_id) is None:
-            raise TargetIntakeError(404, f"import file {import_file_id} not found")
-        rows = self.fact_mapper.by_import_file(import_file_id)
-        return ImportFileTransactionFactListRead(
-            items=[TransactionFactListItem(**row) for row in rows],
-            total=len(rows),
-        )
+        with query_budget(self.mapper.db):
+            relations = TrustedRelationMapper(self.mapper.db)
+            relations.read_snapshot()
+            relations.validate()
+            if self.mapper.detail(import_file_id) is None:
+                raise TargetIntakeError(404, "import file not found")
+            from backend.mapper.import_source_mapper import ImportSourceMapper
+            if ImportSourceMapper(self.mapper.db).broken_file_sources(import_file_id):
+                raise TargetEconomicError(409,"source relation is damaged",code="RELATION_BROKEN")
+            rows = self.fact_mapper.by_import_file(import_file_id)
+            if len(rows) > 4000:
+                raise TargetEconomicError(413,"use source row pages",code="DETAIL_LIMIT")
+            return limited(ImportFileTransactionFactListRead(items=[TransactionFactListItem(**fact_po(row)) for row in rows],total=len(rows)))
 
     def rows(
         self,

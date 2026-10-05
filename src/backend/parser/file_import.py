@@ -117,22 +117,31 @@ def preview_rows(parsed: ParsedFile, limit: int = 8) -> list[dict[str, str]]:
     ]
 
 
-def _read_zip(content: bytes, password: str | None) -> tuple[str, bytes]:
+def _read_zip(content: bytes, password: str | None, *, max_bytes=MAX_ARCHIVE_ENTRY_BYTES, max_members=100) -> tuple[str, bytes]:
     try:
         with pyzipper.AESZipFile(io.BytesIO(content)) as archive:
-            entries = [entry for entry in archive.infolist() if not entry.is_dir()]
+            members = archive.infolist()
+            if len(members) > max_members or sum(entry.file_size for entry in members) > max_bytes:
+                raise ValueError("ZIP decoded content exceeds the safety limit")
+            for member in members:
+                path = PurePosixPath(member.filename.replace('\\', '/'))
+                if path.is_absolute() or ".." in path.parts or any(':' in part for part in path.parts):
+                    raise ValueError("ZIP contains an unsupported file entry")
+            entries = [entry for entry in members if not entry.is_dir()]
             if len(entries) != 1:
                 raise ValueError("ZIP must contain exactly one CSV, XLS, or XLSX file")
             entry = entries[0]
             entry_path = PurePosixPath(entry.filename.replace('\\', '/'))
             if entry_path.is_absolute() or ".." in entry_path.parts or entry_path.suffix.lower() not in SUPPORTED_EXTENSIONS - {".zip"}:
                 raise ValueError("ZIP contains an unsupported file entry")
-            if entry.file_size > MAX_ARCHIVE_ENTRY_BYTES or entry.file_size > MAX_UPLOAD_BYTES * 20:
+            if entry.file_size > max_bytes:
                 raise ValueError("ZIP entry exceeds the safety limit")
             try:
                 payload = archive.read(entry, pwd=password.encode() if password else None)
             except (RuntimeError, NotImplementedError) as error:
                 raise ValueError("ZIP password is required or invalid") from error
+            if len(payload) > max_bytes:
+                raise ValueError("ZIP decoded content exceeds the safety limit")
     except (OSError, zipfile.BadZipFile) as error:
         raise ValueError("Invalid ZIP archive") from error
     return entry.filename, payload
