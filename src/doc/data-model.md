@@ -47,7 +47,7 @@ Review物理类型0系统NORMAL_TRANSACTION、1 BORROW_AND_REPAY、2 CREDIT_CARD
 
 ## 账户与数量身份
 
-`party → account集合 → ref具体来源`。Ledger.account_ref_id=0为UNIDENTIFIED；正ref/account_id=0为UNASSIGNED；完整链为ASSIGNED。换组只改当前归属/筛选，不移动金融行。同名、尾号、订单号、对手账号不自动合并。仅已验收银行解析器的完整可靠本方身份允许精确namespace+identity复用/创建ref；identity_strength=1 RELIABLE有唯一索引，未知为0。账户状态ACTIVE/CLOSED。
+`party → account集合 → ref具体来源`。Ledger.account_ref_id=0为UNIDENTIFIED；正ref/account_id=0为UNASSIGNED；完整链为ASSIGNED。换组只改当前归属/筛选，不移动金融行。同名、尾号、订单号、对手账号不自动合并。仅解析器从账单本方表头明确证明的完整可靠身份允许精确namespace+identity复用/创建ref：当前银行为农行/建行/招行完整账号，钱包为支付宝完整本方手机号或邮箱、微信完整本方微信号；不是昵称、支付方式或资金卡尾号。来源字符串保持原样，不做别名、大小写或跨机构模糊归并。可靠ref随明确导入确认同事务创建/复用，可保持未分组，无需先创建个人/集合；预览和核验不自动建卡。弱/未知来源由用户按文件明确创建或绑定来源卡，该元数据操作不入账，也不将原Raw身份升级为可靠。identity_strength=1 RELIABLE有唯一索引，未知为0。账户状态ACTIVE/CLOSED。
 
 来源卡标准list/search支持当前归属`party_id`正整数等于/不等于，与`account_id`及状态条件按标准逻辑组合；真实链为ref→account→party，未分组仍由`account_id=0`显式选择。COUNT与本页同快照，搜索游标绑定个人/集合范围；过滤不能隐藏破损引用。账户工作台以紧凑来源卡列表为主，个人/集合具名筛选并按需打开有界管理选择器，不默认加载三张目录表；低频维护继续使用原元数据/归属预览写口，三类身份和金融历史不变。
 

@@ -454,6 +454,56 @@ def run():
                             TransactionImportRow.transaction_import_file_id.in_(weak_ids))))
                         assert len(raw)==48
                         assert all(json.loads(value)['normalized']['source_account']['identity_strength']=='WEAK' for value in raw)
+                    # Supported text PDF layouts use the same ordinary guide,
+                    # real bounded parser, explicit preflight and confirm flow.
+                    from fictional_statement_pdf import statement_pdf
+                    from test_pirc35_import_pdf import assert_cash_chain
+                    for provider in ('abc', 'cmb'):
+                        page.set_viewport_size({'width':1280,'height':900})
+                        page.goto(base + '/#workbench/import')
+                        page.locator('[data-action="import-step"][data-step="2"]').first.click()
+                        content = statement_pdf(provider)
+                        upload.locator('[name="files"]').set_input_files({'name':f'Mock-{provider}.pdf',
+                            'mimeType':'application/pdf','buffer':content})
+                        upload.locator('[data-action="preview-import"]').click()
+                        expect(rows).to_have_count(2,timeout=15000)
+                        expect(rows.first.locator('[data-row-decision]')).to_have_value('ACCEPT')
+                        expect(page.locator('[data-batch-confirm]')).to_be_disabled()
+                        before_pdf = wallet_snapshot()
+                        submitted = len(confirmations)
+                        page.locator('[data-batch-guide]').click()
+                        expect(page.locator('[data-batch-selection]')).to_contain_text('2 行',timeout=35000)
+                        expect(page.locator('[data-batch-confirm]')).to_be_enabled(timeout=35000)
+                        assert wallet_snapshot() == before_pdf and len(confirmations) == submitted
+                        page.set_viewport_size({'width':390,'height':844})
+                        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+                        rows.first.scroll_into_view_if_needed()
+                        viewport_evidence(page,f'dev17-pdf-{provider}-guided-390')
+                        with page.expect_response(lambda response: response.request.method == 'POST'
+                                and response.url.endswith('/confirm')) as written:
+                            page.locator('[data-batch-confirm]').click()
+                        result = written.value.json()['body']
+                        expect(page.locator('[data-batch-files]')).to_contain_text('已接受 2',timeout=15000)
+                        assert len(confirmations) == submitted + 1 and len(confirmations[-1]['selected_rows']) == 2
+                        after_pdf = wallet_snapshot()
+                        assert len(after_pdf['transaction_fact']) == len(before_pdf['transaction_fact']) + 2
+                        assert len(after_pdf['ledger_account_ref']) == len(before_pdf['ledger_account_ref']) + 1
+                        assert_cash_chain(after_pdf,result,provider)
+                        page.goto(base + '/#workbench/account')
+                        card = page.locator('[data-account-list] tbody tr[data-ref-id]').filter(
+                            has_text='农业银行' if provider == 'abc' else '招商银行')
+                        expect(card).to_have_count(1)
+                        expect(card).to_contain_text('可靠来源')
+                        expect(card).to_contain_text('未分组')
+                        assert '990000000000001234' not in card.inner_text()
+                        page.goto(base + '/#workbench/import')
+                        page.locator('[data-action="import-step"][data-step="2"]').first.click()
+                        upload.locator('[name="files"]').set_input_files({'name':f'Mock-{provider}.pdf',
+                            'mimeType':'application/pdf','buffer':content})
+                        upload.locator('[data-action="preview-import"]').click()
+                        expect(page.locator('[data-batch-files]')).to_contain_text('已接受 2',timeout=15000)
+                        expect(page.locator('[data-batch-confirm]')).to_be_disabled()
+                        assert wallet_snapshot() == after_pdf and len(confirmations) == submitted + 1
                     assert errors == [], errors
                     browser.close()
                 print("PIRC-35 fictional selected import, raw detail and lost-response browser workflow passed")
