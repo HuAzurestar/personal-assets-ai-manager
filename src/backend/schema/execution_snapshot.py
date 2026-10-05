@@ -9,4 +9,3 @@ class ExecutionSnapshot:
     prompt_fingerprint: str
     model_json: str = field(repr=False)
     disclosure_json: str = field(repr=False)
-

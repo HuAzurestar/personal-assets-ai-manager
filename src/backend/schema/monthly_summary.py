@@ -21,4 +21,3 @@ class MonthlySummaryResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
     summary: str = Field(min_length=1, max_length=2000)
     highlights: list[str] = Field(max_length=5)
-
