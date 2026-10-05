@@ -64,6 +64,35 @@ def test_summary_scalar_fetch_keeps_integer_and_utc_microsecond_types():
         assert rows[0]["occurred_time"].tzinfo == timezone.utc
 
 
+def test_summary_keeps_all_six_amount_slots_exact_units_and_local_day():
+    from datetime import date
+    from zoneinfo import ZoneInfo
+    seed_contributions(12, amount=3)
+    occurred = "2024-01-01T20:00:00.000007Z"
+    with target_database.SessionLocal() as db:
+        # Fictional complete contributions, with all three cash kinds in both
+        # directions and two exact currency quanta. Preserve both link ends.
+        db.execute(text("UPDATE ledger_entry SET entry_type=((id-1)%6)/2, "
+            "entry_direction=CASE WHEN id%2=1 THEN 1 ELSE 2 END, "
+            "cash_currency_code=CASE WHEN id<=6 THEN 'CNY_4' ELSE 'CNY' END, occurred_time=:occurred"),
+            dict(occurred=occurred))
+        db.execute(text("UPDATE transaction_fact SET cash_direction=CASE WHEN id%2=1 THEN 1 ELSE 2 END, "
+            "currency_code=CASE WHEN id<=6 THEN 'CNY_4' ELSE 'CNY' END, occurred_time=:occurred"),
+            dict(occurred=occurred))
+        db.execute(text("UPDATE review_transaction_ledger_allocation SET "
+            "cash_currency_code=CASE WHEN id<=6 THEN 'CNY_4' ELSE 'CNY' END"))
+        db.commit()
+        result = LedgerEntryService(db).summary(LedgerEntrySummaryQuery(display_timezone=ZoneInfo("Asia/Hong_Kong")))
+    assert result.entry_count == 12
+    assert {row.currency_code for row in result.totals} == {"CNY", "CNY_4"}
+    for row in result.totals:
+        assert {value for key, value in row.model_dump().items() if key != "currency_code"} == {3}
+    assert {(row.day, row.currency_code, row.income_amount, row.expense_amount, row.net_amount)
+        for row in result.trend} == {(date(2024, 1, 2), code, 3, 3, 0) for code in ("CNY", "CNY_4")}
+    assert {(row.entry_type_code, row.currency_code, row.in_amount, row.out_amount)
+        for row in result.activities} == {(kind, code, 3, 3) for kind in (0, 1, 2) for code in ("CNY", "CNY_4")}
+
+
 def test_fifty_thousand_and_one_actual_contributors_return_no_partial_sum():
     seed_contributions(50001)
     with target_database.SessionLocal() as db, pytest.raises(TargetEconomicError) as caught:

@@ -158,7 +158,7 @@ class TargetTagProjectionMapper:
         dialect = self.db.get_bind().dialect
         # All Tags of one Ledger share its exact replacement timestamp. Run
         # the existing column codecs once per Ledger rather than twice per Tag.
-        # Explicit text binds retain that validated six-microsecond UTC text;
+        # Explicit text binds retain that validated six-digit fractional UTC text;
         # no clock truncation, alternate codec or persistent cache is involved.
         stored_times = {ledger_id: dict(
             tag_created_time=table.c.created_time.type.process_bind_param(value, dialect),

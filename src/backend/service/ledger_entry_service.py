@@ -156,29 +156,28 @@ class LedgerEntryService:
             "asset_and_liability_in_amount": 0,
             "asset_and_liability_out_amount": 0,
         })
-        type_prefixes = {
-            0: "income_and_expense",
-            1: "internal_transfer",
-            2: "asset_and_liability",
+        amount_keys = {
+            0: ("income_and_expense_in_amount", "income_and_expense_out_amount"),
+            1: ("internal_transfer_in_amount", "internal_transfer_out_amount"),
+            2: ("asset_and_liability_in_amount", "asset_and_liability_out_amount"),
         }
         trend = defaultdict(lambda: {"income_amount": 0, "expense_amount": 0})
         activities = defaultdict(lambda: {"in_amount": 0, "out_amount": 0})
+        display_timezone = query.display_timezone
         for row in rows:
-            direction = "in" if row["entry_direction"] == 1 else "out"
-            key = f"{type_prefixes[row['entry_type']]}_{direction}_amount"
-            totals[row["currency_code"]][key] += row["amount"]
-            if totals[row["currency_code"]][key] > MAX_ABS_AMOUNT:
+            entry_type, currency, amount = row["entry_type"], row["currency_code"], row["amount"]
+            incoming = row["entry_direction"] == 1
+            key = amount_keys[entry_type][0 if incoming else 1]
+            currency_totals = totals[currency]
+            currency_totals[key] += amount
+            if currency_totals[key] > MAX_ABS_AMOUNT:
                 raise TargetEconomicError(413, "aggregate exceeds exact display budget; narrow scope", code="AGGREGATION_LIMIT")
-            activity_key = (row["entry_type"], row["currency_code"])
-            activities[activity_key][f"{direction}_amount"] += row["amount"]
-            if row["entry_type"] == 0:
-                local_time = (
-                    row["occurred_time"].astimezone(query.display_timezone)
-                    if query.display_timezone is not None
-                    else row["occurred_time"]
-                )
-                day_key = (local_time.date(), row["currency_code"])
-                trend[day_key]["income_amount" if direction == "in" else "expense_amount"] += row["amount"]
+            activities[(entry_type, currency)]["in_amount" if incoming else "out_amount"] += amount
+            if entry_type == 0:
+                occurred = row["occurred_time"]
+                local_time = occurred.astimezone(display_timezone) if display_timezone is not None else occurred
+                day_key = (local_time.date(), currency)
+                trend[day_key]["income_amount" if incoming else "expense_amount"] += amount
         result = LedgerEntrySummaryRead(
             entry_count=len(rows),
             totals=[
